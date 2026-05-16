@@ -50,16 +50,21 @@ static void DNNLQuantizedBatchNormForward(const nnvm::NodeAttrs& attrs,
     s8_md = CloneMemDescWithDtype(s8_md, dnnl::memory::data_type::s8);
     auto data_reorder_mem = TmpMemMgr::Get()->Alloc(s8_md);
 
-    std::vector<float> reorder_scale;
-    reorder_scale = {static_cast<float>(kInt8Range) / kUint8Range};
+    // v3: set_output_scales removed; bind runtime scale tensor.
     dnnl::primitive_attr reorder_attr;
-    reorder_attr.set_output_scales(0, reorder_scale);
+    reorder_attr.set_scales_mask(DNNL_ARG_DST, 0);
     dnnl::engine cpu_engine = CpuEngine::Get()->get_engine();
     const auto reorder_pd =
         dnnl::reorder::primitive_desc(cpu_engine, u8_md, cpu_engine, s8_md, reorder_attr);
+    dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                                dnnl::memory::format_tag::x);
+    auto scale_mem = dnnl::memory(scale_md, cpu_engine);
+    *reinterpret_cast<float*>(scale_mem.get_data_handle()) =
+        static_cast<float>(kInt8Range) / kUint8Range;
     dnnl_args_map_t reorder_args;
     reorder_args[DNNL_ARG_SRC] = *data_mem;
     reorder_args[DNNL_ARG_DST] = *data_reorder_mem;
+    reorder_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = scale_mem;
     DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd), reorder_args);
     data_mem = data_reorder_mem;
   }
@@ -81,12 +86,17 @@ static void DNNLQuantizedBatchNormForward(const nnvm::NodeAttrs& attrs,
   }
   const float max_abs_output = std::max(std::abs(*min_output_ptr), std::abs(*max_output_ptr));
 
-  dnnl::normalization_flags flags =
-      dnnl::normalization_flags::use_global_stats | dnnl::normalization_flags::use_scale_shift;
-  auto& fwd                      = DNNLBNForward::GetCached(param, ctx, data_mem, fuse_relu, flags);
-  const dnnl::memory& weight_mem = fwd.GetWeight();
-  CHECK_EQ(weight_mem.get_desc().get_size(), channel_count * sizeof(float) * 2);
-  float* weight_buf = reinterpret_cast<float*>(weight_mem.get_data_handle());
+  // v3: use_scale_shift split; use_scale + use_shift with separate args.
+  dnnl::normalization_flags flags = dnnl::normalization_flags::use_global_stats |
+                                    dnnl::normalization_flags::use_scale |
+                                    dnnl::normalization_flags::use_shift;
+  auto& fwd                     = DNNLBNForward::GetCached(param, ctx, data_mem, fuse_relu, flags);
+  const dnnl::memory& scale_mem = fwd.GetScale();
+  const dnnl::memory& shift_mem = fwd.GetShift();
+  CHECK_EQ(scale_mem.get_desc().get_size(), channel_count * sizeof(float));
+  CHECK_EQ(shift_mem.get_desc().get_size(), channel_count * sizeof(float));
+  float* scale_buf = reinterpret_cast<float*>(scale_mem.get_data_handle());
+  float* shift_buf = reinterpret_cast<float*>(shift_mem.get_data_handle());
 
   float* gamma_ptr = in_data[quantized_batchnorm::kGamma].data().dptr<float>();
   float* beta_ptr  = in_data[quantized_batchnorm::kBeta].data().dptr<float>();
@@ -104,9 +114,9 @@ static void DNNLQuantizedBatchNormForward(const nnvm::NodeAttrs& attrs,
 
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
   for (int channel = 0; channel < channel_count; ++channel) {
-    float invstd        = 1.0 / std::sqrt(moving_var_ptr[channel] + param.eps);
-    weight_buf[channel] = gamma_ptr[channel] * invstd * max_abs_data / max_abs_output;
-    weight_buf[channel_count + channel] =
+    float invstd       = 1.0 / std::sqrt(moving_var_ptr[channel] + param.eps);
+    scale_buf[channel] = gamma_ptr[channel] * invstd * max_abs_data / max_abs_output;
+    shift_buf[channel] =
         (beta_ptr[channel] - moving_mean_ptr[channel] * gamma_ptr[channel] * invstd) * kInt8Range /
         max_abs_output;
     rescaled_mean_ptr[channel] = 0.0f;
@@ -117,11 +127,12 @@ static void DNNLQuantizedBatchNormForward(const nnvm::NodeAttrs& attrs,
   auto fwd_dst_desc  = fwd.GetPd().dst_desc();
   auto out_mem       = const_cast<NDArray&>(out).CreateDNNLData(&fwd_dst_desc);
   dnnl_args_map_t net_args;
-  net_args[DNNL_ARG_SRC]         = *data_mem;
-  net_args[DNNL_ARG_SCALE_SHIFT] = weight_mem;
-  net_args[DNNL_ARG_DST]         = *out_mem;
-  net_args[DNNL_ARG_MEAN]        = *rescaled_mean_mem;
-  net_args[DNNL_ARG_VARIANCE]    = *rescaled_var_mem;
+  net_args[DNNL_ARG_SRC]      = *data_mem;
+  net_args[DNNL_ARG_SCALE]    = scale_mem;
+  net_args[DNNL_ARG_SHIFT]    = shift_mem;
+  net_args[DNNL_ARG_DST]      = *out_mem;
+  net_args[DNNL_ARG_MEAN]     = *rescaled_mean_mem;
+  net_args[DNNL_ARG_VARIANCE] = *rescaled_var_mem;
 
   DNNLStream::Get()->RegisterPrimArgs(fwd.GetFwd(), net_args);
   DNNLStream::Get()->Submit();

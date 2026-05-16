@@ -56,7 +56,9 @@ void DNNLMemorySum(const dnnl::memory& arr1, const dnnl::memory& arr2, const dnn
     in_mem1      = tmp_memory1;
     in_mem2      = tmp_memory2;
   }
-  dnnl::sum::primitive_desc sum_pd(output_pd, scales, input_pds, CpuEngine::Get()->get_engine());
+  // v3: sum::primitive_desc(engine, output_md, scales, src_mds, attr={}).
+  dnnl::sum::primitive_desc sum_pd(
+      CpuEngine::Get()->get_engine(), output_pd, scales, input_pds);
   dnnl_args_map_t args = {
       {DNNL_ARG_MULTIPLE_SRC, *in_mem1},
       {DNNL_ARG_MULTIPLE_SRC + 1, *in_mem2},

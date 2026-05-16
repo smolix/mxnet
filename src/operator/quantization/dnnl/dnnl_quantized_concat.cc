@@ -78,18 +78,24 @@ static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
       auto mem      = in_data[i].GetDNNLData();
       auto mem_desc = mem->get_desc();
       if (in_data[i].dtype() != out_dtype) {
-        mem_desc = CloneMemDescWithDtype(mem_desc, static_cast<dnnl_data_type_t>(get_dnnl_type(out_dtype)));
+        // v3: CloneMemDescWithDtype takes the dnnl C++ enum directly.
+        mem_desc = CloneMemDescWithDtype(mem_desc, get_dnnl_type(out_dtype));
       }
-      const auto rescaled_mem =
-          std::make_shared<dnnl::memory>(mem_desc, CpuEngine::Get()->get_engine());
+      auto cpu_engine = CpuEngine::Get()->get_engine();
+      const auto rescaled_mem = std::make_shared<dnnl::memory>(mem_desc, cpu_engine);
       new_data_mem.push_back(rescaled_mem);
-      std::vector<float> reorder_scale = {out_scale / i_scale};
+      // v3: set_output_scales removed; use set_scales_mask + runtime arg.
       dnnl::primitive_attr reorder_attr;
-      reorder_attr.set_output_scales(0, reorder_scale);
+      reorder_attr.set_scales_mask(DNNL_ARG_DST, 0);
       const auto reorder_pd = dnnl::reorder::primitive_desc(*mem, *rescaled_mem, reorder_attr);
+      dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                                  dnnl::memory::format_tag::x);
+      auto scale_mem = dnnl::memory(scale_md, cpu_engine);
+      *reinterpret_cast<float*>(scale_mem.get_data_handle()) = out_scale / i_scale;
       dnnl_args_map_t reorder_args;
       reorder_args[DNNL_ARG_SRC] = *mem;
       reorder_args[DNNL_ARG_DST] = *rescaled_mem;
+      reorder_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = scale_mem;
       DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd), reorder_args);
       data_mem.push_back(rescaled_mem.get());
       data_md.push_back(mem_desc);

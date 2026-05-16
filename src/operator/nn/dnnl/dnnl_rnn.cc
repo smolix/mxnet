@@ -217,7 +217,7 @@ RnnPrimitive GetRnnFwdPrim(const DNNLRnnLayerParam& layer_param,
   const prop_kind prop = is_train ? prop_kind::forward_training : prop_kind::forward_inference;
   const rnn_direction dnnl_rnn_direction = layer_param.bidirectional ?
                                                rnn_direction::bidirectional_concat :
-                                               rnn_direction::unidirectional;
+                                               rnn_direction::unidirectional_left2right;
 
   auto src_layer_desc    = memory::desc(layer_param.src_dims, src_layer_dtype, tag::tnc);
   auto weight_layer_desc = memory::desc(layer_param.weight_layer_dims, weight_dtype, tag::any);
@@ -301,7 +301,7 @@ RnnBwdPrimitive GetRnnBwdPrim(const DNNLRnnForwardTraining& fwd,
   const prop_kind prop                 = prop_kind::backward;
   rnn_direction dnnl_rnn_direction     = layer_param.bidirectional ?
                                          rnn_direction::bidirectional_concat :
-                                         rnn_direction::unidirectional;
+                                         rnn_direction::unidirectional_left2right;
 
   auto src_layer_desc    = memory::desc(layer_param.src_dims, data_type, tag::tnc);
   auto weight_layer_desc = memory::desc(layer_param.weight_layer_dims, weight_type, tag::any);
@@ -435,8 +435,9 @@ static void ConcatWeights(const dnnl::memory& dst,
   }
   concat_args.emplace(DNNL_ARG_DST, dst);
 
-  auto concat_pd =
-      dnnl::concat::primitive_desc(dst.get_desc(), concat_dimension, src_descs, cpu_engine);
+  // v3: concat::primitive_desc(engine, dst_md, concat_dim, src_mds, attr={}).
+  auto concat_pd = dnnl::concat::primitive_desc(
+      cpu_engine, dst.get_desc(), concat_dimension, src_descs);
   dnnl::concat(concat_pd).execute(s, concat_args);
 }
 

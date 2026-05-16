@@ -209,8 +209,8 @@ reduce_fwd_pd_t DNNLReduceFwd::GetReduceFwdPd(const dnnl::memory::desc& input_md
                                               const dnnl::memory::desc& output_md,
                                               const dnnl::algorithm reduction_alg) {
   auto cpu_engine = CpuEngine::Get()->get_engine();
-  auto desc       = dnnl::reduction::desc(reduction_alg, input_md, output_md, 0.f, 0.f);
-  return reduce_fwd_pd_t(desc, cpu_engine);
+  // v3: reduction::primitive_desc(engine, alg, src_md, dst_md, p, eps, attr={}).
+  return reduce_fwd_pd_t(cpu_engine, reduction_alg, input_md, output_md, 0.f, 0.f);
 }
 
 void DNNLReduceFwd::Execute(const Tensors& tensors) const {

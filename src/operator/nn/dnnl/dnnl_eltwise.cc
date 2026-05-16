@@ -57,8 +57,13 @@ DNNLEltwiseFwd& DNNLEltwiseFwd::GetCached(const NDArray& input,
 
 DNNLEltwiseFwd::DNNLEltwiseFwd(const NDArray& input, const dnnl::algorithm algorithm) {
   auto src_desc = input.GetDNNLData()->get_desc();
-  dnnl::eltwise_forward::desc fwd_desc(dnnl::prop_kind::forward_scoring, algorithm, src_desc);
-  fwd_pd = std::make_shared<eltwise_fwd_pd_t>(fwd_desc, mxnet::CpuEngine::Get()->get_engine());
+  // v3: eltwise primitive_desc(engine, prop, algorithm, src_md, dst_md,
+  //                            alpha, beta, attr={}). For algorithms that do
+  //                            not need alpha/beta the values are ignored.
+  fwd_pd = std::make_shared<eltwise_fwd_pd_t>(mxnet::CpuEngine::Get()->get_engine(),
+                                              dnnl::prop_kind::forward_inference,
+                                              algorithm, src_desc, src_desc,
+                                              0.f, 0.f);
   fwd    = std::make_shared<eltwise_fwd_t>(*fwd_pd);
 }
 

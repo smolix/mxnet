@@ -29,26 +29,29 @@
 namespace mxnet {
 namespace op {
 
-static dnnl::logsoftmax_forward::primitive_desc GetLogSoftmaxFwdPd(bool is_train,
+static dnnl::softmax_forward::primitive_desc GetLogSoftmaxFwdPd(bool is_train,
                                                                    const int axis,
                                                                    const dnnl::memory& input_mem) {
   dnnl::memory::desc data_md = input_mem.get_desc();
   auto cpu_engine            = CpuEngine::Get()->get_engine();
-  auto prop = is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_scoring;
-  auto desc = dnnl::logsoftmax_forward::desc(prop, data_md, axis);
-  return dnnl::logsoftmax_forward::primitive_desc(desc, cpu_engine);
+  auto prop = is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_inference;
+  // v3: dedicated logsoftmax type is gone; use softmax_forward with
+  //     algorithm::softmax_log.
+  return dnnl::softmax_forward::primitive_desc(
+      cpu_engine, prop, dnnl::algorithm::softmax_log, data_md, data_md, axis);
 }
 
-static dnnl::logsoftmax_backward::primitive_desc GetLogSoftmaxBwdPd(
+static dnnl::softmax_backward::primitive_desc GetLogSoftmaxBwdPd(
     const dnnl::memory& diff_mem,
     const dnnl::memory& data_mem,
     const int axis,
-    const dnnl::logsoftmax_forward::primitive_desc& hint_fwd_pd) {
+    const dnnl::softmax_forward::primitive_desc& hint_fwd_pd) {
   dnnl::memory::desc diff_md = diff_mem.get_desc();
   dnnl::memory::desc data_md = data_mem.get_desc();
   auto cpu_engine            = CpuEngine::Get()->get_engine();
-  auto desc                  = dnnl::logsoftmax_backward::desc(diff_md, data_md, axis);
-  return dnnl::logsoftmax_backward::primitive_desc(desc, cpu_engine, hint_fwd_pd);
+  return dnnl::softmax_backward::primitive_desc(
+      cpu_engine, dnnl::algorithm::softmax_log, diff_md, diff_md, data_md, axis,
+      hint_fwd_pd);
 }
 
 // Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_logsoftmax.html
@@ -64,19 +67,19 @@ bool SupportDNNLLogSoftmax(const SoftmaxParam& param, const NDArray& data) {
 
 class DNNLLogSoftmaxFwd {
  public:
-  dnnl::logsoftmax_forward::primitive_desc pd;
+  dnnl::softmax_forward::primitive_desc pd;
 
   DNNLLogSoftmaxFwd(const bool is_train, const int axis, const dnnl::memory& input)
       : pd(GetLogSoftmaxFwdPd(is_train, axis, input)) {
-    fwd_ = std::make_shared<dnnl::logsoftmax_forward>(pd);
+    fwd_ = std::make_shared<dnnl::softmax_forward>(pd);
   }
 
-  const dnnl::logsoftmax_forward& GetFwd() const {
+  const dnnl::softmax_forward& GetFwd() const {
     return *fwd_;
   }
 
  private:
-  std::shared_ptr<dnnl::logsoftmax_forward> fwd_;
+  std::shared_ptr<dnnl::softmax_forward> fwd_;
 };
 
 typedef ParamOpSign<SoftmaxParam> DNNLSoftmaxSignature;
@@ -130,22 +133,22 @@ void DNNLLogSoftmaxForward(const nnvm::NodeAttrs& attrs,
 
 class DNNLLogSoftmaxBwd {
  public:
-  dnnl::logsoftmax_backward::primitive_desc pd;
+  dnnl::softmax_backward::primitive_desc pd;
 
   DNNLLogSoftmaxBwd(const dnnl::memory& diff_mem,
                     const dnnl::memory& data_mem,
                     const int axis,
-                    const dnnl::logsoftmax_forward::primitive_desc& hint_fwd_pd)
+                    const dnnl::softmax_forward::primitive_desc& hint_fwd_pd)
       : pd(GetLogSoftmaxBwdPd(diff_mem, data_mem, axis, hint_fwd_pd)) {
-    bwd_ = std::make_shared<dnnl::logsoftmax_backward>(pd);
+    bwd_ = std::make_shared<dnnl::softmax_backward>(pd);
   }
 
-  const dnnl::logsoftmax_backward& GetBwd() const {
+  const dnnl::softmax_backward& GetBwd() const {
     return *bwd_;
   }
 
  private:
-  std::shared_ptr<dnnl::logsoftmax_backward> bwd_;
+  std::shared_ptr<dnnl::softmax_backward> bwd_;
 };
 
 static DNNLLogSoftmaxBwd& GetLogSoftmaxBwd(const SoftmaxParam& param,

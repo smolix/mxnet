@@ -35,8 +35,9 @@ DNNLBinaryOpFwd::DNNLBinaryOpFwd(const dnnl::algorithm alg,
   auto src1_desc = inputs[1].GetDNNLData()->get_desc();
   auto dst_desc  = outputs[0].GetDNNLData()->get_desc();
 
-  dnnl::binary::desc fwd_desc(alg, src0_desc, src1_desc, dst_desc);
-  fwd_pd = std::make_shared<binary_fwd_pd_t>(fwd_desc, mxnet::CpuEngine::Get()->get_engine());
+  // v3: binary::primitive_desc(engine, alg, src0_md, src1_md, dst_md, attr={}).
+  fwd_pd = std::make_shared<binary_fwd_pd_t>(mxnet::CpuEngine::Get()->get_engine(),
+                                             alg, src0_desc, src1_desc, dst_desc);
   fwd    = std::make_shared<binary_fwd_t>(*fwd_pd);
 }
 

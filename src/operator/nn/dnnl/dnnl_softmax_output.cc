@@ -38,9 +38,11 @@ static dnnl::softmax_forward::primitive_desc GetSoftmaxOutputFwdDescImpl(
     const dnnl::memory& input_mem) {
   dnnl::memory::desc data_md = input_mem.get_desc();
   auto cpu_engine            = CpuEngine::Get()->get_engine();
-  auto prop = is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_scoring;
-  auto desc = dnnl::softmax_forward::desc(prop, data_md, axis);
-  return dnnl::softmax_forward::primitive_desc(desc, cpu_engine);
+  auto prop = is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_inference;
+  // v3: ::desc removed; pass args directly to primitive_desc.
+  return dnnl::softmax_forward::primitive_desc(
+      cpu_engine, prop, dnnl::algorithm::softmax_accurate,
+      data_md, data_md, axis);
 }
 
 typedef ParamOpSign<SoftmaxOutputParam> DNNLSoftmaxOuputSignature;

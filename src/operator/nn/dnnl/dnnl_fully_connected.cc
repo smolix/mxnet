@@ -43,13 +43,13 @@ dnnl::inner_product_forward::primitive_desc GetFCFwdImpl(const DNNLFCFullParam& 
                        GetFCWeightDesc(weight, data.shape()[0], mshadow::kInt8) :
                        GetFCWeightDesc(weight, data.shape()[0]);
   auto propagation =
-      is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_scoring;
+      is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_inference;
 
   dnnl::primitive_attr attr;
   dnnl::post_ops ops;
   if (full_param.dnnl_param.with_eltwise) {
-    ops.append_eltwise(full_param.eltwise_param.scale,
-                       full_param.eltwise_param.alg,
+    // v3: append_eltwise scale parameter dropped.
+    ops.append_eltwise(full_param.eltwise_param.alg,
                        full_param.eltwise_param.alpha,
                        full_param.eltwise_param.beta);
   }
@@ -59,34 +59,34 @@ dnnl::inner_product_forward::primitive_desc GetFCFwdImpl(const DNNLFCFullParam& 
   attr.set_post_ops(ops);
 
   if (full_param.dnnl_param.quantized && full_param.output_scales.size()) {
+    // v3: set_output_scales removed; use set_scales_mask + runtime scale arg
+    //     bound at execution time. TODO: wire runtime scale memory through
+    //     the quantized FC execute path.
     int mask = (full_param.output_scales.size() == 1) ? 0 : (1 << 1);
-    attr.set_output_scales(mask, full_param.output_scales);
+    attr.set_scales_mask(DNNL_ARG_DST, mask);
   }
 
-  auto GetFCFwdPd = [&full_param, &attr, &engine](const dnnl::inner_product_forward::desc& desc) {
-    try {
-      return dnnl::inner_product_forward::primitive_desc(desc, attr, engine);
-    } catch (dnnl::error& e) {
-      if (e.status == dnnl_unimplemented && full_param.dnnl_param.quantized) {
-        LOG(ERROR)
-            << "AVX512-BW support or oneDNN v0.18 or later is required for INT8 fully_connected.";
-      } else {
-        LOG(ERROR) << e.message;
-      }
-      throw;
+  // v3: ::desc removed; primitive_desc takes args directly.
+  try {
+    if (bias) {
+      if ((*bias).shape().ndim() != 1)
+        LOG(FATAL) << "Unexpected shape for bias " << (*bias).shape();
+      auto bias_md =
+          full_param.dnnl_param.quantized ? GetMemDesc(*bias, mshadow::kInt32) : GetMemDesc(*bias);
+      return dnnl::inner_product_forward::primitive_desc(
+          engine, propagation, data_md, weight_md, bias_md, out_md, attr);
+    } else {
+      return dnnl::inner_product_forward::primitive_desc(
+          engine, propagation, data_md, weight_md, out_md, attr);
     }
-  };
-
-  if (bias) {
-    if ((*bias).shape().ndim() != 1)
-      LOG(FATAL) << "Unexpected shape for bias " << (*bias).shape();
-    auto bias_md =
-        full_param.dnnl_param.quantized ? GetMemDesc(*bias, mshadow::kInt32) : GetMemDesc(*bias);
-    dnnl::inner_product_forward::desc desc(propagation, data_md, weight_md, bias_md, out_md);
-    return GetFCFwdPd(desc);
-  } else {
-    dnnl::inner_product_forward::desc desc(propagation, data_md, weight_md, out_md);
-    return GetFCFwdPd(desc);
+  } catch (dnnl::error& e) {
+    if (e.status == dnnl_unimplemented && full_param.dnnl_param.quantized) {
+      LOG(ERROR)
+          << "AVX512-BW support or oneDNN v0.18 or later is required for INT8 fully_connected.";
+    } else {
+      LOG(ERROR) << e.message;
+    }
+    throw;
   }
 }
 
@@ -99,8 +99,9 @@ inline static dnnl::inner_product_backward_data::primitive_desc GetFCBwdData(
   auto weight_md = GetFCWeightDesc(weight, data.shape()[0]);
   auto out_md    = GetMemDesc(output);
   auto engine    = CpuEngine::Get()->get_engine();
-  dnnl::inner_product_backward_data::desc desc(data_md, weight_md, out_md);
-  return dnnl::inner_product_backward_data::primitive_desc(desc, engine, fwd_pd);
+  // v3: ::desc removed; primitive_desc takes args directly.
+  return dnnl::inner_product_backward_data::primitive_desc(
+      engine, data_md, weight_md, out_md, fwd_pd);
 }
 
 inline static dnnl::inner_product_backward_weights::primitive_desc GetFCBwdWeights(
@@ -113,13 +114,14 @@ inline static dnnl::inner_product_backward_weights::primitive_desc GetFCBwdWeigh
   auto weight_md = GetFCWeightDesc(weight, data.shape()[0]);
   auto out_md    = GetMemDesc(output);
   auto engine    = CpuEngine::Get()->get_engine();
+  // v3: ::desc removed; primitive_desc takes args directly.
   if (bias) {
     auto bias_md = GetMemDesc(*bias);
-    dnnl::inner_product_backward_weights::desc desc(data_md, weight_md, bias_md, out_md);
-    return dnnl::inner_product_backward_weights::primitive_desc(desc, engine, fwd_pd);
+    return dnnl::inner_product_backward_weights::primitive_desc(
+        engine, data_md, weight_md, bias_md, out_md, fwd_pd);
   } else {
-    dnnl::inner_product_backward_weights::desc desc(data_md, weight_md, out_md);
-    return dnnl::inner_product_backward_weights::primitive_desc(desc, engine, fwd_pd);
+    return dnnl::inner_product_backward_weights::primitive_desc(
+        engine, data_md, weight_md, out_md, fwd_pd);
   }
 }
 

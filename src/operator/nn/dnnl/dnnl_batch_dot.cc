@@ -78,12 +78,15 @@ dnnl::primitive_attr GetQuantizationAttributes(const DNNLDotParam& param,
                                   param.min_calib_range.value(),
                                   param.max_calib_range.value()) /
                  lhs_scale_ / rhs_scale_;
-    attr.set_output_scales(0, {out_scale_});
+    // v3: set_output_scales removed; use set_scales_mask + runtime scale
+    //     arg DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST. TODO: wire runtime
+    //     scale memory through the quantized batch-dot execute path.
+    attr.set_scales_mask(DNNL_ARG_DST, 0);
   } else if (param.enabled_float_output.has_value()) {
     out_scale_ = 1.0 / lhs_scale_ / rhs_scale_;
-    attr.set_output_scales(0, {out_scale_});
+    attr.set_scales_mask(DNNL_ARG_DST, 0);
   }
-
+  (void)out_scale_;
   return attr;
 }
 
@@ -112,17 +115,19 @@ DNNLBatchDotFwd::DNNLBatchDotFwd(const DNNLDotParam& param,
 
   dnnl::memory::desc data_md    = GetMemoryDesc(inputs[DotIn::lhs], param.transpose_a);
   dnnl::memory::desc weights_md = GetMemoryDesc(inputs[DotIn::rhs], param.transpose_b);
-  dnnl::memory::desc out_md({bigDim, data_md.dims()[1], weights_md.dims()[2]},
-                            get_dnnl_type(outputs[DotOut::out].dtype()),
-                            dnnl::memory::format_tag::any);
-  dnnl::matmul::desc fwd_desc(data_md, weights_md, out_md);
+  dnnl::memory::desc out_md(
+      dnnl::memory::dims{bigDim, data_md.get_dims()[1], weights_md.get_dims()[2]},
+      get_dnnl_type(outputs[DotOut::out].dtype()),
+      dnnl::memory::format_tag::any);
+  // v3: matmul ::desc removed; primitive_desc takes args directly.
+  auto engine = mxnet::CpuEngine::Get()->get_engine();
   if (param.quantized) {
     auto attrs = GetQuantizationAttributes(param, inputs, outputs);
     fwd_pd     = std::make_shared<batch_dot_fwd_pd_t>(
-        fwd_desc, attrs, mxnet::CpuEngine::Get()->get_engine());
-
+        engine, data_md, weights_md, out_md, attrs);
   } else {
-    fwd_pd = std::make_shared<batch_dot_fwd_pd_t>(fwd_desc, mxnet::CpuEngine::Get()->get_engine());
+    fwd_pd = std::make_shared<batch_dot_fwd_pd_t>(
+        engine, data_md, weights_md, out_md);
   }
 
   fwd = std::make_shared<batch_dot_fwd_t>(*fwd_pd);

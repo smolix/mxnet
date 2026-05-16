@@ -39,7 +39,8 @@ class DNNLQuantizedSumFwd {
   DNNLQuantizedSumFwd(const dnnl::memory::desc& output_md,
                       const std::vector<float>& scales,
                       const std::vector<dnnl::memory::desc>& inputs_md)
-      : fwd_pd(output_md, scales, inputs_md, CpuEngine::Get()->get_engine()) {
+      // v3: sum::primitive_desc(engine, dst_md, scales, src_mds, attr={}).
+      : fwd_pd(CpuEngine::Get()->get_engine(), output_md, scales, inputs_md) {
     fwd_ = std::make_shared<dnnl::sum>(fwd_pd);
   }
 
@@ -84,13 +85,27 @@ class DNNLQuantizedBinAddFwd {
   DNNLQuantizedBinAddFwd(const dnnl::memory::desc& output_md,
                          const std::vector<float>& scales,
                          const std::vector<dnnl::memory::desc>& inputs_md) {
-    dnnl::binary::desc fwd_desc(dnnl::algorithm::binary_add, inputs_md[0], inputs_md[1], output_md);
+    // v3: ::desc removed; binary primitive_desc takes args directly.
+    //     set_scales(arg, mask, values) became set_scales_mask(arg, mask)
+    //     with the value bound at execute time as a runtime memory arg.
     dnnl::primitive_attr input_scales;
-    input_scales.set_scales(DNNL_ARG_SRC_0, 0, {scales[0]});
-    input_scales.set_scales(DNNL_ARG_SRC_1, 0, {scales[1]});
-    fwd_pd = dnnl::binary::primitive_desc(fwd_desc, input_scales, CpuEngine::Get()->get_engine());
+    input_scales.set_scales_mask(DNNL_ARG_SRC_0, 0);
+    input_scales.set_scales_mask(DNNL_ARG_SRC_1, 0);
+    fwd_pd = dnnl::binary::primitive_desc(
+        CpuEngine::Get()->get_engine(), dnnl::algorithm::binary_add,
+        inputs_md[0], inputs_md[1], output_md, input_scales);
     fwd_   = std::make_shared<dnnl::binary>(fwd_pd);
+    // Pre-allocate scale memories so callers can bind them at execute time.
+    dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                                dnnl::memory::format_tag::x);
+    src0_scale_ = dnnl::memory(scale_md, CpuEngine::Get()->get_engine());
+    src1_scale_ = dnnl::memory(scale_md, CpuEngine::Get()->get_engine());
+    *reinterpret_cast<float*>(src0_scale_.get_data_handle()) = scales[0];
+    *reinterpret_cast<float*>(src1_scale_.get_data_handle()) = scales[1];
   }
+
+  const dnnl::memory& GetSrc0Scale() const { return src0_scale_; }
+  const dnnl::memory& GetSrc1Scale() const { return src1_scale_; }
 
   const dnnl::binary& GetFwd() const {
     return *fwd_;
@@ -103,6 +118,9 @@ class DNNLQuantizedBinAddFwd {
  private:
   std::shared_ptr<dnnl::binary> fwd_;
   std::shared_ptr<dnnl::memory> out_;
+  // v3: per-input scale runtime memories.
+  dnnl::memory src0_scale_;
+  dnnl::memory src1_scale_;
 };
 
 DNNLQuantizedBinAddFwd& DNNLQuantizedBinAddFwd::GetCached(
@@ -187,17 +205,23 @@ static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
   if (diff_in_types) {
     if (sum_kernel) {
       // rescale uint8 to int8 by reorder to temporary memory
-      auto s8_desc                     = is_A_int8 ? A_mem->get_desc() : B_mem->get_desc();
-      rescaled_mem                     = TmpMemMgr::Get()->Alloc(s8_desc);
-      const float u8_to_s8_scale       = 0.5;
-      std::vector<float> reorder_scale = {u8_to_s8_scale};
-      auto engine                      = CpuEngine::Get()->get_engine();
+      auto s8_desc               = is_A_int8 ? A_mem->get_desc() : B_mem->get_desc();
+      rescaled_mem               = TmpMemMgr::Get()->Alloc(s8_desc);
+      const float u8_to_s8_scale = 0.5;
+      auto engine                = CpuEngine::Get()->get_engine();
+      // v3: set_output_scales removed; bind runtime scale tensor.
       dnnl::primitive_attr reorder_attr;
-      reorder_attr.set_output_scales(0, reorder_scale);
+      reorder_attr.set_scales_mask(DNNL_ARG_DST, 0);
       auto u8_mem = (is_A_int8 == true) ? B_mem : A_mem;
       const auto reorder_pd =
           dnnl::reorder::primitive_desc(engine, u8_mem->get_desc(), engine, s8_desc, reorder_attr);
-      dnnl_args_map_t args({{DNNL_ARG_FROM, *u8_mem}, {DNNL_ARG_TO, *rescaled_mem}});
+      dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                                  dnnl::memory::format_tag::x);
+      auto scale_mem = dnnl::memory(scale_md, engine);
+      *reinterpret_cast<float*>(scale_mem.get_data_handle()) = u8_to_s8_scale;
+      dnnl_args_map_t args({{DNNL_ARG_FROM, *u8_mem},
+                            {DNNL_ARG_TO, *rescaled_mem},
+                            {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, scale_mem}});
       DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd), args);
       // Modify scale to restore original uint8 values:
       if (is_A_int8) {

@@ -31,7 +31,8 @@ namespace mxnet {
 namespace op {
 
 static inline dnnl::memory::data_type get_data_type(const dnnl::memory::desc& md) {
-  return static_cast<dnnl::memory::data_type>(md.data_type());
+  // v3: memory::desc::data_type was made private; use the public getter.
+  return md.get_data_type();
 }
 
 void DNNLPoolingFwd::Init(const mxnet::NDArray& input,
@@ -45,23 +46,28 @@ void DNNLPoolingFwd::Init(const mxnet::NDArray& input,
   const auto src_md         = input.GetDNNLData()->get_desc();
   const auto dst_md         = GetMemDesc(output);
   const dnnl::engine engine = CpuEngine::Get()->get_engine();
-  if (alg_kind != dnnl::algorithm::pooling_max && alg_kind != dnnl::algorithm::pooling_avg &&
+  // v3 dropped the generic pooling_avg; callers must spell out
+  // include-padding vs exclude-padding.
+  if (alg_kind != dnnl::algorithm::pooling_max &&
       alg_kind != dnnl::algorithm::pooling_avg_include_padding &&
       alg_kind != dnnl::algorithm::pooling_avg_exclude_padding) {
     LOG(FATAL) << "oneDNN Pooling: algorithm is not supported";
   }
 
-  dnnl::prop_kind prop = dnnl::prop_kind::forward_scoring;
-  if (is_train && alg_kind != dnnl::algorithm::pooling_avg) {
+  dnnl::prop_kind prop = dnnl::prop_kind::forward_inference;
+  if (is_train && alg_kind != dnnl::algorithm::pooling_avg_include_padding &&
+      alg_kind != dnnl::algorithm::pooling_avg_exclude_padding) {
     prop = dnnl::prop_kind::forward_training;
   }
-  if (is_train && prop == dnnl::prop_kind::forward_scoring) {
-    LOG(INFO) << "oneDNN Pooling: training with prop_kind is forward_scoring";
+  if (is_train && prop == dnnl::prop_kind::forward_inference) {
+    LOG(INFO) << "oneDNN Pooling: training with prop_kind is forward_inference";
   }
 
-  const auto fwd_desc =
-      dnnl::pooling_forward::desc(prop, alg_kind, src_md, dst_md, strides, kernel, pad_l, pad_r);
-  this->fwd_pd_.reset(new dnnl::pooling_forward::primitive_desc(fwd_desc, engine));
+  // v3: pooling primitive_desc takes args directly; dilation became a
+  //     required parameter (use zeros to match v2 behavior).
+  dnnl::memory::dims dilation(kernel.size(), 0);
+  this->fwd_pd_.reset(new dnnl::pooling_forward::primitive_desc(
+      engine, prop, alg_kind, src_md, dst_md, strides, kernel, dilation, pad_l, pad_r));
   this->fwd_.reset(new dnnl::pooling_forward(*(this->fwd_pd_)));
 
   return;
@@ -240,14 +246,14 @@ dnnl::pooling_forward::primitive_desc GetPoolingFwdPdesc(const PoolingParam& par
       << "Not Implemented";
 
   const int kernel_ndims =
-      use_adaptive_pooling ? mxnet::TShape(data_md.dims()).ndim() : param.kernel.ndim();
+      use_adaptive_pooling ? mxnet::TShape(data_md.get_dims()).ndim() : param.kernel.ndim();
   dnnl::memory::dims kernel(kernel_ndims);
   dnnl::memory::dims strides(kernel_ndims);
   dnnl::memory::dims pad_l(kernel_ndims);
   dnnl::memory::dims pad_r(kernel_ndims);
 
-  const mxnet::TShape input_shape  = mxnet::TShape(data_md.dims());
-  const mxnet::TShape output_shape = mxnet::TShape(out_md.dims());
+  const mxnet::TShape input_shape  = mxnet::TShape(data_md.get_dims());
+  const mxnet::TShape output_shape = mxnet::TShape(out_md.get_dims());
 
   if (use_adaptive_pooling) {
     UseAdaptivePaddingKernel(&kernel, &strides, &pad_l, &pad_r, input_shape, output_shape);
@@ -260,14 +266,18 @@ dnnl::pooling_forward::primitive_desc GetPoolingFwdPdesc(const PoolingParam& par
   }
 
   const dnnl::algorithm alg = GetDNNLPoolingAlgorithm(param);
-  dnnl::prop_kind kind      = dnnl::prop_kind::forward_scoring;
-  if (is_train && alg != dnnl::algorithm::pooling_avg) {
+  dnnl::prop_kind kind      = dnnl::prop_kind::forward_inference;
+  if (is_train && alg != dnnl::algorithm::pooling_avg_include_padding &&
+      alg != dnnl::algorithm::pooling_avg_exclude_padding) {
     kind = dnnl::prop_kind::forward_training;
   }
 
-  const dnnl::pooling_forward::desc poolingFwd_desc(
-      kind, alg, data_md, out_md, strides, kernel, pad_l, pad_r);
-  return dnnl::pooling_forward::primitive_desc(poolingFwd_desc, CpuEngine::Get()->get_engine());
+  // v3: pooling primitive_desc takes args directly; dilation became
+  //     a required arg (use zeros to match v2 behavior).
+  dnnl::memory::dims dilation(kernel.size(), 0);
+  return dnnl::pooling_forward::primitive_desc(
+      CpuEngine::Get()->get_engine(), kind, alg, data_md, out_md, strides, kernel,
+      dilation, pad_l, pad_r);
 }
 
 DNNLPoolingFwd& GetPoolingFwd(const PoolingParam& param,
@@ -316,7 +326,8 @@ DNNLPoolingFwd& GetPoolingFwd(const PoolingParam& param,
     }
 
     const dnnl::algorithm alg =
-        use_adaptive_pooling ? dnnl::algorithm::pooling_avg : GetDNNLPoolingAlgorithm(param);
+        use_adaptive_pooling ? dnnl::algorithm::pooling_avg_include_padding :
+                               GetDNNLPoolingAlgorithm(param);
 
     DNNLPoolingFwd fwd(data, output, kernel, strides, pad_l, pad_r, alg, with_workspace, is_train);
     it = AddToCache(&pooling_fwds, key, fwd);
@@ -370,7 +381,8 @@ DNNLPoolingBwd& GetPoolingBwd(const PoolingParam& param,
     auto diff_src_dims = dnnl::memory::dims(in_grad.shape().begin(), in_grad.shape().end());
     auto diff_src_md   = dnnl::memory::desc(diff_src_dims, get_data_type(data_md), any);
     auto cpu_engine    = CpuEngine::Get()->get_engine();
-    auto alg = use_adaptive_pooling ? dnnl::algorithm::pooling_avg : GetDNNLPoolingAlgorithm(param);
+    auto alg = use_adaptive_pooling ? dnnl::algorithm::pooling_avg_include_padding :
+                                      GetDNNLPoolingAlgorithm(param);
 
     const int kernel_ndims = use_adaptive_pooling ? in_grad.shape().ndim() : param.kernel.ndim();
     dnnl::memory::dims kernel(kernel_ndims);
@@ -389,10 +401,12 @@ DNNLPoolingBwd& GetPoolingBwd(const PoolingParam& param,
       InitPoolingPrimitiveParams(param, data_md, kernel, strides, pad_l, pad_r);
     }
 
-    // use dst_md as diff_dst_md with any format
-    auto bwd_desc =
-        dnnl::pooling_backward::desc(alg, diff_src_md, dst_md, strides, kernel, pad_l, pad_r);
-    auto pdesc = dnnl::pooling_backward::primitive_desc(bwd_desc, cpu_engine, fwd_pd);
+    // v3: pooling_backward primitive_desc takes args directly; dilation
+    //     became a required parameter.
+    dnnl::memory::dims dilation(kernel.size(), 0);
+    auto pdesc = dnnl::pooling_backward::primitive_desc(
+        cpu_engine, alg, diff_src_md, dst_md, strides, kernel, dilation,
+        pad_l, pad_r, fwd_pd);
 
     DNNLPoolingBwd bwd(pdesc, with_workspace);
     it = AddToCache(&pooling_bwds, key, bwd);

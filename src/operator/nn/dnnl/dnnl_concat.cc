@@ -33,13 +33,19 @@ static inline bool IsUsingPadding(const dnnl::memory::desc& dst_md) {
   // make sure a blocked format is used (at least one dimension is blocked)
   bool is_blocked_format =
       dst_md.get_format_kind() == dnnl::memory::format_kind::blocked && dst_md.get_inner_nblks() > 0;
+  // v3: get_padded_dims() returns a std::vector (was raw pointer in v2);
+  //     pass an iterator-compatible begin() to std::equal.
+  const auto padded = dst_md.get_padded_dims();
   return is_blocked_format &&
-         !std::equal(
-             dst_md.get_dims().data(), dst_md.get_dims().data() + dst_md.get_ndims(), dst_md.get_padded_dims());
+         !std::equal(dst_md.get_dims().data(),
+                     dst_md.get_dims().data() + dst_md.get_ndims(),
+                     padded.begin());
 }
 
 DNNLConcatFwd::DNNLConcatFwd(int concat_dim, const std::vector<dnnl::memory::desc>& data_md)
-    : fwd_pd(concat_dim, data_md, CpuEngine::Get()->get_engine()) {
+    : fwd_pd(CpuEngine::Get()->get_engine(), concat_dim, data_md) {
+  // v3: concat::primitive_desc(engine, concat_dim, src_mds, attr={}) or
+  //     (engine, dst_md, concat_dim, src_mds, attr={}).
   // DNNL introduced padded formats since 0.15 which require more memory
   // compared to the actual size of the tensor. Currently, DNNL operators
   // still reuse memory from memory planning, so here we need to select a
@@ -49,9 +55,10 @@ DNNLConcatFwd::DNNLConcatFwd(int concat_dim, const std::vector<dnnl::memory::des
   const auto& dst_md = fwd_pd.dst_desc();
   if (IsUsingPadding(dst_md)) {
     auto plain_dst_tag = static_cast<dnnl::memory::format_tag>(GetDefaultFormat(dst_md.get_ndims()));
-    auto plain_dst_md  = dnnl::memory::desc(dst_md.dims(), dst_md.data_type(), plain_dst_tag);
+    auto plain_dst_md  = dnnl::memory::desc(
+        dst_md.get_dims(), dst_md.get_data_type(), plain_dst_tag);
     fwd_pd             = dnnl::concat::primitive_desc(
-        plain_dst_md, concat_dim, data_md, CpuEngine::Get()->get_engine());
+        CpuEngine::Get()->get_engine(), plain_dst_md, concat_dim, data_md);
   }
   fwd_ = std::make_shared<dnnl::concat>(fwd_pd);
 }

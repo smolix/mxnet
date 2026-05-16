@@ -342,11 +342,13 @@ void DNNLBNBackward::Execute(const BatchNormParam& param,
       }
     }
     memcpy(shift_buf, bias_ptr, copy_size);
+    // v3: backward batch_normalization needs DNNL_ARG_SCALE but NOT
+    //     DNNL_ARG_SHIFT (beta is not used in gradient computation; only
+    //     gamma feeds the chain rule). Strictly v3 rejects the extra arg.
     dnnl_args_map_t net_args;
     net_args[DNNL_ARG_SRC]        = *data_mem;
     net_args[DNNL_ARG_DIFF_SRC]   = *gradi_mem.second;
     net_args[DNNL_ARG_SCALE]      = GetScale();
-    net_args[DNNL_ARG_SHIFT]      = GetShift();
     net_args[DNNL_ARG_DIFF_SCALE] = GetGradScale();
     net_args[DNNL_ARG_DIFF_SHIFT] = GetGradShift();
     net_args[DNNL_ARG_DIFF_DST]   = *diff_mem;

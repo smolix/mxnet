@@ -46,7 +46,7 @@ static inline bool IsOutputUInt8(const DNNLConvFusionParam& param) {
     return ((param.alg == dnnl::algorithm::eltwise_relu && param.alpha == 0.f) ||
             param.alg == dnnl::algorithm::eltwise_logistic ||
             param.alg == dnnl::algorithm::eltwise_soft_relu ||
-            param.alg == dnnl::algorithm::eltwise_bounded_relu);
+            param.alg == dnnl::algorithm::eltwise_clip);
   };
   if ((!dnnl_param.with_sum) && dnnl_param.with_act) {
     CHECK(param.full_conv_param.act_param.alg != dnnl::algorithm::undef);

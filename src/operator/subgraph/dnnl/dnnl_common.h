@@ -105,19 +105,31 @@ static inline void ConvertWeightBias2DNNL(NDArray* weight,
   DNNLStream* stream             = DNNLStream::Get();
   const auto new_weight          = NDArray(&weight_md);
   const auto conv_weights_memory = new_weight.GetDNNLData();
+  // v3: set_output_scales removed; use set_scales_mask + runtime arg.
   dnnl::primitive_attr weight_attr;
+  dnnl::memory weight_scale_mem;
   if (weight_scales.size()) {
     const int weight_mask = (weight_scales.size()) == 1 ? 0 : 1;
-    weight_attr.set_output_scales(weight_mask, weight_scales);
+    weight_attr.set_scales_mask(DNNL_ARG_DST, weight_mask);
+    dnnl::memory::desc scale_md(
+        dnnl::memory::dims{static_cast<dnnl::memory::dim>(weight_scales.size())},
+        dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+    weight_scale_mem = dnnl::memory(scale_md, CpuEngine::Get()->get_engine());
+    memcpy(weight_scale_mem.get_data_handle(), weight_scales.data(),
+           weight_scales.size() * sizeof(float));
   }
   auto default_weights_memory = GetWeights(*weight, num_group);
   if (default_weights_memory == nullptr)
     default_weights_memory = weight->GetDNNLData();
   const auto weight_reorder_pd =
       dnnl::reorder::primitive_desc(*default_weights_memory, *conv_weights_memory, weight_attr);
-  DNNLStream::Get()->RegisterPrimArgs(
-      dnnl::reorder(weight_reorder_pd),
-      {{DNNL_ARG_FROM, *default_weights_memory}, {DNNL_ARG_TO, *conv_weights_memory}});
+  dnnl_args_map_t weight_reorder_args{
+      {DNNL_ARG_FROM, *default_weights_memory},
+      {DNNL_ARG_TO, *conv_weights_memory}};
+  if (weight_scales.size()) {
+    weight_reorder_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = weight_scale_mem;
+  }
+  DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(weight_reorder_pd), weight_reorder_args);
   NDArray new_bias;
   if (has_bias && data_scale) {
     std::vector<float> bias_scales(weight_scales.size());
@@ -128,13 +140,21 @@ static inline void ConvertWeightBias2DNNL(NDArray* weight,
     const auto conv_bias_memory = new_bias.GetDNNLData();
     const int bias_mask         = (bias_scales.size()) == 1 ? 0 : 1;
     dnnl::primitive_attr bias_attr;
-    bias_attr.set_output_scales(bias_mask, bias_scales);
+    bias_attr.set_scales_mask(DNNL_ARG_DST, bias_mask);
+    dnnl::memory::desc bias_scale_md(
+        dnnl::memory::dims{static_cast<dnnl::memory::dim>(bias_scales.size())},
+        dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+    auto bias_scale_mem = dnnl::memory(bias_scale_md, CpuEngine::Get()->get_engine());
+    memcpy(bias_scale_mem.get_data_handle(), bias_scales.data(),
+           bias_scales.size() * sizeof(float));
     auto bias_weights_memory = bias->GetDNNLData();
     const auto bias_reorder_pd =
         dnnl::reorder::primitive_desc(*bias_weights_memory, *conv_bias_memory, bias_attr);
     DNNLStream::Get()->RegisterPrimArgs(
         dnnl::reorder(bias_reorder_pd),
-        {{DNNL_ARG_FROM, *bias_weights_memory}, {DNNL_ARG_TO, *conv_bias_memory}});
+        {{DNNL_ARG_FROM, *bias_weights_memory},
+         {DNNL_ARG_TO, *conv_bias_memory},
+         {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, bias_scale_mem}});
   }
   if (submit)
     stream->Submit();

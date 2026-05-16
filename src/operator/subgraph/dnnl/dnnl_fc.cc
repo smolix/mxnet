@@ -276,16 +276,23 @@ NDArray SgDNNLFCOp::PrepareOutputWithSum(const NDArray& sum_input, const NDArray
       dnnl_mem_ptr tmp_mem(new dnnl::memory(
           sum_mem_desc, CpuEngine::Get()->get_engine(), out_dnnl_mem->get_data_handle()));
       DNNLStream::Get()->RegisterMem(tmp_mem);
-      std::vector<float> reorder_scale = {u8_to_s8_scale};
+      // v3: set_output_scales removed; bind runtime scale tensor.
       dnnl::primitive_attr reorder_attr;
-      reorder_attr.set_output_scales(0, reorder_scale);
+      reorder_attr.set_scales_mask(DNNL_ARG_DST, 0);
       const auto reorder_pd = dnnl::reorder::primitive_desc(CpuEngine::Get()->get_engine(),
                                                             in_dnnl_mem->get_desc(),
                                                             CpuEngine::Get()->get_engine(),
                                                             sum_mem_desc,
                                                             reorder_attr);
-      DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd),
-                                          {{DNNL_ARG_FROM, *in_dnnl_mem}, {DNNL_ARG_TO, *tmp_mem}});
+      dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                                  dnnl::memory::format_tag::x);
+      auto scale_mem = dnnl::memory(scale_md, CpuEngine::Get()->get_engine());
+      *reinterpret_cast<float*>(scale_mem.get_data_handle()) = u8_to_s8_scale;
+      DNNLStream::Get()->RegisterPrimArgs(
+          dnnl::reorder(reorder_pd),
+          {{DNNL_ARG_FROM, *in_dnnl_mem},
+           {DNNL_ARG_TO, *tmp_mem},
+           {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, scale_mem}});
       return NDArray(tmp_mem);
     } else {
       dnnl_mem_ptr tmp_mem(new dnnl::memory(in_dnnl_mem->get_desc(),
@@ -607,9 +614,11 @@ static void SgDNNLFCParamParser(nnvm::NodeAttrs* attrs) {
         full_param.eltwise_param.alpha = act_param.slope;
         full_param.eltwise_param.alg   = GetDNNLActAlgo(act_param);
       } else if (op_name == "clip") {
+        // v3: bounded_relu(alpha=upper) became eltwise_clip(alpha=lower, beta=upper).
         const ClipParam clip_param     = nnvm::get<ClipParam>(node->attrs.parsed);
-        full_param.eltwise_param.alg   = dnnl::algorithm::eltwise_bounded_relu;
-        full_param.eltwise_param.alpha = clip_param.a_max;
+        full_param.eltwise_param.alg   = dnnl::algorithm::eltwise_clip;
+        full_param.eltwise_param.alpha = 0.f;
+        full_param.eltwise_param.beta  = clip_param.a_max;
       } else {
         full_param.eltwise_param.alg = GetDNNLEltwiseAlgo(op_name);
       }

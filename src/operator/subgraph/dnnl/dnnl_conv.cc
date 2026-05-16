@@ -320,7 +320,7 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
         full_conv_param.sum_scale = output_scale / sum_in_scale;
       }
       if (dnnl_param.with_act &&
-          full_conv_param.act_param.alg == dnnl::algorithm::eltwise_bounded_relu) {
+          full_conv_param.act_param.alg == dnnl::algorithm::eltwise_clip) {
         if (dnnl_param.with_sum) {
           LOG(ERROR) << "oneDNN doesn't support conv + relu + sum fusion yet.";
           full_conv_param.act_param.alpha *= output_scale;
@@ -359,7 +359,8 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
     if (out_mem_desc != dst_mem_desc) {
       auto tmp_out_mem       = output.GetDNNLDataReorder(&dst_mem_desc);
       auto data_md           = dst_mem_desc;
-      data_md = CloneMemDescWithDtype(data_md, static_cast<dnnl_data_type_t>(out_mem_desc.get_data_type()));
+      // v3: CloneMemDescWithDtype takes the C++ enum directly now.
+      data_md = CloneMemDescWithDtype(data_md, out_mem_desc.get_data_type());
       dnnl_mem_ptr new_out_mem(
           new dnnl::memory(data_md, CpuEngine::Get()->get_engine(), output_mem->get_data_handle()));
       DNNLStream::Get()->RegisterMem(new_out_mem);
@@ -478,9 +479,11 @@ static void SgDNNLConvParamParser(nnvm::NodeAttrs* attrs) {
         post_act_param.alpha = act_param.slope;
         post_act_param.alg   = GetDNNLActAlgo(act_param);
       } else {
+        // v3: bounded_relu(alpha=upper) became eltwise_clip(alpha=lower, beta=upper).
         const auto clip_param = nnvm::get<ClipParam>(node->attrs.parsed);
-        post_act_param.alg    = dnnl::algorithm::eltwise_bounded_relu;
-        post_act_param.alpha  = clip_param.a_max;
+        post_act_param.alg    = dnnl::algorithm::eltwise_clip;
+        post_act_param.alpha  = 0.f;
+        post_act_param.beta   = clip_param.a_max;
       }
       with_act = true;
     }

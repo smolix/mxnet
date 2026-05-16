@@ -69,13 +69,13 @@ inline cudaDeviceProp cuda_get_device_prop() {
  * \brief Get the number of blocks for cuda kernel given N
  */
 inline int cuda_get_num_blocks(const int N) {
-  using namespace mshadow::cuda;
+  using namespace mshadow::cuda_impl;
   return std::min(kMaxGridNum, (N + kBaseThreadNum - 1) / kBaseThreadNum);
 }
 
 template <>
 inline int get_num_threads<gpu>(const int N) {
-  using namespace mshadow::cuda;
+  using namespace mshadow::cuda_impl;
   return kBaseThreadNum * cuda_get_num_blocks(N);
 }
 
@@ -1178,7 +1178,7 @@ struct Kernel<OP, gpu> {
   inline static void Launch(mshadow::Stream<gpu>* s, int N, Args... args) {
     if (0 == N)
       return;
-    using namespace mshadow::cuda;
+    using namespace mshadow::cuda_impl;
     int ngrid = std::min(kMaxGridNum, (N + kBaseThreadNum - 1) / kBaseThreadNum);
     mxnet_generic_kernel<OP, Args...>
         <<<ngrid, kBaseThreadNum, 0, mshadow::Stream<gpu>::GetStream(s)>>>(N, args...);
@@ -1189,7 +1189,7 @@ struct Kernel<OP, gpu> {
   inline static void LaunchEx(mshadow::Stream<gpu>* s, const int N, Args... args) {
     if (0 == N)
       return;
-    using namespace mshadow::cuda;
+    using namespace mshadow::cuda_impl;
     int ngrid = std::min(kMaxGridNum, (N + kBaseThreadNum - 1) / kBaseThreadNum);
     mxnet_generic_kernel_ex<OP, Args...>
         <<<ngrid, kBaseThreadNum, 0, mshadow::Stream<gpu>::GetStream(s)>>>(N, args...);

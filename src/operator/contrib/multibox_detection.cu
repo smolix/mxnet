@@ -33,7 +33,7 @@
   } while (0)
 
 namespace mshadow {
-namespace cuda {
+namespace cuda_impl {
 template <typename DType>
 __device__ void Clip(DType* value, const DType lower, const DType upper) {
   if ((*value) < lower)
@@ -52,7 +52,7 @@ __device__ void CalculateOverlap(const DType* a, const DType* b, DType* iou) {
 }
 
 template <typename DType>
-__global__ __launch_bounds__(cuda::kMaxThreadsPerBlock) void DetectionForwardKernel(
+__global__ __launch_bounds__(mshadow::cuda_impl::kMaxThreadsPerBlock) void DetectionForwardKernel(
     DType* out,
     const DType* cls_prob,
     const DType* loc_pred,
@@ -217,7 +217,7 @@ __global__ __launch_bounds__(cuda::kMaxThreadsPerBlock) void DetectionForwardKer
     __syncthreads();
   }
 }
-}  // namespace cuda
+}  // namespace cuda_impl
 
 template <typename DType>
 inline void MultiBoxDetectionForward(const Tensor<gpu, 3, DType>& out,
@@ -235,11 +235,11 @@ inline void MultiBoxDetectionForward(const Tensor<gpu, 3, DType>& out,
   const int num_classes = cls_prob.size(1);
   const int num_anchors = cls_prob.size(2);
   const int num_batches = cls_prob.size(0);
-  const int num_threads = cuda::kMaxThreadsPerBlock;
+  const int num_threads = mshadow::cuda_impl::kMaxThreadsPerBlock;
   int num_blocks        = num_batches;
-  cuda::CheckLaunchParam(num_blocks, num_threads, "MultiBoxDetection Forward");
+  mshadow::cuda_impl::CheckLaunchParam(num_blocks, num_threads, "MultiBoxDetection Forward");
   cudaStream_t stream = Stream<gpu>::GetStream(out.stream_);
-  cuda::DetectionForwardKernel<<<num_blocks, num_threads, 0, stream>>>(out.dptr_,
+  mshadow::cuda_impl::DetectionForwardKernel<<<num_blocks, num_threads, 0, stream>>>(out.dptr_,
                                                                        cls_prob.dptr_,
                                                                        loc_pred.dptr_,
                                                                        anchors.dptr_,

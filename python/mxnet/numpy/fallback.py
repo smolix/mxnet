@@ -114,6 +114,39 @@ fallbacks = [
 
 fallback_mod = sys.modules[__name__]
 
+# Drop fallbacks that don't actually work in the installed NumPy. NumPy 1.20
+# removed the financial functions (mirr/npv/pmt/...) per NEP 32; the symbols
+# still exist but raise RuntimeError when called. Some others (alltrue/
+# sometrue/msort) have also since been retired. Filter by actually trying to
+# fetch the attribute and call its repr — anything that raises is dropped.
+import warnings as _w
+
+def _available(name):
+    if name in {'__version__', '_NoValue'}:
+        return True
+    if not hasattr(onp, name):
+        return False
+    obj = getattr(onp, name)
+    if not callable(obj):
+        return True
+    # NEP-32-expired stubs raise RuntimeError on call rather than at attribute
+    # access. Trigger the check via the wrapper's `__signature__` or similar
+    # attribute that the expired-shim doesn't override; if we can't get a
+    # docstring, treat as unavailable.
+    try:
+        with _w.catch_warnings():
+            _w.simplefilter("error", DeprecationWarning)
+            _ = obj.__doc__  # touches the wrapper; on expired stubs may warn
+    except Exception:
+        return False
+    return True
+
+fallbacks = [name for name in fallbacks if _available(name)]
+# Explicitly drop names known to be RuntimeError-on-call shims in modern NumPy
+_RETIRED = {'mirr', 'npv', 'pmt', 'ppmt', 'pv', 'rate', 'fv', 'ipmt', 'nper',
+            'alltrue', 'sometrue', 'msort', 'product', 'cumproduct', 'round_'}
+fallbacks = [name for name in fallbacks if name not in _RETIRED]
+
 def get_func(obj, doc):
     """Get new numpy function with object and doc"""
     @wraps(obj)

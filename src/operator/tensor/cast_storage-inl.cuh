@@ -84,7 +84,7 @@ void CastStorageDnsRspGPUImpl_(const OpContext& ctx,
   const dim_t num_rows = dns.shape_[0];
   const dim_t row_length = dns.shape_.ProdShape(1, dns.shape_.ndim());
   const dim_t threads_per_warp = mxnet_op::cuda_get_device_prop().warpSize;
-  const dim_t threads_per_block = mshadow::cuda::kBaseThreadNum;
+  const dim_t threads_per_block = mshadow::cuda_impl::kBaseThreadNum;
   const dim_t min_num_warps = 512;
   dim_t num_threads;
   // TODO: remove kernel dependency on warpSize=32
@@ -292,7 +292,7 @@ struct CastDnsCsrIndPtrWarpKernel {
                                              const nnvm::dim_t num_cols) {
     using nnvm::dim_t;
     typedef cub::WarpReduce<dim_t> WarpReduce;
-    const dim_t warps_per_block = mshadow::cuda::kBaseThreadNum / 32;
+    const dim_t warps_per_block = mshadow::cuda_impl::kBaseThreadNum / 32;
     __shared__ typename WarpReduce::TempStorage temp_storage[warps_per_block];
 
     if (tid == 0) {
@@ -332,7 +332,7 @@ struct CastDnsCsrColIdxAndValsWarpKernel {
                                              const nnvm::dim_t num_cols) {
     using nnvm::dim_t;
     typedef cub::WarpScan<dim_t> WarpScan;
-    const dim_t warps_per_block = mshadow::cuda::kBaseThreadNum / 32;
+    const dim_t warps_per_block = mshadow::cuda_impl::kBaseThreadNum / 32;
     __shared__ typename WarpScan::TempStorage temp_storage[warps_per_block];
     __shared__ volatile dim_t warp_nnz[warps_per_block];
 
@@ -382,7 +382,7 @@ struct CastDnsCsrIndPtrBlockKernel {
                                              const DType* dns,
                                              const nnvm::dim_t num_rows,
                                              const nnvm::dim_t num_cols) {
-    using mshadow::cuda::kBaseThreadNum;
+    using mshadow::cuda_impl::kBaseThreadNum;
     using nnvm::dim_t;
     typedef cub::BlockReduce<dim_t, kBaseThreadNum> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
@@ -419,7 +419,7 @@ struct CastDnsCsrColIdxAndValsBlockKernel {
                                              const DType* dns,
                                              const nnvm::dim_t num_rows,
                                              const nnvm::dim_t num_cols) {
-    using mshadow::cuda::kBaseThreadNum;
+    using mshadow::cuda_impl::kBaseThreadNum;
     using nnvm::dim_t;
     typedef cub::BlockScan<dim_t, kBaseThreadNum> BlockScan;
     __shared__ typename BlockScan::TempStorage temp_storage;
@@ -480,7 +480,7 @@ inline void CastStorageDnsCsrImpl(const OpContext& ctx,
         const dim_t num_rows = dns.shape_[0];
         const dim_t num_cols = dns.shape_[1];
         const dim_t threads_per_warp  = mxnet_op::cuda_get_device_prop().warpSize;
-        const dim_t threads_per_block = mshadow::cuda::kBaseThreadNum;
+        const dim_t threads_per_block = mshadow::cuda_impl::kBaseThreadNum;
         const dim_t min_num_warps = 512;
         dim_t num_threads;
         // TODO: remove kernel dependency on warpSize=32

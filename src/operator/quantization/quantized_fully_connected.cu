@@ -107,7 +107,11 @@ void QuantizedFullyConnectedForwardGPU(const nnvm::NodeAttrs& attrs,
                            out.dptr_,
                            dst_type,
                            k,
+#if CUDA_VERSION >= 11000
+                           mxnet::common::cuda::CublasComputeTypeFromDataType(cmp_type),
+#else
                            cmp_type,
+#endif
                            CUBLAS_GEMM_DFALT));
 
   Kernel<QuantizationRangeForS8S8MultiplicationStruct, gpu>::Launch(

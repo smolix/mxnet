@@ -189,7 +189,7 @@ static std::vector<ResourceRequest> RNNResourceEx(const NodeAttrs& attrs,
                                                   const DispatchMode dispatch_mode) {
   std::vector<ResourceRequest> request;
   if (dev_mask == kGPU) {
-#if MXNET_USE_CUDNN == 1
+#if MXNET_USE_CUDNN == 1 && CUDNN_VERSION < 9000
     request.emplace_back(ResourceRequest::kTempSpace);
     request.emplace_back(ResourceRequest::kCuDNNDropoutDesc);
 #endif

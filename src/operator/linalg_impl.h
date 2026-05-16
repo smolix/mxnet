@@ -429,7 +429,11 @@ inline void linalg_gemm<gpu, mshadow::half::half_t>(const Tensor<gpu, 2, mshadow
                              C.dptr_,
                              half_datatype,
                              C.stride_,
+#if CUDA_VERSION >= 11000
+                             mxnet::common::cuda::CublasComputeTypeFromDataType(computeType),
+#else
                              computeType,
+#endif
                              algo));
   } else {
     // pseudo-fp16 (fp32 math with fp16 I/O)
@@ -485,7 +489,7 @@ LINALG_XPU_BATCH_GEMM_AXIS(gpu, double)
     CHECK_NOTNULL(s);                                                                     \
     linalg_check_batch_size(A.size(0), B.size(0), C.size(0));                             \
     check_gemm(A[0], B[0], C[0], alpha, beta, tA, tB);                                    \
-    using namespace mshadow::cuda;                                                        \
+    using namespace mshadow::cuda_impl;                                                        \
     auto handle                  = Stream<gpu>::GetBlasHandle(s);                         \
     cublasMath_t saved_math_mode = SetCublasMathMode(handle, VERSION_ADJUSTED_TF32_MATH); \
     CUBLAS_CALL(cublas##fname(handle,                                                     \
@@ -531,7 +535,7 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
   auto blas_handle    = Stream<gpu>::GetBlasHandle(s);
   bool use_tensor_ops = GetEnvAllowTensorCore() && GetEnvAllowTensorCoreConversion();
 
-  using namespace mshadow::cuda;
+  using namespace mshadow::cuda_impl;
   auto cublas_math_mode   = use_tensor_ops ? CUBLAS_TENSOR_OP_MATH : VERSION_ADJUSTED_TF32_MATH;
   auto previous_math_mode = SetCublasMathMode(blas_handle, cublas_math_mode);
 
@@ -562,7 +566,11 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
                                            C.stride_,
                                            C.size(1) * C.stride_,
                                            A.size(0),
+#if CUDA_VERSION >= 11000
+                                           CUBLAS_COMPUTE_32F,
+#else
                                            CUDA_R_32F,
+#endif
                                            CUBLAS_GEMM_DEFAULT_TENSOR_OP));
   } else {
     CUBLAS_CALL(cublasSgemmStridedBatched(blas_handle,
@@ -1159,7 +1167,7 @@ __global__ void linalgInitIdentityGPU(DType* a, int stride, int lda, int N) {
     CHECK_NOTNULL(s);                                                                          \
     check_potri(A, lower);                                                                     \
     EPHEMERAL_GPU_STORAGE_ALLOC(linalg_potri, buffer, DType, A.MSize());                       \
-    using namespace mshadow::cuda;                                                             \
+    using namespace mshadow::cuda_impl;                                                             \
     int ngrid = std::min(kMaxGridNum,                                                          \
                          static_cast<int>((A.MSize() + kBaseThreadNum - 1) / kBaseThreadNum)); \
     linalgInitIdentityGPU<<<ngrid, kBaseThreadNum, 0, mshadow::Stream<gpu>::GetStream(s)>>>(   \
@@ -1184,7 +1192,7 @@ LINALG_GPU_POTRI(double)
     CHECK_GT(A.size(0), 0);                                                                    \
     check_potri(A[0], lower);                                                                  \
     EPHEMERAL_GPU_STORAGE_ALLOC(linalg_batch_potri, buffer, DType, A.MSize());                 \
-    using namespace mshadow::cuda;                                                             \
+    using namespace mshadow::cuda_impl;                                                             \
     int ngrid = std::min(kMaxGridNum,                                                          \
                          static_cast<int>((A.MSize() + kBaseThreadNum - 1) / kBaseThreadNum)); \
     linalgInitIdentityGPU<<<ngrid, kBaseThreadNum, 0, mshadow::Stream<gpu>::GetStream(s)>>>(   \

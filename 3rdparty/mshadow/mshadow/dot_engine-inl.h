@@ -53,11 +53,11 @@ inline void GetBatchedView(DType **dst, DType *src, int num, int stride,
   }
 }
 #ifdef __CUDACC__
-namespace cuda {};
+namespace cuda_impl {};
 template<typename DType>
 inline void GetBatchedView(DType **dst, DType *src, int num, int stride,
                            Stream<gpu> *stream) {
-  cuda::GetBatchedView(dst, src, num, stride, stream);
+  cuda_impl::GetBatchedView(dst, src, num, stride, stream);
 }
 #endif  // #ifdef __CUDACC__
 

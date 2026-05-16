@@ -199,16 +199,19 @@ class CudaGraphsSubSegExec {
     CHECK(IsRunnable());
     MakeGraph(exec_list, rctx, is_gpu, verbose, from_op_idx_, num_ops_);
 
-    cudaGraphExecUpdateResult update_result = cudaGraphExecUpdateError;
-    cudaGraphNode_t error_node;
-    cudaError_t err =
-        cudaGraphExecUpdate(graph_exec_.get(), graph_.get(), &error_node, &update_result);
+    // CUDA 12 changed cudaGraphExecUpdate's signature to take a single
+    // cudaGraphExecUpdateResultInfo* out parameter (was: error-node pointer
+    // and result pointer separately). Use the new shape unconditionally; the
+    // CUDA runtime ships a backwards-compat inline wrapper for the old form.
+    cudaGraphExecUpdateResultInfo update_info = {};
+    update_info.result = cudaGraphExecUpdateError;
+    cudaError_t err = cudaGraphExecUpdate(graph_exec_.get(), graph_.get(), &update_info);
     switch (err) {
       case cudaErrorGraphExecUpdateFailure:
         MakeGraphExec(exec_list, rctx);
         break;
       case cudaSuccess:
-        CHECK_EQ(update_result, cudaGraphExecUpdateSuccess);
+        CHECK_EQ(update_info.result, cudaGraphExecUpdateSuccess);
         break;
       default:
         // Respond normally to unusual cudaGraphExecUpdate() ret vals

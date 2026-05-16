@@ -931,13 +931,19 @@ void TakeOpBackwardImpl(mshadow::Stream<gpu>* s,
     size_t sort_temp_storage_bytes  = SortByKeyWorkspaceSize<int, int, gpu>(idxshape.Size());
     size_t histo_temp_storage_bytes = 0;
     int* sorted_idx_ptr             = nullptr;
+    // We want K bins of width 1, covering integer values [0, K). With CUB's
+    // HistogramEven the bin widths are (upper-lower)/(num_levels-1), so for K
+    // bins we need num_levels = K+1 and upper_level = K. The previous code
+    // passed upper_level = K+1 which made bins 1+1/K wide and shifted every
+    // integer sample one bin too low. Older CUB versions appeared to round to
+    // the nearest bin for integer samples; CCCL 3.x (CUDA 13) doesn't.
     cub::DeviceHistogram::HistogramEven(temp_storage_ptr,
                                         histo_temp_storage_bytes,
                                         sorted_idx_ptr,
                                         src_indptr_ptr,
                                         static_cast<int>(arrshape[axis] + 1),
                                         0,
-                                        static_cast<int>(arrshape[axis] + 1),
+                                        static_cast<int>(arrshape[axis]),
                                         static_cast<int>(idxshape.Size()),
                                         mshadow::Stream<gpu>::GetStream(s));
     size_t temp_storage_bytes            = max(scan_temp_storage_bytes, sort_temp_storage_bytes);
@@ -992,7 +998,7 @@ void TakeOpBackwardImpl(mshadow::Stream<gpu>* s,
                                         src_indptr_ptr,
                                         static_cast<int>(arrshape[axis] + 1),
                                         0,
-                                        static_cast<int>(arrshape[axis] + 1),
+                                        static_cast<int>(arrshape[axis]),
                                         static_cast<int>(idxshape.Size()),
                                         mshadow::Stream<gpu>::GetStream(s));
     cub::DeviceScan::ExclusiveSum(temp_storage_ptr,

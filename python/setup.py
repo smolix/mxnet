@@ -121,7 +121,11 @@ setup(name='mxnet',
       version=__version__,
       description=open(os.path.join(CURRENT_DIR, 'README.md')).read(),
       packages=find_packages(),
-      data_files=[('mxnet', [LIB_PATH[0]])],
+      # Bundle libmxnet.so inside the package directory so it's discoverable
+      # via package layout regardless of installation path (data_files goes
+      # to <sysprefix>/mxnet/ which libinfo.find_lib_path() doesn't search).
+      package_data={'mxnet': ['libmxnet.so']},
+      include_package_data=True,
       url='https://github.com/apache/mxnet',
       ext_modules=config_cython(),
       classifiers=[

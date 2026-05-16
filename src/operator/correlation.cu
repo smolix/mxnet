@@ -40,7 +40,7 @@
   } while (0)
 
 namespace mshadow {
-namespace cuda {
+namespace cuda_impl {
 // == Correlation Kernel
 template <typename Dtype>
 __global__ void CorrelateData(const int nthreads,
@@ -769,7 +769,7 @@ void Backward_gpu(const Tensor<gpu, 4, Dtype>& out_grad,
     }
   }
 }
-}  // namespace cuda
+}  // namespace cuda_impl
 template <typename Dtype>
 inline void CorrelationForward(const Tensor<gpu, 4, Dtype>& out,
                                const Tensor<gpu, 4, Dtype>& data1,
@@ -791,7 +791,7 @@ inline void CorrelationForward(const Tensor<gpu, 4, Dtype>& out,
   cudaStream_t stream      = Stream<gpu>::GetStream(out.stream_);
   cudaStream_t stream_tmp1 = Stream<gpu>::GetStream(tmp1.stream_);
   cudaStream_t stream_tmp2 = Stream<gpu>::GetStream(tmp2.stream_);
-  cuda::Forward_gpu(out,
+  mshadow::cuda_impl::Forward_gpu(out,
                     data1,
                     data2,
                     tmp1,
@@ -837,7 +837,7 @@ inline void CorrelationBackward(const Tensor<gpu, 4, Dtype>& out_grad,
                                 int width) {
   cudaStream_t stream0 = Stream<gpu>::GetStream(in_grad1.stream_);
   cudaStream_t stream1 = Stream<gpu>::GetStream(in_grad2.stream_);
-  cuda::Backward_gpu(out_grad,
+  mshadow::cuda_impl::Backward_gpu(out_grad,
                      in_grad1,
                      in_grad2,
                      tmp1,

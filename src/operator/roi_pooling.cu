@@ -29,7 +29,7 @@
 #include <vector>
 
 namespace mshadow {
-namespace cuda {
+namespace cuda_impl {
 
 template <typename Dtype>
 __global__ void ROIPoolForwardKernel(const int count,
@@ -177,7 +177,7 @@ inline void ROIPoolBackwardAcc(const Tensor<gpu, 4, Dtype>& in_grad,
   MSHADOW_CUDA_POST_KERNEL_CHECK(ROIPoolBackwardAccKernel);
 }
 
-}  // namespace cuda
+}  // namespace cuda_impl
 
 template <typename Dtype>
 inline void ROIPoolForward(const Tensor<gpu, 4, Dtype>& out,
@@ -185,7 +185,7 @@ inline void ROIPoolForward(const Tensor<gpu, 4, Dtype>& out,
                            const Tensor<gpu, 2, Dtype>& bbox,
                            const Tensor<gpu, 4, index_t>& max_idx,
                            const float spatial_scale) {
-  cuda::ROIPoolForward(out, data, bbox, max_idx, spatial_scale);
+  mshadow::cuda_impl::ROIPoolForward(out, data, bbox, max_idx, spatial_scale);
 }
 
 template <typename Dtype>
@@ -194,7 +194,7 @@ inline void ROIPoolBackwardAcc(const Tensor<gpu, 4, Dtype>& in_grad,
                                const Tensor<gpu, 2, Dtype>& bbox,
                                const Tensor<gpu, 4, index_t>& max_idx,
                                const float spatial_scale) {
-  cuda::ROIPoolBackwardAcc(in_grad, out_grad, bbox, max_idx, spatial_scale);
+  mshadow::cuda_impl::ROIPoolBackwardAcc(in_grad, out_grad, bbox, max_idx, spatial_scale);
 }
 
 }  // namespace mshadow

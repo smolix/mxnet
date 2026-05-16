@@ -31,7 +31,7 @@
 #endif  // MXNET_USE_CUDNN
 
 namespace mshadow {
-namespace cuda {
+namespace cuda_impl {
 template <typename DType>
 __device__ bool between(DType value, int lowerBound, int upperBound) {
   return (value >= lowerBound && value <= upperBound);
@@ -164,7 +164,7 @@ __global__ void BilinearSamplerBackwardKernel(const int i_c,
     }
   }
 }
-}  // namespace cuda
+}  // namespace cuda_impl
 
 template <typename DType>
 inline void BilinearSamplerForward(const Tensor<gpu, 4, DType>& output,
@@ -175,7 +175,7 @@ inline void BilinearSamplerForward(const Tensor<gpu, 4, DType>& output,
   const DType* grid = grid_src.dptr_;
   int o_n = output.size(0), o_c = output.size(1), o_h = output.size(2), o_w = output.size(3);
   int i_c = input.size(1), i_h = input.size(2), i_w = input.size(3);
-  using namespace cuda;
+  using namespace cuda_impl;
   const int max_block  = (output.shape_.Size() + kMaxThreadsPerBlock - 1) / kMaxThreadsPerBlock;
   const int grid_dim_x = (max_block > kMaxGridDim) ? kMaxGridDim : max_block;
   const int grid_dim_y =
@@ -184,7 +184,7 @@ inline void BilinearSamplerForward(const Tensor<gpu, 4, DType>& output,
   dim3 threads_per_block(kMaxThreadsPerBlock);
   CheckLaunchParam(num_blocks, threads_per_block, "bilinear sampler forward");
   cudaStream_t stream = Stream<gpu>::GetStream(output.stream_);
-  cuda::BilinearSamplerForwardKernel<DType><<<num_blocks, threads_per_block, 0, stream>>>(
+  mshadow::cuda_impl::BilinearSamplerForwardKernel<DType><<<num_blocks, threads_per_block, 0, stream>>>(
       i_c, i_h, i_w, data, grid, o_n, o_c, o_h, o_w, out);
   // post kernel check
   cudaError err = cudaGetLastError();
@@ -208,7 +208,7 @@ inline void BilinearSamplerBackward(const Tensor<gpu, 4, DType>& input_grad,
   int o_n = output_grad.size(0), o_c = output_grad.size(1), o_h = output_grad.size(2),
       o_w = output_grad.size(3);
   int i_c = input_data.size(1), i_h = input_data.size(2), i_w = input_data.size(3);
-  using namespace cuda;
+  using namespace cuda_impl;
   const int max_block =
       (output_grad.shape_.Size() / o_c + kMaxThreadsPerBlock - 1) / kMaxThreadsPerBlock;
   const int grid_dim_x = (max_block > kMaxGridDim) ? kMaxGridDim : max_block;
@@ -220,7 +220,7 @@ inline void BilinearSamplerBackward(const Tensor<gpu, 4, DType>& input_grad,
   cudaStream_t stream = Stream<gpu>::GetStream(input_grad.stream_);
   MXNET_REQ_TYPE_SWITCH(data_req, Req1, {
     MXNET_REQ_TYPE_SWITCH(grid_req, Req2, {
-      cuda::BilinearSamplerBackwardKernel<DType, Req1, Req2>
+      mshadow::cuda_impl::BilinearSamplerBackwardKernel<DType, Req1, Req2>
           <<<num_blocks, threads_per_block, 0, stream>>>(
               i_c, i_h, i_w, grad, data, o_n, o_c, o_h, o_w, g_input, grid_src, grad_grid);
     });

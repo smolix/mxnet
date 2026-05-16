@@ -46,7 +46,7 @@ __global__ void rand_generator_seed_kernel(curandStatePhilox4_32_10_t* states_,
 
 template <>
 void RandGenerator<gpu, float>::Seed(mshadow::Stream<gpu>* s, uint32_t seed) {
-  using namespace mshadow::cuda;
+  using namespace mshadow::cuda_impl;
   int ngrid =
       std::min(kMaxGridNum,
                (RandGenerator<gpu, float>::kNumRandomStates + kBaseThreadNum - 1) / kBaseThreadNum);

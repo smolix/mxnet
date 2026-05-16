@@ -36,7 +36,7 @@
 
 namespace mxnet {
 namespace op {
-namespace cuda {
+namespace cuda_kernels {
 
 /*!
  * \brief The `transpose_pseudo2D` based on chosen vectorized types. It transposes an array of
@@ -120,7 +120,7 @@ __global__ void transpose_pseudo2D(DType* out, DType* inp,
   }
 }
 
-}  // namespace cuda
+}  // namespace cuda_kernels
 
 
 /*!
@@ -146,19 +146,19 @@ inline void call_transpose_pseudo2D(index_t cTypeSize,
   const int nshared = 1024 * cTypeSize / sizeof(DType) * cTypeSize;
   switch (cTypeSize) {
     case (1):
-      cuda::transpose_pseudo2D<DType, uint8_t, is_addto><<<grid, block, nshared, stream>>>
+      cuda_kernels::transpose_pseudo2D<DType, uint8_t, is_addto><<<grid, block, nshared, stream>>>
                               (d_outPtr, d_inpPtr, m, n, nIterY, nIterZ);
       break;
     case (2):
-      cuda::transpose_pseudo2D<DType, uint16_t, is_addto><<<grid, block, nshared, stream>>>
+      cuda_kernels::transpose_pseudo2D<DType, uint16_t, is_addto><<<grid, block, nshared, stream>>>
                               (d_outPtr, d_inpPtr, m, n, nIterY, nIterZ);
       break;
     case (4):
-      cuda::transpose_pseudo2D<DType, uint32_t, is_addto><<<grid, block, nshared, stream>>>
+      cuda_kernels::transpose_pseudo2D<DType, uint32_t, is_addto><<<grid, block, nshared, stream>>>
                               (d_outPtr, d_inpPtr, m, n, nIterY, nIterZ);
       break;
     case (8):
-      cuda::transpose_pseudo2D<DType, uint64_t, is_addto><<<grid, block, nshared, stream>>>
+      cuda_kernels::transpose_pseudo2D<DType, uint64_t, is_addto><<<grid, block, nshared, stream>>>
                               (d_outPtr, d_inpPtr, m, n, nIterY, nIterZ);
       break;
     default:

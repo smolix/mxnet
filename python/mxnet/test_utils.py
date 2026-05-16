@@ -77,7 +77,7 @@ def default_rtols():
     return {np.dtype(np.float16): 1e-2,
             np.dtype(np.float32): 1e-4,
             np.dtype(np.float64): 1e-5,
-            np.dtype(np.bool): 0,
+            np.dtype(np.bool_): 0,
             np.dtype(np.int8): 0,
             np.dtype(np.uint8): 0,
             np.dtype(np.int32): 0,
@@ -90,7 +90,7 @@ def default_atols():
     return {np.dtype(np.float16): 1e-1,
             np.dtype(np.float32): 1e-3,
             np.dtype(np.float64): 1e-20,
-            np.dtype(np.bool): 0,
+            np.dtype(np.bool_): 0,
             np.dtype(np.int8): 0,
             np.dtype(np.uint8): 0,
             np.dtype(np.int32): 0,
@@ -2168,13 +2168,19 @@ def chi_square_check(generator, buckets, probs, nsamples=1000000):
         sample_bucket_ids = np.array(samples)
     if continuous_dist:
         sample_bucket_ids = sample_bucket_ids // 2
-    obs_freq = np.zeros(shape=len(buckets), dtype=np.int)
+    obs_freq = np.zeros(shape=len(buckets), dtype=np.int_)
     for i, _ in enumerate(buckets):
         if continuous_dist:
             obs_freq[i] = (sample_bucket_ids == i).sum()
         else:
             obs_freq[i] = (sample_bucket_ids == buckets[i]).sum()
-    _, p = ss.chisquare(f_obs=obs_freq, f_exp=expected_freq)
+    # SciPy >= 1.10 added a strict `sum_check`; MXNet's generator buckets
+    # don't always sum to exactly the expected total within float tolerance.
+    # Disable the strict check (was the default behaviour pre-1.10).
+    try:
+        _, p = ss.chisquare(f_obs=obs_freq, f_exp=expected_freq, sum_check=False)
+    except TypeError:  # older scipy without sum_check kw
+        _, p = ss.chisquare(f_obs=obs_freq, f_exp=expected_freq)
     return p, obs_freq, expected_freq
 
 def verify_generator(generator, buckets, probs, nsamples=1000000, nrepeat=5, success_rate=0.2, alpha=0.05):

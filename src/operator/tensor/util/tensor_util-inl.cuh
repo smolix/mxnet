@@ -81,7 +81,7 @@ struct MarkRspRowWarpKernel {
                                              const nnvm::dim_t row_length) {
     using nnvm::dim_t;
     typedef cub::WarpReduce<dim_t> WarpReduce;
-    const dim_t warps_per_block = mshadow::cuda::kBaseThreadNum / 32;
+    const dim_t warps_per_block = mshadow::cuda_impl::kBaseThreadNum / 32;
     __shared__ typename WarpReduce::TempStorage temp_storage[warps_per_block];
 
     const dim_t warp_id   = tid / 32;          // global warp   id
@@ -122,7 +122,7 @@ struct MarkRspRowBlockKernel {
                                              const nnvm::dim_t num_rows,
                                              const nnvm::dim_t row_length) {
     using nnvm::dim_t;
-    using mshadow::cuda::kBaseThreadNum;
+    using mshadow::cuda_impl::kBaseThreadNum;
     typedef cub::BlockReduce<dim_t, kBaseThreadNum> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
     if (blockIdx.x < num_rows) {

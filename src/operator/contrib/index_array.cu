@@ -22,7 +22,7 @@
 namespace mxnet {
 namespace op {
 
-using namespace mshadow::cuda;
+using namespace mshadow::cuda_impl;
 
 void IndexArrayForwardGPU(const nnvm::NodeAttrs& attrs,
                           const OpContext& ctx,

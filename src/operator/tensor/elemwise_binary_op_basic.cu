@@ -288,5 +288,26 @@ NNVM_REGISTER_OP(_mod).set_attr<FCompute>("FCompute<gpu>", ElemwiseBinaryRTCComp
 NNVM_REGISTER_OP(_backward_mod)
     .set_attr<FCompute>("FCompute<gpu>", ElemwiseBinaryRTCBwdUseIn{"mod_grad", "mod_rgrad"});
 
+// Explicit instantiations of DnsCsrDnsOp for the GPU stream, so the symbol is
+// visible across TUs. Without these, nvcc's separate-compilation pipeline can
+// fail to emit the host-side definition even when ComputeEx<gpu, OP> (which
+// invokes it) is instantiated in this TU.
+template void ElemwiseBinaryOp::DnsCsrDnsOp<mshadow_op::plus>(mshadow::Stream<gpu>* s,
+                                                              const nnvm::NodeAttrs& attrs,
+                                                              const OpContext& ctx,
+                                                              const NDArray& dns,
+                                                              const NDArray& csr,
+                                                              const OpReqType req,
+                                                              const NDArray& output,
+                                                              const bool reverse);
+template void ElemwiseBinaryOp::DnsCsrDnsOp<mshadow_op::minus>(mshadow::Stream<gpu>* s,
+                                                               const nnvm::NodeAttrs& attrs,
+                                                               const OpContext& ctx,
+                                                               const NDArray& dns,
+                                                               const NDArray& csr,
+                                                               const OpReqType req,
+                                                               const NDArray& output,
+                                                               const bool reverse);
+
 }  // namespace op
 }  // namespace mxnet

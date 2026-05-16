@@ -34,7 +34,7 @@
   } while (0)
 
 namespace mshadow {
-namespace cuda {
+namespace cuda_impl {
 template <typename DType>
 __global__ void AssignPriors(DType* out,
                              const float size,
@@ -62,7 +62,7 @@ __global__ void AssignPriors(DType* out,
   *(ptr++)       = center_x + w;  // xmax
   *(ptr++)       = center_y + h;  // ymax
 }
-}  // namespace cuda
+}  // namespace cuda_impl
 
 template <typename DType>
 inline void MultiBoxPriorForward(const Tensor<gpu, 2, DType>& out,
@@ -82,17 +82,17 @@ inline void MultiBoxPriorForward(const Tensor<gpu, 2, DType>& out,
   const int num_sizes  = static_cast<int>(sizes.size());
   const int num_ratios = static_cast<int>(ratios.size());
 
-  const int num_thread = cuda::kMaxThreadsPerBlock;
+  const int num_thread = mshadow::cuda_impl::kMaxThreadsPerBlock;
   dim3 dimBlock(num_thread);
   dim3 dimGrid((in_width * in_height - 1) / num_thread + 1);
-  cuda::CheckLaunchParam(dimGrid, dimBlock, "MultiBoxPrior Forward");
+  mshadow::cuda_impl::CheckLaunchParam(dimGrid, dimBlock, "MultiBoxPrior Forward");
 
   const int stride = 4 * (num_sizes + num_ratios - 1);
   int offset       = 0;
   // ratio = first ratio, various sizes
   float ratio = num_ratios > 0 ? sqrtf(ratios[0]) : 1.f;
   for (int i = 0; i < num_sizes; ++i) {
-    cuda::AssignPriors<DType><<<dimGrid, dimBlock, 0, stream>>>(out_ptr,
+    mshadow::cuda_impl::AssignPriors<DType><<<dimGrid, dimBlock, 0, stream>>>(out_ptr,
                                                                 sizes[i],
                                                                 ratio,
                                                                 in_width,
@@ -109,7 +109,7 @@ inline void MultiBoxPriorForward(const Tensor<gpu, 2, DType>& out,
 
   // size = sizes[0], various ratios
   for (int j = 1; j < num_ratios; ++j) {
-    cuda::AssignPriors<DType><<<dimGrid, dimBlock, 0, stream>>>(out_ptr,
+    mshadow::cuda_impl::AssignPriors<DType><<<dimGrid, dimBlock, 0, stream>>>(out_ptr,
                                                                 sizes[0],
                                                                 sqrtf(ratios[j]),
                                                                 in_width,

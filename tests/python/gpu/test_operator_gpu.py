@@ -529,7 +529,11 @@ def test_convolution_with_type():
 def check_consistency_NxM(sym_list, ctx_list):
     # e.g. if sym_list=[sym1, sym2] and ctx_list=[ctx1, ctx2, ctx3], then resulting lists are:
     # sym_list=[sym1, sym1, sym1, sym2, sym2, sym2] and ctx_list=[ctx1, ctx2, ctx3, ctx1, ctx2, ctx3]
-    check_consistency(np.repeat(sym_list, len(ctx_list)), ctx_list * len(sym_list), scale=0.5)
+    # NumPy 1.24+ refuses to build an object array out of a list of mxnet Symbols
+    # (np.repeat would call np.asarray and choke on the heterogeneous content).
+    # Manually repeat using a list comprehension.
+    repeated_syms = [s for s in sym_list for _ in range(len(ctx_list))]
+    check_consistency(repeated_syms, ctx_list * len(sym_list), scale=0.5)
 
 
 @pytest.mark.skip(reason="test fails intermittently. temporarily disabled till it gets fixed. tracked at https://github.com/apache/mxnet/issues/10141")

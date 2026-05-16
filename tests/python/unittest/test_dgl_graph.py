@@ -32,7 +32,7 @@ def check_uniform(out, num_hops, max_num_vertices):
     layer = out[2]
     # check sample_id
     assert (len(sample_id) == max_num_vertices+1)
-    num_vertices = sample_id[-1].asnumpy()[0]
+    num_vertices = sample_id[-1].asnumpy().item()
     # check sub_csr
     sub_csr.check_format(full_check=True)
     assert np.all((sub_csr.indptr[num_vertices:] == sub_csr.indptr[num_vertices]).asnumpy())
@@ -47,7 +47,7 @@ def check_non_uniform(out, num_hops, max_num_vertices):
     layer = out[3]
     # check sample_id
     assert (len(sample_id) == max_num_vertices+1)
-    num_vertices = sample_id[-1].asnumpy()[0]
+    num_vertices = sample_id[-1].asnumpy().item()
     # check sub_csr
     sub_csr.check_format(full_check=True)
     assert np.all((sub_csr.indptr[num_vertices:] == sub_csr.indptr[num_vertices]).asnumpy())
@@ -220,8 +220,8 @@ def test_subgraph():
     for i in range(len(subgs[0].indptr) - 1):
         subv1 = i
         v1 = vertices[subv1]
-        row_start = int(subgs[0].indptr[subv1].asnumpy()[0])
-        row_end = int(subgs[0].indptr[subv1 + 1].asnumpy()[0])
+        row_start = int(subgs[0].indptr[subv1].asnumpy().item())
+        row_end = int(subgs[0].indptr[subv1 + 1].asnumpy().item())
         if row_start >= len(subgs[0].indices):
             remain = subgs[0].indptr[subv1:].asnumpy()
             assert np.sum(remain == row_start) == len(remain)

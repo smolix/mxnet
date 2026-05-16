@@ -55,10 +55,10 @@ inline void L1_SVM(const DType& margin,
                    Tensor<gpu, 2, DType> dst,
                    const Tensor<gpu, 1, DType>& label,
                    const Tensor<gpu, 2, DType>& src) {
-  dim3 dimBlock(cuda::kBaseThreadNum);
+  dim3 dimBlock(mshadow::cuda_impl::kBaseThreadNum);
   dim3 dimGrid(dst.size(0));
   cudaStream_t stream = Stream<gpu>::GetStream(dst.stream_);
-  L1_SVMKernel<cuda::kBaseThreadBits, DType>
+  L1_SVMKernel<mshadow::cuda_impl::kBaseThreadBits, DType>
       <<<dimGrid, dimBlock, 0, stream>>>(margin, reg_coef, dst, label, src);
   MSHADOW_CUDA_POST_KERNEL_CHECK(L1_SVMKernel);
 }
@@ -91,10 +91,10 @@ inline void L2_SVM(const DType& margin,
                    Tensor<gpu, 2, DType> dst,
                    const Tensor<gpu, 1, DType>& label,
                    const Tensor<gpu, 2, DType>& src) {
-  dim3 dimBlock(cuda::kBaseThreadNum);
+  dim3 dimBlock(mshadow::cuda_impl::kBaseThreadNum);
   dim3 dimGrid(dst.size(0));
   cudaStream_t stream = Stream<gpu>::GetStream(dst.stream_);
-  L2_SVMKernel<cuda::kBaseThreadBits, DType>
+  L2_SVMKernel<mshadow::cuda_impl::kBaseThreadBits, DType>
       <<<dimGrid, dimBlock, 0, stream>>>(margin, reg_coef, dst, label, src);
   MSHADOW_CUDA_POST_KERNEL_CHECK(L2_SVMKernel);
 }

@@ -111,7 +111,11 @@ void CublasStridedBatchedGemm(mshadow::Stream<gpu>* s,
                                            static_cast<int>(ldc),
                                            strideC,
                                            static_cast<int>(batchCount),
+#if CUDA_VERSION >= 11000
+                                           mxnet::common::cuda::CublasComputeTypeFromDataType(computeType),
+#else
                                            computeType,
+#endif
                                            algo));
   } else {
     if (std::is_same<DType, float>::value) {

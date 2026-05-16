@@ -217,7 +217,7 @@ inline void AddTakeGradLargeBatchKernelLaunch(mshadow::Tensor<gpu, 2, DType> dst
   const int block_dim_y = min(num_y, max_nthread/block_dim_x);
   const int SZ = min((static_cast<int>(src.size(1)) + block_dim_x - 1) / block_dim_x, 4);
   const int grid_dim_x = (src.size(1) + block_dim_x * SZ - 1) / (block_dim_x * SZ);
-  const int grid_dim_y = min(num_unique_est, mshadow::cuda::kBaseGridNum);
+  const int grid_dim_y = min(num_unique_est, mshadow::cuda_impl::kBaseGridNum);
   dim3 dimBlock(block_dim_x, block_dim_y);
   dim3 dimGrid(grid_dim_x, grid_dim_y);
   // Maximum shared memory usage: 128*4*sizeof(DType), which is 4K for 64bit DType elements
@@ -225,7 +225,7 @@ inline void AddTakeGradLargeBatchKernelLaunch(mshadow::Tensor<gpu, 2, DType> dst
 
   CHECK_EQ(dst.size(1), src.size(1)) << "AddTakeGradLargeBatch: shape mismatch";
   CHECK_EQ(index.size(0), src.size(0)) << "AddTakeGradLargeBatch: shape mismatch";
-  mshadow::cuda::CheckLaunchParam(dimGrid, dimBlock, "AddTakeGradLargeBatch");
+  mshadow::cuda_impl::CheckLaunchParam(dimGrid, dimBlock, "AddTakeGradLargeBatch");
 
   switch (SZ) {
     case 1:

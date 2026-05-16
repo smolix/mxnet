@@ -996,7 +996,10 @@ def test_gluon_student_t():
             if hybridize:
                 net.hybridize()
             mx_out = net(df, loc, scale).asnumpy()
-            ss_f = ss.t(loc=0, scale=scale.asnumpy(), df=df.asnumpy())
+            # scipy >=1.10 refuses to safe-cast float64 results back into
+            # float32 underlying arrays; pass float64 inputs to match.
+            ss_f = ss.t(loc=0, scale=scale.asnumpy().astype('float64'),
+                        df=df.asnumpy().astype('float64'))
             if func == 'mean':
                 np_out = ss_f.mean()
             elif func == 'variance':

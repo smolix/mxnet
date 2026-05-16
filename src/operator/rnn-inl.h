@@ -43,10 +43,10 @@
 #include "./rnn_impl.h"
 #include "../profiler/storage_profiler.h"
 
-#if MXNET_USE_CUDNN == 1
+#if MXNET_USE_CUDNN == 1 && CUDNN_VERSION < 9000
 STATIC_ASSERT_CUDNN_VERSION_GE(7000);
 #endif
-#define MXNET_USE_CUDNN_GE_7200 MXNET_USE_CUDNN == 1 && CUDNN_VERSION >= 7200
+#define MXNET_USE_CUDNN_GE_7200 (MXNET_USE_CUDNN == 1 && CUDNN_VERSION >= 7200 && CUDNN_VERSION < 9000)
 
 namespace mxnet {
 namespace op {
@@ -608,7 +608,7 @@ class RNNOp {
     this->ctx_   = ctx;
 
     if (ctx_.dev_type == kGPU) {
-#if MXNET_USE_CUDNN == 1
+#if MXNET_USE_CUDNN == 1 && CUDNN_VERSION < 9000
       init_cudnn_ = false;
       dtype_      = mshadow::DataType<DType>::kCudnnFlag;
       // TensorCore algos only allowed on fp16-I/O convolutions if permitted by the global policy.
@@ -703,7 +703,7 @@ class RNNOp {
 
   ~RNNOp() {
     if (ctx_.dev_type == kGPU) {
-#if MXNET_USE_CUDNN == 1
+#if MXNET_USE_CUDNN == 1 && CUDNN_VERSION < 9000
       CUDNN_CALL(cudnnDestroyTensorDescriptor(hx_desc_));
       CUDNN_CALL(cudnnDestroyTensorDescriptor(cx_desc_));
       CUDNN_CALL(cudnnDestroyTensorDescriptor(hy_desc_));
@@ -840,7 +840,7 @@ class RNNOp {
     CHECK_EQ(hx.CheckContiguous(), true);
     CHECK_EQ(y.CheckContiguous(), true);
 
-#if MXNET_USE_CUDNN == 1 && defined(__CUDACC__)
+#if MXNET_USE_CUDNN == 1 && CUDNN_VERSION < 9000 && defined(__CUDACC__)
     if (!init_cudnn_) {
       Init(ctx, s, in_data, out_data);
     }
@@ -1192,7 +1192,7 @@ class RNNOp {
       dcy_ptr = (out_grad[rnn_enum::kStateCellOut].get<xpu, 3, DType>(s)).dptr_;
     }
 
-#if MXNET_USE_CUDNN == 1 && defined(__CUDACC__)
+#if MXNET_USE_CUDNN == 1 && CUDNN_VERSION < 9000 && defined(__CUDACC__)
     if (!init_cudnn_) {
       Init(ctx, s, in_data, out_data);
     }
@@ -1380,7 +1380,7 @@ class RNNOp {
     CHECK_EQ(in_data.size(), num_inputs);
     CHECK_EQ(out_data.size(), num_outputs);
 
-#if MXNET_USE_CUDNN == 1 && defined(__CUDACC__)
+#if MXNET_USE_CUDNN == 1 && CUDNN_VERSION < 9000 && defined(__CUDACC__)
     format_ = CUDNN_TENSOR_NCHW;
 
     if (!init_cudnn_) {
@@ -1578,7 +1578,7 @@ class RNNOp {
   size_t reserve_cpu_space_size_, temp_cpu_space_size_;
   NDArray reserve_cpu_space_, temp_cpu_space_;
 
-#if MXNET_USE_CUDNN == 1 && defined(__CUDACC__)
+#if MXNET_USE_CUDNN == 1 && CUDNN_VERSION < 9000 && defined(__CUDACC__)
   // cuDNN versions up to and including v7.6.4 did not sync a last dgrad kernel back to the main
   // cudnn handle's stream (non-persistant algo, bidirectional only).  This could result in silent
   // non-determinstic failures with very low probability, seen more often when wgrad is bypassed.
@@ -1595,7 +1595,7 @@ class RNNOp {
   }
 #endif  // MXNET_USE_CUDNN == 1 && defined(__CUDACC__)
 
-#if MXNET_USE_CUDNN == 1
+#if MXNET_USE_CUDNN == 1 && CUDNN_VERSION < 9000
   cudnnDataType_t dtype_;
   bool init_cudnn_;
   cudnnRNNDescriptor_t rnn_desc_;

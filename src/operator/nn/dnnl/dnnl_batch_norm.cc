@@ -41,10 +41,16 @@ typedef dnnl::batch_normalization_backward::primitive_desc t_bn_b_pdesc;
 
 DNNLBNForward::DNNLBNForward(const t_bn_f_pdesc& _pd, bool is_train_and_not_global_stats)
     : pd(_pd) {
-  // v3 has separate scale_desc()/shift_desc() helpers (both 1-D, length=C).
+  // v3 split SCALE_SHIFT into separate scale + shift; each is a 1-D f32
+  // tensor of length C. weights_desc() in v3 may return an invalid /
+  // empty desc when use_scale|use_shift flags are used, so build the
+  // 1-D length-C desc explicitly.
   auto engine = CpuEngine::Get()->get_engine();
-  scale_m.reset(new dnnl::memory(pd.weights_desc(), engine));
-  shift_m.reset(new dnnl::memory(pd.weights_desc(), engine));
+  const auto channels = pd.src_desc().get_dims()[1];
+  const dnnl::memory::desc scale_shift_md(
+      {channels}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::a);
+  scale_m.reset(new dnnl::memory(scale_shift_md, engine));
+  shift_m.reset(new dnnl::memory(scale_shift_md, engine));
   fwd.reset(new dnnl::batch_normalization_forward(pd));
   this->is_train_and_not_global_stats = is_train_and_not_global_stats;
 }
@@ -200,13 +206,20 @@ void DNNLBNForward::Execute(const OpContext& ctx,
   }
 }
 
+// v3: build 1-D length-C f32 desc for each of scale/shift/diff_scale/diff_shift
+//     (weights_desc/diff_weights_desc may not be valid when use_scale|use_shift
+//     flags are used).
+static dnnl::memory::desc BnScaleShiftMd(const t_bn_b_pdesc& pd) {
+  const auto channels = pd.src_desc().get_dims()[1];
+  return dnnl::memory::desc({channels}, dnnl::memory::data_type::f32,
+                            dnnl::memory::format_tag::a);
+}
+
 DNNLBNBackward::DNNLBNBackward(const t_bn_b_pdesc& _pd)
-    : scale_m(new dnnl::memory(_pd.weights_desc(), CpuEngine::Get()->get_engine())),
-      shift_m(new dnnl::memory(_pd.weights_desc(), CpuEngine::Get()->get_engine())),
-      grad_scale_m(
-          new dnnl::memory(_pd.diff_weights_desc(), CpuEngine::Get()->get_engine())),
-      grad_shift_m(
-          new dnnl::memory(_pd.diff_weights_desc(), CpuEngine::Get()->get_engine())),
+    : scale_m(new dnnl::memory(BnScaleShiftMd(_pd), CpuEngine::Get()->get_engine())),
+      shift_m(new dnnl::memory(BnScaleShiftMd(_pd), CpuEngine::Get()->get_engine())),
+      grad_scale_m(new dnnl::memory(BnScaleShiftMd(_pd), CpuEngine::Get()->get_engine())),
+      grad_shift_m(new dnnl::memory(BnScaleShiftMd(_pd), CpuEngine::Get()->get_engine())),
       pd(_pd) {
   bwd.reset(new dnnl::batch_normalization_backward(pd));
 }

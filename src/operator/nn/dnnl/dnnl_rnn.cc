@@ -422,7 +422,9 @@ static void ConcatWeights(const dnnl::memory& dst,
   const memory::desc& dst_desc = dst.get_desc();
   // Use dst memory dims to initialize src memory dims, then set the concat
   // dim to 1. And Rnn weights are 5-dimension tensor.
-  memory::dims src_dims(dst_desc.get_dims().data(), dst_desc.get_dims().data() + dst_desc.get_ndims());
+  // v3: get_dims() returns a vector by value; store once before iterating.
+  const auto dst_dims = dst_desc.get_dims();
+  memory::dims src_dims(dst_dims.begin(), dst_dims.end());
   src_dims.at(concat_dimension) = 1;
   std::vector<memory::desc> src_descs;
   std::unordered_map<int, memory> concat_args;

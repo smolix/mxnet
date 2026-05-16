@@ -127,7 +127,9 @@ void DNNLMemoryCopy(const dnnl::memory& mem, const dnnl::memory* this_mem) {
   if (!same_shape(this_desc, from_desc) && IsDefaultFormat(from_desc)) {
     // In this case, we can simply create a new DNNL memory for the required
     // shape.
-    dnnl::memory::dims dims(this_desc.get_dims().data(), this_desc.get_dims().data() + this_desc.get_ndims());
+    // v3: get_dims() returns a vector by value; store once before iterating.
+    const auto src_dims = this_desc.get_dims();
+    dnnl::memory::dims dims(src_dims.begin(), src_dims.end());
     auto this_dtype = static_cast<dnnl::memory::data_type>(this_desc.get_data_type());
     dnnl::memory::desc data_md(
         dims, this_dtype, static_cast<dnnl::memory::format_tag>(this_def_format));

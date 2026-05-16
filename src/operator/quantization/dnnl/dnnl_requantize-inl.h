@@ -70,10 +70,10 @@ static void DNNLRequantizeForwardKer(const nnvm::NodeAttrs& attrs,
   float second_scale = second_quantized_range / second_real_range;
   float scale        = first_scale * second_scale;
 
+  // v3: set_output_scales removed; use set_scales_mask + runtime arg.
   dnnl::primitive_attr attr;
-  const int mask            = 0;
-  std::vector<float> scales = {scale};
-  attr.set_output_scales(mask, scales);
+  const int mask = 0;
+  attr.set_scales_mask(DNNL_ARG_DST, mask);
   dnnl::engine cpu_engine = mxnet::CpuEngine::Get()->get_engine();
 
   NDArray in_buffer = inputs[0];
@@ -86,8 +86,15 @@ static void DNNLRequantizeForwardKer(const nnvm::NodeAttrs& attrs,
   o_desc = CloneMemDescWithDtype(o_desc, get_dnnl_type_t<DstType>());
   auto reorder_pd = dnnl::reorder::primitive_desc(cpu_engine, i_desc, cpu_engine, o_desc, attr);
   auto o_mem      = CreateDNNLMem(outputs[0], o_desc, req[0]);
+  // v3: bind runtime scale tensor.
+  dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                              dnnl::memory::format_tag::x);
+  auto scale_mem = dnnl::memory(scale_md, cpu_engine);
+  *reinterpret_cast<float*>(scale_mem.get_data_handle()) = scale;
   DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd),
-                                      {{DNNL_ARG_FROM, *i_mem}, {DNNL_ARG_TO, *o_mem.second}});
+                                      {{DNNL_ARG_FROM, *i_mem},
+                                       {DNNL_ARG_TO, *o_mem.second},
+                                       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, scale_mem}});
   CommitOutput(outputs[0], o_mem);
   DNNLStream::Get()->Submit();
 }

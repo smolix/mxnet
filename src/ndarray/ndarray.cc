@@ -215,7 +215,11 @@ nnvm::Symbol NDArray::get_autograd_symbol() const {
 
 NDArray::NDArray(const void* md_desc) : storage_type_(kDefaultStorage), autograd_entry_(nullptr) {
   dnnl::memory::desc md = *static_cast<const dnnl::memory::desc*>(md_desc);
-  shape_                = mxnet::TShape(md.get_dims().data(), md.get_dims().data() + md.get_ndims());
+  // v3: get_dims() returns a std::vector by value; calling it twice in one
+  //     expression creates separate temporaries with different .data()
+  //     pointers (undefined behavior). Store once.
+  const auto md_dims    = md.get_dims();
+  shape_                = mxnet::TShape(md_dims.begin(), md_dims.end());
   dtype_                = get_mxnet_type(md.get_data_type());
   ptr_                  = std::make_shared<Chunk>(shape_, Context::CPU(), true, dtype_);
   ptr_->CheckAndAlloc(md.get_size());
@@ -225,7 +229,9 @@ NDArray::NDArray(const void* md_desc) : storage_type_(kDefaultStorage), autograd
 NDArray::NDArray(const std::shared_ptr<dnnl::memory>& dnnl_mem)
     : storage_type_(kDefaultStorage), autograd_entry_(nullptr) {
   auto mem_desc      = dnnl_mem->get_desc();
-  shape_             = mxnet::TShape(mem_desc.get_dims().data(), mem_desc.get_dims().data() + mem_desc.get_ndims());
+  // v3: avoid the get_dims() temporary-pointer trap (see above).
+  const auto md_dims = mem_desc.get_dims();
+  shape_             = mxnet::TShape(md_dims.begin(), md_dims.end());
   dtype_             = get_mxnet_type(mem_desc.get_data_type());
   ptr_               = std::make_shared<Chunk>(shape_, Context::CPU(), true, dtype_);
   ptr_->shandle.dptr = dnnl_mem->get_data_handle();

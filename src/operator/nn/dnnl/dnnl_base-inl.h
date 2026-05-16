@@ -688,7 +688,11 @@ class DNNLMemory {
   dnnl::memory::desc GetDesc(
       dnnl_format_tag_t format,
       dnnl::memory::data_type data_type = dnnl::memory::data_type::undef) const {
-    dnnl::memory::dims dims(desc.get_dims().data(), desc.get_dims().data() + desc.get_ndims());
+    // v3: get_dims() returns a std::vector by value, so we must store the
+    //     temporary before taking .data() — otherwise the two .data() calls
+    //     reference different temporaries (undefined behavior).
+    const auto src_dims = desc.get_dims();
+    dnnl::memory::dims dims(src_dims.begin(), src_dims.end());
     dnnl::memory::data_type cpp_type =
         (data_type == dnnl::memory::data_type::undef) ?
             static_cast<dnnl::memory::data_type>(desc.get_data_type()) :

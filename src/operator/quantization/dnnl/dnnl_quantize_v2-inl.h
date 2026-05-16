@@ -53,6 +53,8 @@ class SgDNNLQuantizeOperator {
   dnnl::memory::desc o_desc_;
   dnnl_args_map_t args_;
   std::shared_ptr<dnnl::reorder> fwd_pd_;
+  // v3: runtime scale tensor for set_scales_mask reorder attr.
+  dnnl::memory scale_mem_;
 };
 
 void SgDNNLQuantizeOperator::Forward(const OpContext& ctx,
@@ -136,16 +138,18 @@ void SgDNNLQuantizeOperator::Forward(const OpContext& ctx,
       cached_data_max_ = data_max;
       float real_range = MaxAbs(data_min, data_max);
       float scale      = quantized_range / real_range;
+      // v3: set_output_scales removed; use set_scales_mask + runtime arg.
       dnnl::primitive_attr attr;
-      const int mask            = 0;
-      std::vector<float> scales = {scale};
-      attr.set_output_scales(mask, scales);
+      const int mask = 0;
+      attr.set_scales_mask(DNNL_ARG_DST, mask);
       dnnl::engine cpu_engine = mxnet::CpuEngine::Get()->get_engine();
       auto i_desc             = i_mem->get_desc();
       size_t i_ndim           = in_buffer.shape().ndim();
       if (i_ndim == 4) {
         dnnl::memory::format_tag o_fmt = dnnl::memory::format_tag::nhwc;
-        dnnl::memory::dims o_dims(i_desc.get_dims().data(), i_desc.get_dims().data() + i_desc.get_ndims());
+        // v3: get_dims() returns a vector by value; store once before iterating.
+        const auto src_dims = i_desc.get_dims();
+        dnnl::memory::dims o_dims(src_dims.begin(), src_dims.end());
         o_desc_ = dnnl::memory::desc(o_dims, get_dnnl_type(out_type), o_fmt);
       } else {
         o_desc_                = i_desc;
@@ -154,11 +158,17 @@ void SgDNNLQuantizeOperator::Forward(const OpContext& ctx,
       auto reorder_pd =
           dnnl::reorder::primitive_desc(cpu_engine, i_desc, cpu_engine, o_desc_, attr);
       fwd_pd_     = std::make_shared<dnnl::reorder>(reorder_pd);
+      // v3: bind runtime scale tensor for the reorder attr.
+      dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                                  dnnl::memory::format_tag::x);
+      scale_mem_ = dnnl::memory(scale_md, cpu_engine);
+      *reinterpret_cast<float*>(scale_mem_.get_data_handle()) = scale;
       initalized_ = true;
     }
     auto o_mem           = CreateDNNLMem(outputs[0], o_desc_, req[0]);
     args_[DNNL_ARG_FROM] = *i_mem;
     args_[DNNL_ARG_TO]   = *o_mem.second;
+    args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = scale_mem_;
     DNNLStream::Get()->RegisterPrimArgs(*fwd_pd_, args_);
     CommitOutput(outputs[0], o_mem);
     DNNLStream::Get()->Submit();

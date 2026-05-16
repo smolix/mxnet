@@ -61,10 +61,10 @@ static void DNNLQuantizeComputeKer(const std::vector<NDArray>& inputs,
     LOG(FATAL) << "oneDNN quantize op only supports int8 and uint8 as output type";
   }
   float scale = quantized_range / real_range;
+  // v3: set_output_scales removed; use set_scales_mask + runtime arg.
   dnnl::primitive_attr attr;
-  const int mask            = 0;
-  std::vector<float> scales = {scale};
-  attr.set_output_scales(mask, scales);
+  const int mask = 0;
+  attr.set_scales_mask(DNNL_ARG_DST, mask);
   dnnl::engine cpu_engine = mxnet::CpuEngine::Get()->get_engine();
   NDArray in_buffer       = inputs[0];
   auto i_mem    = in_buffer.GetDNNLData();
@@ -73,16 +73,25 @@ static void DNNLQuantizeComputeKer(const std::vector<NDArray>& inputs,
   dnnl::memory::desc o_desc;
   if (i_ndim == 4) {
     dnnl::memory::format_tag o_fmt = dnnl::memory::format_tag::nhwc;
-    dnnl::memory::dims o_dims(i_desc.get_dims().data(), i_desc.get_dims().data() + i_desc.get_ndims());
-    o_desc = dnnl::memory::desc(o_dims, get_dnnl_type<DstType>(), o_fmt);
+    // v3: get_dims() returns a vector by value; store once before iterating.
+    const auto src_dims = i_desc.get_dims();
+    dnnl::memory::dims o_dims(src_dims.begin(), src_dims.end());
+    o_desc = dnnl::memory::desc(o_dims, get_dnnl_type_t<DstType>(), o_fmt);
   } else {
     o_desc                = i_desc;
     o_desc = CloneMemDescWithDtype(o_desc, get_dnnl_type_t<DstType>());
   }
   auto reorder_pd = dnnl::reorder::primitive_desc(cpu_engine, i_desc, cpu_engine, o_desc, attr);
   auto o_mem      = CreateDNNLMem(outputs[0], o_desc, req[0]);
+  // v3: bind runtime scale tensor.
+  dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                              dnnl::memory::format_tag::x);
+  auto scale_mem = dnnl::memory(scale_md, cpu_engine);
+  *reinterpret_cast<float*>(scale_mem.get_data_handle()) = scale;
   DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd),
-                                      {{DNNL_ARG_FROM, *i_mem}, {DNNL_ARG_TO, *o_mem.second}});
+                                      {{DNNL_ARG_FROM, *i_mem},
+                                       {DNNL_ARG_TO, *o_mem.second},
+                                       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, scale_mem}});
   CommitOutput(outputs[0], o_mem);
   DNNLStream::Get()->Submit();
 }

@@ -39,16 +39,19 @@ namespace mxnet {
 namespace op {
 
 typedef dnnl::batch_normalization_forward::primitive_desc t_bn_f_pdesc;
-typedef dnnl::batch_normalization_forward::desc t_bn_f_desc;
 typedef dnnl::batch_normalization_backward::primitive_desc t_bn_b_pdesc;
-typedef dnnl::batch_normalization_backward::desc t_bn_b_desc;
+// oneDNN v3 removed the per-primitive `::desc` types and folded their
+// constructor arguments into primitive_desc directly. The legacy
+// `use_scale_shift` flag was split into use_scale + use_shift, each with its
+// own DNNL_ARG_SCALE / DNNL_ARG_SHIFT memory arg.
 
 inline static dnnl::normalization_flags _GetFlags(const std::vector<NDArray>& in_data,
                                                   const std::vector<NDArray>& aux_states,
                                                   bool is_train_and_not_global_stats) {
   dnnl::normalization_flags flags = static_cast<dnnl::normalization_flags>(0U);
   if (in_data.size() == 3U) {
-    flags |= dnnl::normalization_flags::use_scale_shift;
+    flags |= dnnl::normalization_flags::use_scale;
+    flags |= dnnl::normalization_flags::use_shift;
   }
 
   // aux_states[0]: inMean
@@ -68,23 +71,25 @@ inline static t_bn_f_pdesc _GetFwd(const dnnl::memory& data_mem,
   auto engine  = CpuEngine::Get()->get_engine();
 
   if (is_train) {
-    t_bn_f_desc bnFwd_desc(dnnl::prop_kind::forward_training, data_md, eps, flags);
-    return t_bn_f_pdesc(bnFwd_desc, engine);
+    // oneDNN v3 primitive_desc signature:
+    //   primitive_desc(engine, prop_kind, src_md, dst_md, epsilon, flags, attr)
+    return t_bn_f_pdesc(engine, dnnl::prop_kind::forward_training, data_md, data_md,
+                        eps, flags);
   }
 
   if (fuse_relu) {
-    const float scale = 1.f;
     const float alpha = 0.f;
     const float beta  = 0.f;
     dnnl::post_ops post_ops;
-    post_ops.append_eltwise(scale, dnnl::algorithm::eltwise_relu, alpha, beta);
+    // v3 dropped the `scale` parameter; use the 3-arg form.
+    post_ops.append_eltwise(dnnl::algorithm::eltwise_relu, alpha, beta);
     dnnl::primitive_attr attr;
     attr.set_post_ops(post_ops);
-    t_bn_f_desc bnFwd_desc(dnnl::prop_kind::forward_inference, data_md, eps, flags);
-    return t_bn_f_pdesc(bnFwd_desc, attr, engine);
+    return t_bn_f_pdesc(engine, dnnl::prop_kind::forward_inference, data_md, data_md,
+                        eps, flags, attr);
   } else {
-    t_bn_f_desc bnFwd_desc(dnnl::prop_kind::forward_inference, data_md, eps, flags);
-    return t_bn_f_pdesc(bnFwd_desc, engine);
+    return t_bn_f_pdesc(engine, dnnl::prop_kind::forward_inference, data_md, data_md,
+                        eps, flags);
   }
 }
 
@@ -96,14 +101,19 @@ inline static t_bn_b_pdesc _GetBwd(const dnnl::memory& data_mem,
   auto diff_md = diff_mem.get_desc();
   auto engine  = CpuEngine::Get()->get_engine();
 
-  t_bn_b_desc bnBwd_desc(dnnl::prop_kind::backward, diff_md, data_md, eps, flags);
-  return t_bn_b_pdesc(bnBwd_desc, engine, _GetFwd(data_mem, true, false, eps, flags));
+  // v3 primitive_desc signature:
+  //   primitive_desc(engine, prop_kind, diff_src_md, diff_dst_md, src_md,
+  //                  epsilon, flags, hint_fwd_pd)
+  return t_bn_b_pdesc(engine, dnnl::prop_kind::backward, diff_md, diff_md, data_md,
+                      eps, flags, _GetFwd(data_mem, true, false, eps, flags));
 }
 
 typedef ParamOpSign<BatchNormParam> DNNLBNSignature;
 
 class DNNLBNForward {
-  std::shared_ptr<const dnnl::memory> weight_m;
+  // v3 split the v2 combined weights tensor into separate scale + shift.
+  std::shared_ptr<const dnnl::memory> scale_m;
+  std::shared_ptr<const dnnl::memory> shift_m;
   std::shared_ptr<dnnl::batch_normalization_forward> fwd;
   bool is_train_and_not_global_stats;
   t_bn_f_pdesc pd;
@@ -111,7 +121,8 @@ class DNNLBNForward {
  public:
   DNNLBNForward(const t_bn_f_pdesc& _pd, bool is_train_and_not_global_stats);
 
-  const dnnl::memory& GetWeight() const;
+  const dnnl::memory& GetScale() const;
+  const dnnl::memory& GetShift() const;
 
   const t_bn_f_pdesc& GetPd() const;
 
@@ -166,17 +177,21 @@ void DNNLBatchNormForward(const nnvm::NodeAttrs& attrs,
 
 class DNNLBNBackward {
   std::shared_ptr<dnnl::batch_normalization_backward> bwd;
-  const std::shared_ptr<dnnl::memory> weight_m;
-  const std::shared_ptr<dnnl::memory> gradw_m;
+  // v3: separate scale + shift memories (1-D, length C each).
+  const std::shared_ptr<dnnl::memory> scale_m;
+  const std::shared_ptr<dnnl::memory> shift_m;
+  const std::shared_ptr<dnnl::memory> grad_scale_m;
+  const std::shared_ptr<dnnl::memory> grad_shift_m;
 
  public:
   const t_bn_b_pdesc pd;
 
   explicit DNNLBNBackward(const t_bn_b_pdesc& _pd);
 
-  const dnnl::memory& GetWeight() const;
-
-  const dnnl::memory& GetGradw() const;
+  const dnnl::memory& GetScale() const;
+  const dnnl::memory& GetShift() const;
+  const dnnl::memory& GetGradScale() const;
+  const dnnl::memory& GetGradShift() const;
 
   const dnnl::batch_normalization_backward& GetBwd() const;
 

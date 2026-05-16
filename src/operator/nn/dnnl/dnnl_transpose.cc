@@ -61,17 +61,17 @@ DNNLTransposeFwd::DNNLTransposeFwd(const NumpyTransposeParam& param, const NDArr
   }
 
   // v3 C API: dnnl_memory_desc_init_by_strides was renamed to
-  //           dnnl_memory_desc_create_with_strides, which allocates a new
-  //           handle that callers must release; wrap with unique_ptr.
+  //           dnnl_memory_desc_create_with_strides. The C++ dnnl::memory::desc
+  //           constructor that takes a dnnl_memory_desc_t takes ownership
+  //           (its handle<> base will destroy it on destruction), so we must
+  //           NOT call dnnl_memory_desc_destroy ourselves — that produces a
+  //           double-free and a later use-after-free segfault.
   dnnl_memory_desc_t dst_fmt;
-  // v3: C API now takes a C++-enum-castable dnnl_data_type_t. Our helper
-  //     returns the C++ enum; cast to its underlying C value.
   dnnl_memory_desc_create_with_strides(
       &dst_fmt, data_ndim, sh,
       static_cast<dnnl_data_type_t>(get_dnnl_type_t(data.dtype())), strides);
 
   dst_md_ = std::make_shared<dnnl::memory::desc>(dst_fmt);
-  dnnl_memory_desc_destroy(dst_fmt);
   out_    = std::make_shared<dnnl::memory>(*dst_md_, engine, nullptr);
 
   transpose_ = std::make_shared<dnnl::reorder>(*data_, *out_);

@@ -47,7 +47,7 @@ static void DNNLQuantizedBatchNormForward(const nnvm::NodeAttrs& attrs,
   if (in_data[quantized_batchnorm::kData].dtype() == mshadow::kUint8) {
     auto u8_md            = data_mem->get_desc();
     auto s8_md            = u8_md;
-    s8_md.data.data_type  = static_cast<dnnl_data_type_t>(dnnl::memory::data_type::s8);
+    s8_md = CloneMemDescWithDtype(s8_md, dnnl::memory::data_type::s8);
     auto data_reorder_mem = TmpMemMgr::Get()->Alloc(s8_md);
 
     std::vector<float> reorder_scale;

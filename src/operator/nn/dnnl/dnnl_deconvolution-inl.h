@@ -60,7 +60,7 @@ using deconv_bwd_weights_pd_t = dnnl::deconvolution_backward_weights::primitive_
 // channels (for example: oihw => iohw, iohw => oihw, goihw => giohw).
 inline dnnl::memory::desc IOLogicalSwapDesc(const dnnl::memory::desc& desc,
                                             const uint32_t num_group) {
-  std::vector<int> order(desc.data.ndims);
+  std::vector<int> order(desc.get_ndims());
   std::iota(std::begin(order), std::end(order), 0);
   const int offset = static_cast<int>(num_group > 1);
   std::swap(order[offset + 0], order[offset + 1]);
@@ -79,7 +79,7 @@ inline void IOLogicalSwapDNNLMem(const NDArray& arr, const uint32_t num_group) {
     desc             = dnnl::memory::desc(
         temp.dims(),
         temp.data_type(),
-        static_cast<dnnl::memory::format_tag>(GetDefaultFormat(temp.data.ndims)));
+        static_cast<dnnl::memory::format_tag>(GetDefaultFormat(temp.get_ndims())));
   }
   auto iOLogicalSwapDesc = IOLogicalSwapDesc(desc, num_group);
   const_cast<NDArray&>(arr).UpdateDNNLMemDesc(&iOLogicalSwapDesc);

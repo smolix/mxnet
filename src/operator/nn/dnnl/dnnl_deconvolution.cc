@@ -392,16 +392,16 @@ bool DeconvDescCreator::ImposePlainWherePadding(const size_t data_size,
                                                 const size_t out_size) {
   // Changing only one at a time, so maybe better implementations will be selected (than entirely
   // plain one)
-  if (data_md.data.format_kind == dnnl_format_kind_any && data_size != GetMemDescSize(data_md)) {
+  if (data_md.get_format_kind() == dnnl::memory::format_kind::any && data_size != GetMemDescSize(data_md)) {
     data_md = GetDesc(data_md, GetDefaultFormat(data_md));
     return true;
-  } else if (out_md.data.format_kind == dnnl_format_kind_any &&
+  } else if (out_md.get_format_kind() == dnnl::memory::format_kind::any &&
              out_size != GetMemDescSize(out_md)) {
     out_md = GetDesc(out_md, GetDefaultFormat(out_md));
     return true;
-  } else if (weights_md.data.format_kind == dnnl_format_kind_any &&
+  } else if (weights_md.get_format_kind() == dnnl::memory::format_kind::any &&
              weights_size != GetMemDescSize(weights_md)) {
-    const int num_gr = (weights_md.data.ndims > data_md.data.ndims) ? weights_md.data.dims[0] : 1;
+    const int num_gr = (weights_md.get_ndims() > data_md.get_ndims()) ? weights_md.get_dims()[0] : 1;
     weights_md       = IOLogicalSwapDesc(weights_md, num_gr);
     weights_md       = IOLogicalSwapDesc(GetDesc(weights_md, GetDefaultFormat(weights_md)), num_gr);
     return true;

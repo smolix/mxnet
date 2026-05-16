@@ -78,7 +78,7 @@ static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
       auto mem      = in_data[i].GetDNNLData();
       auto mem_desc = mem->get_desc();
       if (in_data[i].dtype() != out_dtype) {
-        mem_desc.data.data_type = static_cast<dnnl_data_type_t>(get_dnnl_type(out_dtype));
+        mem_desc = CloneMemDescWithDtype(mem_desc, static_cast<dnnl_data_type_t>(get_dnnl_type(out_dtype)));
       }
       const auto rescaled_mem =
           std::make_shared<dnnl::memory>(mem_desc, CpuEngine::Get()->get_engine());

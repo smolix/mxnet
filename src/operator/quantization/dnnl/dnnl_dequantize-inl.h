@@ -92,11 +92,11 @@ void SgDNNLDequantizeOperator::Forward(const OpContext& ctx,
     size_t i_ndim           = in_buffer.shape().ndim();
     if (i_ndim == 4) {
       dnnl::memory::format_tag o_fmt = dnnl::memory::format_tag::nchw;
-      dnnl::memory::dims o_dims(i_desc.data.dims, i_desc.data.dims + i_desc.data.ndims);
+      dnnl::memory::dims o_dims(i_desc.get_dims().data(), i_desc.get_dims().data() + i_desc.get_ndims());
       o_desc_ = dnnl::memory::desc(o_dims, get_dnnl_type<float>(), o_fmt);
     } else {
       o_desc_                = i_desc;
-      o_desc_.data.data_type = get_dnnl_type_t<float>();
+      o_desc_ = CloneMemDescWithDtype(o_desc_, get_dnnl_type_t<float>());
     }
     auto reorder_pd = dnnl::reorder::primitive_desc(cpu_engine, i_desc, cpu_engine, o_desc_, attr);
     fwd_pd_         = std::make_shared<dnnl::reorder>(reorder_pd);

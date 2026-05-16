@@ -125,8 +125,8 @@ void DNNLMemoryCopy(const dnnl::memory& mem, const dnnl::memory* this_mem) {
   if (!same_shape(this_desc, from_desc) && IsDefaultFormat(from_desc)) {
     // In this case, we can simply create a new DNNL memory for the required
     // shape.
-    dnnl::memory::dims dims(this_desc.data.dims, this_desc.data.dims + this_desc.data.ndims);
-    auto this_dtype = static_cast<dnnl::memory::data_type>(this_desc.data.data_type);
+    dnnl::memory::dims dims(this_desc.get_dims().data(), this_desc.get_dims().data() + this_desc.get_ndims());
+    auto this_dtype = static_cast<dnnl::memory::data_type>(this_desc.get_data_type());
     dnnl::memory::desc data_md(
         dims, this_dtype, static_cast<dnnl::memory::format_tag>(this_def_format));
 
@@ -328,16 +328,16 @@ const dnnl::memory* GetWeights(const NDArray& arr,
 // dnnl: 1.winograd 2.rnn packed 3. block and dims'stride is not increase monotonically
 bool IsDNNL(const dnnl::memory::desc& desc) {
   bool rslt = true;
-  if (desc.data.format_kind == dnnl_blocked) {
-    if (desc.data.format_desc.blocking.inner_nblks == 0) {
+  if (desc.get_format_kind() == dnnl::memory::format_kind::blocked) {
+    if (desc.get_inner_nblks() == 0) {
       int i = 0;
-      for (i = 0; i < desc.data.ndims - 1; i++) {
-        if (desc.data.format_desc.blocking.strides[i] <
-            desc.data.format_desc.blocking.strides[i + 1]) {
+      for (i = 0; i < desc.get_ndims() - 1; i++) {
+        if (desc.get_strides()[i] <
+            desc.get_strides()[i + 1]) {
           break;
         }
       }
-      if (i == desc.data.ndims - 1) {
+      if (i == desc.get_ndims() - 1) {
         rslt = false;
       }
     }
@@ -410,21 +410,21 @@ dnnl_format_tag_t GetPermutedFormat(int num_dims) {
 }
 
 dnnl_format_tag_t GetDefaultFormat(const dnnl::memory::desc& desc) {
-  return GetDefaultFormat(desc.data.ndims);
+  return GetDefaultFormat(desc.get_ndims());
 }
 
 bool IsDefaultFormat(const dnnl::memory::desc& desc) {
   bool rslt = false;
-  if (desc.data.format_kind == dnnl_blocked) {
-    if (desc.data.format_desc.blocking.inner_nblks == 0) {
+  if (desc.get_format_kind() == dnnl::memory::format_kind::blocked) {
+    if (desc.get_inner_nblks() == 0) {
       int i = 0;
-      for (i = 0; i < desc.data.ndims - 1; i++) {
-        if (desc.data.format_desc.blocking.strides[i] <
-            desc.data.format_desc.blocking.strides[i + 1]) {
+      for (i = 0; i < desc.get_ndims() - 1; i++) {
+        if (desc.get_strides()[i] <
+            desc.get_strides()[i + 1]) {
           break;
         }
       }
-      if (i == desc.data.ndims - 1) {
+      if (i == desc.get_ndims() - 1) {
         rslt = true;
       }
     }
@@ -433,11 +433,11 @@ bool IsDefaultFormat(const dnnl::memory::desc& desc) {
 }
 
 dnnl::memory::desc GetDesc(const dnnl::memory::desc& desc, const dnnl_format_tag_t& format) {
-  dnnl::memory::dims dims(desc.data.ndims);
+  dnnl::memory::dims dims(desc.get_ndims());
   for (size_t i = 0; i < dims.size(); i++)
-    dims[i] = desc.data.dims[i];
+    dims[i] = desc.get_dims()[i];
   dnnl::memory::format_tag cpp_format = static_cast<dnnl::memory::format_tag>(format);
-  dnnl::memory::data_type cpp_type    = static_cast<dnnl::memory::data_type>(desc.data.data_type);
+  dnnl::memory::data_type cpp_type    = static_cast<dnnl::memory::data_type>(desc.get_data_type());
   return dnnl::memory::desc(dims, cpp_type, cpp_format);
 }
 

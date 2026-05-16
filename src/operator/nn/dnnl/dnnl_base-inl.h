@@ -311,17 +311,19 @@ static inline dnnl::memory::data_type get_dnnl_type() {
   return static_cast<dnnl::memory::data_type>(data_type_enum<T>::type);
 }
 
-static inline dnnl_data_type_t get_dnnl_type_t(int dtype) {
-  return static_cast<dnnl_data_type_t>(get_dnnl_type(dtype));
+// oneDNN v3 made dnnl::memory::data_type (C++) and dnnl_data_type_t (C)
+// distinct strong enums.  Most call sites now want the C++ one; keep the
+// helper returning that.
+static inline dnnl::memory::data_type get_dnnl_type_t(int dtype) {
+  return get_dnnl_type(dtype);
 }
 
 template <typename T>
-static inline dnnl_data_type_t get_dnnl_type_t() {
-  return static_cast<dnnl_data_type_t>(data_type_enum<T>::type);
+static inline dnnl::memory::data_type get_dnnl_type_t() {
+  return data_type_enum<T>::type;
 }
 
-static inline int get_mxnet_type(dnnl_data_type_t dtype) {
-  auto dnnl_dtype = static_cast<dnnl::memory::data_type>(dtype);
+static inline int get_mxnet_type(dnnl::memory::data_type dnnl_dtype) {
   switch (dnnl_dtype) {
     case dnnl::memory::data_type::f32:
       return mshadow::kFloat32;
@@ -339,16 +341,25 @@ static inline int get_mxnet_type(dnnl_data_type_t dtype) {
   }
 }
 
+// oneDNN v3 made memory::desc opaque; you can no longer mutate fields like
+// data_type directly.  This helper rebuilds a desc with the original layout
+// but a new data type, which is what the v2-era assignment was used for.
+// Works for blocked layouts (the only kind these call sites produce).
+static inline dnnl::memory::desc CloneMemDescWithDtype(
+    const dnnl::memory::desc& md, dnnl::memory::data_type new_dtype) {
+  return dnnl::memory::desc(md.get_dims(), new_dtype, md.get_strides());
+}
+
 static inline size_t GetMemDescSize(const dnnl::memory::desc& md) {
-  if (md.data.ndims == 0)
+  if (md.get_ndims() == 0)
     return 0;
 
   size_t ret = 1;
-  for (int i = 0; i < md.data.ndims; i++) {
-    ret *= md.data.dims[i];
+  for (int i = 0; i < md.get_ndims(); i++) {
+    ret *= md.get_dims()[i];
   }
 
-  ret *= mshadow::mshadow_sizeof(get_mxnet_type(md.data.data_type));
+  ret *= mshadow::mshadow_sizeof(get_mxnet_type(md.get_data_type()));
   return ret;
 }
 
@@ -614,17 +625,17 @@ inline bool same_shape(const mxnet::TShape& shape, const dnnl_dims_t dims, int n
 }
 
 inline bool same_shape(const dnnl::memory::desc& desc1, const dnnl::memory::desc& desc2) {
-  if (desc1.data.ndims != desc2.data.ndims)
+  if (desc1.get_ndims() != desc2.get_ndims())
     return false;
-  for (int i = 0; i < desc1.data.ndims; i++)
-    if (desc1.data.dims[i] != desc2.data.dims[i])
+  for (int i = 0; i < desc1.get_ndims(); i++)
+    if (desc1.get_dims()[i] != desc2.get_dims()[i])
       return false;
   return true;
 }
 
 inline bool same_shape(const mxnet::TShape& shape, int dtype, const dnnl::memory::desc& desc) {
-  return same_shape(shape, desc.data.dims, desc.data.ndims) &&
-         get_dnnl_type(dtype) == desc.data.data_type;
+  return same_shape(shape, desc.get_dims().data(), desc.get_ndims()) &&
+         get_dnnl_type(dtype) == desc.get_data_type();
 }
 
 /*
@@ -675,10 +686,10 @@ class DNNLMemory {
   dnnl::memory::desc GetDesc(
       dnnl_format_tag_t format,
       dnnl::memory::data_type data_type = dnnl::memory::data_type::undef) const {
-    dnnl::memory::dims dims(desc.data.dims, desc.data.dims + desc.data.ndims);
+    dnnl::memory::dims dims(desc.get_dims().data(), desc.get_dims().data() + desc.get_ndims());
     dnnl::memory::data_type cpp_type =
         (data_type == dnnl::memory::data_type::undef) ?
-            static_cast<dnnl::memory::data_type>(desc.data.data_type) :
+            static_cast<dnnl::memory::data_type>(desc.get_data_type()) :
             data_type;
     dnnl::memory::desc data_md(dims, cpp_type, static_cast<dnnl::memory::format_tag>(format));
     return data_md;

@@ -73,11 +73,11 @@ static void DNNLQuantizeComputeKer(const std::vector<NDArray>& inputs,
   dnnl::memory::desc o_desc;
   if (i_ndim == 4) {
     dnnl::memory::format_tag o_fmt = dnnl::memory::format_tag::nhwc;
-    dnnl::memory::dims o_dims(i_desc.data.dims, i_desc.data.dims + i_desc.data.ndims);
+    dnnl::memory::dims o_dims(i_desc.get_dims().data(), i_desc.get_dims().data() + i_desc.get_ndims());
     o_desc = dnnl::memory::desc(o_dims, get_dnnl_type<DstType>(), o_fmt);
   } else {
     o_desc                = i_desc;
-    o_desc.data.data_type = get_dnnl_type_t<DstType>();
+    o_desc = CloneMemDescWithDtype(o_desc, get_dnnl_type_t<DstType>());
   }
   auto reorder_pd = dnnl::reorder::primitive_desc(cpu_engine, i_desc, cpu_engine, o_desc, attr);
   auto o_mem      = CreateDNNLMem(outputs[0], o_desc, req[0]);

@@ -143,11 +143,11 @@ void InitPoolingPrimitiveParams(const PoolingParam& param,
 
     if (param.pooling_convention == pool_enum::kFull) {
       pad_r[0] =
-          GetPaddingSizeFull(data_md.data.dims[2], pad_l[0], pad_r[0], kernel[0], strides[0]);
+          GetPaddingSizeFull(data_md.get_dims()[2], pad_l[0], pad_r[0], kernel[0], strides[0]);
     }
 
     if (param.global_pool) {
-      kernel[0]  = data_md.data.dims[2];
+      kernel[0]  = data_md.get_dims()[2];
       strides[0] = 1;
       pad_l[0] = pad_r[0] = 0;
     }
@@ -167,14 +167,14 @@ void InitPoolingPrimitiveParams(const PoolingParam& param,
 
     if (param.pooling_convention == pool_enum::kFull) {
       pad_r[0] =
-          GetPaddingSizeFull(data_md.data.dims[2], pad_l[0], pad_r[0], kernel[0], strides[0]);
+          GetPaddingSizeFull(data_md.get_dims()[2], pad_l[0], pad_r[0], kernel[0], strides[0]);
       pad_r[1] =
-          GetPaddingSizeFull(data_md.data.dims[3], pad_l[1], pad_r[1], kernel[1], strides[1]);
+          GetPaddingSizeFull(data_md.get_dims()[3], pad_l[1], pad_r[1], kernel[1], strides[1]);
     }
 
     if (param.global_pool) {
-      kernel[0]  = data_md.data.dims[2];
-      kernel[1]  = data_md.data.dims[3];
+      kernel[0]  = data_md.get_dims()[2];
+      kernel[1]  = data_md.get_dims()[3];
       strides[0] = strides[1] = 1;
       pad_l[0] = pad_l[1] = pad_r[0] = pad_r[1] = 0;
     }
@@ -199,17 +199,17 @@ void InitPoolingPrimitiveParams(const PoolingParam& param,
 
     if (param.pooling_convention == pool_enum::kFull) {
       pad_r[0] =
-          GetPaddingSizeFull(data_md.data.dims[2], pad_l[0], pad_r[0], kernel[0], strides[0]);
+          GetPaddingSizeFull(data_md.get_dims()[2], pad_l[0], pad_r[0], kernel[0], strides[0]);
       pad_r[1] =
-          GetPaddingSizeFull(data_md.data.dims[3], pad_l[1], pad_r[1], kernel[1], strides[1]);
+          GetPaddingSizeFull(data_md.get_dims()[3], pad_l[1], pad_r[1], kernel[1], strides[1]);
       pad_r[2] =
-          GetPaddingSizeFull(data_md.data.dims[4], pad_l[2], pad_r[2], kernel[2], strides[2]);
+          GetPaddingSizeFull(data_md.get_dims()[4], pad_l[2], pad_r[2], kernel[2], strides[2]);
     }
 
     if (param.global_pool) {
-      kernel[0]  = data_md.data.dims[2];
-      kernel[1]  = data_md.data.dims[3];
-      kernel[2]  = data_md.data.dims[4];
+      kernel[0]  = data_md.get_dims()[2];
+      kernel[1]  = data_md.get_dims()[3];
+      kernel[2]  = data_md.get_dims()[4];
       strides[0] = strides[1] = strides[2] = 1;
       pad_l[0] = pad_l[1] = pad_l[2] = pad_r[0] = pad_r[1] = pad_r[2] = 0;
     }

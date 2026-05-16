@@ -175,7 +175,7 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
         const auto& mem_desc  = in_dnnl_mem->get_desc();
         const auto this_dtype = get_dnnl_type(outputs[kOut].dtype());
         auto omd              = mem_desc;
-        omd.data.data_type    = static_cast<dnnl_data_type_t>(this_dtype);
+        omd = CloneMemDescWithDtype(omd, this_dtype);
         dnnl_mem_ptr tmp_mem(
             new dnnl::memory(omd, CpuEngine::Get()->get_engine(), out_dnnl_mem->get_data_handle()));
         DNNLStream::Get()->RegisterMem(tmp_mem);
@@ -359,7 +359,7 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
     if (out_mem_desc != dst_mem_desc) {
       auto tmp_out_mem       = output.GetDNNLDataReorder(&dst_mem_desc);
       auto data_md           = dst_mem_desc;
-      data_md.data.data_type = static_cast<dnnl_data_type_t>(out_mem_desc.data.data_type);
+      data_md = CloneMemDescWithDtype(data_md, static_cast<dnnl_data_type_t>(out_mem_desc.get_data_type()));
       dnnl_mem_ptr new_out_mem(
           new dnnl::memory(data_md, CpuEngine::Get()->get_engine(), output_mem->get_data_handle()));
       DNNLStream::Get()->RegisterMem(new_out_mem);

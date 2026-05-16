@@ -215,8 +215,8 @@ nnvm::Symbol NDArray::get_autograd_symbol() const {
 
 NDArray::NDArray(const void* md_desc) : storage_type_(kDefaultStorage), autograd_entry_(nullptr) {
   dnnl::memory::desc md = *static_cast<const dnnl::memory::desc*>(md_desc);
-  shape_                = mxnet::TShape(md.data.dims, md.data.dims + md.data.ndims);
-  dtype_                = get_mxnet_type(md.data.data_type);
+  shape_                = mxnet::TShape(md.get_dims().data(), md.get_dims().data() + md.get_ndims());
+  dtype_                = get_mxnet_type(md.get_data_type());
   ptr_                  = std::make_shared<Chunk>(shape_, Context::CPU(), true, dtype_);
   ptr_->CheckAndAlloc(md.get_size());
   ptr_->dnnl_mem_ = std::make_shared<DNNLMemory>(md, ptr_->shandle.dptr);
@@ -225,8 +225,8 @@ NDArray::NDArray(const void* md_desc) : storage_type_(kDefaultStorage), autograd
 NDArray::NDArray(const std::shared_ptr<dnnl::memory>& dnnl_mem)
     : storage_type_(kDefaultStorage), autograd_entry_(nullptr) {
   auto mem_desc      = dnnl_mem->get_desc();
-  shape_             = mxnet::TShape(mem_desc.data.dims, mem_desc.data.dims + mem_desc.data.ndims);
-  dtype_             = get_mxnet_type(mem_desc.data.data_type);
+  shape_             = mxnet::TShape(mem_desc.get_dims().data(), mem_desc.get_dims().data() + mem_desc.get_ndims());
+  dtype_             = get_mxnet_type(mem_desc.get_data_type());
   ptr_               = std::make_shared<Chunk>(shape_, Context::CPU(), true, dtype_);
   ptr_->shandle.dptr = dnnl_mem->get_data_handle();
   ptr_->shandle.size = mem_desc.get_size();
@@ -585,7 +585,7 @@ void NDArray::Chunk::DNNLDataReorder(const void* mem_desc) {
   } else {
     old_mem = this->dnnl_mem_->GetMem();
   }
-  CHECK(old_mem->get_desc().data.ndims == md.data.ndims);
+  CHECK(old_mem->get_desc().get_ndims() == md.get_ndims());
 
   // This may be called in DNNL operators. We can't use DNNLStream here.
   dnnl::reorder(*old_mem, *new_mem).execute(s, *old_mem, *new_mem);
@@ -672,9 +672,9 @@ const dnnl::memory* NDArray::GetDNNLDataReorder(const void* mem_desc) const {
     // If they have different shapes, we need to reshape the array first.
     // Since this method will only be used inside an operator, we can call
     // DNNLDataReshape to reshape an array.
-    mxnet::TShape required_shape(new_desc.data.ndims, -1);
-    for (int i = 0; i < new_desc.data.ndims; i++)
-      required_shape[i] = new_desc.data.dims[i];
+    mxnet::TShape required_shape(new_desc.get_ndims(), -1);
+    for (int i = 0; i < new_desc.get_ndims(); i++)
+      required_shape[i] = new_desc.get_dims()[i];
     NDArray reshaped        = DNNLDataReshape(required_shape);
     const dnnl::memory* ret = reshaped.GetDNNLData();
     if (ret->get_desc() == new_desc) {
@@ -698,9 +698,9 @@ NDArray NDArray::Reorder2Default() const {
 
   // create new ndarray from dnnl layout
   dnnl::memory::desc from_desc = ptr_->dnnl_mem_->GetDesc();
-  mxnet::TShape tshape(from_desc.data.ndims, -1);
-  for (int i = 0; i < from_desc.data.ndims; i++)
-    tshape[i] = from_desc.data.dims[i];
+  mxnet::TShape tshape(from_desc.get_ndims(), -1);
+  for (int i = 0; i < from_desc.get_ndims(); i++)
+    tshape[i] = from_desc.get_dims()[i];
   NDArray ret(tshape, ctx(), false, dtype());
   dnnl_format_tag_t format    = ptr_->dnnl_mem_->GetDefaultFormat();
   dnnl::memory::desc def_desc = ptr_->dnnl_mem_->GetDesc(format);
@@ -726,9 +726,9 @@ void NDArray::SelfReorder2Default() {
 
   // create new ndarray from  dnnl layout
   dnnl::memory::desc from_desc = dnnl_mem->GetDesc();
-  mxnet::TShape tshape(from_desc.data.ndims, -1);
-  for (int i = 0; i < from_desc.data.ndims; i++)
-    tshape[i] = from_desc.data.dims[i];
+  mxnet::TShape tshape(from_desc.get_ndims(), -1);
+  for (int i = 0; i < from_desc.get_ndims(); i++)
+    tshape[i] = from_desc.get_dims()[i];
 
   const auto saved_shape       = shape_;
   const auto saved_byte_offset = byte_offset_;
@@ -917,7 +917,7 @@ void NDArray::UpdateDNNLMemDesc(const void* mem_desc) {
   dnnl::memory::desc desc = *static_cast<const dnnl::memory::desc*>(mem_desc);
   auto new_desc           = desc;
   auto this_dtype         = get_dnnl_type(dtype());
-  new_desc.data.data_type = static_cast<dnnl_data_type_t>(this_dtype);
+  new_desc = CloneMemDescWithDtype(new_desc, this_dtype);
   ptr_->dnnl_mem_.reset(new DNNLMemory(new_desc, ptr_->shandle.dptr));
   DNNLStream::Get()->RegisterMem(ptr_->dnnl_mem_->GetMem());
 }

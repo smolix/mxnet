@@ -32,10 +32,10 @@ namespace op {
 static inline bool IsUsingPadding(const dnnl::memory::desc& dst_md) {
   // make sure a blocked format is used (at least one dimension is blocked)
   bool is_blocked_format =
-      dst_md.data.format_kind == dnnl_blocked && dst_md.data.format_desc.blocking.inner_nblks > 0;
+      dst_md.get_format_kind() == dnnl::memory::format_kind::blocked && dst_md.get_inner_nblks() > 0;
   return is_blocked_format &&
          !std::equal(
-             dst_md.data.dims, dst_md.data.dims + dst_md.data.ndims, dst_md.data.padded_dims);
+             dst_md.get_dims().data(), dst_md.get_dims().data() + dst_md.get_ndims(), dst_md.get_padded_dims());
 }
 
 DNNLConcatFwd::DNNLConcatFwd(int concat_dim, const std::vector<dnnl::memory::desc>& data_md)
@@ -48,7 +48,7 @@ DNNLConcatFwd::DNNLConcatFwd(int concat_dim, const std::vector<dnnl::memory::des
   // When fwd_pd uses padding, impose a plain format
   const auto& dst_md = fwd_pd.dst_desc();
   if (IsUsingPadding(dst_md)) {
-    auto plain_dst_tag = static_cast<dnnl::memory::format_tag>(GetDefaultFormat(dst_md.data.ndims));
+    auto plain_dst_tag = static_cast<dnnl::memory::format_tag>(GetDefaultFormat(dst_md.get_ndims()));
     auto plain_dst_md  = dnnl::memory::desc(dst_md.dims(), dst_md.data_type(), plain_dst_tag);
     fwd_pd             = dnnl::concat::primitive_desc(
         plain_dst_md, concat_dim, data_md, CpuEngine::Get()->get_engine());

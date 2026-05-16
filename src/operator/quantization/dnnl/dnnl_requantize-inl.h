@@ -83,7 +83,7 @@ static void DNNLRequantizeForwardKer(const nnvm::NodeAttrs& attrs,
   auto i_mem            = in_buffer.GetDNNLData();
   auto i_desc           = i_mem->get_desc();
   auto o_desc           = i_desc;
-  o_desc.data.data_type = get_dnnl_type_t<DstType>();
+  o_desc = CloneMemDescWithDtype(o_desc, get_dnnl_type_t<DstType>());
   auto reorder_pd = dnnl::reorder::primitive_desc(cpu_engine, i_desc, cpu_engine, o_desc, attr);
   auto o_mem      = CreateDNNLMem(outputs[0], o_desc, req[0]);
   DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd),

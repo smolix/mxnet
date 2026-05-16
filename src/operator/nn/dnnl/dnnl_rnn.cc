@@ -422,14 +422,14 @@ static void ConcatWeights(const dnnl::memory& dst,
   const memory::desc& dst_desc = dst.get_desc();
   // Use dst memory dims to initialize src memory dims, then set the concat
   // dim to 1. And Rnn weights are 5-dimension tensor.
-  memory::dims src_dims(dst_desc.data.dims, dst_desc.data.dims + dst_desc.data.ndims);
+  memory::dims src_dims(dst_desc.get_dims().data(), dst_desc.get_dims().data() + dst_desc.get_ndims());
   src_dims.at(concat_dimension) = 1;
   std::vector<memory::desc> src_descs;
   std::unordered_map<int, memory> concat_args;
 
   for (size_t i = 0; i < src_ptrs.size(); ++i) {
     src_descs.emplace_back(
-        src_dims, static_cast<memory::data_type>(dst_desc.data.data_type), src_format);
+        src_dims, static_cast<memory::data_type>(dst_desc.get_data_type()), src_format);
     concat_args.emplace(DNNL_ARG_MULTIPLE_SRC + i,
                         memory(src_descs.back(), cpu_engine, src_ptrs.at(i)));
   }
@@ -938,7 +938,7 @@ void DNNLRnnBackward::SetWeightsGradsMem() {
     const auto& cpu_engine         = CpuEngine::Get()->get_engine();
     const DNNLRnnLayerParam& param = fwd_ptr_->GetParam();
     const auto dnnl_type =
-        static_cast<dnnl::memory::data_type>(bwd_.diff_weights_layer_desc_.data.data_type);
+        static_cast<dnnl::memory::data_type>(bwd_.diff_weights_layer_desc_.get_data_type());
 
     auto native_layer_desc = dnnl::memory::desc(param.weight_layer_dims, dnnl_type, tag::ldgoi);
     auto native_iter_desc  = dnnl::memory::desc(param.weight_iter_dims, dnnl_type, tag::ldgoi);

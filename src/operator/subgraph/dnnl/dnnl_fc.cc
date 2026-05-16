@@ -262,7 +262,7 @@ NDArray SgDNNLFCOp::PrepareOutputWithSum(const NDArray& sum_input, const NDArray
     if (output.dtype() == mshadow::kInt32) {
       auto mem_desc           = in_dnnl_mem->get_desc();
       auto this_dtype         = get_dnnl_type(mshadow::kInt32);
-      mem_desc.data.data_type = static_cast<dnnl_data_type_t>(this_dtype);
+      mem_desc = CloneMemDescWithDtype(mem_desc, this_dtype);
       dnnl_mem_ptr tmp_mem(new dnnl::memory(
           mem_desc, CpuEngine::Get()->get_engine(), out_dnnl_mem->get_data_handle()));
       DNNLStream::Get()->RegisterMem(tmp_mem);
@@ -272,7 +272,7 @@ NDArray SgDNNLFCOp::PrepareOutputWithSum(const NDArray& sum_input, const NDArray
     } else if (sum_input.dtype() == mshadow::kUint8 && output.dtype() == mshadow::kInt8) {
       auto sum_mem_desc           = in_dnnl_mem->get_desc();
       auto out_dtype              = get_dnnl_type(mshadow::kInt8);
-      sum_mem_desc.data.data_type = static_cast<dnnl_data_type_t>(out_dtype);
+      sum_mem_desc = CloneMemDescWithDtype(sum_mem_desc, out_dtype);
       dnnl_mem_ptr tmp_mem(new dnnl::memory(
           sum_mem_desc, CpuEngine::Get()->get_engine(), out_dnnl_mem->get_data_handle()));
       DNNLStream::Get()->RegisterMem(tmp_mem);

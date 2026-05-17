@@ -151,26 +151,27 @@ DNNLWhereFwd::DNNLWhereFwd(const Tensors& tensors) {
   auto out_md    = dnnl::memory::desc(out_dims, inp_dtype, def_ft);
   auto scalar_md = dnnl::memory::desc(scalar_dims, cnd_dtype, def_ft);
 
+  // v3: binary::primitive_desc(engine, alg, src0_md, src1_md, dst_md, attr={}).
   binary_ne_zero_pd = dnnl::binary::primitive_desc(
-      dnnl::binary::desc(dnnl::algorithm::binary_ne, cnd_md, scalar_md, cnd_md), cpu_engine);
+      cpu_engine, dnnl::algorithm::binary_ne, cnd_md, scalar_md, cnd_md);
   binary_eq_zero_pd = dnnl::binary::primitive_desc(
-      dnnl::binary::desc(dnnl::algorithm::binary_eq, cnd_md, scalar_md, cnd_md), cpu_engine);
+      cpu_engine, dnnl::algorithm::binary_eq, cnd_md, scalar_md, cnd_md);
 
   // if broadcast is needed output must be larger in size
   const auto lmask_shape = GetBroadcastedShape(lhs_shape, cnd_shape);
   const auto lmask_dim   = dnnl::memory::dims(lmask_shape.begin(), lmask_shape.end());
   auto lmask_md          = dnnl::memory::desc(lmask_dim, inp_dtype, def_ft);
   binary_mul_l_pd        = dnnl::binary::primitive_desc(
-      dnnl::binary::desc(dnnl::algorithm::binary_mul, lhs_md, cnd_md, lmask_md), cpu_engine);
+      cpu_engine, dnnl::algorithm::binary_mul, lhs_md, cnd_md, lmask_md);
 
   const auto rmask_shape = GetBroadcastedShape(rhs_shape, cnd_shape);
   const auto rmask_dim   = dnnl::memory::dims(rmask_shape.begin(), rmask_shape.end());
   auto rmask_md          = dnnl::memory::desc(rmask_dim, inp_dtype, def_ft);
   binary_mul_r_pd        = dnnl::binary::primitive_desc(
-      dnnl::binary::desc(dnnl::algorithm::binary_mul, rhs_md, cnd_md, rmask_md), cpu_engine);
+      cpu_engine, dnnl::algorithm::binary_mul, rhs_md, cnd_md, rmask_md);
 
   binary_sum_pd = dnnl::binary::primitive_desc(
-      dnnl::binary::desc(dnnl::algorithm::binary_add, lmask_md, rmask_md, out_md), cpu_engine);
+      cpu_engine, dnnl::algorithm::binary_add, lmask_md, rmask_md, out_md);
 
   binary_ne_zero = dnnl::binary(binary_ne_zero_pd);
   binary_eq_zero = dnnl::binary(binary_eq_zero_pd);

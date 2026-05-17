@@ -63,7 +63,7 @@ struct UniqueComputeMaskGPUKernel {
 };
 
 template <typename DType>
-struct argsort_functor1d : public thrust::unary_function<dim_t, dim_t> {
+struct argsort_functor1d {
   explicit argsort_functor1d(DType* data_) : data(data_) {}
   __device__ bool operator()(dim_t a, dim_t b) {
     return data[a] < data[b];
@@ -72,7 +72,7 @@ struct argsort_functor1d : public thrust::unary_function<dim_t, dim_t> {
 };
 
 template <typename DType>
-struct argsort_functor2d : public thrust::unary_function<dim_t, dim_t> {
+struct argsort_functor2d {
   argsort_functor2d(DType* data_, dim_t numel_) : data(data_), numel(numel_) {}
   __device__ bool operator()(dim_t a, dim_t b) {
     for (dim_t i = 0; i < numel; ++i) {

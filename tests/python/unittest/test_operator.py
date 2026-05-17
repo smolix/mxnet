@@ -322,7 +322,7 @@ def test_slice_channel():
         assert len(exe.outputs) == num_outputs
         for i in range(num_outputs):
             gt = data_npy.take(np.arange(i * shape[axis]/num_outputs,
-                                         (i+1) * shape[axis]/num_outputs).astype(np.int), axis=axis)
+                                         (i+1) * shape[axis]/num_outputs).astype(np.int_), axis=axis)
             if squeeze_axis:
                 assert_almost_equal(outputs[i], gt.reshape(outputs[i].shape))
             else:
@@ -1907,7 +1907,8 @@ def test_convolution_independent_gradients():
 
 def gen_broadcast_data(idx):
     # Manually set test cases
-    binary_op_data_shape = np.array(
+    # NumPy 1.24+ rejects ragged nested sequences. Stay in plain Python lists.
+    binary_op_data_shape = list(
         [[[2, 5, 1, 30, 7], [1, 5, 448, 30, 1]],
         [[10, 49, 1, 77, 17], [10, 1, 2, 1, 17]],
         [[13, 2, 65, 2,  1], [13, 1, 65, 1, 225]],
@@ -1944,7 +1945,7 @@ def gen_broadcast_data(idx):
         [[15, 3, 5], [3, 5]], [[15, 3, 5], [1, 5]],
         [[15, 3, 5], [3, 1]], [[1,1,1,1], [1,1]],
         [[15,3], [4, 1, 3]], [[7, 1, 5], [8, 1, 6, 1]]])
-    if idx < binary_op_data_shape.shape[0]:
+    if idx < len(binary_op_data_shape):
         l_shape = binary_op_data_shape[idx][0]
         r_shape = binary_op_data_shape[idx][1]
     else:
@@ -2712,7 +2713,7 @@ def test_crop():
                 idx.append(slice(b, e))
             x = mx.nd.array(np.random.normal(size=dims))
             y = mx.nd.crop(x, begin=tuple(begin), end=tuple(end))
-            assert_allclose(x.asnumpy()[idx], y.asnumpy())
+            assert_allclose(x.asnumpy()[tuple(idx)], y.asnumpy())
 
             vx = mx.sym.Variable('x')
             vy = mx.sym.crop(vx, begin=tuple(begin), end=tuple(end))
@@ -2746,11 +2747,11 @@ def test_slice_axis():
             exec1 = Y._bind(default_device(), args = [x], args_grad = {'X': xgrad})
             exec1.forward(is_train=True)
             y = exec1.outputs[0]
-            assert_allclose(x.asnumpy()[idx], y.asnumpy())
+            assert_allclose(x.asnumpy()[tuple(idx)], y.asnumpy())
             exec1.backward([y])
             xx = x.asnumpy()
             xx[:] = 0.0
-            xx[idx] = x.asnumpy()[idx]
+            xx[tuple(idx)] = x.asnumpy()[tuple(idx)]
             assert_allclose(xx, xgrad.asnumpy())
             x_grad_npy = np.random.normal(size=x.shape)
             xgrad = mx.nd.array(x_grad_npy)
@@ -2758,7 +2759,7 @@ def test_slice_axis():
             exec2.forward(is_train=True)
             exec2.backward([exec2.outputs[0]])
             xx = np.zeros(shape=x.shape, dtype=np.float32)
-            xx[idx] = x.asnumpy()[idx]
+            xx[tuple(idx)] = x.asnumpy()[tuple(idx)]
             assert_allclose(xx + x_grad_npy, xgrad.asnumpy(), atol=1E-5)
 
 def test_slice_like():
@@ -2793,11 +2794,11 @@ def test_slice_like():
                            args_grad = {'X': xgrad, 'X1': xgrad1})
             exec1.forward(is_train=True)
             y = exec1.outputs[0]
-            assert_allclose(x.asnumpy()[idx], y.asnumpy())
+            assert_allclose(x.asnumpy()[tuple(idx)], y.asnumpy())
             exec1.backward([y])
             xx = x.asnumpy()
             xx[:] = 0.0
-            xx[idx] = x.asnumpy()[idx]
+            xx[tuple(idx)] = x.asnumpy()[tuple(idx)]
             assert_allclose(xx, xgrad.asnumpy())
             assert_allclose(xgrad1.asnumpy(), mx.nd.zeros_like(xgrad1).asnumpy())
 
@@ -2840,7 +2841,7 @@ def test_flip():
             idx = [slice(None, None, -1) if i == axis else slice(None, None) for i in range(ndim)]
             x = mx.nd.array(np.random.normal(size=dims))
             y = mx.nd.flip(x, axis=axis)
-            assert_allclose(x.asnumpy()[idx], y.asnumpy())
+            assert_allclose(x.asnumpy()[tuple(idx)], y.asnumpy())
 
 
 def test_stn():
@@ -4802,7 +4803,7 @@ def test_where():
         condition = mx.sym.Variable('condition')
         x = mx.sym.Variable('x')
         y = mx.sym.Variable('y')
-        grad_in_mx = mx.nd.array(grad_in_np, dtype=np.int)
+        grad_in_mx = mx.nd.array(grad_in_np, dtype=np.int_)
         where_sym = mx.sym.where(condition, x, y)
 
         # test req='write'
@@ -5075,7 +5076,7 @@ def test_masked_softmax(dtype, axis, ndims, n_broadcast_axis, temperature, norma
 
     np_data = mx_data.asnumpy()
     np_mask = np.random.randint(0, 2, shape_mask)
-    mx_mask = mx.nd.array(np_mask, dtype=np.bool)
+    mx_mask = mx.nd.array(np_mask, dtype=np.bool_)
     mx_grad = rand_ndarray(shape, dtype=dtype)
     np_grad = mx_grad.asnumpy()
 
@@ -5094,7 +5095,7 @@ def test_masked_softmax(dtype, axis, ndims, n_broadcast_axis, temperature, norma
     check_symbolic_forward(mx_sym, location, [np_out], rtol=rtol, atol=atol,
                            dtype="asnumpy", equal_nan=True)
     check_symbolic_backward(mx_sym, location, [mx_grad],
-                            [np_grad_out, np.zeros(shape, dtype=np.bool)],
+                            [np_grad_out, np.zeros(shape, dtype=np.bool_)],
                             rtol=1e-2, atol=2e-3 if dtype == np.float16 else 1e-3,
                             dtype="asnumpy", equal_nan=True)
 
@@ -5107,7 +5108,7 @@ def test_masked_log_softmax(dtype, ndims):
     mx_data = rand_ndarray(shape, dtype=dtype)
     np_data = mx_data.asnumpy()
     np_mask = np.random.randint(0, 2, shape)
-    mx_mask = mx.nd.array(np_mask, dtype=np.bool)
+    mx_mask = mx.nd.array(np_mask, dtype=np.bool_)
     mx_grad = rand_ndarray(shape, dtype=dtype)
     np_grad = mx_grad.asnumpy()
     np_out = np.log(np_masked_softmax(np_data, np_mask, axis)+1e-20) * np_mask
@@ -5121,7 +5122,7 @@ def test_masked_log_softmax(dtype, ndims):
     atol = 1e-4 if dtype == np.float16 else 1e-5
     check_symbolic_forward(mx_sym, location, [np_out_inf], rtol=rtol, atol=atol, dtype="asnumpy")
     check_symbolic_backward(mx_sym, location, [mx_grad],
-                            [np_grad_out, np.zeros(shape, dtype=np.bool)],
+                            [np_grad_out, np.zeros(shape, dtype=np.bool_)],
                             rtol=1e-2, atol=2e-3 if dtype == np.float16 else 1e-3,
                             dtype="asnumpy", equal_nan=True)
 
@@ -5151,7 +5152,7 @@ def test_pick():
                     ishape = [1 for _ in range(ndim)]
                     ishape[i] = bshape[i]
                     exp.append(np.arange(bshape[i]).reshape(ishape))
-            expected = data[exp]
+            expected = data[tuple(exp)]
             data = mx.nd.array(data, dtype='float32')
             index = mx.nd.array(index, dtype=index_type)
             out = mx.nd.pick(data, index, axis=axis, keepdims=True, mode=mode)
@@ -5816,8 +5817,8 @@ def test_psroipooling():
             for image_height, image_width in itertools.product([168, 224], [168, 224]):
                 for grad_nodes in [['im_data']]:
                     spatial_scale = 0.0625
-                    feat_height = np.int(image_height * spatial_scale)
-                    feat_width = np.int(image_width * spatial_scale)
+                    feat_height = np.int_(image_height * spatial_scale)
+                    feat_width = np.int_(image_width * spatial_scale)
                     im_data = np.random.rand(1, num_classes*num_group*num_group, feat_height, feat_width)
                     rois_data = np.zeros([num_rois, 5])
                     rois_data[:, [1,3]] = np.sort(np.random.rand(num_rois, 2)*(image_width-1))
@@ -5960,8 +5961,8 @@ def test_deformable_psroipooling():
                 for grad_nodes in [['im_data'], ['offset_data']]:
                     spatial_scale = 0.0625
                     stride = int(1 / spatial_scale)
-                    feat_height = np.int(image_height * spatial_scale)
-                    feat_width = np.int(image_width * spatial_scale)
+                    feat_height = np.int_(image_height * spatial_scale)
+                    feat_width = np.int_(image_width * spatial_scale)
                     im_data = np.random.rand(1, num_classes*num_group*num_group, feat_height, feat_width)
                     rois_data = np.zeros([num_rois, 5])
                     rois_data[:, [1,3]] = np.sort(np.random.rand(num_rois, 2)*(image_width-1 - 2 * stride)) + stride

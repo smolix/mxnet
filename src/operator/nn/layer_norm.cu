@@ -23,7 +23,7 @@
  */
 #include "./layer_norm-inl.h"
 
-using namespace mshadow::cuda;
+using namespace mshadow::cuda_impl;
 
 namespace mxnet {
 namespace op {

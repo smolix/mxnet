@@ -25,6 +25,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cstring>
 #include <string>
 
 #include "operator/nn/convolution-inl.h"
@@ -50,7 +51,7 @@ std::shared_ptr<dnnl::convolution_forward::primitive_desc> GetConvFwdImpl(
     const NDArray& weights,
     const NDArray* bias,
     const NDArray& output) {
-  auto prop      = is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_scoring;
+  auto prop      = is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_inference;
   auto data_md   = GetMemDesc(data);
   auto weight_md = GetWeightDesc(weights, param.conv_param.num_group, param.dnnl_param.quantized);
   auto out_md    = GetMemDesc(output);
@@ -92,111 +93,77 @@ std::shared_ptr<dnnl::convolution_forward::primitive_desc> GetConvFwdImpl(
   dnnl::primitive_attr attr;
   dnnl::post_ops ops;
   if (param.dnnl_param.with_act) {
+    // v3: post_ops::append_eltwise(algo, alpha, beta); scale parameter
+    //     dropped. The per-post-op scale is folded into the global output
+    //     scales when needed.
     const auto& act_param = param.act_param;
-    ops.append_eltwise(act_param.scale, act_param.alg, act_param.alpha, act_param.beta);
+    ops.append_eltwise(act_param.alg, act_param.alpha, act_param.beta);
   }
   if (param.dnnl_param.with_sum) {
     ops.append_sum(param.sum_scale);
   }
   if (param.dnnl_param.with_postsum_act) {
     const auto& act_param = param.postsum_act_param;
-    ops.append_eltwise(act_param.scale, act_param.alg, act_param.alpha, act_param.beta);
+    ops.append_eltwise(act_param.alg, act_param.alpha, act_param.beta);
   }
   attr.set_post_ops(ops);
 
   if (param.dnnl_param.quantized && param.requantize_scales.size()) {
-    int mask = (param.requantize_scales.size() > 1) ? 2 : 0;
-    attr.set_output_scales(mask, param.requantize_scales);
+    // v3: per-OC output scales must go on DNNL_ARG_WEIGHTS (mask=1<<0=1 along
+    // the OC axis of weights) because v3 conv rejects per-channel DNNL_ARG_DST
+    // scales (only per-tensor mask=0 supported on DST). Mathematically
+    // equivalent to v2 set_output_scales(mask=2): each OC's output is scaled
+    // by scales[oc]. Per-tensor case (size==1) keeps DNNL_ARG_DST mask=0.
+    if (param.requantize_scales.size() > 1) {
+      attr.set_scales_mask(DNNL_ARG_WEIGHTS, 1);
+    } else {
+      attr.set_scales_mask(DNNL_ARG_DST, 0);
+    }
   }
-  auto GetConvFwdPd =
-      [&param, &data, &weights, &output, &attr](const dnnl::convolution_forward::desc& desc) {
-        auto engine = CpuEngine::Get()->get_engine();
-        try {
-          // DNNL introduced padded formats since 0.15 which require more memory
-          // compared to the actual size of the tensor. Currently, DNNL operators
-          // still reuse memory from memory planning, so here we need to select a
-          // suboptimal kernel for computation that has the expected memory size requirements
-          auto conv_pd =
-              std::make_shared<dnnl::convolution_forward::primitive_desc>(desc, attr, engine);
-          while (conv_pd->dst_desc().get_size() != GetArraySize(output) ||
-                 conv_pd->src_desc().get_size() != GetArraySize(data) ||
-                 (!param.dnnl_param.quantized &&
-                  conv_pd->weights_desc().get_size() != GetArraySize(weights))) {
-            // next_impl() will visit desc and engine, please make sure they are still alive here.
-            CHECK(conv_pd->next_impl()) << "No convolution implementation for this request.";
-          }
-          return conv_pd;
-        } catch (dnnl::error& e) {
-          if (e.status == dnnl_unimplemented && param.dnnl_param.quantized) {
-            LOG(ERROR) << "AVX512-BW support or Intel(R) MKL dependency is "
-                          "required for int8 convolution";
-          } else {
-            LOG(ERROR) << e.message;
-          }
-          throw;
-        }
-      };
 
-  if (param.conv_param.dilate.ndim() == 0 && bias_md_ptr == nullptr) {
-    dnnl::convolution_forward::desc desc(prop,
-                                         dnnl::algorithm::convolution_direct,
-                                         data_md,
-                                         weight_md,
-                                         out_md,
-                                         strides,
-                                         padding,
-                                         padding);
-    return GetConvFwdPd(desc);
-  } else if (param.conv_param.dilate.ndim() == 0) {
-    dnnl::convolution_forward::desc desc(prop,
-                                         dnnl::algorithm::convolution_direct,
-                                         data_md,
-                                         weight_md,
-                                         *bias_md_ptr,
-                                         out_md,
-                                         strides,
-                                         padding,
-                                         padding);
-    return GetConvFwdPd(desc);
+  // v3 dilation is always required; build it once (zeros if no dilation).
+  const int kndim = param.conv_param.kernel.ndim();
+  dnnl::memory::dims dilates(kndim, 0);
+  if (param.conv_param.dilate.ndim() != 0) {
+    CHECK_EQ(param.conv_param.dilate.ndim(), kndim);
+    for (int i = 0; i < kndim; ++i) {
+      dilates[i] = param.conv_param.dilate[i] - 1;
+    }
+  }
+
+  auto engine = CpuEngine::Get()->get_engine();
+  auto GetConvFwdPd = [&param, &data, &weights, &output](
+                          std::shared_ptr<dnnl::convolution_forward::primitive_desc> conv_pd) {
+    try {
+      while (conv_pd->dst_desc().get_size() != GetArraySize(output) ||
+             conv_pd->src_desc().get_size() != GetArraySize(data) ||
+             (!param.dnnl_param.quantized &&
+              conv_pd->weights_desc().get_size() != GetArraySize(weights))) {
+        CHECK(conv_pd->next_impl()) << "No convolution implementation for this request.";
+      }
+      return conv_pd;
+    } catch (dnnl::error& e) {
+      if (e.status == dnnl_unimplemented && param.dnnl_param.quantized) {
+        LOG(ERROR) << "AVX512-BW support or Intel(R) MKL dependency is "
+                      "required for int8 convolution";
+      } else {
+        LOG(ERROR) << e.message;
+      }
+      throw;
+    }
+  };
+
+  // v3: ::desc removed; primitive_desc takes the args directly.
+  if (bias_md_ptr == nullptr) {
+    return GetConvFwdPd(std::make_shared<dnnl::convolution_forward::primitive_desc>(
+        engine, prop, dnnl::algorithm::convolution_direct,
+        data_md, weight_md, out_md,
+        strides, dilates, padding, padding, attr));
   } else {
-    dnnl::memory::dims dilates(param.conv_param.kernel.ndim());
-    if (param.conv_param.dilate.ndim() == 1) {
-      dilates[0] = param.conv_param.dilate[0] - 1;
-    } else if (param.conv_param.dilate.ndim() == 2) {
-      dilates[0] = param.conv_param.dilate[0] - 1;
-      dilates[1] = param.conv_param.dilate[1] - 1;
-    } else if (param.conv_param.dilate.ndim() == 3) {
-      dilates[0] = param.conv_param.dilate[0] - 1;
-      dilates[1] = param.conv_param.dilate[1] - 1;
-      dilates[2] = param.conv_param.dilate[2] - 1;
-    } else {
-      LOG(FATAL) << "Unexpected oneDNN Conv dilate size " << param.conv_param.dilate.ndim()
-                 << ", supporting only 1 or 2 or 3.";
-    }
-    if (bias_md_ptr == nullptr) {
-      dnnl::convolution_forward::desc desc(prop,
-                                           dnnl::algorithm::convolution_direct,
-                                           data_md,
-                                           weight_md,
-                                           out_md,
-                                           strides,
-                                           dilates,
-                                           padding,
-                                           padding);
-      return GetConvFwdPd(desc);
-    } else {
-      dnnl::convolution_forward::desc desc(prop,
-                                           dnnl::algorithm::convolution_direct,
-                                           data_md,
-                                           weight_md,
-                                           *bias_md_ptr,
-                                           out_md,
-                                           strides,
-                                           dilates,
-                                           padding,
-                                           padding);
-      return GetConvFwdPd(desc);
-    }
+    return GetConvFwdPd(std::make_shared<dnnl::convolution_forward::primitive_desc>(
+        engine, prop, dnnl::algorithm::convolution_direct,
+        data_md, weight_md, *bias_md_ptr, out_md,
+        strides, dilates, padding, padding, attr));
   }
 }
 
@@ -242,15 +209,13 @@ static std::shared_ptr<dnnl::convolution_backward_data::primitive_desc> GetConvB
   }
 
   auto GetConvBwdDataPd = [&data, &weight, &output, &fwd_pd](
-                              const dnnl::convolution_backward_data::desc& desc) {
-    auto engine = CpuEngine::Get()->get_engine();
+                              std::shared_ptr<dnnl::convolution_backward_data::primitive_desc>
+                                  conv_pd) {
     try {
       // DNNL introduced padded formats since 0.15 which require more memory
       // compared to the actual size of the tensor. Currently, DNNL operators
       // still reuse memory from memory planning, so here we need to select a
       // suboptimal kernel for computation that has the expected memory size requirements
-      auto conv_pd =
-          std::make_shared<dnnl::convolution_backward_data::primitive_desc>(desc, engine, fwd_pd);
       while (conv_pd->diff_dst_desc().get_size() != GetArraySize(output) ||
              conv_pd->diff_src_desc().get_size() != GetArraySize(data) ||
              conv_pd->weights_desc().get_size() != GetArraySize(weight)) {
@@ -264,35 +229,21 @@ static std::shared_ptr<dnnl::convolution_backward_data::primitive_desc> GetConvB
     }
   };
 
-  if (param.dilate.ndim() == 0) {
-    dnnl::convolution_backward_data::desc desc(
-        dnnl::algorithm::convolution_direct, data_md, weight_md, out_md, strides, padding, padding);
-    return GetConvBwdDataPd(desc);
-  } else {
-    dnnl::memory::dims dilates(param.kernel.ndim());
-    if (param.dilate.ndim() == 1) {
-      dilates[0] = param.dilate[0] - 1;
-    } else if (param.dilate.ndim() == 2) {
-      dilates[0] = param.dilate[0] - 1;
-      dilates[1] = param.dilate[1] - 1;
-    } else if (param.dilate.ndim() == 3) {
-      dilates[0] = param.dilate[0] - 1;
-      dilates[1] = param.dilate[1] - 1;
-      dilates[2] = param.dilate[2] - 1;
-    } else {
-      LOG(FATAL) << "Unexpected oneDNN Conv dilate size " << param.dilate.ndim()
-                 << ", supporting only 1 or 2 or 3.";
+  // v3: dilation is required; build it once (zeros if no dilation).
+  const int kndim = param.kernel.ndim();
+  dnnl::memory::dims dilates(kndim, 0);
+  if (param.dilate.ndim() != 0) {
+    CHECK_EQ(param.dilate.ndim(), kndim);
+    for (int i = 0; i < kndim; ++i) {
+      dilates[i] = param.dilate[i] - 1;
     }
-    dnnl::convolution_backward_data::desc desc(dnnl::algorithm::convolution_direct,
-                                               data_md,
-                                               weight_md,
-                                               out_md,
-                                               strides,
-                                               dilates,
-                                               padding,
-                                               padding);
-    return GetConvBwdDataPd(desc);
   }
+
+  // v3: ::desc removed; primitive_desc takes args directly.
+  return GetConvBwdDataPd(std::make_shared<dnnl::convolution_backward_data::primitive_desc>(
+      engine, dnnl::algorithm::convolution_direct,
+      data_md, weight_md, out_md,
+      strides, dilates, padding, padding, fwd_pd));
 }
 
 static std::shared_ptr<dnnl::convolution_backward_weights::primitive_desc> GetConvBwdWeights(
@@ -338,15 +289,13 @@ static std::shared_ptr<dnnl::convolution_backward_weights::primitive_desc> GetCo
   }
 
   auto GetConvBwdWeightsPd = [&data, &weight, &output, &fwd_pd](
-                                 const dnnl::convolution_backward_weights::desc& desc) {
-    auto engine = CpuEngine::Get()->get_engine();
+                                 std::shared_ptr<
+                                     dnnl::convolution_backward_weights::primitive_desc> conv_pd) {
     try {
       // DNNL introduced padded formats since 0.15 which require more memory
       // compared to the actual size of the tensor. Currently, DNNL operators
       // still reuse memory from memory planning, so here we need to select a
       // suboptimal kernel for computation that has the expected memory size requirements
-      auto conv_pd = std::make_shared<dnnl::convolution_backward_weights::primitive_desc>(
-          desc, engine, fwd_pd);
       while (conv_pd->diff_dst_desc().get_size() != GetArraySize(output) ||
              conv_pd->src_desc().get_size() != GetArraySize(data) ||
              conv_pd->diff_weights_desc().get_size() != GetArraySize(weight)) {
@@ -360,59 +309,30 @@ static std::shared_ptr<dnnl::convolution_backward_weights::primitive_desc> GetCo
     }
   };
 
-  if (param.dilate.ndim() == 0 && bias == nullptr) {
-    dnnl::convolution_backward_weights::desc desc(
-        dnnl::algorithm::convolution_direct, data_md, weight_md, out_md, strides, padding, padding);
-    return GetConvBwdWeightsPd(desc);
-  } else if (param.dilate.ndim() == 0) {
-    auto bias_md = GetMemDesc(*bias);
-    dnnl::convolution_backward_weights::desc desc(dnnl::algorithm::convolution_direct,
-                                                  data_md,
-                                                  weight_md,
-                                                  bias_md,
-                                                  out_md,
-                                                  strides,
-                                                  padding,
-                                                  padding);
-    return GetConvBwdWeightsPd(desc);
+  // v3: dilation is required; build it once (zeros if no dilation).
+  const int kndim = param.kernel.ndim();
+  dnnl::memory::dims dilates(kndim, 0);
+  if (param.dilate.ndim() != 0) {
+    CHECK_EQ(param.dilate.ndim(), kndim);
+    for (int i = 0; i < kndim; ++i) {
+      dilates[i] = param.dilate[i] - 1;
+    }
+  }
+
+  // v3: ::desc removed; primitive_desc takes args directly.
+  if (bias == nullptr) {
+    return GetConvBwdWeightsPd(
+        std::make_shared<dnnl::convolution_backward_weights::primitive_desc>(
+            engine, dnnl::algorithm::convolution_direct,
+            data_md, weight_md, out_md,
+            strides, dilates, padding, padding, fwd_pd));
   } else {
-    dnnl::memory::dims dilates(param.kernel.ndim());
-    if (param.dilate.ndim() == 1) {
-      dilates[0] = param.dilate[0] - 1;
-    } else if (param.dilate.ndim() == 2) {
-      dilates[0] = param.dilate[0] - 1;
-      dilates[1] = param.dilate[1] - 1;
-    } else if (param.dilate.ndim() == 3) {
-      dilates[0] = param.dilate[0] - 1;
-      dilates[1] = param.dilate[1] - 1;
-      dilates[2] = param.dilate[2] - 1;
-    } else {
-      LOG(FATAL) << "Unexpected oneDNN Conv dilate size " << param.dilate.ndim()
-                 << ", supporting only 1 or 2 or 3.";
-    }
-    if (bias == nullptr) {
-      dnnl::convolution_backward_weights::desc desc(dnnl::algorithm::convolution_direct,
-                                                    data_md,
-                                                    weight_md,
-                                                    out_md,
-                                                    strides,
-                                                    dilates,
-                                                    padding,
-                                                    padding);
-      return GetConvBwdWeightsPd(desc);
-    } else {
-      auto bias_md = GetMemDesc(*bias);
-      dnnl::convolution_backward_weights::desc desc(dnnl::algorithm::convolution_direct,
-                                                    data_md,
-                                                    weight_md,
-                                                    bias_md,
-                                                    out_md,
-                                                    strides,
-                                                    dilates,
-                                                    padding,
-                                                    padding);
-      return GetConvBwdWeightsPd(desc);
-    }
+    auto bias_md = GetMemDesc(*bias);
+    return GetConvBwdWeightsPd(
+        std::make_shared<dnnl::convolution_backward_weights::primitive_desc>(
+            engine, dnnl::algorithm::convolution_direct,
+            data_md, weight_md, bias_md, out_md,
+            strides, dilates, padding, padding, fwd_pd));
   }
 }
 
@@ -424,6 +344,20 @@ DNNLConvForward::DNNLConvForward(const DNNLConvFullParam& param,
                                  const NDArray& output)
     : pd_(GetConvFwdImpl(param, is_train, data, weight, bias, output)) {
   fwd_ = std::make_shared<dnnl::convolution_forward>(GetPd());
+  // v3: build runtime output-scale tensor for the quantized path. ARG key
+  // depends on per-OC (WEIGHTS, mask=1) vs per-tensor (DST, mask=0) — must
+  // match the set_scales_mask call in GetConvFwdImpl.
+  if (param.dnnl_param.quantized && param.requantize_scales.size()) {
+    auto engine = CpuEngine::Get()->get_engine();
+    dnnl::memory::desc scale_md(
+        dnnl::memory::dims{static_cast<dnnl::memory::dim>(param.requantize_scales.size())},
+        dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+    out_scale_mem_ = std::make_shared<dnnl::memory>(scale_md, engine);
+    std::memcpy(out_scale_mem_->get_data_handle(),
+                param.requantize_scales.data(),
+                param.requantize_scales.size() * sizeof(float));
+    out_scale_arg_ = (param.requantize_scales.size() > 1) ? DNNL_ARG_WEIGHTS : DNNL_ARG_DST;
+  }
 }
 
 DNNLConvForward& GetConvFwd(const DNNLConvFullParam& param,
@@ -511,6 +445,11 @@ void DNNLConvolutionForwardFullFeature(const DNNLConvFullParam& param,
   net_args.insert({DNNL_ARG_SRC, *data_mem});
   net_args.insert({DNNL_ARG_WEIGHTS, *weight_mem});
   net_args.insert({DNNL_ARG_DST, *out_mem.second});
+  // v3: bind the runtime DNNL_ARG_DST scale tensor declared via
+  // attr.set_scales_mask in GetConvFwdImpl for quantized requantize output.
+  if (auto* sm = fwd->GetOutputScaleMem()) {
+    net_args.insert({DNNL_ARG_ATTR_SCALES | fwd->GetOutputScaleArg(), *sm});
+  }
   DNNLStream::Get()->RegisterPrimArgs(fwd->GetFwd(), net_args);
   CommitOutput(out_data[conv::kOut], out_mem);
   DNNLStream::Get()->Submit();

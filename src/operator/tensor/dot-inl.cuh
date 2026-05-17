@@ -89,7 +89,7 @@ struct DotCsrDnsDnsVectorKernel {
                                              const DType* data_r,
                                              const nnvm::dim_t num_cols_r) {
     using nnvm::dim_t;
-    __shared__ volatile AType vals[mshadow::cuda::kBaseThreadNum];
+    __shared__ volatile AType vals[mshadow::cuda_impl::kBaseThreadNum];
     const dim_t warp_id = tid / 32;           // global warp id
     const dim_t lane = tid & (32-1);          // local thread id within warp
     const dim_t irow = warp_id / num_cols_r;  // lhs row that this warp computes

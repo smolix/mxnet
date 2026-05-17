@@ -70,7 +70,7 @@ def test_recordimage_dataset(prepare_record):
 
     for i, (x, y) in enumerate(loader):
         assert x.shape[0] == 1 and x.shape[3] == 3
-        assert y.asscalar() == i
+        assert y.item() == i
 
 @mx.util.use_np
 def test_recordimage_dataset_handle(prepare_record):
@@ -102,7 +102,7 @@ def test_recordimage_dataset_with_data_loader_multiworker(prepare_record):
 
     for i, (x, y) in enumerate(loader):
         assert x.shape[0] == 1 and x.shape[3] == 3
-        assert y.asscalar() == i
+        assert y.item() == i
 
     # with transform
     dataset = gluon.data.vision.ImageRecordDataset(recfile).transform(_dataset_transform_fn)
@@ -110,7 +110,7 @@ def test_recordimage_dataset_with_data_loader_multiworker(prepare_record):
 
     for i, (x, y) in enumerate(loader):
         assert x.shape[0] == 1 and x.shape[3] == 3
-        assert y.asscalar() == i
+        assert y.item() == i
 
     # with transform_first
     dataset = gluon.data.vision.ImageRecordDataset(recfile).transform_first(_dataset_transform_first_fn)
@@ -118,7 +118,7 @@ def test_recordimage_dataset_with_data_loader_multiworker(prepare_record):
 
     for i, (x, y) in enumerate(loader):
         assert x.shape[0] == 1 and x.shape[3] == 3
-        assert y.asscalar() == i
+        assert y.item() == i
 
 def test_sampler():
     seq_sampler = gluon.data.SequentialSampler(10)

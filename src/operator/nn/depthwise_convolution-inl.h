@@ -88,7 +88,7 @@ void DepthwiseConv2dForwardGpu(mshadow::Stream<gpu>* stream,
   using namespace mshadow;
   using namespace mshadow::expr;
   using namespace tf::depthwise_conv;
-  using namespace tf::depthwise_conv::cuda;
+  using namespace tf::depthwise_conv::cuda_kernels;
   Tensor<gpu, 4, DType> data   = in_data[conv::kData].get<gpu, 4, DType>(stream);
   Tensor<gpu, 4, DType> weight = in_data[conv::kWeight].get<gpu, 4, DType>(stream);
   Tensor<gpu, 4, DType> out    = out_data[conv::kOut].get<gpu, 4, DType>(stream);
@@ -100,14 +100,14 @@ void DepthwiseConv2dForwardGpu(mshadow::Stream<gpu>* stream,
   } else {
     int num_output = out_data[conv::kOut].shape_.Size();
     int block_num =
-        std::min(num_output / mshadow::cuda::kBaseThreadNum + 1, mshadow::cuda::kMaxGridNum);
+        std::min(num_output / mshadow::cuda_impl::kBaseThreadNum + 1, mshadow::cuda_impl::kMaxGridNum);
     auto s = mshadow::Stream<gpu>::GetStream(stream);
     if (args.filter_height == 3 && args.filter_width == 3) {
-      DepthwiseConv2dForwardKernel<DType, 3, 3><<<block_num, mshadow::cuda::kBaseThreadNum, 0, s>>>(
+      DepthwiseConv2dForwardKernel<DType, 3, 3><<<block_num, mshadow::cuda_impl::kBaseThreadNum, 0, s>>>(
           data.dptr_, weight.dptr_, args, num_output, out.dptr_);
     } else {
       DepthwiseConv2dForwardKernel<DType, -1, -1>
-          <<<block_num, mshadow::cuda::kBaseThreadNum, 0, s>>>(
+          <<<block_num, mshadow::cuda_impl::kBaseThreadNum, 0, s>>>(
               data.dptr_, weight.dptr_, args, num_output, out.dptr_);
     }
     MSHADOW_CUDA_POST_KERNEL_CHECK(DepthwiseConv2dForwardKernel);
@@ -123,7 +123,7 @@ void DepthwiseConv2dBackwardDataGpu(mshadow::Stream<gpu>* stream,
   using namespace mshadow;
   using namespace mshadow::expr;
   using namespace tf::depthwise_conv;
-  using namespace tf::depthwise_conv::cuda;
+  using namespace tf::depthwise_conv::cuda_kernels;
   Tensor<gpu, 4, DType> out_g     = out_grad[conv::kOut].get<gpu, 4, DType>(stream);
   Tensor<gpu, 4, DType> weight    = in_data[conv::kWeight].get<gpu, 4, DType>(stream);
   Tensor<gpu, 4, DType> in_data_g = in_grad[conv::kData].get<gpu, 4, DType>(stream);
@@ -135,8 +135,8 @@ void DepthwiseConv2dBackwardDataGpu(mshadow::Stream<gpu>* stream,
     int num_in_grad = in_grad[conv::kData].shape_.Size();
     auto s          = mshadow::Stream<gpu>::GetStream(stream);
     int block_num =
-        std::min(num_in_grad / mshadow::cuda::kBaseThreadNum + 1, mshadow::cuda::kMaxGridNum);
-    DepthwiseConv2dBackwardDataKernel<DType><<<block_num, mshadow::cuda::kBaseThreadNum, 0, s>>>(
+        std::min(num_in_grad / mshadow::cuda_impl::kBaseThreadNum + 1, mshadow::cuda_impl::kMaxGridNum);
+    DepthwiseConv2dBackwardDataKernel<DType><<<block_num, mshadow::cuda_impl::kBaseThreadNum, 0, s>>>(
         args, out_g.dptr_, weight.dptr_, in_data_g.dptr_, num_in_grad);
     MSHADOW_CUDA_POST_KERNEL_CHECK(DepthwiseConv2dBackwardDataKernel);
   }
@@ -151,7 +151,7 @@ void DepthwiseConv2dBackwardFilterGpu(mshadow::Stream<gpu>* stream,
   using namespace mshadow;
   using namespace mshadow::expr;
   using namespace tf::depthwise_conv;
-  using namespace tf::depthwise_conv::cuda;
+  using namespace tf::depthwise_conv::cuda_kernels;
   Tensor<gpu, 4, DType> out_g       = out_grad[conv::kOut].get<gpu, 4, DType>(stream);
   Tensor<gpu, 4, DType> in_d        = in_data[conv::kData].get<gpu, 4, DType>(stream);
   Tensor<gpu, 4, DType> weight_grad = in_grad[conv::kWeight].get<gpu, 4, DType>(stream);
@@ -162,14 +162,14 @@ void DepthwiseConv2dBackwardFilterGpu(mshadow::Stream<gpu>* stream,
   } else {
     int num_out_grad = out_grad[conv::kOut].shape_.Size();
     auto s           = mshadow::Stream<gpu>::GetStream(stream);
-    int block_num    = std::min(args.out_channel * args.batch, mshadow::cuda::kMaxGridNum);
+    int block_num    = std::min(args.out_channel * args.batch, mshadow::cuda_impl::kMaxGridNum);
     if (args.filter_width == 3 && args.filter_height == 3) {
       DepthwiseConv2dBackwardFilterKernel<DType, 3, 3>
-          <<<block_num, mshadow::cuda::kBaseThreadNum, 0, s>>>(
+          <<<block_num, mshadow::cuda_impl::kBaseThreadNum, 0, s>>>(
               args, out_g.dptr_, in_d.dptr_, weight_grad.dptr_, num_out_grad);
     } else {
       DepthwiseConv2dBackwardFilterKernel<DType, -1, -1>
-          <<<block_num, mshadow::cuda::kBaseThreadNum, 0, s>>>(
+          <<<block_num, mshadow::cuda_impl::kBaseThreadNum, 0, s>>>(
               args, out_g.dptr_, in_d.dptr_, weight_grad.dptr_, num_out_grad);
     }
     MSHADOW_CUDA_POST_KERNEL_CHECK(DepthwiseConv2dBackwardFilterKernel);

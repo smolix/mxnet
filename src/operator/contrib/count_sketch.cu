@@ -31,7 +31,7 @@
 #define THREADS_PER_BLOCK 512
 
 namespace mshadow {
-namespace cuda {
+namespace cuda_impl {
 // wrappers to deal with atomic add
 // supporting only single precision
 __device__ void atomic_add(float* dst, float val) {
@@ -102,7 +102,7 @@ __global__ void sketch_backward_kernel(const int nthreads,
   in_grad[index]     = out_grad[i_outdim] * s[i_indim];
 }
 
-}  // namespace cuda
+}  // namespace cuda_impl
 
 // CountSketch Forward
 template <typename DType>
@@ -131,7 +131,7 @@ inline void CountSketchForward(const Tensor<gpu, 2, DType>& out,
     // to make number of threads the same as input
     const int threads_per_block = min(THREADS_PER_BLOCK, nthreads);
     int nblocks                 = (nthreads + threads_per_block - 1) / threads_per_block;
-    cuda::sketch_forward_kernel<DType><<<nblocks, threads_per_block>>>(nthreads,
+    mshadow::cuda_impl::sketch_forward_kernel<DType><<<nblocks, threads_per_block>>>(nthreads,
                                                                        out_ptr + bstart * out_dim,
                                                                        h_ptr,
                                                                        s_ptr,
@@ -171,7 +171,7 @@ inline void CountSketchBackward(const Tensor<gpu, 2, DType>& in_grad,
     // to make number of threads the same as input
     const int threads_per_block = min(THREADS_PER_BLOCK, nthreads);
     int nblocks                 = (nthreads + threads_per_block - 1) / threads_per_block;
-    cuda::sketch_backward_kernel<DType>
+    mshadow::cuda_impl::sketch_backward_kernel<DType>
         <<<nblocks, threads_per_block>>>(nthreads,
                                          in_grad_ptr + bstart * in_dim,
                                          h_ptr,

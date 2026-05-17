@@ -60,7 +60,7 @@ using deconv_bwd_weights_pd_t = dnnl::deconvolution_backward_weights::primitive_
 // channels (for example: oihw => iohw, iohw => oihw, goihw => giohw).
 inline dnnl::memory::desc IOLogicalSwapDesc(const dnnl::memory::desc& desc,
                                             const uint32_t num_group) {
-  std::vector<int> order(desc.data.ndims);
+  std::vector<int> order(desc.get_ndims());
   std::iota(std::begin(order), std::end(order), 0);
   const int offset = static_cast<int>(num_group > 1);
   std::swap(order[offset + 0], order[offset + 1]);
@@ -77,9 +77,9 @@ inline void IOLogicalSwapDNNLMem(const NDArray& arr, const uint32_t num_group) {
     // descriptor from GetWeightDesc but with default format
     const auto& temp = GetWeightDesc(arr, num_group);
     desc             = dnnl::memory::desc(
-        temp.dims(),
-        temp.data_type(),
-        static_cast<dnnl::memory::format_tag>(GetDefaultFormat(temp.data.ndims)));
+        temp.get_dims(),
+        temp.get_data_type(),
+        static_cast<dnnl::memory::format_tag>(GetDefaultFormat(temp.get_ndims())));
   }
   auto iOLogicalSwapDesc = IOLogicalSwapDesc(desc, num_group);
   const_cast<NDArray&>(arr).UpdateDNNLMemDesc(&iOLogicalSwapDesc);
@@ -305,9 +305,11 @@ class DeconvDescCreator {
                         const size_t weights_size,
                         const size_t out_size) const;
 
-  deconv_fwd_t::desc CreateFwdDesc() const;
-  deconv_bwd_data_t::desc CreateBwdDataDesc() const;
-  deconv_bwd_weights_t::desc CreateBwdWeightsDesc() const;
+  // v3: ::desc removed. We return primitive_desc directly here; the
+  //     engine is fetched from CpuEngine inside the methods.
+  deconv_fwd_pd_t CreateFwdPd() const;
+  deconv_bwd_data_pd_t CreateBwdDataPd(const deconv_fwd_pd_t& fwd_pd) const;
+  deconv_bwd_weights_pd_t CreateBwdWeightsPd(const deconv_fwd_pd_t& fwd_pd) const;
 
  private:
   dnnl::memory::desc data_md;
@@ -331,40 +333,28 @@ inline bool DeconvDescCreator::CheckImplSizeReq(const size_t data_size,
           out_size == GetMemDescSize(out_md));
 }
 
-inline deconv_fwd_t::desc DeconvDescCreator::CreateFwdDesc() const {
-  return deconv_fwd_t::desc(dnnl::prop_kind::forward_training,
-                            dnnl::algorithm::deconvolution_direct,
-                            data_md,
-                            weights_md,
-                            bias_md,
-                            out_md,
-                            strides,
-                            dilates,
-                            padding,
-                            padding);
+inline deconv_fwd_pd_t DeconvDescCreator::CreateFwdPd() const {
+  auto engine = CpuEngine::Get()->get_engine();
+  return deconv_fwd_pd_t(engine, dnnl::prop_kind::forward_training,
+                         dnnl::algorithm::deconvolution_direct,
+                         data_md, weights_md, bias_md, out_md,
+                         strides, dilates, padding, padding);
 }
 
-inline deconv_bwd_data_t::desc DeconvDescCreator::CreateBwdDataDesc() const {
-  return deconv_bwd_data_t::desc(dnnl::algorithm::deconvolution_direct,
-                                 data_md,
-                                 weights_md,
-                                 out_md,
-                                 strides,
-                                 dilates,
-                                 padding,
-                                 padding);
+inline deconv_bwd_data_pd_t DeconvDescCreator::CreateBwdDataPd(
+    const deconv_fwd_pd_t& fwd_pd) const {
+  auto engine = CpuEngine::Get()->get_engine();
+  return deconv_bwd_data_pd_t(engine, dnnl::algorithm::deconvolution_direct,
+                              data_md, weights_md, out_md,
+                              strides, dilates, padding, padding, fwd_pd);
 }
 
-inline deconv_bwd_weights_t::desc DeconvDescCreator::CreateBwdWeightsDesc() const {
-  return deconv_bwd_weights_t::desc(dnnl::algorithm::deconvolution_direct,
-                                    data_md,
-                                    weights_md,
-                                    bias_md,
-                                    out_md,
-                                    strides,
-                                    dilates,
-                                    padding,
-                                    padding);
+inline deconv_bwd_weights_pd_t DeconvDescCreator::CreateBwdWeightsPd(
+    const deconv_fwd_pd_t& fwd_pd) const {
+  auto engine = CpuEngine::Get()->get_engine();
+  return deconv_bwd_weights_pd_t(engine, dnnl::algorithm::deconvolution_direct,
+                                 data_md, weights_md, bias_md, out_md,
+                                 strides, dilates, padding, padding, fwd_pd);
 }
 
 void DNNLDeconvolutionForward(const nnvm::NodeAttrs& attrs,

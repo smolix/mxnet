@@ -122,6 +122,35 @@ if(CUDA_VERSION VERSION_GREATER_EQUAL "11.1")
   set(CUDA_LIMIT_GPU_ARCHITECTURE "9.0")
 endif()
 
+# CUDA 11.8 added Ada (sm_89) and Hopper (sm_90).
+if(CUDA_VERSION VERSION_GREATER_EQUAL "11.8")
+  list(APPEND CUDA_KNOWN_GPU_ARCHITECTURES "Ada" "Hopper")
+  list(APPEND CUDA_COMMON_GPU_ARCHITECTURES "8.9" "9.0")
+  list(APPEND CUDA_ALL_GPU_ARCHITECTURES "8.7" "8.9" "9.0")
+
+  set(_CUDA_MAX_COMMON_ARCHITECTURE "9.0+PTX")
+  set(CUDA_LIMIT_GPU_ARCHITECTURE "10.0")
+endif()
+
+# CUDA 12.8 added Blackwell (sm_100 datacenter and sm_120 consumer/RTX-PRO).
+if(CUDA_VERSION VERSION_GREATER_EQUAL "12.8")
+  list(APPEND CUDA_KNOWN_GPU_ARCHITECTURES "Blackwell")
+  list(APPEND CUDA_COMMON_GPU_ARCHITECTURES "10.0" "12.0")
+  list(APPEND CUDA_ALL_GPU_ARCHITECTURES "10.0" "10.1" "12.0")
+
+  set(_CUDA_MAX_COMMON_ARCHITECTURE "12.0+PTX")
+  set(CUDA_LIMIT_GPU_ARCHITECTURE "13.0")
+endif()
+
+# CUDA 13 drops compilation support for Maxwell (5.x), Pascal (6.x) and Volta (7.0/7.2).
+if(CUDA_VERSION VERSION_GREATER_EQUAL "13.0")
+  list(REMOVE_ITEM CUDA_KNOWN_GPU_ARCHITECTURES
+       "Maxwell" "Maxwell+Tegra" "Pascal" "Volta")
+  list(REMOVE_ITEM CUDA_COMMON_GPU_ARCHITECTURES "5.0" "5.2" "5.3" "6.0" "6.1" "6.2" "7.0")
+  list(REMOVE_ITEM CUDA_ALL_GPU_ARCHITECTURES
+       "5.0" "5.2" "5.3" "6.0" "6.1" "6.2" "7.0" "7.2")
+endif()
+
 list(APPEND CUDA_COMMON_GPU_ARCHITECTURES "${_CUDA_MAX_COMMON_ARCHITECTURE}")
 
 # Check with: cmake -DCUDA_VERSION=7.0 -P select_compute_arch.cmake
@@ -240,7 +269,7 @@ function(CUDA_SELECT_NVCC_ARCH_FLAGS out_variable)
       set(add_ptx TRUE)
       set(arch_name ${CMAKE_MATCH_1})
     endif()
-    if(arch_name MATCHES "^([0-9]\\.[0-9](\\([0-9]\\.[0-9]\\))?)$")
+    if(arch_name MATCHES "^([0-9]+\\.[0-9]+(\\([0-9]+\\.[0-9]+\\))?)$")
       set(arch_bin ${CMAKE_MATCH_1})
       set(arch_ptx ${arch_bin})
     else()
@@ -269,8 +298,17 @@ function(CUDA_SELECT_NVCC_ARCH_FLAGS out_variable)
         set(arch_bin 7.5)
         set(arch_ptx 7.5)
       elseif(${arch_name} STREQUAL "Ampere")
-        set(arch_bin 8.0)
-        set(arch_ptx 8.0)
+        set(arch_bin 8.0 8.6)
+        set(arch_ptx 8.6)
+      elseif(${arch_name} STREQUAL "Ada")
+        set(arch_bin 8.9)
+        set(arch_ptx 8.9)
+      elseif(${arch_name} STREQUAL "Hopper")
+        set(arch_bin 9.0)
+        set(arch_ptx 9.0)
+      elseif(${arch_name} STREQUAL "Blackwell")
+        set(arch_bin 10.0 12.0)
+        set(arch_ptx 12.0)
       else()
         message(SEND_ERROR "Unknown CUDA Architecture Name ${arch_name} in CUDA_SELECT_NVCC_ARCH_FLAGS")
       endif()

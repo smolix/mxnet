@@ -38,7 +38,7 @@
     CHECK_EQ(err, cudaSuccess) << "Name: " << #x << " ErrStr:" << cudaGetErrorString(err); \
   } while (0)
 namespace mshadow {
-namespace cuda {
+namespace cuda_impl {
 /* load unit for memory access, if CUDAARCH not defined, this is advanced nvcc */
 #if MSHADOW_OLD_CUDA
 const int kMemUnitBits = 4;
@@ -934,6 +934,6 @@ inline void SortByKey(Tensor<gpu, 1, mshadow::half::half_t> keys,
   bool is_ascend) {
   LOG(FATAL) << "SortByKey for half_t is not implemented!";
 }
-}  // namespace cuda
+}  // namespace cuda_impl
 }  // namespace mshadow
 #endif  // MSHADOW_CUDA_TENSOR_GPU_INL_CUH_

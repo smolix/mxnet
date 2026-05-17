@@ -28,7 +28,7 @@
 namespace mxnet {
 namespace op {
 
-using namespace mshadow::cuda;
+using namespace mshadow::cuda_impl;
 
 // The maximum number of blocks to use in the default kernel call.
 constexpr int ROI_MAXIMUM_NUM_BLOCKS = 4096;

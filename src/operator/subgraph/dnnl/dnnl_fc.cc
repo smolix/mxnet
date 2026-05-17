@@ -220,6 +220,14 @@ void SgDNNLFCOp::Forward(const OpContext& ctx,
     if (has_bias)
       args_[DNNL_ARG_BIAS] = *static_cast<const dnnl::memory*>(cached_bias_.GetDNNLData());
     args_[DNNL_ARG_DST] = *cached_out_mem_;
+    // v3: bind runtime scale tensors. int8/u8-output uses one scale on DST
+    // (per-tensor) or WEIGHTS (per-OC). f32-output uses SRC + WEIGHTS scales.
+    if (auto* sm = fwd_->GetOutputScaleMem()) {
+      args_[DNNL_ARG_ATTR_SCALES | fwd_->GetOutputScaleArg()] = *sm;
+    }
+    if (auto* ssm = fwd_->GetSrcScaleMem()) {
+      args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = *ssm;
+    }
     initialized_        = true;
   }
 
@@ -262,7 +270,7 @@ NDArray SgDNNLFCOp::PrepareOutputWithSum(const NDArray& sum_input, const NDArray
     if (output.dtype() == mshadow::kInt32) {
       auto mem_desc           = in_dnnl_mem->get_desc();
       auto this_dtype         = get_dnnl_type(mshadow::kInt32);
-      mem_desc.data.data_type = static_cast<dnnl_data_type_t>(this_dtype);
+      mem_desc = CloneMemDescWithDtype(mem_desc, this_dtype);
       dnnl_mem_ptr tmp_mem(new dnnl::memory(
           mem_desc, CpuEngine::Get()->get_engine(), out_dnnl_mem->get_data_handle()));
       DNNLStream::Get()->RegisterMem(tmp_mem);
@@ -272,20 +280,28 @@ NDArray SgDNNLFCOp::PrepareOutputWithSum(const NDArray& sum_input, const NDArray
     } else if (sum_input.dtype() == mshadow::kUint8 && output.dtype() == mshadow::kInt8) {
       auto sum_mem_desc           = in_dnnl_mem->get_desc();
       auto out_dtype              = get_dnnl_type(mshadow::kInt8);
-      sum_mem_desc.data.data_type = static_cast<dnnl_data_type_t>(out_dtype);
+      sum_mem_desc = CloneMemDescWithDtype(sum_mem_desc, out_dtype);
       dnnl_mem_ptr tmp_mem(new dnnl::memory(
           sum_mem_desc, CpuEngine::Get()->get_engine(), out_dnnl_mem->get_data_handle()));
       DNNLStream::Get()->RegisterMem(tmp_mem);
-      std::vector<float> reorder_scale = {u8_to_s8_scale};
+      // v3: set_output_scales removed; bind runtime scale tensor.
       dnnl::primitive_attr reorder_attr;
-      reorder_attr.set_output_scales(0, reorder_scale);
+      // v3 reorder: DNNL_ARG_DST divides; use DNNL_ARG_SRC to multiply by u8_to_s8_scale.
+      reorder_attr.set_scales_mask(DNNL_ARG_SRC, 0);
       const auto reorder_pd = dnnl::reorder::primitive_desc(CpuEngine::Get()->get_engine(),
                                                             in_dnnl_mem->get_desc(),
                                                             CpuEngine::Get()->get_engine(),
                                                             sum_mem_desc,
                                                             reorder_attr);
-      DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd),
-                                          {{DNNL_ARG_FROM, *in_dnnl_mem}, {DNNL_ARG_TO, *tmp_mem}});
+      dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                                  dnnl::memory::format_tag::x);
+      auto scale_mem = dnnl::memory(scale_md, CpuEngine::Get()->get_engine());
+      *reinterpret_cast<float*>(scale_mem.get_data_handle()) = u8_to_s8_scale;
+      DNNLStream::Get()->RegisterPrimArgs(
+          dnnl::reorder(reorder_pd),
+          {{DNNL_ARG_FROM, *in_dnnl_mem},
+           {DNNL_ARG_TO, *tmp_mem},
+           {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC, scale_mem}});
       return NDArray(tmp_mem);
     } else {
       dnnl_mem_ptr tmp_mem(new dnnl::memory(in_dnnl_mem->get_desc(),
@@ -404,34 +420,47 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
     if (has_bias) {
       if (cached_bias_.dtype() == mshadow::kInt8) {
         float bias_scale = GetQuantizeScale(mshadow::kInt8, cached_bias_min_, cached_bias_max_);
-
-        float bias_int32_rescale = data_scale_ * weight_scales_[0] / bias_scale;
-        // TODO(zhennan): dnnl has bug to handle INT_MAX in bias, so set
-        // the maximum value of bias to INT_MAX / 2.
-        float bias_max_rescale =
-            MaxValue<int32_t>() / 2 / MaxAbs(cached_bias_min_, cached_bias_max_) / bias_scale;
-        if (bias_int32_rescale > bias_max_rescale) {
-          // avoid overflow on bias
-          bias_int32_rescale   = bias_max_rescale;
-          float weight_rescale = bias_int32_rescale * bias_scale / data_scale_ / weight_scales_[0];
-          int8_t* weight_ptr   = weight.data().dptr<int8_t>();
-          size_t weight_size   = weight.shape().Size();
+        if (dnnl_param.enabled_float_output.has_value()) {
+          // Dequantize bias to real f32; v3 matmul wants f32 bias when dst is f32.
+          NDArray bias    = in_data[fullc::kBias];
+          cached_bias_    = NDArray(bias.storage_type(), bias.shape(), bias.ctx(), true,
+                                    mshadow::kFloat32);
+          int8_t* bias_ptr = bias.data().dptr<int8_t>();
+          float* f32_bias  = cached_bias_.data().dptr<float>();
+          size_t bias_size = bias.shape().Size();
 #pragma omp parallel for num_threads(nthreads)
-          for (index_t i = 0; i < static_cast<index_t>(weight_size); ++i) {
-            weight_ptr[i] = std::round(weight_ptr[i] * weight_rescale);
+          for (index_t i = 0; i < static_cast<index_t>(bias_size); ++i) {
+            f32_bias[i] = static_cast<float>(bias_ptr[i]) / bias_scale;
           }
-          weight_scales_[0] *= weight_rescale;
-        }
-        NDArray bias = in_data[fullc::kBias];
-        cached_bias_ =
-            NDArray(bias.storage_type(), bias.shape(), bias.ctx(), true, mshadow::kInt32);
-        int8_t* bias_ptr            = bias.data().dptr<int8_t>();
-        int32_t* quantized_bias_ptr = cached_bias_.data().dptr<int32_t>();
-        size_t bias_size            = bias.shape().Size();
+        } else {
+          float bias_int32_rescale = data_scale_ * weight_scales_[0] / bias_scale;
+          // TODO(zhennan): dnnl has bug to handle INT_MAX in bias, so set
+          // the maximum value of bias to INT_MAX / 2.
+          float bias_max_rescale =
+              MaxValue<int32_t>() / 2 / MaxAbs(cached_bias_min_, cached_bias_max_) / bias_scale;
+          if (bias_int32_rescale > bias_max_rescale) {
+            // avoid overflow on bias
+            bias_int32_rescale   = bias_max_rescale;
+            float weight_rescale = bias_int32_rescale * bias_scale / data_scale_ / weight_scales_[0];
+            int8_t* weight_ptr   = weight.data().dptr<int8_t>();
+            size_t weight_size   = weight.shape().Size();
+#pragma omp parallel for num_threads(nthreads)
+            for (index_t i = 0; i < static_cast<index_t>(weight_size); ++i) {
+              weight_ptr[i] = std::round(weight_ptr[i] * weight_rescale);
+            }
+            weight_scales_[0] *= weight_rescale;
+          }
+          NDArray bias = in_data[fullc::kBias];
+          cached_bias_ =
+              NDArray(bias.storage_type(), bias.shape(), bias.ctx(), true, mshadow::kInt32);
+          int8_t* bias_ptr            = bias.data().dptr<int8_t>();
+          int32_t* quantized_bias_ptr = cached_bias_.data().dptr<int32_t>();
+          size_t bias_size            = bias.shape().Size();
 
 #pragma omp parallel for num_threads(nthreads)
-        for (index_t i = 0; i < static_cast<index_t>(bias_size); ++i) {
-          quantized_bias_ptr[i] = std::round(bias_ptr[i] * bias_int32_rescale);
+          for (index_t i = 0; i < static_cast<index_t>(bias_size); ++i) {
+            quantized_bias_ptr[i] = std::round(bias_ptr[i] * bias_int32_rescale);
+          }
         }
       }
     }
@@ -440,8 +469,19 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
   size_t num_channel = cached_weight_.shape()[0];
   float out_scale    = 1.0f;
   if (fuse_requantize || dnnl_param.enabled_float_output.has_value()) {
-    float tmp_scale_ = 1.0f;
-    if (fuse_requantize) {
+    if (dnnl_param.enabled_float_output.has_value()) {
+      // v3 dequant: split combined dequant into SRC (1/data_scale) and
+      // WEIGHTS (1/weight_scale[c]); bias is dequantized to real f32. This
+      // avoids the rejected s32-bias + f32-dst + DST-scale combo.
+      full_param_.src_scale = 1.0f / data_scale_;
+      const size_t n        = support_channelwise_scale ? num_channel : 1;
+      full_param_.output_scales.resize(n);
+#pragma omp parallel for num_threads(nthreads)
+      for (index_t i = 0; i < static_cast<index_t>(n); ++i) {
+        full_param_.output_scales[i] = 1.0f / weight_scales_[i];
+      }
+    } else {
+      float tmp_scale_ = 1.0f;
       if (dnnl_param.with_eltwise) {
         tmp_scale_ = 1.0 / data_scale_;
         full_param_.eltwise_param.scale =
@@ -450,19 +490,25 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
         out_scale  = GetQuantizeScale(output.dtype(), cached_output_min_, cached_output_max_);
         tmp_scale_ = out_scale / data_scale_;
       }
-    } else {
-      tmp_scale_ = 1.0 / data_scale_;
-    }
 
-    if (support_channelwise_scale) {
-      full_param_.output_scales.resize(num_channel);
+      if (support_channelwise_scale) {
+        full_param_.output_scales.resize(num_channel);
 #pragma omp parallel for num_threads(nthreads)
-      for (index_t i = 0; i < static_cast<index_t>(num_channel); ++i) {
-        full_param_.output_scales[i] = tmp_scale_ / weight_scales_[i];
+        for (index_t i = 0; i < static_cast<index_t>(num_channel); ++i) {
+          full_param_.output_scales[i] = tmp_scale_ / weight_scales_[i];
+        }
+      } else {
+        full_param_.output_scales.resize(1);
+        full_param_.output_scales[0] = tmp_scale_ / weight_scales_[0];
       }
-    } else {
-      full_param_.output_scales.resize(1);
-      full_param_.output_scales[0] = tmp_scale_ / weight_scales_[0];
+      if (dmlc::GetEnv("MX_FC_DBG", 0)) {
+        std::fprintf(stderr,
+                     "FC_DBG: out=%d ds=%g ws=%g out_min=%g out_max=%g out_scale=%g tmp=%g os[0]=%g bias_min=%g bias_max=%g\n",
+                     output.dtype(), data_scale_, weight_scales_[0],
+                     cached_output_min_, cached_output_max_,
+                     out_scale, tmp_scale_, full_param_.output_scales[0],
+                     cached_bias_min_, cached_bias_max_);
+      }
     }
   } else {
     Stream<cpu>* s = ctx.get_stream<cpu>();
@@ -494,7 +540,19 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
   if (dnnl_param.with_sum && !dnnl_param.enabled_float_output.has_value()) {
     float sum_in_scale =
         GetQuantizeScale(in_data[idx.sum].dtype(), cached_sum_min_, cached_sum_max_);
-    full_param_.sum_scale = out_scale / sum_in_scale;
+    // v2:  dst = output_scales * (acc + bias) + sum_scale_v2 * dst_loaded
+    // v3:  dst = DST_scale * (acc + bias + sum_scale_v3 * dst_loaded)
+    // For the per-tensor DST path, DST_scale = output_scales[0]; therefore the
+    // v3 sum_scale must be pre-divided by DST_scale so the sum contribution
+    // ends up multiplied by sum_scale_v2 in the final result. For per-OC
+    // (weights-side scaling) there is no DST scale, so sum_scale_v2 is used
+    // directly.
+    const float sum_scale_v2 = out_scale / sum_in_scale;
+    if (full_param_.output_scales.size() == 1) {
+      full_param_.sum_scale = sum_scale_v2 / full_param_.output_scales[0];
+    } else {
+      full_param_.sum_scale = sum_scale_v2;
+    }
     if (in_data[idx.sum].dtype() == mshadow::kUint8 && output.dtype() == mshadow::kInt8) {
       // In this case, reorder with scale 0.5 is used on in_data[idx.sum] to
       // scale it to s8 range, so sum_scale has to be rescaled as well
@@ -541,17 +599,31 @@ void SgDNNLFCOp::GetCachedWeightsAndBias(const NDArray& weight,
     // convert weight and bias to the format that oneDNN requires
     if (!full_param_.dnnl_param.quantized || support_channelwise_scale) {
       dnnl::memory::desc bias_md;
+      const bool float_output =
+          full_param_.dnnl_param.quantized &&
+          full_param_.dnnl_param.enabled_float_output.has_value();
       if (has_bias)
         bias_md = fwd_->fwd_pd.bias_desc();
+      // v3 dequant: bias is already f32 and represents real values; suppress
+      // the bias-rescale reorder by passing data_scale=0 and copy f32 bias
+      // directly into the cached buffer below.
       ConvertWeightBias2DNNL(&cached_weight_,
                              &cached_bias_,
-                             has_bias,
+                             has_bias && !float_output,
                              fwd_->fwd_pd.weights_desc(),
                              has_bias ? &bias_md : nullptr,
                              1,
-                             data_scale_,
+                             float_output ? 0.0f : data_scale_,
                              weight_scales_,
                              false);
+      if (has_bias && float_output) {
+        NDArray new_bias(&bias_md);
+        const auto bias_mem = new_bias.GetDNNLData();
+        std::memcpy(bias_mem->get_data_handle(),
+                    cached_bias_.data().dptr<float>(),
+                    cached_bias_.shape().Size() * sizeof(float));
+        cached_bias_ = new_bias;
+      }
     } else {
       const auto def_weight_mem = weight.GetDNNLData();
       if (def_weight_mem->get_desc() != fwd_->fwd_pd.weights_desc()) {
@@ -602,14 +674,24 @@ static void SgDNNLFCParamParser(nnvm::NodeAttrs* attrs) {
       if (op_name == "Activation") {
         const ActivationParam act_param = nnvm::get<ActivationParam>(node->attrs.parsed);
         full_param.eltwise_param.alg    = GetDNNLActAlgo(act_param);
+        // v3: eltwise_soft_relu formula is log(1+exp(alpha*x))/alpha; alpha=0
+        // is a division by zero. softrelu uses alpha=1 (softplus) and
+        // log_sigmoid is encoded as soft_relu with alpha=-1.
+        if (act_param.act_type == activation::kSoftReLU) {
+          full_param.eltwise_param.alpha = 1.0f;
+        } else if (act_param.act_type == activation::kLogSigmoid) {
+          full_param.eltwise_param.alpha = -1.0f;
+        }
       } else if (op_name == "LeakyReLU") {
         const auto act_param           = nnvm::get<LeakyReLUParam>(node->attrs.parsed);
         full_param.eltwise_param.alpha = act_param.slope;
         full_param.eltwise_param.alg   = GetDNNLActAlgo(act_param);
       } else if (op_name == "clip") {
+        // v3: bounded_relu(alpha=upper) became eltwise_clip(alpha=lower, beta=upper).
         const ClipParam clip_param     = nnvm::get<ClipParam>(node->attrs.parsed);
-        full_param.eltwise_param.alg   = dnnl::algorithm::eltwise_bounded_relu;
-        full_param.eltwise_param.alpha = clip_param.a_max;
+        full_param.eltwise_param.alg   = dnnl::algorithm::eltwise_clip;
+        full_param.eltwise_param.alpha = 0.f;
+        full_param.eltwise_param.beta  = clip_param.a_max;
       } else {
         full_param.eltwise_param.alg = GetDNNLEltwiseAlgo(op_name);
       }

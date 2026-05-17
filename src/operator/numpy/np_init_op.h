@@ -222,6 +222,18 @@ inline bool NumpyLinspaceShape(const nnvm::NodeAttrs& attrs,
 }
 
 struct numpy_linspace_fwd {
+  // Cast a real value to DType the way numpy.linspace does:
+  //   - for integer DType: floor toward -infinity (matches NumPy's
+  //     `dtype=intX` behaviour, which floors rather than truncating-toward-0).
+  //   - for floating DType: straight cast.
+  template <typename DType>
+  MSHADOW_XINLINE static DType cast_value(double v) {
+    if (std::is_integral<DType>::value) {
+      return static_cast<DType>(::floor(v));
+    }
+    return static_cast<DType>(v);
+  }
+
   template <typename DType, typename ValueType>
   MSHADOW_XINLINE static void Map(index_t i,
                                   index_t size,
@@ -233,12 +245,12 @@ struct numpy_linspace_fwd {
                                   DType* out) {
     if (i == 0) {
       // Special cases : start = 9007199254740993
-      KERNEL_ASSIGN(out[i], req, static_cast<DType>(start));
+      KERNEL_ASSIGN(out[i], req, cast_value<DType>(static_cast<double>(start)));
     } else {
-      KERNEL_ASSIGN(out[i], req, static_cast<DType>(start + step * i));
+      KERNEL_ASSIGN(out[i], req, cast_value<DType>(static_cast<double>(start) + step * i));
     }
     if (endpoint && i != 0 && i == size - 1) {
-      KERNEL_ASSIGN(out[i], req, static_cast<DType>(stop));
+      KERNEL_ASSIGN(out[i], req, cast_value<DType>(static_cast<double>(stop)));
     }
   }
 };

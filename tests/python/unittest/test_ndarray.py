@@ -2028,19 +2028,19 @@ def test_large_int_rounding():
     large_integer = 50000001
 
     a = mx.nd.array([large_integer], dtype='int32')
-    assert np.all(a == large_integer)
+    assert np.all((a == large_integer).asnumpy())
 
     a = mx.nd.array([large_integer], dtype='int32').floor()
-    assert np.all(a == large_integer)
+    assert np.all((a == large_integer).asnumpy())
 
     a = mx.nd.array([large_integer], dtype='int32').round()
-    assert np.all(a == large_integer)
+    assert np.all((a == large_integer).asnumpy())
 
     a = mx.nd.array([large_integer], dtype='int32').ceil()
-    assert np.all(a == large_integer)
+    assert np.all((a == large_integer).asnumpy())
 
     a = mx.nd.array([large_integer], dtype='int32').trunc()
-    assert np.all(a == large_integer)
+    assert np.all((a == large_integer).asnumpy())
 
 
 def test_load_saved_gpu_array_when_no_gpus_are_present():

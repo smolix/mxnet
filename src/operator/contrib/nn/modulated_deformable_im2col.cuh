@@ -283,14 +283,14 @@ inline void modulated_deformable_im2col(mshadow::Stream<gpu>* s,
   const uint32_t deformable_group, DType* data_col) {
   // num_axes should be smaller than block size
   index_t num_spatial_axes = kernel_shape.ndim();
-  CHECK_LT(num_spatial_axes, mshadow::cuda::kBaseThreadNum);
+  CHECK_LT(num_spatial_axes, mshadow::cuda_impl::kBaseThreadNum);
   index_t channel_per_deformable_group = im_shape[1] / deformable_group;
   index_t num_kernels = im_shape[1] * col_shape.ProdShape(1, col_shape.ndim());
   using namespace mxnet_op;
   switch (num_spatial_axes) {
   case 2:
     modulated_deformable_im2col_gpu_kernel<DType> // NOLINT_NEXT_LINE(whitespace/operators)
-        <<<cuda_get_num_blocks(num_kernels), mshadow::cuda::kBaseThreadNum,
+        <<<cuda_get_num_blocks(num_kernels), mshadow::cuda_impl::kBaseThreadNum,
            0, mshadow::Stream<gpu>::GetStream(s)>>>(
         num_kernels, data_im, data_offset, data_mask, im_shape[2], im_shape[3], kernel_shape[0], kernel_shape[1],
         pad[0], pad[1], stride[0], stride[1], dilation[0], dilation[1], channel_per_deformable_group,
@@ -391,14 +391,14 @@ inline void modulated_deformable_col2im(mshadow::Stream<gpu>* s,
   index_t channel_per_deformable_group = im_shape[1] / deformable_group;
   index_t num_kernels = col_shape.ProdShape(0, col_shape.ndim());
   // num_axes should be smaller than block size
-  CHECK_LT(num_spatial_axes, mshadow::cuda::kBaseThreadNum);
+  CHECK_LT(num_spatial_axes, mshadow::cuda_impl::kBaseThreadNum);
   using namespace mxnet_op;
   switch (num_spatial_axes) {
   case 2:
     // To avoid involving atomic operations, we will launch one kernel per
     // bottom dimension, and then in the kernel add up the top dimensions.
     // NOLINT_NEXT_LINE(whitespace/operators)
-    modulated_deformable_col2im_gpu_kernel<DType><<<cuda_get_num_blocks(num_kernels), mshadow::cuda::kBaseThreadNum,
+    modulated_deformable_col2im_gpu_kernel<DType><<<cuda_get_num_blocks(num_kernels), mshadow::cuda_impl::kBaseThreadNum,
                                0, mshadow::Stream<gpu>::GetStream(s)>>>(
         num_kernels, data_col, data_offset, data_mask, im_shape[1], im_shape[2], im_shape[3],
         kernel_shape[0], kernel_shape[1], pad[0], pad[1], stride[0], stride[1],
@@ -511,7 +511,7 @@ inline void modulated_deformable_col2im_coord(mshadow::Stream<gpu>* s,
   index_t num_kernels = col_shape[1] * col_shape[2] * col_shape[3] * 2 * kernel_shape[0] * kernel_shape[1] * deformable_group;
   index_t channel_per_deformable_group = col_shape[0] / deformable_group;
   // num_axes should be smaller than block size
-  CHECK_LT(num_spatial_axes, mshadow::cuda::kBaseThreadNum);
+  CHECK_LT(num_spatial_axes, mshadow::cuda_impl::kBaseThreadNum);
   using namespace mxnet_op;
   switch (num_spatial_axes) {
   case 2:
@@ -519,7 +519,7 @@ inline void modulated_deformable_col2im_coord(mshadow::Stream<gpu>* s,
     // bottom dimension, and then in the kernel add up the top dimensions.
     // NOLINT_NEXT_LINE(whitespace/operators)
 
-    modulated_deformable_col2im_coord_gpu_kernel<DType> << <cuda_get_num_blocks(num_kernels), mshadow::cuda::kBaseThreadNum,
+    modulated_deformable_col2im_coord_gpu_kernel<DType> << <cuda_get_num_blocks(num_kernels), mshadow::cuda_impl::kBaseThreadNum,
       0, mshadow::Stream<gpu>::GetStream(s) >> >(
         num_kernels, data_col, data_im, data_offset, data_mask, im_shape[1], im_shape[2], im_shape[3],
         kernel_shape[0], kernel_shape[1], pad[0], pad[1], stride[0], stride[1],

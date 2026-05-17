@@ -127,7 +127,7 @@ void DNNLQuantizeAsymOp::Forward(const OpContext& ctx,
       const dnnl::engine& cpu_engine   = mxnet::CpuEngine::Get()->get_engine();
       const dnnl::memory::desc& i_desc = i_mem->get_desc();
       o_desc_                          = i_desc;
-      o_desc_.data.data_type           = get_dnnl_type_t(outputs[0].dtype());
+      o_desc_ = CloneMemDescWithDtype(o_desc_, get_dnnl_type_t(outputs[0].dtype()));
       dnnl::reorder::primitive_desc reorder_pd(cpu_engine, i_desc, cpu_engine, o_desc_, attr);
       fwd_pd_      = std::make_shared<dnnl::reorder>(reorder_pd);
       initialized_ = true;

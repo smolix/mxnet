@@ -127,7 +127,7 @@ inline void MapExp(TRValue<R, gpu, dim, DType> *dst,
   CHECK(eshape[0] == 0 || eshape == dshape)
     << "Assignment: Shape of Tensors are not consistent with target, "
     << "eshape: " << eshape << " dshape:" << dshape;
-  cuda::MapPlan<Saver>(MakePlan(dst->self()),
+  cuda_impl::MapPlan<Saver>(MakePlan(dst->self()),
                        MakePlan(exp.self()),
                        dshape.FlatTo2D(),
                        Stream<gpu>::GetStream(expr::StreamInfo<gpu, R>::Get(dst->self())));
@@ -145,7 +145,7 @@ inline void MapReduceKeepLowest(TRValue<R, gpu, 1, DType> *dst,
   Shape<1> dshape = expr::ShapeCheck<1, R>::Check(dst->self());
   CHECK_EQ(eshape[1], dshape[0]) << "MapReduceKeepLowest::reduction dimension do not match";
   CHECK_NE(eshape[0], 0U) << "can not reduce over empty tensor";
-  cuda::MapReduceKeepLowest<Saver, Reducer>
+  cuda_impl::MapReduceKeepLowest<Saver, Reducer>
       (MakePlan(dst->self()), MakePlan(exp.self()), scale, eshape,
        Stream<gpu>::GetStream(expr::StreamInfo<gpu, R>::Get(dst->self())));
 }
@@ -168,27 +168,27 @@ inline void MapReduceKeepHighDim(TRValue<R, gpu, 1, DType> *dst,
                            eshape.ProdShape(dimkeep + 1, EShape::kSubdim),
                            eshape[EShape::kSubdim]);
   // call equavalent map red dim 2
-  cuda::MapReduceKeepDim1<Saver, Reducer>
+  cuda_impl::MapReduceKeepDim1<Saver, Reducer>
       (MakePlan(dst->self()), MakePlan(exp.self()), scale, pshape,
        Stream<gpu>::GetStream(expr::StreamInfo<gpu, R>::Get(dst->self())));
 }
 template<typename DType>
 inline void Softmax(Tensor<gpu, 2, DType> dst,
                     const Tensor<gpu, 2, DType>& src) {
-  cuda::Softmax(dst, src);
+  cuda_impl::Softmax(dst, src);
 }
 
 template<typename DType>
 inline void Softmax(Tensor<gpu, 3, DType> dst,
                     const Tensor<gpu, 3, DType>& src) {
-  cuda::Softmax(dst, src);
+  cuda_impl::Softmax(dst, src);
 }
 
 template<typename DType>
 inline void SoftmaxGrad(const Tensor<gpu, 2, DType> &dst,
                         const Tensor<gpu, 2, DType> &src,
                         const Tensor<gpu, 1, DType> &label) {
-  cuda::SoftmaxGrad(dst, src, label);
+  cuda_impl::SoftmaxGrad(dst, src, label);
 }
 
 template<typename DType>
@@ -196,7 +196,7 @@ inline void SmoothSoftmaxGrad(const Tensor<gpu, 2, DType> &dst,
                               const Tensor<gpu, 2, DType> &src,
                               const Tensor<gpu, 1, DType> &label,
                               const float alpha) {
-  cuda::SmoothSoftmaxGrad(dst, src, label, alpha);
+  cuda_impl::SmoothSoftmaxGrad(dst, src, label, alpha);
 }
 
 template<typename DType>
@@ -204,7 +204,7 @@ inline void SoftmaxGrad(const Tensor<gpu, 2, DType> &dst,
                         const Tensor<gpu, 2, DType> &src,
                         const Tensor<gpu, 1, DType> &label,
                         const DType &ignore_label) {
-  cuda::SoftmaxGrad(dst, src, label, ignore_label);
+  cuda_impl::SoftmaxGrad(dst, src, label, ignore_label);
 }
 
 template<typename DType>
@@ -213,14 +213,14 @@ inline void SmoothSoftmaxGrad(const Tensor<gpu, 2, DType> &dst,
                               const Tensor<gpu, 1, DType> &label,
                               const DType &ignore_label,
                               const float alpha) {
-  cuda::SmoothSoftmaxGrad(dst, src, label, ignore_label, alpha);
+  cuda_impl::SmoothSoftmaxGrad(dst, src, label, ignore_label, alpha);
 }
 
 template<typename DType>
 inline void SoftmaxGrad(const Tensor<gpu, 3, DType> &dst,
                         const Tensor<gpu, 3, DType> &src,
                         const Tensor<gpu, 2, DType> &label) {
-  cuda::SoftmaxGrad(dst, src, label);
+  cuda_impl::SoftmaxGrad(dst, src, label);
 }
 
 template<typename DType>
@@ -228,14 +228,14 @@ inline void SoftmaxGrad(const Tensor<gpu, 3, DType> &dst,
                         const Tensor<gpu, 3, DType> &src,
                         const Tensor<gpu, 2, DType> &label,
                         const DType &ignore_label) {
-  cuda::SoftmaxGrad(dst, src, label, ignore_label);
+  cuda_impl::SoftmaxGrad(dst, src, label, ignore_label);
 }
 
 template<bool clip, typename IndexType, typename DType>
 inline void AddTakeGrad(Tensor<gpu, 2, DType> dst,
                         const Tensor<gpu, 1, IndexType>& index,
                         const Tensor<gpu, 2, DType> &src) {
-  cuda::AddTakeGrad<clip, IndexType, DType>(dst, index, src);
+  cuda_impl::AddTakeGrad<clip, IndexType, DType>(dst, index, src);
 }
 
 template<bool clip, typename IndexType, typename DType, typename AType>
@@ -243,7 +243,7 @@ inline void AddTakeGrad(Tensor<gpu, 2, DType> dst,
                         Tensor<gpu, 2, AType> temp,
                         const Tensor<gpu, 1, IndexType>& index,
                         const Tensor<gpu, 2, DType> &src) {
-  cuda::AddTakeGrad<clip, IndexType, DType>(dst, temp, index, src);
+  cuda_impl::AddTakeGrad<clip, IndexType, DType>(dst, temp, index, src);
 }
 
 template<typename IndexType, typename DType>
@@ -251,20 +251,20 @@ inline void AddTakeGradLargeBatch(Tensor<gpu, 2, DType> dst,
                                   const Tensor<gpu, 1, IndexType>& sorted,
                                   const Tensor<gpu, 1, IndexType>& index,
                                   const Tensor<gpu, 2, DType> &src) {
-  cuda::AddTakeGradLargeBatch(dst, sorted, index, src);
+  cuda_impl::AddTakeGradLargeBatch(dst, sorted, index, src);
 }
 
 template<typename KDType, typename VDType>
 inline void SortByKey(Tensor<gpu, 1, KDType> keys, Tensor<gpu, 1, VDType> values,
                       bool is_ascend) {
-  cuda::SortByKey(keys, values, is_ascend);
+  cuda_impl::SortByKey(keys, values, is_ascend);
 }
 
 template<typename IndexType, typename DType>
 inline void IndexFill(Tensor<gpu, 2, DType> dst,
                       const Tensor<gpu, 1, IndexType>& index,
                       const Tensor<gpu, 2, DType> &src) {
-  cuda::IndexFill(dst, index, src);
+  cuda_impl::IndexFill(dst, index, src);
 }
 }  // namespace mshadow
 #endif  // __CUDACC__

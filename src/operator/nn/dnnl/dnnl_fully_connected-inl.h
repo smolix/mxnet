@@ -28,6 +28,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cstring>
 #include <memory>
 #include <unordered_map>
 #include <string>
@@ -88,13 +89,18 @@ struct DNNLFCFullParam : public dmlc::Parameter<DNNLFCFullParam> {
   DNNLFCParam dnnl_param;
   DNNLPostEltwiseParam eltwise_param;
   float sum_scale                  = {1.0f};
+  // For int8/u8 output: DST or WEIGHTS scale values (= out_quant_scale /
+  // (data_scale * weight_scale[c])). For f32 output (dequant-as-output):
+  // per-OC or per-tensor WEIGHTS-only dequant (= 1 / weight_scale[c]); the
+  // matching SRC scale (= 1 / data_scale) is stored in src_scale below.
   std::vector<float> output_scales = {0.0f};
+  float src_scale                  = {0.0f};
   DMLC_DECLARE_PARAMETER(DNNLFCFullParam) {}
 
   bool operator==(const DNNLFCFullParam& other) const {
     return this->default_param == other.default_param && this->dnnl_param == other.dnnl_param &&
            this->eltwise_param == other.eltwise_param && this->sum_scale == other.sum_scale &&
-           this->output_scales == other.output_scales;
+           this->output_scales == other.output_scales && this->src_scale == other.src_scale;
   }
 };
 
@@ -193,14 +199,51 @@ class DNNLFullyConnectedForward {
                             const dnnl::memory::desc& out_md)
       : fwd_pd(GetFCFwdImpl(full_param, is_train, data, weight, bias, out_md)) {
     fwd_ = std::make_shared<dnnl::inner_product_forward>(fwd_pd);
+    // v3: build runtime scale tensors for quantized inner_product. For int8/u8
+    // output, a single scale binds to DNNL_ARG_DST (per-tensor) or
+    // DNNL_ARG_WEIGHTS (per-OC). For f32-output (dequant) the matmul kernel
+    // requires the scaling be split across SRC and WEIGHTS rather than DST
+    // (s32 bias + f32 dst + DST scale is rejected by v3 matmul); SRC gets
+    // 1/data_scale and WEIGHTS gets 1/weight_scale[c].
+    if (full_param.dnnl_param.quantized && full_param.output_scales.size()) {
+      auto engine             = CpuEngine::Get()->get_engine();
+      const bool float_output = full_param.dnnl_param.enabled_float_output.has_value();
+      dnnl::memory::desc scale_md(
+          dnnl::memory::dims{static_cast<dnnl::memory::dim>(full_param.output_scales.size())},
+          dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+      out_scale_mem_ = std::make_shared<dnnl::memory>(scale_md, engine);
+      std::memcpy(out_scale_mem_->get_data_handle(),
+                  full_param.output_scales.data(),
+                  full_param.output_scales.size() * sizeof(float));
+      if (float_output) {
+        out_scale_arg_ = DNNL_ARG_WEIGHTS;
+        dnnl::memory::desc src_scale_md(
+            dnnl::memory::dims{1},
+            dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+        src_scale_mem_ = std::make_shared<dnnl::memory>(src_scale_md, engine);
+        *reinterpret_cast<float*>(src_scale_mem_->get_data_handle()) = full_param.src_scale;
+      } else {
+        out_scale_arg_ = (full_param.output_scales.size() > 1) ? DNNL_ARG_WEIGHTS : DNNL_ARG_DST;
+      }
+    }
   }
 
   const dnnl::inner_product_forward& GetFwd() const {
     return *fwd_;
   }
 
+  // v3 quantized: runtime scale tensor (nullptr if not quantized) plus the
+  // ARG key (DNNL_ARG_DST per-tensor, DNNL_ARG_WEIGHTS per-OC).
+  const dnnl::memory* GetOutputScaleMem() const { return out_scale_mem_.get(); }
+  int GetOutputScaleArg() const { return out_scale_arg_; }
+  // f32-output mode only: SRC dequant scale (1/data_scale), nullptr otherwise.
+  const dnnl::memory* GetSrcScaleMem() const { return src_scale_mem_.get(); }
+
  private:
   std::shared_ptr<dnnl::inner_product_forward> fwd_;
+  std::shared_ptr<dnnl::memory> out_scale_mem_;
+  std::shared_ptr<dnnl::memory> src_scale_mem_;
+  int out_scale_arg_{DNNL_ARG_DST};
 };
 
 typedef ParamOpSign<DNNLFCFullParam> DNNLFullyconSignature;
@@ -273,6 +316,7 @@ struct hash<mxnet::op::DNNLFCFullParam> {
     ret        = dmlc::HashCombine(ret, val.dnnl_param);
     ret        = dmlc::HashCombine(ret, val.eltwise_param);
     ret        = dmlc::HashCombine(ret, val.sum_scale);
+    ret        = dmlc::HashCombine(ret, val.src_scale);
     for (const auto& v : val.output_scales)
       ret = dmlc::HashCombine(ret, v);
     return ret;

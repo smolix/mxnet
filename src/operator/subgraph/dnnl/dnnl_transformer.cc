@@ -198,6 +198,8 @@ class SgDNNLSelfAttQKOp {
   std::shared_ptr<dnnl::memory> cached_query_mem_;
   std::shared_ptr<dnnl::memory> cached_key_mem_;
   std::shared_ptr<dnnl::memory> cached_out_mem_;
+  // v3: runtime scale tensor for set_scales_mask matmul attr.
+  std::shared_ptr<dnnl::memory> cached_scale_mem_;
   float min_data_0_;
   float max_data_0_;
   float min_data_1_;
@@ -309,11 +311,18 @@ void SgDNNLSelfAttQKOp::Initialize(const OpContext& ctx,
     }
   }
 
+  // v3: set_output_scales / matmul::desc removed; bind scale at execute time.
   dnnl::primitive_attr attr;
-  attr.set_output_scales(0, {oscale});
-  auto matmul_d  = matmul::desc(query_md, key_md, GetMemDesc(out_tensor));
-  auto matmul_pd = matmul::primitive_desc(matmul_d, attr, engine);
+  attr.set_scales_mask(DNNL_ARG_DST, 0);
+  auto matmul_pd = matmul::primitive_desc(
+      engine, query_md, key_md, GetMemDesc(out_tensor), attr);
   fwd_           = std::make_shared<matmul>(matmul_pd);
+
+  // Pre-build the runtime scale memory.
+  dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                              dnnl::memory::format_tag::x);
+  cached_scale_mem_ = std::make_shared<memory>(scale_md, engine);
+  *reinterpret_cast<float*>(cached_scale_mem_->get_data_handle()) = oscale;
 
   MSHADOW_TYPE_SWITCH(inputs[0].dtype(), DType, {
     DType* query_mem_ptr = inputs[0].data().dptr<DType>();
@@ -332,10 +341,11 @@ void SgDNNLSelfAttQKOp::Initialize(const OpContext& ctx,
         std::make_shared<memory>(matmul_pd.dst_desc(), engine, out_tensor.data().dptr<DType>());
   });
 
-  args_[DNNL_ARG_SRC]     = *cached_query_mem_;
-  args_[DNNL_ARG_WEIGHTS] = *cached_key_mem_;
-  args_[DNNL_ARG_DST]     = *cached_out_mem_;
-  initialized_            = true;
+  args_[DNNL_ARG_SRC]                        = *cached_query_mem_;
+  args_[DNNL_ARG_WEIGHTS]                    = *cached_key_mem_;
+  args_[DNNL_ARG_DST]                        = *cached_out_mem_;
+  args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = *cached_scale_mem_;
+  initialized_                               = true;
 }
 
 template <bool with_split>
@@ -654,6 +664,8 @@ class DNNLSelfAttValAttOp {
   std::shared_ptr<dnnl::memory> cached_result_mem_;
   std::shared_ptr<dnnl::memory> cached_tmp_mem_;
   std::shared_ptr<dnnl::memory> cached_transposed_mem_;  // op output
+  // v3: runtime scale tensor for set_scales_mask matmul attr.
+  std::shared_ptr<dnnl::memory> cached_scale_mem_;
   float min_qkv_;
   float max_qkv_;
   float min_att_;
@@ -780,14 +792,19 @@ void DNNLSelfAttValAttOp::Initialize(const OpContext& ctx,
         std::make_shared<dnnl::memory>(transpose_md, engine, outputs[0].data().dptr<DType>());
   });
 
+  // v3: set_output_scales / matmul::desc removed.
   dnnl::primitive_attr attr;
-  attr.set_output_scales(0, {oscale});
-  auto matmul_d           = matmul::desc(attn_md, value_md, result_md);
-  auto matmul_pd          = matmul::primitive_desc(matmul_d, attr, engine);
-  fwd_                    = std::make_shared<matmul>(matmul_pd);
-  args_[DNNL_ARG_SRC]     = *cached_att_mem_;
-  args_[DNNL_ARG_WEIGHTS] = *cached_value_mem_;
-  args_[DNNL_ARG_DST]     = *cached_result_mem_;
+  attr.set_scales_mask(DNNL_ARG_DST, 0);
+  auto matmul_pd = matmul::primitive_desc(engine, attn_md, value_md, result_md, attr);
+  fwd_           = std::make_shared<matmul>(matmul_pd);
+  dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                              dnnl::memory::format_tag::x);
+  cached_scale_mem_ = std::make_shared<memory>(scale_md, engine);
+  *reinterpret_cast<float*>(cached_scale_mem_->get_data_handle()) = oscale;
+  args_[DNNL_ARG_SRC]                        = *cached_att_mem_;
+  args_[DNNL_ARG_WEIGHTS]                    = *cached_value_mem_;
+  args_[DNNL_ARG_DST]                        = *cached_result_mem_;
+  args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = *cached_scale_mem_;
 
   auto reorder_pd            = dnnl::reorder::primitive_desc(engine, tmp_md, engine, transpose_md);
   reorder_                   = std::make_shared<dnnl::reorder>(reorder_pd);

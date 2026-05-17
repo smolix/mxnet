@@ -165,7 +165,8 @@ if(USE_CUDA)
       "Please fix your cuda installation: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#mandatory-post")
   endif()
   enable_language(CUDA)
-  set(CMAKE_CUDA_STANDARD 14)
+  # CUDA 13's CCCL (libcu++, Thrust, CUB) hard-errors on anything below C++17.
+  set(CMAKE_CUDA_STANDARD 17)
   set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 endif()
 
@@ -684,6 +685,14 @@ if(USE_CUDA)
   endif()
 
   include_directories(${CUDAToolkit_INCLUDE_DIRS})
+  # CUDA 13 relocated the CCCL umbrella (thrust, cub, libcudacxx) under
+  # <toolkit>/include/cccl/. Host-side .cc files that #include <thrust/...>
+  # need this path on the include search list.
+  foreach(_cuda_inc ${CUDAToolkit_INCLUDE_DIRS})
+    if(EXISTS "${_cuda_inc}/cccl/thrust")
+      include_directories("${_cuda_inc}/cccl")
+    endif()
+  endforeach()
   link_directories(${CUDAToolkit_LIBRARY_DIR})
 endif()
 

@@ -254,7 +254,7 @@ bool SupportDNNLConcat(const std::vector<NDArray>& arrs) {
     if (arr.IsView() || !SupportDNNL<2, 12, AllTypes>(arr))
       return false;
     int ndim             = arr.shape().ndim();
-    const int dnnl_ndims = arr.GetDNNLData()->get_desc().data.ndims;
+    const int dnnl_ndims = arr.GetDNNLData()->get_desc().get_ndims();
     if (ndim != dnnl_ndims) {
       return false;
     }

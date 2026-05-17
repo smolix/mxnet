@@ -61,6 +61,26 @@ def context(state=True):
         set_deferred_compute(val)
 
 
+_c_void_pp = ctypes.POINTER(ctypes.c_void_p)
+
+
+def _as_void_pp(items):
+    """Pack a list of ctypes-compatible handles into a c_void_p* (a pointer to
+    the first element of an array). Returns the pointer and keeps the backing
+    array alive by attaching it as ``._buf``.
+
+    Some MXNet C entry points are called without explicit ``argtypes``;
+    starting with Python 3.11's ctypes, passing a ``c_void_p * N`` value
+    directly no longer decays to a ``void**`` — the function then reads
+    uninitialised stack memory. Explicit casting fixes that.
+    """
+    arr_t = ctypes.c_void_p * len(items)
+    arr = arr_t(*items)
+    ptr = ctypes.cast(arr, _c_void_pp)
+    ptr._buf = arr  # type: ignore[attr-defined]
+    return ptr
+
+
 def get_symbol(output_arrays, *, sym_cls=Symbol):
     """Get symbolic representation of computation recorded in deferred compute mode.
 
@@ -74,10 +94,7 @@ def get_symbol(output_arrays, *, sym_cls=Symbol):
     Symbol of sym_cls
     """
     output_arrays = _as_list(output_arrays)
-    # Prepare ctypes array types
-    output_handles_type = ctypes.c_void_p * len(output_arrays)
-    # Convert handles
-    output_handles = output_handles_type(*[array.handle for array in output_arrays])
+    output_handles = _as_void_pp([array.handle for array in output_arrays])
     handle = SymbolHandle()
     check_call(_LIB.MXNDArrayGetDeferredComputeSymbol(output_handles, len(output_arrays),
                                                       ctypes.byref(handle)))
@@ -96,14 +113,10 @@ def set_variable(arrays, variables):
     arrays = _as_list(arrays)
     variables = _as_list(variables)
 
-    # Prepare ctypes array types
-    arrays_type = variables_type = ctypes.c_void_p * len(arrays)
+    arrays_p = _as_void_pp([array.handle for array in arrays])
+    variables_p = _as_void_pp([symbol.handle for symbol in variables])
 
-    # Convert handles
-    arrays = arrays_type(*[array.handle for array in arrays])
-    variables = variables_type(*[symbol.handle for symbol in variables])
-
-    check_call(_LIB.MXNDArraySetDeferredComputeVariable(arrays, variables, len(arrays)))
+    check_call(_LIB.MXNDArraySetDeferredComputeVariable(arrays_p, variables_p, len(arrays)))
 
 
 def clear(arrays):
@@ -115,11 +128,6 @@ def clear(arrays):
     """
 
     arrays = _as_list(arrays)
+    arrays_p = _as_void_pp([array.handle for array in arrays])
 
-    # Prepare ctypes array types
-    arrays_type = ctypes.c_void_p * len(arrays)
-
-    # Convert handles
-    arrays = arrays_type(*[array.handle for array in arrays])
-
-    check_call(_LIB.MXNDArrayClearDeferredCompute(arrays, len(arrays)))
+    check_call(_LIB.MXNDArrayClearDeferredCompute(arrays_p, len(arrays)))

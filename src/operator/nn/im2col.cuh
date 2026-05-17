@@ -128,7 +128,7 @@ inline void im2col_gpu(mshadow::Stream<gpu>* s,
   int num_kernels = channels * height_col * width_col;
   using namespace mxnet_op;
   // NOLINT_NEXT_LINE(whitespace/operators)
-  im2col_gpu_kernel<DType><<<cuda_get_num_blocks(num_kernels), mshadow::cuda::kBaseThreadNum,
+  im2col_gpu_kernel<DType><<<cuda_get_num_blocks(num_kernels), mshadow::cuda_impl::kBaseThreadNum,
                              0, mshadow::Stream<gpu>::GetStream(s)>>>(
       num_kernels, data_im, height, width, kernel_h, kernel_w, pad_h,
       pad_w, stride_h, stride_w, dilation_h, dilation_w, height_col,
@@ -287,20 +287,20 @@ inline void im2col(mshadow::Stream<gpu>* s,
                    const mxnet::TShape& dilation, DType* data_col) {
   // num_axes should be smaller than block size
   index_t num_spatial_axes = kernel_shape.ndim();
-  CHECK_LT(num_spatial_axes, mshadow::cuda::kBaseThreadNum);
+  CHECK_LT(num_spatial_axes, mshadow::cuda_impl::kBaseThreadNum);
   index_t num_kernels = im_shape[1] * col_shape.ProdShape(1, col_shape.ndim());
   using namespace mxnet_op;
   switch (num_spatial_axes) {
   case 1:
     im2col_nd_gpu_kernel<DType, 1>  // NOLINT_NEXT_LINE(whitespace/operators)
-        <<<cuda_get_num_blocks(num_kernels), mshadow::cuda::kBaseThreadNum,
+        <<<cuda_get_num_blocks(num_kernels), mshadow::cuda_impl::kBaseThreadNum,
            0, mshadow::Stream<gpu>::GetStream(s)>>>(
         num_kernels, data_im, im_shape.get<3>(), col_shape.get<2>(),
         kernel_shape.get<1>(), pad.get<1>(), stride.get<1>(), dilation.get<1>(), data_col);
     break;
   case 2:
     im2col_gpu_kernel<DType> // NOLINT_NEXT_LINE(whitespace/operators)
-        <<<cuda_get_num_blocks(num_kernels), mshadow::cuda::kBaseThreadNum,
+        <<<cuda_get_num_blocks(num_kernels), mshadow::cuda_impl::kBaseThreadNum,
            0, mshadow::Stream<gpu>::GetStream(s)>>>(
         num_kernels, data_im, im_shape[2], im_shape[3], kernel_shape[0], kernel_shape[1],
         pad[0], pad[1], stride[0], stride[1], dilation[0], dilation[1],
@@ -308,7 +308,7 @@ inline void im2col(mshadow::Stream<gpu>* s,
     break;
   case 3:
     im2col_nd_gpu_kernel<DType, 3>  // NOLINT_NEXT_LINE(whitespace/operators)
-        <<<cuda_get_num_blocks(num_kernels), mshadow::cuda::kBaseThreadNum,
+        <<<cuda_get_num_blocks(num_kernels), mshadow::cuda_impl::kBaseThreadNum,
            0, mshadow::Stream<gpu>::GetStream(s)>>>(
         num_kernels, data_im, im_shape.get<5>(), col_shape.get<4>(),
         kernel_shape.get<3>(), pad.get<3>(), stride.get<3>(), dilation.get<3>(), data_col);
@@ -338,7 +338,7 @@ inline void col2im_gpu(mshadow::Stream<gpu>* s, const DType* data_col, const int
   // To avoid involving atomic operations, we will launch one kernel per
   // bottom dimension, and then in the kernel add up the top dimensions.
   // NOLINT_NEXT_LINE(whitespace/operators)
-  col2im_gpu_kernel<DType><<<cuda_get_num_blocks(num_kernels), mshadow::cuda::kBaseThreadNum,
+  col2im_gpu_kernel<DType><<<cuda_get_num_blocks(num_kernels), mshadow::cuda_impl::kBaseThreadNum,
                              0, mshadow::Stream<gpu>::GetStream(s)>>>(
       num_kernels, data_col, height, width, channels, kernel_h, kernel_w,
       pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w,
@@ -474,12 +474,12 @@ inline void col2im(mshadow::Stream<gpu>* s,
   index_t num_spatial_axes = kernel_shape.ndim();
   index_t im_size = im_shape.ProdShape(1, im_shape.ndim());
   // num_axes should be smaller than block size
-  CHECK_LT(num_spatial_axes, mshadow::cuda::kBaseThreadNum);
+  CHECK_LT(num_spatial_axes, mshadow::cuda_impl::kBaseThreadNum);
   using namespace mxnet_op;
   switch (num_spatial_axes) {
   case 1:
     col2im_nd_gpu_kernel<DType, 1>  // NOLINT_NEXT_LINE(whitespace/operators)
-          <<<cuda_get_num_blocks(im_size), mshadow::cuda::kBaseThreadNum,
+          <<<cuda_get_num_blocks(im_size), mshadow::cuda_impl::kBaseThreadNum,
              0, mshadow::Stream<gpu>::GetStream(s)>>>(
           im_size, data_col, im_shape.get<3>(), col_shape.get<2>(),
           kernel_shape.get<1>(), pad.get<1>(), stride.get<1>(), dilation.get<1>(),
@@ -490,7 +490,7 @@ inline void col2im(mshadow::Stream<gpu>* s,
     // To avoid involving atomic operations, we will launch one kernel per
     // bottom dimension, and then in the kernel add up the top dimensions.
     // NOLINT_NEXT_LINE(whitespace/operators)
-    col2im_gpu_kernel<DType><<<cuda_get_num_blocks(im_size), mshadow::cuda::kBaseThreadNum,
+    col2im_gpu_kernel<DType><<<cuda_get_num_blocks(im_size), mshadow::cuda_impl::kBaseThreadNum,
                                0, mshadow::Stream<gpu>::GetStream(s)>>>(
         im_size, data_col, im_shape[1], im_shape[2], im_shape[3],
         kernel_shape[0], kernel_shape[1], pad[0], pad[1], stride[0], stride[1],
@@ -499,7 +499,7 @@ inline void col2im(mshadow::Stream<gpu>* s,
     break;
   case 3:
     col2im_nd_gpu_kernel<DType, 3>  // NOLINT_NEXT_LINE(whitespace/operators)
-          <<<cuda_get_num_blocks(im_size), mshadow::cuda::kBaseThreadNum,
+          <<<cuda_get_num_blocks(im_size), mshadow::cuda_impl::kBaseThreadNum,
              0, mshadow::Stream<gpu>::GetStream(s)>>>(
           im_size, data_col, im_shape.get<5>(), col_shape.get<4>(),
           kernel_shape.get<3>(), pad.get<3>(), stride.get<3>(), dilation.get<3>(),

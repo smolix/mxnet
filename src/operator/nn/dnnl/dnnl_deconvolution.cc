@@ -105,22 +105,19 @@ DNNLDeconvFwd& DNNLDeconvFwd::GetCached(const DeconvolutionParam& param, const T
 std::shared_ptr<deconv_fwd_pd_t> DNNLDeconvFwd::CreatePrimitiveDesc(const DeconvolutionParam& param,
                                                                     const Tensors& tensors) {
   DeconvDescCreator ddc(param, tensors.data, tensors.weights, tensors.bias, tensors.out);
-  auto fwd_desc = ddc.CreateFwdDesc();  // `fwd_desc` lifetime must be longer than `pd`
-                                        // when using next_impl
-  const auto& engine          = CpuEngine::Get()->get_engine();
-  const auto pd               = std::make_shared<deconv_fwd_pd_t>(fwd_desc, engine);
+  // v3: ::desc removed; the primitive_desc encapsulates the operator
+  //     description, so we rebuild the pd directly when we need a new
+  //     attempt.
+  const auto pd               = std::make_shared<deconv_fwd_pd_t>(ddc.CreateFwdPd());
   const auto get_data_size    = [&pd]() { return pd->src_desc().get_size(); };
   const auto get_weights_size = [&pd]() { return pd->weights_desc().get_size(); };
   const auto get_out_size     = [&pd]() { return pd->dst_desc().get_size(); };
 
   while (!ddc.CheckImplSizeReq(get_data_size(), get_weights_size(), get_out_size())) {
     if (!pd->next_impl()) {
-      // ImposePlainWherePadding fails when all memory descriptors already have plain formats
-      // imposed, meaning there is no implementation with plain formats
       CHECK(ddc.ImposePlainWherePadding(get_data_size(), get_weights_size(), get_out_size()))
           << "No implementation of deconvolution forward propagation";
-      fwd_desc = ddc.CreateFwdDesc();
-      *pd      = deconv_fwd_pd_t(fwd_desc, engine);
+      *pd = ddc.CreateFwdPd();
     }
   }
   return pd;
@@ -251,22 +248,16 @@ std::shared_ptr<deconv_bwd_data_pd_t> DNNLDeconvBwd::CreateDataPrimitiveDesc(
     const deconv_fwd_pd_t& fwd_pd) {
   DeconvDescCreator ddc(
       param, read_tensors.data, read_tensors.weights, nullptr, read_tensors.out_grad);
-  auto bwd_d_desc = ddc.CreateBwdDataDesc();  // `bwd_d_desc` lifetime must be longer than `pd`
-                                              // when using next_impl
-  const auto& engine          = CpuEngine::Get()->get_engine();
-  const auto pd               = std::make_shared<deconv_bwd_data_pd_t>(bwd_d_desc, engine, fwd_pd);
+  const auto pd               = std::make_shared<deconv_bwd_data_pd_t>(ddc.CreateBwdDataPd(fwd_pd));
   const auto get_data_size    = [&pd]() { return pd->diff_src_desc().get_size(); };
   const auto get_weights_size = [&pd]() { return pd->weights_desc().get_size(); };
   const auto get_out_size     = [&pd]() { return pd->diff_dst_desc().get_size(); };
 
   while (!ddc.CheckImplSizeReq(get_data_size(), get_weights_size(), get_out_size())) {
     if (!pd->next_impl()) {
-      // ImposePlainWherePadding fails when all memory descriptors already have plain formats
-      // imposed, meaning there is no implementation with plain formats
       CHECK(ddc.ImposePlainWherePadding(get_data_size(), get_weights_size(), get_out_size()))
           << "No implementation of deconvolution backward propagation";
-      bwd_d_desc = ddc.CreateBwdDataDesc();
-      *pd        = deconv_bwd_data_pd_t(bwd_d_desc, engine, fwd_pd);
+      *pd = ddc.CreateBwdDataPd(fwd_pd);
     }
   }
   return pd;
@@ -278,22 +269,16 @@ std::shared_ptr<deconv_bwd_weights_pd_t> DNNLDeconvBwd::CreateWeightsPrimitiveDe
     const deconv_fwd_pd_t& fwd_pd) {
   DeconvDescCreator ddc(
       param, read_tensors.data, read_tensors.weights, read_tensors.bias, read_tensors.out_grad);
-  auto bwd_w_desc = ddc.CreateBwdWeightsDesc();  // `bwd_w_desc` lifetime must be longer than `pd`
-                                                 // when using next_impl
-  const auto& engine       = CpuEngine::Get()->get_engine();
-  const auto pd            = std::make_shared<deconv_bwd_weights_pd_t>(bwd_w_desc, engine, fwd_pd);
-  const auto get_data_size = [&pd]() { return pd->src_desc().get_size(); };
+  const auto pd = std::make_shared<deconv_bwd_weights_pd_t>(ddc.CreateBwdWeightsPd(fwd_pd));
+  const auto get_data_size    = [&pd]() { return pd->src_desc().get_size(); };
   const auto get_weights_size = [&pd]() { return pd->diff_weights_desc().get_size(); };
   const auto get_out_size     = [&pd]() { return pd->diff_dst_desc().get_size(); };
 
   while (!ddc.CheckImplSizeReq(get_data_size(), get_weights_size(), get_out_size())) {
     if (!pd->next_impl()) {
-      // ImposePlainWherePadding fails when all memory descriptors already have plain formats
-      // imposed, meaning there is no implementation with plain formats
       CHECK(ddc.ImposePlainWherePadding(get_data_size(), get_weights_size(), get_out_size()))
           << "No implementation of calculating deconvolution weights gradient";
-      bwd_w_desc = ddc.CreateBwdWeightsDesc();
-      *pd        = deconv_bwd_weights_pd_t(bwd_w_desc, engine, fwd_pd);
+      *pd = ddc.CreateBwdWeightsPd(fwd_pd);
     }
   }
   return pd;
@@ -392,16 +377,16 @@ bool DeconvDescCreator::ImposePlainWherePadding(const size_t data_size,
                                                 const size_t out_size) {
   // Changing only one at a time, so maybe better implementations will be selected (than entirely
   // plain one)
-  if (data_md.data.format_kind == dnnl_format_kind_any && data_size != GetMemDescSize(data_md)) {
+  if (data_md.get_format_kind() == dnnl::memory::format_kind::any && data_size != GetMemDescSize(data_md)) {
     data_md = GetDesc(data_md, GetDefaultFormat(data_md));
     return true;
-  } else if (out_md.data.format_kind == dnnl_format_kind_any &&
+  } else if (out_md.get_format_kind() == dnnl::memory::format_kind::any &&
              out_size != GetMemDescSize(out_md)) {
     out_md = GetDesc(out_md, GetDefaultFormat(out_md));
     return true;
-  } else if (weights_md.data.format_kind == dnnl_format_kind_any &&
+  } else if (weights_md.get_format_kind() == dnnl::memory::format_kind::any &&
              weights_size != GetMemDescSize(weights_md)) {
-    const int num_gr = (weights_md.data.ndims > data_md.data.ndims) ? weights_md.data.dims[0] : 1;
+    const int num_gr = (weights_md.get_ndims() > data_md.get_ndims()) ? weights_md.get_dims()[0] : 1;
     weights_md       = IOLogicalSwapDesc(weights_md, num_gr);
     weights_md       = IOLogicalSwapDesc(GetDesc(weights_md, GetDefaultFormat(weights_md)), num_gr);
     return true;

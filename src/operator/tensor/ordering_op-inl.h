@@ -434,7 +434,7 @@ MSHADOW_FORCE_INLINE void TopKSort(const Tensor<gpu, 1, DType>& dat,
       mxnet::op::SortByKey(batch_id, ind, true, &sort_work);
     }
   } else {
-    const IDXType nthreads(mshadow::cuda::kBaseThreadNum);
+    const IDXType nthreads(mshadow::cuda_impl::kBaseThreadNum);
     PartialSortSmallK<<<M,
                         nthreads,
                         nthreads * K*(sizeof(IDXType) + sizeof(DType)),

@@ -109,21 +109,22 @@ softmax_fwd_pd_t DNNLSoftmaxFwd::GetSoftmaxFwdPd(const dnnl::memory& input_mem,
                                                  const bool is_train) {
   const auto data_md    = input_mem.get_desc();
   const auto cpu_engine = CpuEngine::Get()->get_engine();
-  const auto prop = is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_scoring;
-  const auto desc = dnnl::softmax_forward::desc(prop, data_md, axis);
-  return softmax_fwd_pd_t(desc, cpu_engine);
+  const auto prop = is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_inference;
+  // v3: ::desc removed; pass args directly to primitive_desc. The algorithm
+  //     parameter (new in v3) selects accurate softmax.
+  return softmax_fwd_pd_t(cpu_engine, prop, dnnl::algorithm::softmax_accurate,
+                          data_md, data_md, axis);
 }
 
 linear_pd_t DNNLSoftmaxFwd::GetTemperaturePd(const dnnl::memory& input_mem,
                                              const float temperature) {
   const auto data_md    = input_mem.get_desc();
   const auto cpu_engine = CpuEngine::Get()->get_engine();
-  const auto desc       = dnnl::eltwise_forward::desc(dnnl::prop_kind::forward_scoring,
-                                                dnnl::algorithm::eltwise_linear,
-                                                data_md,
-                                                1.0f / temperature,
-                                                0.0f);
-  return linear_pd_t(desc, cpu_engine);
+  // v3: eltwise primitive_desc(engine, prop, algorithm, src_md, dst_md,
+  //                            alpha, beta, attr={})
+  return linear_pd_t(cpu_engine, dnnl::prop_kind::forward_inference,
+                     dnnl::algorithm::eltwise_linear, data_md, data_md,
+                     1.0f / temperature, 0.0f);
 }
 
 void DNNLSoftmaxFwd::Execute(const Tensors& tensors) const {
@@ -160,8 +161,10 @@ softmax_bwd_pd_t DNNLSoftmaxBwd::GetSoftmaxBwdPd(const dnnl::memory& out_grad_me
   dnnl::memory::desc out_grad_md = out_grad_mem.get_desc();
   dnnl::memory::desc out_md      = out_mem.get_desc();
   const auto cpu_engine          = CpuEngine::Get()->get_engine();
-  const auto desc                = dnnl::softmax_backward::desc(out_grad_md, out_md, axis);
-  return softmax_bwd_pd_t(desc, cpu_engine, hint_fwd_pd);
+  // v3: primitive_desc(engine, algorithm, diff_src_md, diff_dst_md, dst_md,
+  //                    axis, hint_fwd_pd, attr={})
+  return softmax_bwd_pd_t(cpu_engine, dnnl::algorithm::softmax_accurate,
+                          out_grad_md, out_grad_md, out_md, axis, hint_fwd_pd);
 }
 
 void DNNLSoftmaxBackward(const nnvm::NodeAttrs& attrs,

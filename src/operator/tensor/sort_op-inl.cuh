@@ -40,7 +40,7 @@
 
 namespace mxnet {
 namespace op {
-namespace cuda {
+namespace cuda_kernels {
 template<typename T>
 struct less_half
 {
@@ -290,11 +290,11 @@ SortByKeyImpl(mshadow::Tensor<gpu, 1, KDType> keys,
   if (is_ascend) {
     thrust::stable_sort_by_key(
       thrust::cuda::par.on(stream),
-      key_iter, key_iter + (keys.size(0)), value_iter.get(), cuda::less_half<__half>());
+      key_iter, key_iter + (keys.size(0)), value_iter.get(), cuda_kernels::less_half<__half>());
   } else {
     thrust::stable_sort_by_key(
       thrust::cuda::par.on(stream),
-      key_iter, key_iter + (keys.size(0)), value_iter.get(), cuda::greater_half<__half>());
+      key_iter, key_iter + (keys.size(0)), value_iter.get(), cuda_kernels::greater_half<__half>());
   }
   MSHADOW_CUDA_POST_KERNEL_CHECK(SortByKey);
 #else
@@ -331,11 +331,11 @@ SortByKeyImpl(mshadow::Tensor<gpu, 1, KDType> keys,
   if (is_ascend) {
     thrust::stable_sort_by_key(
       thrust::cuda::par.on(stream),
-      key_iter, key_iter + (keys.size(0)), value_iter.get(), cuda::less_half<__half>());
+      key_iter, key_iter + (keys.size(0)), value_iter.get(), cuda_kernels::less_half<__half>());
   } else {
     thrust::stable_sort_by_key(
       thrust::cuda::par.on(stream),
-      key_iter, key_iter + (keys.size(0)), value_iter.get(), cuda::greater_half<__half>());
+      key_iter, key_iter + (keys.size(0)), value_iter.get(), cuda_kernels::greater_half<__half>());
   }
   MSHADOW_CUDA_POST_KERNEL_CHECK(SortByKey);
 #else

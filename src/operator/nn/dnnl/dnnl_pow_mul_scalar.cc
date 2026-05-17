@@ -54,12 +54,13 @@ DNNLPowMulScalarFwd& DNNLPowMulScalarFwd::GetCached(const DNNLPowMulScalarParam&
 
 DNNLPowMulScalarFwd::DNNLPowMulScalarFwd(const DNNLPowMulScalarParam& param, const NDArray& input) {
   auto src_desc = input.GetDNNLData()->get_desc();
-  dnnl::eltwise_forward::desc fwd_desc(dnnl::prop_kind::forward_scoring,
-                                       dnnl::algorithm::eltwise_pow,
-                                       src_desc,
-                                       param.multiplier,
-                                       param.exponent);
-  fwd_pd = std::make_shared<eltwise_fwd_pd_t>(fwd_desc, mxnet::CpuEngine::Get()->get_engine());
+  // v3: eltwise primitive_desc(engine, prop, algorithm, src_md, dst_md,
+  //                            alpha, beta, attr={}).
+  fwd_pd = std::make_shared<eltwise_fwd_pd_t>(mxnet::CpuEngine::Get()->get_engine(),
+                                              dnnl::prop_kind::forward_inference,
+                                              dnnl::algorithm::eltwise_pow,
+                                              src_desc, src_desc,
+                                              param.multiplier, param.exponent);
   fwd    = std::make_shared<eltwise_fwd_t>(*fwd_pd);
 }
 

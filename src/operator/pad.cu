@@ -27,7 +27,7 @@
 #include "../common/cuda/utils.h"
 
 namespace mshadow {
-namespace cuda {
+namespace cuda_impl {
 
 ////////////////////////////////////////////////////////////////////////////////
 // Special Case: 2d image (so only pad width + height)
@@ -652,7 +652,7 @@ inline void image_pad_reflect_grad(Tensor<gpu, 5, DType> grad_in,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-}  // namespace cuda
+}  // namespace cuda_impl
 
 template <int dim, typename DType>
 void pad_image(Tensor<gpu, dim, DType> dst,
@@ -662,13 +662,13 @@ void pad_image(Tensor<gpu, dim, DType> dst,
                const DType constant_value) {
   switch (mode) {
     case mxnet::op::pad_enum::kEdge:
-      cuda::image_pad_edge(dst, src, pad);
+      mshadow::cuda_impl::image_pad_edge(dst, src, pad);
       break;
     case mxnet::op::pad_enum::kConstant:
-      cuda::image_pad_constant(dst, src, pad, constant_value);
+      mshadow::cuda_impl::image_pad_constant(dst, src, pad, constant_value);
       break;
     case mxnet::op::pad_enum::kReflect:
-      cuda::image_pad_reflect(dst, src, pad);
+      mshadow::cuda_impl::image_pad_reflect(dst, src, pad);
       break;
   }
 }
@@ -680,13 +680,13 @@ void pad_image_grad(Tensor<gpu, dim, DType> grad_in,
                     int mode) {
   switch (mode) {
     case mxnet::op::pad_enum::kEdge:
-      cuda::image_pad_edge_grad(grad_in, grad_out, pad);
+      mshadow::cuda_impl::image_pad_edge_grad(grad_in, grad_out, pad);
       break;
     case mxnet::op::pad_enum::kConstant:
-      cuda::image_pad_constant_grad(grad_in, grad_out, pad);
+      mshadow::cuda_impl::image_pad_constant_grad(grad_in, grad_out, pad);
       break;
     case mxnet::op::pad_enum::kReflect:
-      cuda::image_pad_reflect_grad(grad_in, grad_out, pad);
+      mshadow::cuda_impl::image_pad_reflect_grad(grad_in, grad_out, pad);
       break;
   }
 }

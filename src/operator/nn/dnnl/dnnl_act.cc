@@ -77,7 +77,11 @@ dnnl::algorithm GetDNNLActAlgo(const ActivationParam& param) {
     case activation::kSigmoid:
       return dnnl::algorithm::eltwise_logistic;
     case activation::kLogSigmoid:
-      return dnnl::algorithm::eltwise_logsigmoid;
+      // v3 renamed eltwise_logsigmoid → eltwise_soft_relu with alpha = -1.
+      // To avoid touching the API surface in this function, keep the
+      // identifier as soft_relu (alpha=-1 is set via param.slope at call
+      // site for log-sigmoid).
+      return dnnl::algorithm::eltwise_soft_relu;
     case activation::kMish:
       return dnnl::algorithm::eltwise_mish;
     case activation::kTanh:
@@ -113,9 +117,11 @@ dnnl::eltwise_forward::primitive_desc GetActFwdDescImpl(const DNNLActParam& para
   auto cpu_engine            = CpuEngine::Get()->get_engine();
   auto alg                   = param.alg;
 
-  auto prop = is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_scoring;
-  auto desc = dnnl::eltwise_forward::desc(prop, alg, data_md, param.slope);
-  return dnnl::eltwise_forward::primitive_desc(desc, cpu_engine);
+  auto prop = is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_inference;
+  // v3: eltwise primitive_desc(engine, prop, algorithm, src_md, dst_md,
+  //                            alpha, beta, attr={}).
+  return dnnl::eltwise_forward::primitive_desc(cpu_engine, prop, alg, data_md, data_md,
+                                               param.slope, 0.f);
 }
 
 const inline dnnl::eltwise_forward& DNNLActForward::GetFwd() const {
@@ -152,6 +158,13 @@ void DNNLActivationForward(const nnvm::NodeAttrs& attrs,
   const ActivationParam& param = nnvm::get<ActivationParam>(attrs.parsed);
   DNNLActParam param_;
   param_.alg               = GetDNNLActAlgo(param);
+  // v3 eltwise_soft_relu(alpha)=log(1+exp(alpha*x))/alpha; alpha=0 divides by
+  // zero. softrelu wants alpha=1; log_sigmoid is soft_relu with alpha=-1.
+  if (param.act_type == activation::kSoftReLU) {
+    param_.slope = 1.0f;
+  } else if (param.act_type == activation::kLogSigmoid) {
+    param_.slope = -1.0f;
+  }
   const NDArray& in_buffer = in_data;
   DNNLStream* stream       = DNNLStream::Get();
   auto input_mem           = in_buffer.GetDNNLData();
@@ -196,11 +209,14 @@ dnnl::eltwise_backward::primitive_desc GetActBwdDescImpl(const DNNLActParam& par
   auto cpu_engine            = CpuEngine::Get()->get_engine();
   auto alg                   = param.alg;
 
-  dnnl::eltwise_forward::desc fw_desc(dnnl::prop_kind::forward_training, alg, data_md, param.slope);
-  dnnl::eltwise_forward::primitive_desc fw_pdesc(fw_desc, cpu_engine);
-  dnnl::eltwise_backward::desc bw_desc(alg, diff_md, data_md, param.slope);
-  dnnl::eltwise_backward::primitive_desc bw_pdesc(bw_desc, cpu_engine, fw_pdesc);
-  return bw_pdesc;
+  // v3: ::desc removed; pass args directly to primitive_desc.
+  dnnl::eltwise_forward::primitive_desc fw_pdesc(
+      cpu_engine, dnnl::prop_kind::forward_training, alg, data_md, data_md,
+      param.slope, 0.f);
+  // backward primitive_desc(engine, algorithm, diff_src_md, diff_dst_md,
+  //                         data_md, alpha, beta, hint_fwd_pd, attr={}).
+  return dnnl::eltwise_backward::primitive_desc(
+      cpu_engine, alg, diff_md, diff_md, data_md, param.slope, 0.f, fw_pdesc);
 }
 
 const inline dnnl::eltwise_backward& DNNLActBackward::GetBwd() const {

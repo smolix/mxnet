@@ -100,8 +100,9 @@ DNNLDotFwd::DNNLDotFwd(const DotParam& param,
   out_md = dnnl::memory::desc({bigDimLhs, bigDimRhs},
                               get_dnnl_type(outputs[DotOut::out].dtype()),
                               dnnl::memory::format_tag::any);
-  dnnl::matmul::desc fwd_desc(lhs_md, rhs_md, out_md);
-  fwd_pd = std::make_shared<dot_fwd_pd_t>(fwd_desc, mxnet::CpuEngine::Get()->get_engine());
+  // v3: matmul ::desc removed; primitive_desc takes args directly.
+  fwd_pd = std::make_shared<dot_fwd_pd_t>(mxnet::CpuEngine::Get()->get_engine(),
+                                          lhs_md, rhs_md, out_md);
   fwd    = std::make_shared<dot_fwd_t>(*fwd_pd);
 }
 

@@ -35,19 +35,32 @@ namespace mxnet {
 namespace op {
 
 typedef dnnl::batch_normalization_forward::primitive_desc t_bn_f_pdesc;
-typedef dnnl::batch_normalization_forward::desc t_bn_f_desc;
+
 typedef dnnl::batch_normalization_backward::primitive_desc t_bn_b_pdesc;
-typedef dnnl::batch_normalization_backward::desc t_bn_b_desc;
+
 
 DNNLBNForward::DNNLBNForward(const t_bn_f_pdesc& _pd, bool is_train_and_not_global_stats)
     : pd(_pd) {
-  weight_m.reset(new dnnl::memory(pd.weights_desc(), CpuEngine::Get()->get_engine()));
+  // v3 split SCALE_SHIFT into separate scale + shift; each is a 1-D f32
+  // tensor of length C. weights_desc() in v3 may return an invalid /
+  // empty desc when use_scale|use_shift flags are used, so build the
+  // 1-D length-C desc explicitly.
+  auto engine = CpuEngine::Get()->get_engine();
+  const auto channels = pd.src_desc().get_dims()[1];
+  const dnnl::memory::desc scale_shift_md(
+      {channels}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::a);
+  scale_m.reset(new dnnl::memory(scale_shift_md, engine));
+  shift_m.reset(new dnnl::memory(scale_shift_md, engine));
   fwd.reset(new dnnl::batch_normalization_forward(pd));
   this->is_train_and_not_global_stats = is_train_and_not_global_stats;
 }
 
-const dnnl::memory& DNNLBNForward::GetWeight() const {
-  return *weight_m;
+const dnnl::memory& DNNLBNForward::GetScale() const {
+  return *scale_m;
+}
+
+const dnnl::memory& DNNLBNForward::GetShift() const {
+  return *shift_m;
 }
 
 const t_bn_f_pdesc& DNNLBNForward::GetPd() const {
@@ -122,40 +135,45 @@ void DNNLBNForward::Execute(const OpContext& ctx,
 
   // mxnet will always use scale shift.
   // But if fix_gamma is true, then all scale elements will be set to 1.0f
-  if (static_cast<int>(flags) & static_cast<int>(dnnl::normalization_flags::use_scale_shift)) {
+  // v3: use_scale_shift was split into use_scale | use_shift.
+  if (static_cast<int>(flags) & static_cast<int>(dnnl::normalization_flags::use_scale)) {
     const NDArray& gamma = in_data[batchnorm::kGamma];
     const NDArray& beta  = in_data[batchnorm::kBeta];
     CHECK_EQ(gamma.storage_type(), mxnet::kDefaultStorage);
     CHECK_EQ(beta.storage_type(), mxnet::kDefaultStorage);
 
-    const dnnl::memory& weight_mem = GetWeight();
-    float* weight_buf              = reinterpret_cast<float*>(weight_mem.get_data_handle());
+    const dnnl::memory& scale_mem = GetScale();
+    const dnnl::memory& shift_mem = GetShift();
+    float* scale_buf = reinterpret_cast<float*>(scale_mem.get_data_handle());
+    float* shift_buf = reinterpret_cast<float*>(shift_mem.get_data_handle());
 
-    index_t channels_ = data.shape()[1];
-    CHECK(weight_mem.get_desc().get_size() == channels_ * sizeof(float) * 2);
+    index_t channels_      = data.shape()[1];
+    CHECK(scale_mem.get_desc().get_size() == channels_ * sizeof(float));
+    CHECK(shift_mem.get_desc().get_size() == channels_ * sizeof(float));
     float* weight_ptr      = gamma.data().dptr<float>();
     float* bias_ptr        = beta.data().dptr<float>();
-    const size_t copy_size = sizeof(weight_buf[0]) * channels_;
+    const size_t copy_size = sizeof(float) * channels_;
     if (!param.fix_gamma) {
-      memcpy(weight_buf, weight_ptr, copy_size);
-      memcpy(&weight_buf[channels_], bias_ptr, copy_size);
+      memcpy(scale_buf, weight_ptr, copy_size);
+      memcpy(shift_buf, bias_ptr, copy_size);
     } else if (IsBNWriting(req[batchnorm::kGamma])) {
       for (index_t i = 0; i < channels_; i++) {
-        weight_buf[i]             = 1.0f;
-        weight_ptr[i]             = 1.0f;
-        weight_buf[channels_ + i] = bias_ptr[i];  // bias
+        scale_buf[i]   = 1.0f;
+        weight_ptr[i]  = 1.0f;
+        shift_buf[i]   = bias_ptr[i];
       }
     } else {
       for (index_t i = 0; i < channels_; i++) {
-        weight_buf[i]             = 1.0f;
-        weight_buf[channels_ + i] = bias_ptr[i];  // bias
+        scale_buf[i] = 1.0f;
+        shift_buf[i] = bias_ptr[i];
       }
     }
 
     dnnl_args_map_t net_args;
-    net_args[DNNL_ARG_SRC]         = *data_mem;
-    net_args[DNNL_ARG_SCALE_SHIFT] = weight_mem;
-    net_args[DNNL_ARG_DST]         = *out_mem;
+    net_args[DNNL_ARG_SRC]   = *data_mem;
+    net_args[DNNL_ARG_SCALE] = scale_mem;
+    net_args[DNNL_ARG_SHIFT] = shift_mem;
+    net_args[DNNL_ARG_DST]   = *out_mem;
     if (!ctx.is_train || param.use_global_stats) {
       float* omean  = outputs[batchnorm::kMean].data().dptr<float>();
       float* ovar   = outputs[batchnorm::kVar].data().dptr<float>();
@@ -188,20 +206,28 @@ void DNNLBNForward::Execute(const OpContext& ctx,
   }
 }
 
+// v3: build 1-D length-C f32 desc for each of scale/shift/diff_scale/diff_shift
+//     (weights_desc/diff_weights_desc may not be valid when use_scale|use_shift
+//     flags are used).
+static dnnl::memory::desc BnScaleShiftMd(const t_bn_b_pdesc& pd) {
+  const auto channels = pd.src_desc().get_dims()[1];
+  return dnnl::memory::desc({channels}, dnnl::memory::data_type::f32,
+                            dnnl::memory::format_tag::a);
+}
+
 DNNLBNBackward::DNNLBNBackward(const t_bn_b_pdesc& _pd)
-    : weight_m(new dnnl::memory(_pd.weights_desc(), CpuEngine::Get()->get_engine())),
-      gradw_m(new dnnl::memory(_pd.diff_weights_desc(), CpuEngine::Get()->get_engine())),
+    : scale_m(new dnnl::memory(BnScaleShiftMd(_pd), CpuEngine::Get()->get_engine())),
+      shift_m(new dnnl::memory(BnScaleShiftMd(_pd), CpuEngine::Get()->get_engine())),
+      grad_scale_m(new dnnl::memory(BnScaleShiftMd(_pd), CpuEngine::Get()->get_engine())),
+      grad_shift_m(new dnnl::memory(BnScaleShiftMd(_pd), CpuEngine::Get()->get_engine())),
       pd(_pd) {
   bwd.reset(new dnnl::batch_normalization_backward(pd));
 }
 
-const dnnl::memory& DNNLBNBackward::GetWeight() const {
-  return *weight_m;
-}
-
-const dnnl::memory& DNNLBNBackward::GetGradw() const {
-  return *gradw_m;
-}
+const dnnl::memory& DNNLBNBackward::GetScale() const { return *scale_m; }
+const dnnl::memory& DNNLBNBackward::GetShift() const { return *shift_m; }
+const dnnl::memory& DNNLBNBackward::GetGradScale() const { return *grad_scale_m; }
+const dnnl::memory& DNNLBNBackward::GetGradShift() const { return *grad_shift_m; }
 
 const dnnl::batch_normalization_backward& DNNLBNBackward::GetBwd() const {
   return *bwd;
@@ -298,29 +324,34 @@ void DNNLBNBackward::Execute(const BatchNormParam& param,
   auto gradi_mem =
       CreateDNNLMem(const_cast<NDArray&>(gradIn), pd.diff_src_desc(), req[batchnorm::kData]);
 
-  if (static_cast<int>(flags) & static_cast<int>(dnnl::normalization_flags::use_scale_shift)) {
+  // v3: use_scale_shift was split into use_scale | use_shift.
+  if (static_cast<int>(flags) & static_cast<int>(dnnl::normalization_flags::use_scale)) {
     const NDArray& gamma   = in_data[batchnorm::kGamma];
     const NDArray& beta    = in_data[batchnorm::kBeta];
-    float* weight_buf      = reinterpret_cast<float*>(GetWeight().get_data_handle());
+    float* scale_buf       = reinterpret_cast<float*>(GetScale().get_data_handle());
+    float* shift_buf       = reinterpret_cast<float*>(GetShift().get_data_handle());
     index_t channels_      = data.shape()[1];
     float* weight_ptr      = gamma.data().dptr<float>();
     float* bias_ptr        = beta.data().dptr<float>();
-    const size_t copy_size = sizeof(weight_buf[0]) * channels_;
+    const size_t copy_size = sizeof(float) * channels_;
     if (!param.fix_gamma) {
-      memcpy(weight_buf, weight_ptr, copy_size);
-      memcpy(&weight_buf[channels_], bias_ptr, copy_size);
+      memcpy(scale_buf, weight_ptr, copy_size);
     } else {
       for (index_t i = 0; i < channels_; i++) {
-        weight_buf[i] = 1.0f;
+        scale_buf[i] = 1.0f;
       }
-      memcpy(&weight_buf[channels_], bias_ptr, copy_size);
     }
+    memcpy(shift_buf, bias_ptr, copy_size);
+    // v3: backward batch_normalization needs DNNL_ARG_SCALE but NOT
+    //     DNNL_ARG_SHIFT (beta is not used in gradient computation; only
+    //     gamma feeds the chain rule). Strictly v3 rejects the extra arg.
     dnnl_args_map_t net_args;
-    net_args[DNNL_ARG_SRC]              = *data_mem;
-    net_args[DNNL_ARG_DIFF_SRC]         = *gradi_mem.second;
-    net_args[DNNL_ARG_SCALE_SHIFT]      = GetWeight();
-    net_args[DNNL_ARG_DIFF_SCALE_SHIFT] = GetGradw();
-    net_args[DNNL_ARG_DIFF_DST]         = *diff_mem;
+    net_args[DNNL_ARG_SRC]        = *data_mem;
+    net_args[DNNL_ARG_DIFF_SRC]   = *gradi_mem.second;
+    net_args[DNNL_ARG_SCALE]      = GetScale();
+    net_args[DNNL_ARG_DIFF_SCALE] = GetGradScale();
+    net_args[DNNL_ARG_DIFF_SHIFT] = GetGradShift();
+    net_args[DNNL_ARG_DIFF_DST]   = *diff_mem;
 
     // training but no input mean and variance
     if (ctx.is_train && !param.use_global_stats) {
@@ -348,19 +379,20 @@ void DNNLBNBackward::Execute(const BatchNormParam& param,
     CommitOutput(gradIn, gradi_mem);
     DNNLStream::Get()->Submit();
 
-    // copy data from gradw_mem to in_grad[1] and in_grad[2]
-    float* gw_buf   = reinterpret_cast<float*>(GetGradw().get_data_handle());
-    float* w_grad_1 = in_grad[batchnorm::kGamma].data().dptr<float>();
-    float* w_grad_2 = in_grad[batchnorm::kBeta].data().dptr<float>();
+    // v3: split scale gradient (length C) and shift gradient (length C).
+    float* g_scale_buf = reinterpret_cast<float*>(GetGradScale().get_data_handle());
+    float* g_shift_buf = reinterpret_cast<float*>(GetGradShift().get_data_handle());
+    float* w_grad_1    = in_grad[batchnorm::kGamma].data().dptr<float>();
+    float* w_grad_2    = in_grad[batchnorm::kBeta].data().dptr<float>();
 
     // the gradient of gamma
     if (!param.fix_gamma) {
       if (req[batchnorm::kGamma] != kNullOp) {
         if (req[batchnorm::kGamma] != kAddTo) {
-          memcpy(w_grad_1, gw_buf, copy_size);
+          memcpy(w_grad_1, g_scale_buf, copy_size);
         } else {
           for (index_t i = 0; i < channels_; i++) {
-            w_grad_1[i] += gw_buf[i];
+            w_grad_1[i] += g_scale_buf[i];
           }
         }
       }
@@ -373,11 +405,10 @@ void DNNLBNBackward::Execute(const BatchNormParam& param,
     // the gradient of beta
     if (req[batchnorm::kBeta] != kNullOp) {
       if (req[batchnorm::kBeta] != kAddTo) {
-        memcpy(w_grad_2, &gw_buf[channels_], copy_size);
+        memcpy(w_grad_2, g_shift_buf, copy_size);
       } else {
-        float* grad_beta = &gw_buf[channels_];
         for (index_t i = 0; i < channels_; i++) {
-          w_grad_2[i] += grad_beta[i];
+          w_grad_2[i] += g_shift_buf[i];
         }
       }
     }

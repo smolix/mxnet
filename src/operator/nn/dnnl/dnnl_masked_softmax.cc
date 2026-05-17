@@ -89,38 +89,33 @@ std::shared_ptr<Primitives> DNNLMaskedSoftmaxFwd::CreatePrimitives(const MaskedS
   dnnl::memory::desc mask_desc =
       dnnl::memory::desc(mask_dims, dnnl::memory::data_type::s8, mem_format);
 
-  // (mask - 1)
-  auto minusone_desc = dnnl::eltwise_forward::desc(dnnl::prop_kind::forward_scoring,
-                                                   dnnl::algorithm::eltwise_linear,
-                                                   mask_desc,
-                                                   1.0f,    // multiply factor
-                                                   -1.0f);  // minus one
-  prim->minusone_pd  = dnnl::eltwise_forward::primitive_desc(minusone_desc, engine);
-  prim->minusone     = dnnl::eltwise_forward(prim->minusone_pd);
+  // (mask - 1) — v3 eltwise primitive_desc takes args directly.
+  prim->minusone_pd = dnnl::eltwise_forward::primitive_desc(
+      engine, dnnl::prop_kind::forward_inference, dnnl::algorithm::eltwise_linear,
+      mask_desc, mask_desc, 1.0f /*alpha*/, -1.0f /*beta*/);
+  prim->minusone    = dnnl::eltwise_forward(prim->minusone_pd);
 
-  // (input + mask) / temperature
-  auto mask_input_desc =
-      dnnl::binary::desc(dnnl::algorithm::binary_add,
-                         input_desc,
-                         dnnl::memory::desc(mask_dims, dnnl::memory::data_type::f32, mem_format),
-                         input_desc);
+  // (input + mask) / temperature — v3 binary primitive_desc takes args
+  //                                directly; post-op scale parameter removed.
+  dnnl::memory::desc mask_f32_desc(mask_dims, dnnl::memory::data_type::f32, mem_format);
   if (param.temperature.has_value() && param.temperature.value() != 1.0f) {
     dnnl::post_ops binary_ops;
     binary_ops.append_eltwise(
-        1.0f, dnnl::algorithm::eltwise_linear, 1 / param.temperature.value(), 0.0f);
+        dnnl::algorithm::eltwise_linear, 1.0f / param.temperature.value(), 0.0f);
     dnnl::primitive_attr binary_attr;
     binary_attr.set_post_ops(binary_ops);
-
-    prim->mask_input_pd = dnnl::binary::primitive_desc(mask_input_desc, binary_attr, engine);
+    prim->mask_input_pd = dnnl::binary::primitive_desc(
+        engine, dnnl::algorithm::binary_add, input_desc, mask_f32_desc, input_desc,
+        binary_attr);
   } else {
-    prim->mask_input_pd = dnnl::binary::primitive_desc(mask_input_desc, engine);
+    prim->mask_input_pd = dnnl::binary::primitive_desc(
+        engine, dnnl::algorithm::binary_add, input_desc, mask_f32_desc, input_desc);
   }
   prim->mask_input = dnnl::binary(prim->mask_input_pd);
 
   // output * mask
-  auto mask_output_desc =
-      dnnl::binary::desc(dnnl::algorithm::binary_mul, input_desc, mask_desc, input_desc);
-  prim->mask_output_pd = dnnl::binary::primitive_desc(mask_output_desc, engine);
+  prim->mask_output_pd = dnnl::binary::primitive_desc(
+      engine, dnnl::algorithm::binary_mul, input_desc, mask_desc, input_desc);
   prim->mask_output    = dnnl::binary(prim->mask_output_pd);
 
   return prim;
@@ -171,10 +166,20 @@ void DNNLMaskedSoftmaxFwd::Execute(const Tensors& tensors,
   // 1. B) out = out * inf
   const memory::desc converted_mask_desc = this->primitives->mask_input_pd.src1_desc();
   dnnl::memory* converted_mask_mem       = TmpMemMgr::Get()->Alloc(converted_mask_desc);
+  // v3: set_output_scales(mask, scales) is gone. For reorder we use
+  //     set_scales_mask(DNNL_ARG_DST, 0) and feed the scale as a runtime
+  //     memory arg DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST.
   dnnl::primitive_attr attr;
-  attr.set_output_scales(0, {mshadow::red::limits::MaxValue<float>()});
+  attr.set_scales_mask(DNNL_ARG_DST, 0);
+  dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                              dnnl::memory::format_tag::x);
+  auto scale_mem    = dnnl::memory(scale_md, engine);
+  float scale_value = mshadow::red::limits::MaxValue<float>();
+  memcpy(scale_mem.get_data_handle(), &scale_value, sizeof(float));
   std::unordered_map<int, dnnl::memory> args(
-      {{DNNL_ARG_FROM, *mask_minusone_mem}, {DNNL_ARG_TO, *converted_mask_mem}});
+      {{DNNL_ARG_FROM, *mask_minusone_mem},
+       {DNNL_ARG_TO, *converted_mask_mem},
+       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, scale_mem}});
   stream->RegisterPrimArgs(dnnl::reorder(*mask_minusone_mem, *converted_mask_mem, attr), args);
 
   // prepare softmax primitive and memory

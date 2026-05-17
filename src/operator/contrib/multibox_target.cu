@@ -33,7 +33,7 @@
   } while (0)
 
 namespace mshadow {
-namespace cuda {
+namespace cuda_impl {
 template <typename DType>
 __global__ void InitGroundTruthFlags(DType* gt_flags,
                                      const DType* labels,
@@ -360,7 +360,7 @@ __global__ void AssignTrainigTargets(DType* loc_target,
     }
   }
 }
-}  // namespace cuda
+}  // namespace cuda_impl
 
 template <typename DType>
 inline void MultiBoxTargetForward(const Tensor<gpu, 2, DType>& loc_target,
@@ -388,11 +388,11 @@ inline void MultiBoxTargetForward(const Tensor<gpu, 2, DType>& loc_target,
   // init ground-truth flags, by checking valid labels
   temp_space[1]         = 0.f;
   DType* gt_flags       = temp_space[1].dptr_;
-  const int num_threads = cuda::kMaxThreadsPerBlock;
+  const int num_threads = mshadow::cuda_impl::kMaxThreadsPerBlock;
   dim3 init_thread_dim(num_threads);
   dim3 init_block_dim((num_batches * num_labels - 1) / num_threads + 1);
-  cuda::CheckLaunchParam(init_block_dim, init_thread_dim, "MultiBoxTarget Init");
-  cuda::InitGroundTruthFlags<DType><<<init_block_dim, init_thread_dim>>>(
+  mshadow::cuda_impl::CheckLaunchParam(init_block_dim, init_thread_dim, "MultiBoxTarget Init");
+  mshadow::cuda_impl::InitGroundTruthFlags<DType><<<init_block_dim, init_thread_dim>>>(
       gt_flags, labels.dptr_, num_batches, num_labels, label_width);
   MULTIBOX_TARGET_CUDA_CHECK(cudaGetLastError());
 
@@ -402,14 +402,14 @@ inline void MultiBoxTargetForward(const Tensor<gpu, 2, DType>& loc_target,
   DType* anchor_flags   = temp_space[2].dptr_;
   DType* best_matches   = temp_space[3].dptr_;
   const DType* overlaps = temp_space[0].dptr_;
-  cuda::CheckLaunchParam(num_batches, num_threads, "MultiBoxTarget Matching");
-  cuda::FindBestMatches<DType><<<num_batches, num_threads>>>(
+  mshadow::cuda_impl::CheckLaunchParam(num_batches, num_threads, "MultiBoxTarget Matching");
+  mshadow::cuda_impl::FindBestMatches<DType><<<num_batches, num_threads>>>(
       best_matches, gt_flags, anchor_flags, overlaps, num_anchors, num_labels);
   MULTIBOX_TARGET_CUDA_CHECK(cudaGetLastError());
 
   // find good matches with overlap > threshold
   if (overlap_threshold > 0) {
-    cuda::FindGoodMatches<DType><<<num_batches, num_threads>>>(
+    mshadow::cuda_impl::FindGoodMatches<DType><<<num_batches, num_threads>>>(
         best_matches, anchor_flags, overlaps, num_anchors, num_labels, overlap_threshold);
     MULTIBOX_TARGET_CUDA_CHECK(cudaGetLastError());
   }
@@ -419,7 +419,7 @@ inline void MultiBoxTargetForward(const Tensor<gpu, 2, DType>& loc_target,
     CHECK_GT(negative_mining_thresh, 0);
     temp_space[4] = 0;
     DType* buffer = temp_space[4].dptr_;
-    cuda::NegativeMining<DType><<<num_batches, num_threads>>>(overlaps,
+    mshadow::cuda_impl::NegativeMining<DType><<<num_batches, num_threads>>>(overlaps,
                                                               cls_preds.dptr_,
                                                               anchor_flags,
                                                               buffer,
@@ -432,13 +432,13 @@ inline void MultiBoxTargetForward(const Tensor<gpu, 2, DType>& loc_target,
     MULTIBOX_TARGET_CUDA_CHECK(cudaGetLastError());
   } else {
     int num_blocks = (num_batches * num_anchors - 1) / num_threads + 1;
-    cuda::CheckLaunchParam(num_blocks, num_threads, "MultiBoxTarget Negative");
-    cuda::UseAllNegatives<DType>
+    mshadow::cuda_impl::CheckLaunchParam(num_blocks, num_threads, "MultiBoxTarget Negative");
+    mshadow::cuda_impl::UseAllNegatives<DType>
         <<<num_blocks, num_threads>>>(anchor_flags, num_batches * num_anchors);
     MULTIBOX_TARGET_CUDA_CHECK(cudaGetLastError());
   }
 
-  cuda::AssignTrainigTargets<DType><<<num_batches, num_threads>>>(loc_target.dptr_,
+  mshadow::cuda_impl::AssignTrainigTargets<DType><<<num_batches, num_threads>>>(loc_target.dptr_,
                                                                   loc_mask.dptr_,
                                                                   cls_target.dptr_,
                                                                   anchor_flags,

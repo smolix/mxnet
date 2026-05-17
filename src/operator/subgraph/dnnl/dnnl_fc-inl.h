@@ -63,7 +63,7 @@ static inline bool IsOutputUint8(const DNNLFCFullParam& full_param) {
   // TODO(ciyong): some alg doesn't support int8 so far.
   if (full_param.dnnl_param.with_eltwise &&
       (alg == dnnl::algorithm::eltwise_relu || alg == dnnl::algorithm::eltwise_logistic ||
-       alg == dnnl::algorithm::eltwise_soft_relu || alg == dnnl::algorithm::eltwise_bounded_relu ||
+       alg == dnnl::algorithm::eltwise_soft_relu || alg == dnnl::algorithm::eltwise_clip ||
        alg == dnnl::algorithm::eltwise_square || alg == dnnl::algorithm::eltwise_sqrt ||
        alg == dnnl::algorithm::eltwise_exp || alg == dnnl::algorithm::eltwise_abs)) {
     return true;

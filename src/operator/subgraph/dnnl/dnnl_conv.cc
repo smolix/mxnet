@@ -19,6 +19,8 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cmath>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -109,6 +111,9 @@ class SgDNNLConvOperator {
   dnnl_args_map_t args_;
   NDArray cached_weight_;
   NDArray cached_bias_;
+  // TODO: wire from quantization inputs (see dnnl_fc.cc kBiasMin/kBiasMax)
+  float cached_bias_min_{0.0f};
+  float cached_bias_max_{0.0f};
   float cached_data_min_;
   float cached_data_max_;
   float cached_sum_min_;
@@ -175,7 +180,7 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
         const auto& mem_desc  = in_dnnl_mem->get_desc();
         const auto this_dtype = get_dnnl_type(outputs[kOut].dtype());
         auto omd              = mem_desc;
-        omd.data.data_type    = static_cast<dnnl_data_type_t>(this_dtype);
+        omd = CloneMemDescWithDtype(omd, this_dtype);
         dnnl_mem_ptr tmp_mem(
             new dnnl::memory(omd, CpuEngine::Get()->get_engine(), out_dnnl_mem->get_data_handle()));
         DNNLStream::Get()->RegisterMem(tmp_mem);
@@ -263,6 +268,31 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
                                                 data_scale_,
                                                 weight_channelwise_scale);
       });
+      // Bias-overflow guard: GetQuantizeScale returns MaxValue<int32_t> when the
+      // tensor's real range is zero (degenerate calibration). Multiplied by
+      // data_scale to form the bias rescale in ConvertWeightBias2DNNL, this
+      // saturates the int32 bias and corrupts the output. Cap weight_scales_[c]
+      // so bias_real * (data_scale * weight_scale[c]) stays within int32/2.
+      // Mirrors dnnl_fc.cc:421-437; downstream requantize_scales is recomputed
+      // from the capped weight_scales_, so the math stays consistent.
+      if (has_bias && cached_bias_.dtype() == mshadow::kInt8) {
+        const float bias_abs_max = std::max(std::abs(cached_bias_min_),
+                                            std::abs(cached_bias_max_));
+        if (bias_abs_max > 0) {
+          const float bias_quant_scale =
+              GetQuantizeScale(mshadow::kInt8, cached_bias_min_, cached_bias_max_);
+          const float bias_int32_rescale_cap =
+              static_cast<float>(std::numeric_limits<int32_t>::max()) / 2.0f /
+              bias_abs_max / bias_quant_scale;
+          const float weight_scale_cap =
+              bias_int32_rescale_cap * bias_quant_scale / data_scale_;
+          for (size_t c = 0; c < weight_scales_.size(); ++c) {
+            if (weight_scales_[c] > weight_scale_cap) {
+              weight_scales_[c] = weight_scale_cap;
+            }
+          }
+        }
+      }
       // Collect scale.
       size_t channel     = cached_weight_.shape()[0];
       float sum_in_scale = 1.0;
@@ -317,10 +347,18 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
         full_conv_param.requantize_scales.resize(0);
       }
       if (dnnl_param.with_sum) {
+        // v2:  dst = output_scales * (acc + bias) + sum_scale_v2 * dst_loaded
+        // v3:  dst = DST_scale * (acc + bias + sum_scale_v3 * dst_loaded)
+        // For per-tensor DST scale, pre-divide so the sum contribution matches
+        // v2's. For per-OC (WEIGHTS-side scaling) there is no DST scale, so
+        // sum_scale_v2 is used directly. With no requantize, no DST scale.
         full_conv_param.sum_scale = output_scale / sum_in_scale;
+        if (full_conv_param.requantize_scales.size() == 1) {
+          full_conv_param.sum_scale /= full_conv_param.requantize_scales[0];
+        }
       }
       if (dnnl_param.with_act &&
-          full_conv_param.act_param.alg == dnnl::algorithm::eltwise_bounded_relu) {
+          full_conv_param.act_param.alg == dnnl::algorithm::eltwise_clip) {
         if (dnnl_param.with_sum) {
           LOG(ERROR) << "oneDNN doesn't support conv + relu + sum fusion yet.";
           full_conv_param.act_param.alpha *= output_scale;
@@ -349,6 +387,13 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
     if (has_bias)
       args_[DNNL_ARG_BIAS] = *cached_bias_.GetDNNLData();
     args_[DNNL_ARG_DST] = *output.GetDNNLData();
+    // v3: bind runtime output-scale tensor for quantized (requantize) conv.
+    // ARG key is WEIGHTS for per-OC scales (mask=1) or DST for per-tensor
+    // (mask=0) — determined inside DNNLConvForward to match the
+    // set_scales_mask attr installed in GetConvFwdImpl.
+    if (auto* sm = fwd_->GetOutputScaleMem()) {
+      args_[DNNL_ARG_ATTR_SCALES | fwd_->GetOutputScaleArg()] = *sm;
+    }
     initialized_        = true;
   }
 
@@ -359,7 +404,8 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
     if (out_mem_desc != dst_mem_desc) {
       auto tmp_out_mem       = output.GetDNNLDataReorder(&dst_mem_desc);
       auto data_md           = dst_mem_desc;
-      data_md.data.data_type = static_cast<dnnl_data_type_t>(out_mem_desc.data.data_type);
+      // v3: CloneMemDescWithDtype takes the C++ enum directly now.
+      data_md = CloneMemDescWithDtype(data_md, out_mem_desc.get_data_type());
       dnnl_mem_ptr new_out_mem(
           new dnnl::memory(data_md, CpuEngine::Get()->get_engine(), output_mem->get_data_handle()));
       DNNLStream::Get()->RegisterMem(new_out_mem);
@@ -473,14 +519,24 @@ static void SgDNNLConvParamParser(nnvm::NodeAttrs* attrs) {
       if (node_name == "Activation") {
         const auto act_param = nnvm::get<ActivationParam>(node->attrs.parsed);
         post_act_param.alg   = GetDNNLActAlgo(act_param);
+        // v3 eltwise_soft_relu = log(1+exp(alpha*x))/alpha — alpha=0 is a
+        // division by zero. softrelu uses alpha=1; log_sigmoid is encoded as
+        // soft_relu with alpha=-1.
+        if (act_param.act_type == activation::kSoftReLU) {
+          post_act_param.alpha = 1.0f;
+        } else if (act_param.act_type == activation::kLogSigmoid) {
+          post_act_param.alpha = -1.0f;
+        }
       } else if (node_name == "LeakyReLU") {
         const auto act_param = nnvm::get<LeakyReLUParam>(node->attrs.parsed);
         post_act_param.alpha = act_param.slope;
         post_act_param.alg   = GetDNNLActAlgo(act_param);
       } else {
+        // v3: bounded_relu(alpha=upper) became eltwise_clip(alpha=lower, beta=upper).
         const auto clip_param = nnvm::get<ClipParam>(node->attrs.parsed);
-        post_act_param.alg    = dnnl::algorithm::eltwise_bounded_relu;
-        post_act_param.alpha  = clip_param.a_max;
+        post_act_param.alg    = dnnl::algorithm::eltwise_clip;
+        post_act_param.alpha  = 0.f;
+        post_act_param.beta   = clip_param.a_max;
       }
       with_act = true;
     }

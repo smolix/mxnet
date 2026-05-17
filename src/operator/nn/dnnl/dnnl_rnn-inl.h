@@ -165,10 +165,13 @@ class RnnPrimitive {
   template <typename rnn_fwd, typename... Args>
   static RnnPrimitive Create(const shared_dnnl_attr_t attr, Args&&... args) {
     RnnPrimitive rnn_fwd_prim;
-    auto fwd_desc = typename rnn_fwd::desc(std::forward<Args>(args)...);
+    // v3: ::desc removed; primitive_desc takes args directly. The first arg
+    //     is the engine, then the operator-specific args, finally attr.
     rnn_fwd_prim.fwd_pd_.reset(
         new typename rnn_fwd::primitive_desc(
-            fwd_desc, attr ? *attr : dnnl::primitive_attr(), CpuEngine::Get()->get_engine()),
+            CpuEngine::Get()->get_engine(),
+            std::forward<Args>(args)...,
+            attr ? *attr : dnnl::primitive_attr()),
         [](void* pd) { delete reinterpret_cast<typename rnn_fwd::primitive_desc*>(pd); });
     auto fwd_pd = reinterpret_cast<typename rnn_fwd::primitive_desc*>(rnn_fwd_prim.fwd_pd_.get());
     rnn_fwd_prim.attr_               = attr;
@@ -403,8 +406,9 @@ class RnnBwdPrimitive {
   template <typename rnn_fwd, typename rnn_bwd, typename... Args>
   static RnnBwdPrimitive Create(typename rnn_fwd::primitive_desc const& fwd_pd, Args&&... args) {
     RnnBwdPrimitive bwd_prim;
-    typename rnn_bwd::desc bwd_desc(std::forward<Args>(args)...);
-    typename rnn_bwd::primitive_desc bwd_pd(bwd_desc, CpuEngine::Get()->get_engine(), fwd_pd);
+    // v3: ::desc removed; primitive_desc(engine, ..., hint_fwd_pd, attr={}).
+    typename rnn_bwd::primitive_desc bwd_pd(
+        CpuEngine::Get()->get_engine(), std::forward<Args>(args)..., fwd_pd);
     bwd_prim.weights_layer_desc_      = bwd_pd.weights_layer_desc();
     bwd_prim.weights_iter_desc_       = bwd_pd.weights_iter_desc();
     bwd_prim.diff_weights_layer_desc_ = bwd_pd.diff_weights_layer_desc();

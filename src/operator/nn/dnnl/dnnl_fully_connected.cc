@@ -43,13 +43,13 @@ dnnl::inner_product_forward::primitive_desc GetFCFwdImpl(const DNNLFCFullParam& 
                        GetFCWeightDesc(weight, data.shape()[0], mshadow::kInt8) :
                        GetFCWeightDesc(weight, data.shape()[0]);
   auto propagation =
-      is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_scoring;
+      is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_inference;
 
   dnnl::primitive_attr attr;
   dnnl::post_ops ops;
   if (full_param.dnnl_param.with_eltwise) {
-    ops.append_eltwise(full_param.eltwise_param.scale,
-                       full_param.eltwise_param.alg,
+    // v3: append_eltwise scale parameter dropped.
+    ops.append_eltwise(full_param.eltwise_param.alg,
                        full_param.eltwise_param.alpha,
                        full_param.eltwise_param.beta);
   }
@@ -58,35 +58,47 @@ dnnl::inner_product_forward::primitive_desc GetFCFwdImpl(const DNNLFCFullParam& 
   }
   attr.set_post_ops(ops);
 
+  const bool float_output = full_param.dnnl_param.quantized &&
+                            full_param.dnnl_param.enabled_float_output.has_value();
   if (full_param.dnnl_param.quantized && full_param.output_scales.size()) {
-    int mask = (full_param.output_scales.size() == 1) ? 0 : (1 << 1);
-    attr.set_output_scales(mask, full_param.output_scales);
+    if (float_output) {
+      // v3 dequant: bind dequant scales to SRC + WEIGHTS (no DST scale). v3
+      // matmul rejects s32 bias + f32 dst + DST scale; splitting the scale
+      // and using f32 bias avoids the unsupported combo.
+      attr.set_scales_mask(DNNL_ARG_SRC, 0);
+      attr.set_scales_mask(DNNL_ARG_WEIGHTS, full_param.output_scales.size() > 1 ? 1 : 0);
+    } else if (full_param.output_scales.size() > 1) {
+      // v3: per-OC output scales must go on DNNL_ARG_WEIGHTS (mask=1<<0=1 along
+      // weights' OC axis); v3 inner_product rejects per-channel DST masks.
+      attr.set_scales_mask(DNNL_ARG_WEIGHTS, 1);
+    } else {
+      attr.set_scales_mask(DNNL_ARG_DST, 0);
+    }
   }
 
-  auto GetFCFwdPd = [&full_param, &attr, &engine](const dnnl::inner_product_forward::desc& desc) {
-    try {
-      return dnnl::inner_product_forward::primitive_desc(desc, attr, engine);
-    } catch (dnnl::error& e) {
-      if (e.status == dnnl_unimplemented && full_param.dnnl_param.quantized) {
-        LOG(ERROR)
-            << "AVX512-BW support or oneDNN v0.18 or later is required for INT8 fully_connected.";
-      } else {
-        LOG(ERROR) << e.message;
-      }
-      throw;
+  // v3: ::desc removed; primitive_desc takes args directly.
+  try {
+    if (bias) {
+      if ((*bias).shape().ndim() != 1)
+        LOG(FATAL) << "Unexpected shape for bias " << (*bias).shape();
+      auto bias_md =
+          full_param.dnnl_param.quantized
+              ? GetMemDesc(*bias, float_output ? mshadow::kFloat32 : mshadow::kInt32)
+              : GetMemDesc(*bias);
+      return dnnl::inner_product_forward::primitive_desc(
+          engine, propagation, data_md, weight_md, bias_md, out_md, attr);
+    } else {
+      return dnnl::inner_product_forward::primitive_desc(
+          engine, propagation, data_md, weight_md, out_md, attr);
     }
-  };
-
-  if (bias) {
-    if ((*bias).shape().ndim() != 1)
-      LOG(FATAL) << "Unexpected shape for bias " << (*bias).shape();
-    auto bias_md =
-        full_param.dnnl_param.quantized ? GetMemDesc(*bias, mshadow::kInt32) : GetMemDesc(*bias);
-    dnnl::inner_product_forward::desc desc(propagation, data_md, weight_md, bias_md, out_md);
-    return GetFCFwdPd(desc);
-  } else {
-    dnnl::inner_product_forward::desc desc(propagation, data_md, weight_md, out_md);
-    return GetFCFwdPd(desc);
+  } catch (dnnl::error& e) {
+    if (e.status == dnnl_unimplemented && full_param.dnnl_param.quantized) {
+      LOG(ERROR)
+          << "AVX512-BW support or oneDNN v0.18 or later is required for INT8 fully_connected.";
+    } else {
+      LOG(ERROR) << e.message;
+    }
+    throw;
   }
 }
 
@@ -99,8 +111,9 @@ inline static dnnl::inner_product_backward_data::primitive_desc GetFCBwdData(
   auto weight_md = GetFCWeightDesc(weight, data.shape()[0]);
   auto out_md    = GetMemDesc(output);
   auto engine    = CpuEngine::Get()->get_engine();
-  dnnl::inner_product_backward_data::desc desc(data_md, weight_md, out_md);
-  return dnnl::inner_product_backward_data::primitive_desc(desc, engine, fwd_pd);
+  // v3: ::desc removed; primitive_desc takes args directly.
+  return dnnl::inner_product_backward_data::primitive_desc(
+      engine, data_md, weight_md, out_md, fwd_pd);
 }
 
 inline static dnnl::inner_product_backward_weights::primitive_desc GetFCBwdWeights(
@@ -113,13 +126,14 @@ inline static dnnl::inner_product_backward_weights::primitive_desc GetFCBwdWeigh
   auto weight_md = GetFCWeightDesc(weight, data.shape()[0]);
   auto out_md    = GetMemDesc(output);
   auto engine    = CpuEngine::Get()->get_engine();
+  // v3: ::desc removed; primitive_desc takes args directly.
   if (bias) {
     auto bias_md = GetMemDesc(*bias);
-    dnnl::inner_product_backward_weights::desc desc(data_md, weight_md, bias_md, out_md);
-    return dnnl::inner_product_backward_weights::primitive_desc(desc, engine, fwd_pd);
+    return dnnl::inner_product_backward_weights::primitive_desc(
+        engine, data_md, weight_md, bias_md, out_md, fwd_pd);
   } else {
-    dnnl::inner_product_backward_weights::desc desc(data_md, weight_md, out_md);
-    return dnnl::inner_product_backward_weights::primitive_desc(desc, engine, fwd_pd);
+    return dnnl::inner_product_backward_weights::primitive_desc(
+        engine, data_md, weight_md, out_md, fwd_pd);
   }
 }
 
@@ -213,6 +227,15 @@ void DNNLFCForwardFullFeature(const DNNLFCFullParam& full_param,
     auto fwd_bias_desc  = fwd->fwd_pd.bias_desc();
     auto bias_mem       = in_data[fullc::kBias].GetDNNLDataReorder(&fwd_bias_desc);
     args[DNNL_ARG_BIAS] = *bias_mem;
+  }
+  // v3: bind runtime scale tensors. For int8/u8 output, one scale binds to
+  // DST (per-tensor) or WEIGHTS (per-OC). For f32 output, both SRC (1/data_scale)
+  // and WEIGHTS (1/weight_scale[c]) scales are bound.
+  if (auto* sm = fwd->GetOutputScaleMem()) {
+    args[DNNL_ARG_ATTR_SCALES | fwd->GetOutputScaleArg()] = *sm;
+  }
+  if (auto* ssm = fwd->GetSrcScaleMem()) {
+    args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = *ssm;
   }
   DNNLStream::Get()->RegisterPrimArgs(fwd->GetFwd(), args);
   CommitOutput(out_data[fullc::kOut], out_mem);

@@ -217,7 +217,7 @@ RnnPrimitive GetRnnFwdPrim(const DNNLRnnLayerParam& layer_param,
   const prop_kind prop = is_train ? prop_kind::forward_training : prop_kind::forward_inference;
   const rnn_direction dnnl_rnn_direction = layer_param.bidirectional ?
                                                rnn_direction::bidirectional_concat :
-                                               rnn_direction::unidirectional;
+                                               rnn_direction::unidirectional_left2right;
 
   auto src_layer_desc    = memory::desc(layer_param.src_dims, src_layer_dtype, tag::tnc);
   auto weight_layer_desc = memory::desc(layer_param.weight_layer_dims, weight_dtype, tag::any);
@@ -301,7 +301,7 @@ RnnBwdPrimitive GetRnnBwdPrim(const DNNLRnnForwardTraining& fwd,
   const prop_kind prop                 = prop_kind::backward;
   rnn_direction dnnl_rnn_direction     = layer_param.bidirectional ?
                                          rnn_direction::bidirectional_concat :
-                                         rnn_direction::unidirectional;
+                                         rnn_direction::unidirectional_left2right;
 
   auto src_layer_desc    = memory::desc(layer_param.src_dims, data_type, tag::tnc);
   auto weight_layer_desc = memory::desc(layer_param.weight_layer_dims, weight_type, tag::any);
@@ -422,21 +422,24 @@ static void ConcatWeights(const dnnl::memory& dst,
   const memory::desc& dst_desc = dst.get_desc();
   // Use dst memory dims to initialize src memory dims, then set the concat
   // dim to 1. And Rnn weights are 5-dimension tensor.
-  memory::dims src_dims(dst_desc.data.dims, dst_desc.data.dims + dst_desc.data.ndims);
+  // v3: get_dims() returns a vector by value; store once before iterating.
+  const auto dst_dims = dst_desc.get_dims();
+  memory::dims src_dims(dst_dims.begin(), dst_dims.end());
   src_dims.at(concat_dimension) = 1;
   std::vector<memory::desc> src_descs;
   std::unordered_map<int, memory> concat_args;
 
   for (size_t i = 0; i < src_ptrs.size(); ++i) {
     src_descs.emplace_back(
-        src_dims, static_cast<memory::data_type>(dst_desc.data.data_type), src_format);
+        src_dims, static_cast<memory::data_type>(dst_desc.get_data_type()), src_format);
     concat_args.emplace(DNNL_ARG_MULTIPLE_SRC + i,
                         memory(src_descs.back(), cpu_engine, src_ptrs.at(i)));
   }
   concat_args.emplace(DNNL_ARG_DST, dst);
 
-  auto concat_pd =
-      dnnl::concat::primitive_desc(dst.get_desc(), concat_dimension, src_descs, cpu_engine);
+  // v3: concat::primitive_desc(engine, dst_md, concat_dim, src_mds, attr={}).
+  auto concat_pd = dnnl::concat::primitive_desc(
+      cpu_engine, dst.get_desc(), concat_dimension, src_descs);
   dnnl::concat(concat_pd).execute(s, concat_args);
 }
 
@@ -938,7 +941,7 @@ void DNNLRnnBackward::SetWeightsGradsMem() {
     const auto& cpu_engine         = CpuEngine::Get()->get_engine();
     const DNNLRnnLayerParam& param = fwd_ptr_->GetParam();
     const auto dnnl_type =
-        static_cast<dnnl::memory::data_type>(bwd_.diff_weights_layer_desc_.data.data_type);
+        static_cast<dnnl::memory::data_type>(bwd_.diff_weights_layer_desc_.get_data_type());
 
     auto native_layer_desc = dnnl::memory::desc(param.weight_layer_dims, dnnl_type, tag::ldgoi);
     auto native_iter_desc  = dnnl::memory::desc(param.weight_iter_dims, dnnl_type, tag::ldgoi);

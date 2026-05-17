@@ -71,7 +71,7 @@ struct DepthwiseArgs {
   int out_channel;
 };
 
-namespace cuda {
+namespace cuda_kernels {
 template<typename DType, int kFilterHeight, int kFilterWidth>
 __global__ void __launch_bounds__(1024, 2)
 DepthwiseConv2dForwardKernel(const DType* input,
@@ -640,7 +640,7 @@ __launch_bounds__(1024, 2) void DepthwiseConv2dBackwardFilterKernelSmall(
 }
 
 
-}  // namespace cuda
+}  // namespace cuda_kernels
 
 // Returns whether depthwise convolution forward or backward input pass can be
 // performed using the faster ('Small') variant of the kernel.
@@ -665,7 +665,7 @@ bool CanLaunchDepthwiseConv2dBackwardFilterGPUSmall(const DepthwiseArgs args,
       args.filter_height * args.filter_width <= block_height * args.in_width;
 }
 
-template <typename DType, cuda::DepthwiseConv2dDirection kDirection,
+template <typename DType, cuda_kernels::DepthwiseConv2dDirection kDirection,
           int kBlockSlices, bool kEvenHeight>
 void LaunchDepthwiseConv2dGPUSmall(mshadow::Stream<mxnet::gpu> *stream,
                                    const DepthwiseArgs args,
@@ -682,19 +682,19 @@ void LaunchDepthwiseConv2dGPUSmall(mshadow::Stream<mxnet::gpu> *stream,
   const int num_outputs =
       args.batch * args.out_height * args.out_width * args.out_channel;
   int block_count = std::min(num_outputs/(block_dim.x * block_dim.y * block_dim.z) + 1,
-                             (unsigned)mshadow::cuda::kMaxGridNum);
+                             (unsigned)mshadow::cuda_impl::kMaxGridNum);
   auto s = mshadow::Stream<mxnet::gpu>::GetStream(stream);
   if (args.filter_height == 3 && args.filter_width == 3) {
-    cuda::DepthwiseConv2dKernelSmall<DType, kDirection, kBlockSlices, kEvenHeight, 3, 3>
+    cuda_kernels::DepthwiseConv2dKernelSmall<DType, kDirection, kBlockSlices, kEvenHeight, 3, 3>
         <<<block_count, block_dim, shared_memory_size, s>>>(args, input, filter, output);
   } else {
-    cuda::DepthwiseConv2dKernelSmall<DType, kDirection, kBlockSlices, kEvenHeight, -1, -1>
+    cuda_kernels::DepthwiseConv2dKernelSmall<DType, kDirection, kBlockSlices, kEvenHeight, -1, -1>
         <<<block_count, block_dim, shared_memory_size, s>>>(args, input, filter, output);
   }
   MSHADOW_CUDA_POST_KERNEL_CHECK(DepthwiseConv2dKernelSmall);
 }
 
-template <typename DType, cuda::DepthwiseConv2dDirection kDirection, int kBlockSlices>
+template <typename DType, cuda_kernels::DepthwiseConv2dDirection kDirection, int kBlockSlices>
 void LaunchDepthwiseConv2dGPUSmall(mshadow::Stream<mxnet::gpu> *stream,
                                    const DepthwiseArgs args,
                                    const DType* input, const DType* filter, DType* output) {
@@ -707,7 +707,7 @@ void LaunchDepthwiseConv2dGPUSmall(mshadow::Stream<mxnet::gpu> *stream,
   }
 }
 
-template <typename DType, cuda::DepthwiseConv2dDirection kDirection>
+template <typename DType, cuda_kernels::DepthwiseConv2dDirection kDirection>
 void LaunchDepthwiseConv2dGPUSmall(mshadow::Stream<mxnet::gpu> *stream,
                                    const DepthwiseArgs args,
                                    const DType* input, const DType* filter, DType* output) {
@@ -746,11 +746,11 @@ bool TryLaunchDepthwiseConv2dBackwardFilterGPUSmall(mshadow::Stream<mxnet::gpu> 
   int block_count = num_out_grad/(block_dim.x * block_dim.y * block_dim.z) + 1;
   auto s = mshadow::Stream<mxnet::gpu>::GetStream(stream);
   if (args.filter_height == 3 && args.filter_width == 3) {
-    cuda::DepthwiseConv2dBackwardFilterKernelSmall<DType, kBlockSlices, kAccumPixels, 3, 3>
+    cuda_kernels::DepthwiseConv2dBackwardFilterKernelSmall<DType, kBlockSlices, kAccumPixels, 3, 3>
         <<<block_count, block_dim, shared_memory_size, s>>>(
             args, out_grad, input, filter_grad);
   } else {
-    cuda::DepthwiseConv2dBackwardFilterKernelSmall<DType, kBlockSlices, kAccumPixels, -1, -1>
+    cuda_kernels::DepthwiseConv2dBackwardFilterKernelSmall<DType, kBlockSlices, kAccumPixels, -1, -1>
         <<<block_count, block_dim, shared_memory_size, s>>>(
             args, out_grad, input, filter_grad);
   }

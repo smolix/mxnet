@@ -55,10 +55,12 @@ inline dnnl::lrn_forward::primitive_desc GetLRNFwdDesc(const LRNParam& param,
   if (is_train) {
     kind = dnnl::prop_kind::forward_training;
   } else {
-    kind = dnnl::prop_kind::forward_scoring;
+    kind = dnnl::prop_kind::forward_inference;
   }
-  dnnl::lrn_forward::desc fwd_desc(kind, alg, src_md, nsize, alpha, beta, k);
-  return dnnl::lrn_forward::primitive_desc(fwd_desc, engine);
+  // v3: lrn_forward::primitive_desc(engine, prop, alg, src_md, dst_md,
+  //                                 local_size, alpha, beta, k, attr={}).
+  return dnnl::lrn_forward::primitive_desc(
+      engine, kind, alg, src_md, src_md, nsize, alpha, beta, k);
 }
 
 inline dnnl::lrn_backward::primitive_desc GetLRNBwdDesc(
@@ -73,8 +75,11 @@ inline dnnl::lrn_backward::primitive_desc GetLRNBwdDesc(
   const int nsize           = param.nsize;
   const float k             = param.knorm;
 
-  dnnl::lrn_backward::desc lrnBwd_desc(alg, data_in_md, diff_md, nsize, alpha, beta, k);
-  return dnnl::lrn_backward::primitive_desc(lrnBwd_desc, engine, lrnFwd_desc);
+  // v3: lrn_backward::primitive_desc(engine, alg, diff_src_md, diff_dst_md,
+  //                                  src_md, local_size, alpha, beta, k,
+  //                                  hint_fwd_pd, attr={}).
+  return dnnl::lrn_backward::primitive_desc(
+      engine, alg, diff_md, diff_md, data_in_md, nsize, alpha, beta, k, lrnFwd_desc);
 }
 
 typedef ParamOpSign<LRNParam> DNNLLRNSignature;
@@ -148,7 +153,7 @@ static DNNLLRNFwd& GetLRNFwd(const LRNParam& param, const OpContext& ctx, const 
 #else
   static MX_THREAD_LOCAL std::unordered_map<DNNLLRNSignature, DNNLLRNFwd, OpHash> lrn_fwds;
 #endif
-  auto kind_ = ctx.is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_scoring;
+  auto kind_ = ctx.is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_inference;
 
   DNNLLRNSignature key(param);
   key.AddSign(static_cast<int>(kind_));

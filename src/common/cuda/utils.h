@@ -311,6 +311,27 @@ inline cublasOperation_t CublasTransposeOp(bool transpose) {
 }
 #endif
 
+#if CUDA_VERSION >= 11000
+// cuBLAS 11+ requires cublasGemmEx / cublasGemmStridedBatchedEx to receive a
+// cublasComputeType_t (rather than the cudaDataType_t used by older cuBLAS).
+// Translate the I/O cudaDataType used elsewhere in mxnet into the matching
+// compute-type enum.
+inline cublasComputeType_t CublasComputeTypeFromDataType(cudaDataType_t t) {
+  switch (t) {
+    case CUDA_R_16F:
+      return CUBLAS_COMPUTE_16F;
+    case CUDA_R_32F:
+      return CUBLAS_COMPUTE_32F;
+    case CUDA_R_64F:
+      return CUBLAS_COMPUTE_64F;
+    case CUDA_R_32I:
+      return CUBLAS_COMPUTE_32I;
+    default:
+      return CUBLAS_COMPUTE_32F;
+  }
+}
+#endif
+
 /*!
  * \brief Get string representation of cuSOLVER errors.
  * \param error The error.
@@ -623,21 +644,13 @@ inline cublasMath_t SetCublasMathMode(cublasHandle_t blas_handle, cublasMath_t n
 
 #include <cudnn.h>
 
-// Creating CUDNN_VERSION_AS_STRING as follows avoids a static_assert error message that shows
-// the formula for CUDNN_VERSION, i.e. "1000 * 7 + 100 * 6 + 0" rather than number "7600".
-static_assert(CUDNN_PATCHLEVEL < 100 && CUDNN_MINOR < 10,
+// Build a readable "MAJOR.MINOR.PATCH" string regardless of how cuDNN computes
+// CUDNN_VERSION internally. cuDNN 8 used MAJOR*1000+MINOR*100+PATCH (MINOR<10);
+// cuDNN 9 switched to MAJOR*10000+MINOR*100+PATCH and allows MINOR>=10.
+static_assert(CUDNN_PATCHLEVEL < 100 && CUDNN_MINOR < 100,
               "CUDNN_VERSION_AS_STRING macro assumptions violated.");
-#if CUDNN_PATCHLEVEL >= 10
 #define CUDNN_VERSION_AS_STRING \
-  QUOTEVALUE(CUDNN_MAJOR)       \
-  QUOTEVALUE(CUDNN_MINOR)       \
-  QUOTEVALUE(CUDNN_PATCHLEVEL)
-#else
-#define CUDNN_VERSION_AS_STRING \
-  QUOTEVALUE(CUDNN_MAJOR)       \
-  QUOTEVALUE(CUDNN_MINOR)       \
-  "0" QUOTEVALUE(CUDNN_PATCHLEVEL)
-#endif
+  QUOTEVALUE(CUDNN_MAJOR) "." QUOTEVALUE(CUDNN_MINOR) "." QUOTEVALUE(CUDNN_PATCHLEVEL)
 
 #define STATIC_ASSERT_CUDNN_VERSION_GE(min_version)             \
   static_assert(                                                \

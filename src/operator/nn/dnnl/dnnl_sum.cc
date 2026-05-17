@@ -67,7 +67,8 @@ DNNLSumFwd::DNNLSumFwd(const std::vector<NDArray>& inputs, const std::vector<NDA
     data_md.push_back(tmp_md);
   }
 
-  fwd_pd = std::make_shared<sum_pd_t>(scales, data_md, CpuEngine::Get()->get_engine());
+  // v3: sum::primitive_desc(engine, scales, src_mds, attr={}).
+  fwd_pd = std::make_shared<sum_pd_t>(CpuEngine::Get()->get_engine(), scales, data_md);
   fwd    = std::make_shared<sum_t>(*fwd_pd);
 }
 

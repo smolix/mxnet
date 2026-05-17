@@ -265,8 +265,16 @@ static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
                             req[q_elemwise_add::kOut],
                             &inputs[potentially_inplace_input]);
 
+    // v3: per-input scales were declared on the primitive via set_scales_mask;
+    // their values MUST be bound at execute time as runtime memory args, otherwise
+    // oneDNN dereferences an uninitialized scale pointer and segfaults inside
+    // ref_binary_t::execute_ref.
     const dnnl_args_map_t args(
-        {{DNNL_ARG_SRC_0, *A_mem}, {DNNL_ARG_SRC_1, *B_mem}, {DNNL_ARG_DST, *out_mem.second}});
+        {{DNNL_ARG_SRC_0, *A_mem},
+         {DNNL_ARG_SRC_1, *B_mem},
+         {DNNL_ARG_DST, *out_mem.second},
+         {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC_0, fwd.GetSrc0Scale()},
+         {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC_1, fwd.GetSrc1Scale()}});
     stream->RegisterPrimArgs(fwd.GetFwd(), args);
   }
   CommitOutput(outputs[q_elemwise_add::kOut], out_mem);

@@ -26,7 +26,18 @@ import tempfile
 import unittest
 import pytest
 
-mx.npx.reset_np()
+
+@pytest.fixture(autouse=True)
+def _legacy_nd_semantics():
+    # This file targets the legacy `mx.nd.NDArray` image API and must run
+    # with np-semantics OFF. A module-scope `mx.npx.reset_np()` historically
+    # achieved this, but it leaks into any other test file collected in the
+    # same pytest invocation (notably test_gluon_data.py, whose recordio
+    # tests expect np-semantics ON). Scope the toggle to test execution so
+    # cross-file pytest runs are clean.
+    mx.npx.reset_np()
+    yield
+    mx.npx.set_np()
 
 def _get_data(url, dirname):
     import os, tarfile

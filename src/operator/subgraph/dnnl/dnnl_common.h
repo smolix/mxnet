@@ -134,9 +134,13 @@ static inline void ConvertWeightBias2DNNL(NDArray* weight,
   DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(weight_reorder_pd), weight_reorder_args);
   NDArray new_bias;
   if (has_bias && data_scale) {
+    // v3 dequant: when conv requested f32 bias (float-output dequant path),
+    // the cached f32 bias is already in real units; skip the s32 rescale.
+    const bool f32_bias =
+        bias_md != nullptr && bias_md->get_data_type() == dnnl::memory::data_type::f32;
     std::vector<float> bias_scales(weight_scales.size());
     for (size_t c = 0; c < weight_scales.size(); ++c) {
-      bias_scales[c] = weight_scales[c] * data_scale;
+      bias_scales[c] = f32_bias ? 1.0f : weight_scales[c] * data_scale;
     }
     new_bias                    = NDArray(bias_md);
     const auto conv_bias_memory = new_bias.GetDNNLData();

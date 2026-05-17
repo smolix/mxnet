@@ -166,11 +166,12 @@ void DNNLMaskedSoftmaxFwd::Execute(const Tensors& tensors,
   // 1. B) out = out * inf
   const memory::desc converted_mask_desc = this->primitives->mask_input_pd.src1_desc();
   dnnl::memory* converted_mask_mem       = TmpMemMgr::Get()->Alloc(converted_mask_desc);
-  // v3: set_output_scales(mask, scales) is gone. For reorder we use
-  //     set_scales_mask(DNNL_ARG_DST, 0) and feed the scale as a runtime
-  //     memory arg DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST.
+  // v3 reorder: DNNL_ARG_DST scale DIVIDES the output (inverse of v2's
+  // set_output_scales). We want to MULTIPLY the (mask-1) values by
+  // MAX_FLOAT to get -inf for masked positions, so bind the scale to
+  // DNNL_ARG_SRC instead.
   dnnl::primitive_attr attr;
-  attr.set_scales_mask(DNNL_ARG_DST, 0);
+  attr.set_scales_mask(DNNL_ARG_SRC, 0);
   dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
                               dnnl::memory::format_tag::x);
   auto scale_mem    = dnnl::memory(scale_md, engine);
@@ -179,7 +180,7 @@ void DNNLMaskedSoftmaxFwd::Execute(const Tensors& tensors,
   std::unordered_map<int, dnnl::memory> args(
       {{DNNL_ARG_FROM, *mask_minusone_mem},
        {DNNL_ARG_TO, *converted_mask_mem},
-       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, scale_mem}});
+       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC, scale_mem}});
   stream->RegisterPrimArgs(dnnl::reorder(*mask_minusone_mem, *converted_mask_mem, attr), args);
 
   // prepare softmax primitive and memory

@@ -263,6 +263,14 @@ void DNNLActivationBackward(const nnvm::NodeAttrs& attrs,
   const NDArray& in_grad    = outputs[0];
   DNNLActParam param_;
   param_.alg = GetDNNLActAlgo(param);
+  // v3 eltwise_soft_relu(alpha)=log(1+exp(alpha*x))/alpha; alpha=0 divides by
+  // zero in the backward kernel too. softrelu wants alpha=1; log_sigmoid is
+  // soft_relu with alpha=-1.
+  if (param.act_type == activation::kSoftReLU) {
+    param_.slope = 1.0f;
+  } else if (param.act_type == activation::kLogSigmoid) {
+    param_.slope = -1.0f;
+  }
   TmpMemMgr::Get()->Init(ctx.requested[activation::kTempSpace]);
   auto diff_dst_memory = out_buffer.GetDNNLData();
   auto input_mem       = in_buffer.GetDNNLData();

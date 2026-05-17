@@ -77,7 +77,11 @@ struct DNNLConvFullParam {
   ConvolutionParam conv_param;
   DNNLConvParam dnnl_param;
   float sum_scale = 1.f;
+  // For int8/u8 output, requantize_scales[c] = out_quant_scale /
+  // (data_scale * weight_scale[c]). For f32 output (dequant-as-output), it is
+  // 1 / weight_scale[c] and the matching SRC scale 1/data_scale is in src_scale.
   std::vector<float> requantize_scales;
+  float src_scale = 0.f;
   DNNLPostEltwiseParam act_param;
   DNNLPostEltwiseParam postsum_act_param;
 };
@@ -113,11 +117,14 @@ class DNNLConvForward {
   // via GetOutputScaleArg(). Returns nullptr if not quantized.
   const dnnl::memory* GetOutputScaleMem() const { return out_scale_mem_.get(); }
   int GetOutputScaleArg() const { return out_scale_arg_; }
+  // f32-output mode only: SRC dequant scale (1/data_scale), nullptr otherwise.
+  const dnnl::memory* GetSrcScaleMem() const { return src_scale_mem_.get(); }
 
  private:
   std::shared_ptr<dnnl::convolution_forward> fwd_;
   std::shared_ptr<dnnl::convolution_forward::primitive_desc> pd_;
   std::shared_ptr<dnnl::memory> out_scale_mem_;
+  std::shared_ptr<dnnl::memory> src_scale_mem_;
   int out_scale_arg_{DNNL_ARG_DST};
 };
 

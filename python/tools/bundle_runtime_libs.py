@@ -15,114 +15,110 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Bundle CUDA / cuDNN / NCCL runtime libraries into python/mxnet/lib/ so the
-produced wheel is self-contained.
+"""Set libmxnet.so RUNPATH so the wheel finds NVIDIA runtime libs via
+pip-installed nvidia-*-cu13 wheels — PyTorch / JAX install layout.
+
+We do NOT bundle cuDNN / NCCL / CUDA runtime into the wheel:
+- Bundling pushes the wheel past the GitHub Releases 2 GB per-asset limit.
+- It also makes the wheel huge for users who already have CUDA installed.
+
+Instead we declare them as pip dependencies in setup.py (install_requires)
+and patch RUNPATH on libmxnet.so so the loader can find them under
+site-packages/nvidia/<pkg>/lib/.
 
 After running this script:
-  - python/mxnet/lib/ contains the runtime .so files and symlinks
-  - python/mxnet/libmxnet.so has RUNPATH set to $ORIGIN/lib
+  - python/mxnet/lib/ is gone (no bundled libs)
+  - python/mxnet/libmxnet.so has RUNPATH pointing at $ORIGIN/lib + each
+    nvidia/<pkg>/lib relative to site-packages/mxnet/
 
 Requires:
-  - patchelf in PATH
-  - The CUDA toolkit and cuDNN/NCCL installed somewhere readable
-
-Usage:
-  python tools/bundle_runtime_libs.py
+  - patchelf  (apt install patchelf)
 """
-import os
+
+from __future__ import annotations
+
+import argparse
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 
-# Files we bundle. For each, the destination filename is the SONAME the
-# dynamic linker actually looks for (matches DT_NEEDED entries in libmxnet.so).
-# We copy the on-disk file (which has the full version in its name) but rename
-# it to the soname, avoiding shipping both the symlink and the target (wheels
-# can't represent symlinks, so doing so would double our storage cost).
-# Mapping: source filename in SEARCH_DIRS -> SONAME we package as.
-BUNDLED = [
-    # cuDNN 9.x (from local wheel cudnn_local/unpacked/.../lib — filenames are
-    # already the SONAME `.so.9`, so source == destination here).
-    ('libcudnn.so.9', 'libcudnn.so.9'),
-    ('libcudnn_adv.so.9', 'libcudnn_adv.so.9'),
-    ('libcudnn_cnn.so.9', 'libcudnn_cnn.so.9'),
-    ('libcudnn_engines_precompiled.so.9', 'libcudnn_engines_precompiled.so.9'),
-    ('libcudnn_engines_runtime_compiled.so.9', 'libcudnn_engines_runtime_compiled.so.9'),
-    ('libcudnn_engines_tensor_ir.so.9', 'libcudnn_engines_tensor_ir.so.9'),
-    ('libcudnn_graph.so.9', 'libcudnn_graph.so.9'),
-    ('libcudnn_heuristic.so.9', 'libcudnn_heuristic.so.9'),
-    ('libcudnn_ops.so.9', 'libcudnn_ops.so.9'),
-    # NCCL 2.x
-    ('libnccl.so.2.28.3', 'libnccl.so.2'),
-    # CUDA 13 runtime + math libs
-    ('libcudart.so.13.0.96', 'libcudart.so.13'),
-    ('libcublas.so.13.1.0.3', 'libcublas.so.13'),
-    ('libcublasLt.so.13.1.0.3', 'libcublasLt.so.13'),
-    ('libcufft.so.12.0.0.61', 'libcufft.so.12'),
-    ('libcusolver.so.12.0.4.66', 'libcusolver.so.12'),
-    ('libcurand.so.10.4.0.35', 'libcurand.so.10'),
-    ('libcusparse.so.12.6.3.3', 'libcusparse.so.12'),
-    ('libnvrtc.so.13.0.88', 'libnvrtc.so.13'),
-    ('libnvJitLink.so.13.0.88', 'libnvJitLink.so.13'),
-    # libnvrtc-builtins is dlopen()ed by libnvrtc at runtime with the major+minor
-    # SONAME (libnvrtc-builtins.so.13.0), not just the major.
-    ('libnvrtc-builtins.so.13.0.88', 'libnvrtc-builtins.so.13.0'),
-    # Fortran ABI used by OpenBLAS
-    ('libgfortran.so.5', 'libgfortran.so.5'),
+# Each entry maps the directory the NVIDIA wheel installs under
+# site-packages/ to the libraries we expect to find there. The RUNPATH
+# is constructed relative to mxnet/libmxnet.so, i.e. $ORIGIN/.. is
+# site-packages.
+# NVIDIA wheels we can pip-install for CUDA 13 (as of 2026-05-17 NVIDIA
+# only ships these two for cu13 on PyPI; the rest are placeholder 0.0.1
+# stubs and so come from the system toolkit at /usr/local/cuda/ for now).
+NVIDIA_PIP_DEPS = [
+    ("nvidia/cudnn/lib", ["libcudnn.so.9"]),
+    ("nvidia/nccl/lib", ["libnccl.so.2"]),
 ]
 
-SEARCH_DIRS = [
-    # Prefer the local cuDNN wheel (9.22) over the system one (9.14).
-    '/workspace/mxnet/cudnn_local/unpacked/nvidia/cudnn/lib',
-    '/usr/lib/x86_64-linux-gnu',
-    '/usr/local/cuda/lib64',
-    '/usr/local/cuda/targets/x86_64-linux/lib',
+# CUDA toolkit runtime libs that don't have pip wheels yet — fall back
+# to the system install. Order matters; loader tries each in turn.
+SYSTEM_CUDA_PATHS = [
+    "/usr/local/cuda/lib64",
+    "/usr/local/cuda-13/lib64",
+    "/usr/lib/x86_64-linux-gnu",
 ]
 
 
-def find_lib(name):
-    for d in SEARCH_DIRS:
-        p = os.path.join(d, name)
-        if os.path.exists(p):
-            return p
-    raise FileNotFoundError(f'Cannot find {name} in {SEARCH_DIRS}')
+def build_runpath() -> str:
+    parts = ["$ORIGIN/lib"]
+    parts.extend(f"$ORIGIN/../{d}" for d, _ in NVIDIA_PIP_DEPS)
+    parts.extend(SYSTEM_CUDA_PATHS)
+    return ":".join(parts)
 
 
-def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    pkg_root = os.path.normpath(os.path.join(here, '..', 'mxnet'))
-    lib_dir = os.path.join(pkg_root, 'lib')
-    libmxnet = os.path.join(pkg_root, 'libmxnet.so')
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--libmxnet",
+        default=str(Path(__file__).resolve().parents[1] / "mxnet" / "libmxnet.so"),
+        help="path to libmxnet.so to patch (default: python/mxnet/libmxnet.so)",
+    )
+    parser.add_argument(
+        "--drop-bundled",
+        action="store_true",
+        help="remove python/mxnet/lib/ if it exists (we no longer bundle)",
+    )
+    args = parser.parse_args()
 
-    if not os.path.exists(libmxnet):
-        sys.exit(f'libmxnet.so not found at {libmxnet}; build first.')
+    libmxnet = Path(args.libmxnet).resolve()
+    if not libmxnet.exists():
+        print(f"error: {libmxnet} not found", file=sys.stderr)
+        return 1
 
-    shutil.rmtree(lib_dir, ignore_errors=True)
-    os.makedirs(lib_dir, exist_ok=True)
+    runpath = build_runpath()
+    print(f"patching {libmxnet}")
+    print(f"  RUNPATH={runpath}")
+    subprocess.run(
+        ["patchelf", "--set-rpath", runpath, str(libmxnet)],
+        check=True,
+    )
 
-    for srcname, dstname in BUNDLED:
-        src = find_lib(srcname)
-        dst = os.path.join(lib_dir, dstname)
-        shutil.copy(src, dst)
+    actual = subprocess.run(
+        ["patchelf", "--print-rpath", str(libmxnet)],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    if actual != runpath:
+        print(
+            f"error: RUNPATH didn't take. got: {actual!r}, want: {runpath!r}",
+            file=sys.stderr,
+        )
+        return 1
 
-    # Set RUNPATH=$ORIGIN/lib on libmxnet.so
-    subprocess.check_call(['patchelf', '--set-rpath', '$ORIGIN/lib', libmxnet])
-    # Set RUNPATH=$ORIGIN on each bundled lib so they find each other
-    for fn in os.listdir(lib_dir):
-        p = os.path.join(lib_dir, fn)
-        if os.path.islink(p) or not os.path.isfile(p):
-            continue
-        try:
-            subprocess.check_call(['patchelf', '--set-rpath', '$ORIGIN', p])
-        except subprocess.CalledProcessError:
-            # Some files (e.g. linker scripts) are not ELF; skip.
-            pass
+    if args.drop_bundled:
+        bundled = libmxnet.parent / "lib"
+        if bundled.is_dir():
+            print(f"removing {bundled}/")
+            shutil.rmtree(bundled)
 
-    print(f'Bundled libraries into {lib_dir}')
-    print('libmxnet.so RUNPATH:')
-    subprocess.check_call(['patchelf', '--print-rpath', libmxnet])
+    print("done.")
+    return 0
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    sys.exit(main())

@@ -111,6 +111,9 @@ class SgDNNLConvOperator {
   dnnl_args_map_t args_;
   NDArray cached_weight_;
   NDArray cached_bias_;
+  // TODO: wire from quantization inputs (see dnnl_fc.cc kBiasMin/kBiasMax)
+  float cached_bias_min_{0.0f};
+  float cached_bias_max_{0.0f};
   float cached_data_min_;
   float cached_data_max_;
   float cached_sum_min_;
@@ -516,6 +519,14 @@ static void SgDNNLConvParamParser(nnvm::NodeAttrs* attrs) {
       if (node_name == "Activation") {
         const auto act_param = nnvm::get<ActivationParam>(node->attrs.parsed);
         post_act_param.alg   = GetDNNLActAlgo(act_param);
+        // v3 eltwise_soft_relu = log(1+exp(alpha*x))/alpha — alpha=0 is a
+        // division by zero. softrelu uses alpha=1; log_sigmoid is encoded as
+        // soft_relu with alpha=-1.
+        if (act_param.act_type == activation::kSoftReLU) {
+          post_act_param.alpha = 1.0f;
+        } else if (act_param.act_type == activation::kLogSigmoid) {
+          post_act_param.alpha = -1.0f;
+        }
       } else if (node_name == "LeakyReLU") {
         const auto act_param = nnvm::get<LeakyReLUParam>(node->attrs.parsed);
         post_act_param.alpha = act_param.slope;

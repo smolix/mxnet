@@ -58,11 +58,18 @@ dnnl::inner_product_forward::primitive_desc GetFCFwdImpl(const DNNLFCFullParam& 
   }
   attr.set_post_ops(ops);
 
+  const bool float_output = full_param.dnnl_param.quantized &&
+                            full_param.dnnl_param.enabled_float_output.has_value();
   if (full_param.dnnl_param.quantized && full_param.output_scales.size()) {
-    // v3: per-OC output scales must go on DNNL_ARG_WEIGHTS (mask=1<<0=1 along
-    // weights' OC axis); v3 inner_product rejects per-channel DST masks.
-    // Per-tensor case keeps DNNL_ARG_DST mask=0.
-    if (full_param.output_scales.size() > 1) {
+    if (float_output) {
+      // v3 dequant: bind dequant scales to SRC + WEIGHTS (no DST scale). v3
+      // matmul rejects s32 bias + f32 dst + DST scale; splitting the scale
+      // and using f32 bias avoids the unsupported combo.
+      attr.set_scales_mask(DNNL_ARG_SRC, 0);
+      attr.set_scales_mask(DNNL_ARG_WEIGHTS, full_param.output_scales.size() > 1 ? 1 : 0);
+    } else if (full_param.output_scales.size() > 1) {
+      // v3: per-OC output scales must go on DNNL_ARG_WEIGHTS (mask=1<<0=1 along
+      // weights' OC axis); v3 inner_product rejects per-channel DST masks.
       attr.set_scales_mask(DNNL_ARG_WEIGHTS, 1);
     } else {
       attr.set_scales_mask(DNNL_ARG_DST, 0);
@@ -75,7 +82,9 @@ dnnl::inner_product_forward::primitive_desc GetFCFwdImpl(const DNNLFCFullParam& 
       if ((*bias).shape().ndim() != 1)
         LOG(FATAL) << "Unexpected shape for bias " << (*bias).shape();
       auto bias_md =
-          full_param.dnnl_param.quantized ? GetMemDesc(*bias, mshadow::kInt32) : GetMemDesc(*bias);
+          full_param.dnnl_param.quantized
+              ? GetMemDesc(*bias, float_output ? mshadow::kFloat32 : mshadow::kInt32)
+              : GetMemDesc(*bias);
       return dnnl::inner_product_forward::primitive_desc(
           engine, propagation, data_md, weight_md, bias_md, out_md, attr);
     } else {
@@ -219,10 +228,14 @@ void DNNLFCForwardFullFeature(const DNNLFCFullParam& full_param,
     auto bias_mem       = in_data[fullc::kBias].GetDNNLDataReorder(&fwd_bias_desc);
     args[DNNL_ARG_BIAS] = *bias_mem;
   }
-  // v3: bind runtime scale tensor — ARG key is WEIGHTS for per-OC, DST for
-  // per-tensor — to match the set_scales_mask attr from GetFCFwdImpl.
+  // v3: bind runtime scale tensors. For int8/u8 output, one scale binds to
+  // DST (per-tensor) or WEIGHTS (per-OC). For f32 output, both SRC (1/data_scale)
+  // and WEIGHTS (1/weight_scale[c]) scales are bound.
   if (auto* sm = fwd->GetOutputScaleMem()) {
     args[DNNL_ARG_ATTR_SCALES | fwd->GetOutputScaleArg()] = *sm;
+  }
+  if (auto* ssm = fwd->GetSrcScaleMem()) {
+    args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = *ssm;
   }
   DNNLStream::Get()->RegisterPrimArgs(fwd->GetFwd(), args);
   CommitOutput(out_data[fullc::kOut], out_mem);

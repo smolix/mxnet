@@ -158,6 +158,13 @@ void DNNLActivationForward(const nnvm::NodeAttrs& attrs,
   const ActivationParam& param = nnvm::get<ActivationParam>(attrs.parsed);
   DNNLActParam param_;
   param_.alg               = GetDNNLActAlgo(param);
+  // v3 eltwise_soft_relu(alpha)=log(1+exp(alpha*x))/alpha; alpha=0 divides by
+  // zero. softrelu wants alpha=1; log_sigmoid is soft_relu with alpha=-1.
+  if (param.act_type == activation::kSoftReLU) {
+    param_.slope = 1.0f;
+  } else if (param.act_type == activation::kLogSigmoid) {
+    param_.slope = -1.0f;
+  }
   const NDArray& in_buffer = in_data;
   DNNLStream* stream       = DNNLStream::Get();
   auto input_mem           = in_buffer.GetDNNLData();

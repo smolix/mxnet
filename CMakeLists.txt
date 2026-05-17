@@ -57,14 +57,17 @@ include(CMakeDependentOption)
 #Some things have order. This must be put in front alone
 option(MXNET_BUILD_SHARED_LIBS "Build shared libraries instead of static libraries" ON)
 option(USE_CUDA "Build with CUDA support"   ON)
-set(MXNET_CUDA_ARCH "Auto" CACHE STRING "Target NVIDIA GPU achitecture.
+set(MXNET_CUDA_ARCH "8.0;8.6;8.9;9.0;12.0+PTX" CACHE STRING "Target NVIDIA GPU achitecture.
 Format: Auto | Common | All | LIST(ARCH_AND_PTX ...)
 - \"Auto\" detects local machine GPU compute arch at runtime.
 - \"Common\" and \"All\" cover common and entire subsets of architectures
 - ARCH_AND_PTX : NAME | NUM.NUM | NUM.NUM(NUM.NUM) | NUM.NUM+PTX
 - NAME: Fermi Kepler Maxwell Kepler+Tegra Kepler+Tesla Maxwell+Tegra Pascal Volta Turing
 - NUM: Any number. Only those pairs are currently accepted by NVCC though:
-       2.0 2.1 3.0 3.2 3.5 3.7 5.0 5.2 5.3 6.0 6.2 7.0 7.2 7.5")
+       2.0 2.1 3.0 3.2 3.5 3.7 5.0 5.2 5.3 6.0 6.2 7.0 7.2 7.5 8.0 8.6 8.9 9.0 12.0
+Default targets Ampere (sm_80/sm_86), Ada (sm_89), Hopper (sm_90), and
+Blackwell consumer (sm_120) with a forward-compat PTX 12.0 fallback for
+future GPUs newer than sm_120.")
 option(USE_NCCL "Use NVidia NCCL with CUDA" OFF)
 option(USE_OPENCV "Build with OpenCV support" ON)
 option(USE_OPENMP "Build with Openmp support" ON)

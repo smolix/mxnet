@@ -1,0 +1,142 @@
+name: release-wheel
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to attach the wheel to (e.g. v2.0.0)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-wheel:
+    name: Build CPU wheel (manylinux-ish on ubuntu-22.04)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      CMAKE_BUILD_DIR: build
+      CMAKE_BUILD_TYPE: Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ninja-build \
+            cmake \
+            ccache \
+            g++ \
+            libopenblas-dev \
+            libopencv-dev \
+            libomp-dev \
+            patchelf \
+            python3-dev
+          python -m pip install --upgrade pip wheel setuptools build auditwheel
+
+      - name: Configure CMake (CPU + oneDNN)
+        run: |
+          cmake -S . -B "$CMAKE_BUILD_DIR" -G Ninja \
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DUSE_CUDA=OFF \
+            -DUSE_CUDNN=OFF \
+            -DUSE_NCCL=OFF \
+            -DUSE_ONEDNN=ON \
+            -DUSE_OPENMP=ON \
+            -DUSE_OPENCV=ON \
+            -DUSE_BLAS=open \
+            -DUSE_DIST_KVSTORE=OFF \
+            -DBUILD_CPP_EXAMPLES=OFF
+
+      - name: Build libmxnet
+        timeout-minutes: 60
+        run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j"$(nproc)"
+
+      - name: Stage libmxnet.so into python package
+        run: |
+          set -e
+          libpath=$(find "$CMAKE_BUILD_DIR" -maxdepth 3 -name 'libmxnet.so' | head -n1)
+          if [ -z "$libpath" ]; then
+            echo "libmxnet.so not produced" >&2
+            exit 1
+          fi
+          mkdir -p python/mxnet/lib
+          cp -v "$libpath" python/mxnet/lib/libmxnet.so
+
+      - name: Resolve tag / version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          else
+            tag="${{ github.event.inputs.tag }}"
+          fi
+          if [ -z "$tag" ]; then
+            tag="v0.0.0-dev-${GITHUB_SHA::8}"
+          fi
+          # Strip leading "v" to form a PEP-440 version.
+          version="${tag#v}"
+          echo "tag=$tag"     >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build wheel
+        env:
+          MXNET_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -e
+          cd python
+          # setup.py auto-detects libmxnet.so under mxnet/lib/.
+          python -m build --wheel --outdir ../dist
+          ls -lh ../dist
+
+      - name: Repair wheel with auditwheel (best effort)
+        continue-on-error: true
+        run: |
+          set -e
+          mkdir -p wheelhouse
+          for whl in dist/*.whl; do
+            # auditwheel may fail on ubuntu-22.04 newer libstdc++ vs older manylinux tags;
+            # keep it best-effort so we still publish the raw wheel.
+            auditwheel repair --plat manylinux_2_35_x86_64 -w wheelhouse "$whl" || cp "$whl" wheelhouse/
+          done
+          ls -lh wheelhouse
+
+      - name: Upload wheel as workflow artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mxnet-cpu-wheel-${{ steps.ver.outputs.version }}
+          path: |
+            dist/*.whl
+            wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach wheel to GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          files: |
+            dist/*.whl
+            wheelhouse/*.whl
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+          body: |
+            CPU-only MXNet wheel (oneDNN enabled, no CUDA).
+
+            GPU wheels require a self-hosted CUDA runner and are not built by this workflow.

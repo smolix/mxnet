@@ -70,11 +70,10 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 10. **NCCL multi-process not validated** — 1-process / 2-GPU `kv.create('nccl')` push/pull works. Standard distributed training topology (1 process per GPU with `dist.init_process_group`-style init) is untested. May need `MXNET_KVSTORE_USETREE` or related tunings to scale.
 
-11. **Test-source bugs blocking 80+ test invocations** (test code, not MXNet code):
-   - `test_convolution_options` — `np.repeat(object_array, 5)` fails on numpy ≥1.24 (#10141)
-   - `test_deformable_psroipooling` — `np.int` removed in numpy ≥1.20 (#11713) at 4 sites
-   - `test_np_empty_like` — positional args don't match new signature
-   All are easy fixes (kwargs, replace `np.int` with `int`, rewrite `np.repeat`).
+11. ~~**Test-source bugs blocking 80+ test invocations**~~ **RESOLVED 2026-05-17** via agent #46 (commit `fa51581cb` numpy test fixes) plus the 21-test unskip in `cedeb2f9b`. Re-verified on cuDNN-9.22 build:
+   - `test_deformable_psroipooling` → 1 PASS
+   - `test_np_empty_like` → 1 SKIP (separate bug about int8/uint8/bool not supported, documented inline at the skip)
+   - `test_convolution_options` was never in this fork (no upstream test by that name; bug referenced has different path)
 
 12. **`test_gpu_memory_profiler_symbolic`** (#18564) — profiler probe for `tensordot:dot_backward` attr_name doesn't find a match. The dot kernel was renamed under oneDNN v3 dispatch. Either update the test or restore the tag name in the kernel.
 

@@ -271,6 +271,36 @@ def wrap_mxnp_np_ufunc(func):
         return func(x1, x2)
     return _wrap_mxnp_np_ufunc
 
+
+def wrap_mxnp_np_ufunc_inplace(func):
+    """
+    A convenience decorator for in-place binary ops (__iadd__, __imul__, etc.).
+
+    Per the array-API spec, in-place ops must NOT change the dtype/shape of the
+    lhs array.  When the rhs has a different dtype, it must be cast to the lhs
+    dtype before the operation rather than raising a "Type inconsistent" error
+    (numpy implements the same behaviour).
+
+    Parameters
+    ----------
+    func : the in-place dunder method to be wrapped.
+
+    Returns
+    -------
+    Function
+        A function whose rhs is cast to lhs dtype and, if necessary, from a
+        plain numpy ndarray to an mxnet.numpy ndarray.
+    """
+    @functools.wraps(func)
+    def _wrap_mxnp_np_ufunc_inplace(x1, x2):
+        if isinstance(x2, _np.ndarray):
+            x2 = _as_mx_np_array(x2, device=x1.device)
+        # Cast rhs to lhs dtype so the dtype/shape of x1 is never changed.
+        if isinstance(x2, NDArray) and x2.dtype != x1.dtype:
+            x2 = x2.astype(x1.dtype, copy=False)
+        return func(x1, x2)
+    return _wrap_mxnp_np_ufunc_inplace
+
 @set_module('mxnet.numpy')
 class ndarray(NDArray):  # pylint: disable=invalid-name
     """
@@ -1086,7 +1116,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """x.__add__(y) <=> x + y"""
         return add(self, other)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __iadd__(self, other):
         """x.__iadd__(y) <=> x += y"""
         if not self.writable:
@@ -1142,27 +1172,27 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """x.__rshift__(y) <=> x >> y"""
         return bitwise_right_shift(self, other)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __iand__(self, other):
         """x.__iand__(y) <=> x &= y"""
         return bitwise_and(self, other, out=self)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __ior__(self, other):
         r"""x.__ior__(y) <=> x \|= y"""
         return bitwise_or(self, other, out=self)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __ixor__(self, other):
         """x.__ixor__(y) <=> x ^= y"""
         return bitwise_xor(self, other, out=self)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __ilshift__(self, other):
         """x.__ilshift__(y) <=> x <<= y"""
         return bitwise_left_shift(self, other, out=self)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __irshift__(self, other):
         """x.__irshift__(y) <=> x >>= y"""
         return bitwise_right_shift(self, other, out=self)
@@ -1202,7 +1232,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """x.__sub__(y) <=> x - y"""
         return subtract(self, other)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __isub__(self, other):
         """x.__isub__(y) <=> x -= y"""
         if not self.writable:
@@ -1224,7 +1254,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """x.__floordiv__(y) <=> x // y"""
         return floor_divide(self, other)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __ifloordiv__(self, other):
         """x.__ifloordiv__(y) <=> x //= y"""
         if not self.writable:
@@ -1244,7 +1274,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """x.__pos__() <=> +x"""
         return positive(self)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __imul__(self, other):
         r"""x.__imul__(y) <=> x \*= y"""
         if not self.writable:
@@ -1266,7 +1296,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """x.__rdiv__(y) <=> y / x"""
         return divide(other, self)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __idiv__(self, other):
         """x.__idiv__(y) <=> x /= y"""
         return divide(self, other, out=self)
@@ -1281,7 +1311,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """x.__rtruediv__(y) <=> y / x"""
         return divide(other, self)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __itruediv__(self, other):
         """x.__itruediv__(y) <=> x /= y"""
         return divide(self, other, out=self)
@@ -1296,7 +1326,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """x.__rmod__(y) <=> y % x"""
         return mod(other, self)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __imod__(self, other):
         """x.__imod__(y) <=> x %= y"""
         return mod(self, other, out=self)
@@ -1311,7 +1341,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """x.__rpow__(y) <=> y ** x"""
         return power(other, self)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __ipow__(self, other):
         """x.__ipow__(y) <=> x **= y"""
         return power(self, other, out=self)
@@ -1359,7 +1389,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """x.__rmatmul__(y) <=> y @ x"""
         return matmul(other, self)
 
-    @wrap_mxnp_np_ufunc
+    @wrap_mxnp_np_ufunc_inplace
     def __imatmul__(self, other):
         """x.__imatmul__(y) <=> x @= y"""
         return matmul(self, other, out=self)

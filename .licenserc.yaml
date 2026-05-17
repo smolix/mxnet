@@ -76,6 +76,21 @@ header:
     - 'include/nnvm' # symlinks to 3rdparty/tvm/nnvm/include/nnvm
     # test/build data
     - 'tests/python/dnnl/data/test_dnnl_test_dnnl_model_model1.json'
+    # Blackwell-port fork-local docs / scoping notes / bug reports
+    - 'issues.md'
+    - 'bugreport.md'
+    - 'bugreport_gluon_data.md'
+    - 'cublaslt_scope.md'
+    - 'tf32_audit.md'
+    - 'cudnn_bump.md'
+    # Blackwell-port fork-local benchmark scripts (not shipped in the wheel)
+    - 'bench_tf32_conv.py'
+    - 'bench_cudnn_sweep.py'
+    # local cuDNN install dir (downloaded wheel, not source)
+    - 'cudnn_local'
+    # build artifacts
+    - 'build*'
+    - 'gpu_memory_profile-*.csv'
 
 
   comment: on-failure

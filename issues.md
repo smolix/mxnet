@@ -1,6 +1,6 @@
 # MXNet Blackwell port — open issues
 
-Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `3570d453d` (36 commits since start of port).
+Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `a912fcdab` (43 commits since start of port).
 
 ## Status at this snapshot
 
@@ -14,6 +14,20 @@ Final clean rebuild + 3-way parallel test sweep complete:
 | **Total** | **1324** | **3** | **296** |
 
 99.8% pass rate. The 3 remaining failures and their root causes are documented below (items 4, 2, plus the test-order flake).
+
+### Additional surfaces validated 2026-05-17 (post-TF32 + post-batchify rebuild)
+
+| Surface | Pass | Fail | Skipped |
+|---|---|---|---|
+| FC subgraph (`test_fc_subgraph.py`, full file) | **387** | 0 | 16 |
+| Unskipped operator + sparse (7 tests) | **7** | 0 | 0 |
+| Unskipped numpy_op (6 tests) | **6** | 0 | 0 |
+| Unskipped gluon_rnn (108 parametrized) | **108** | 0 | 0 |
+| Unskipped batch 1 (6 tests: deconv2d_16c, CSVIter, aggregator x2, adamax, profile_create_domain_dept) | **6** | 0 | 0 |
+| `test_gluon_data.py` (after `7934d40d7` batchify fix) | **30** | 0 | 0 |
+| **Additional** | **544** | **0** | **16** |
+
+The TF32 default change (commit `783cfa133`) was independently benchmarked: **2.87x** speedup on a 3×3 conv, 28×28, 256→256, batch 32 on sm_120 (14.46 → 41.48 TFLOPS).
 
 libmxnet.so is 792 MB with all 5 SASS variants + PTX 120 fallback. Wheel is `mxnet-2.0.0+cu13.bw.20260517-py3-none-linux_x86_64.whl`, 1.9 GB self-contained.
 

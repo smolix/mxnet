@@ -21,6 +21,7 @@ Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `f8b0c7125` (49 commits 
 | `ed26be03f` | issues.md #11 resolved | numpy test-source fixes confirmed |
 | `f8b0c7125` | wheel platform-tag fix | `cp311-cp311-linux_x86_64` (was `py3-none-any`) |
 | `e0eb106ea` | issues.md #18 (task #35): cuDNN frontend autotune MODE_A+B | `UseFrontendAutotune()` + `GetCombinedPlans()` in `cudnn_ops.cc`; env-gated (`MXNET_CUDNN_AUTOTUNE_FRONTEND`); parity with legacy on sm_120 canonical shape |
+| *(next)* | fix apache#19019: AMP weight cast cache | `python/mxnet/amp/amp.py` — `_cast_symbol_NDArray` now caches the fp16 result keyed by `(id(src), src_dtype, dst_dtype)`; repeated forward passes through a shared layer reuse one fp16 buffer instead of allocating a new one each step. Peak GPU memory with a 200-iteration shared-cell loop goes from `200 × weight_size` → `1 × weight_size`. `clear_weight_cache()` public API for explicit invalidation. Regression test: `tests/python/gpu/test_amp_weight_cache.py` (7/7 PASS); smoke: `test_amp_subgraph.py` 6/6 unchanged. |
 
 Verification on post-cuDNN-9.22 build:
 

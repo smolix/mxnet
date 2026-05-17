@@ -21,7 +21,7 @@ __all__ = ['init', 'init_trainer', 'scale_loss', 'unscale', 'convert_model',
            'convert_hybrid_block', 'list_lp16_ops', 'list_fp32_ops',
            'list_lp16_fp32_ops', 'list_conditional_fp32_ops',
            'list_widest_type_cast', 'list_loss_output_functions', 'list_lp16_use_fp32_params',
-           'convert_symbol']
+           'convert_symbol', 'clear_weight_cache']
 
 from array import array
 import ctypes
@@ -29,6 +29,8 @@ import inspect
 import logging
 import contextlib
 import sys
+import threading
+import weakref
 import numpy as np
 
 from mxnet import numpy
@@ -54,6 +56,44 @@ OFFLINE_CAST_DTYPE_ATTR = '__amp_dtype__'
 float_types_gpu = (np.float16, np.float32)
 float_types_cpu = (bfloat16, np.float32)
 
+# ---------------------------------------------------------------------------
+# Weight cast cache  (fixes apache/mxnet#19019)
+#
+# Problem: when the same parameter NDArray is passed through AMP-wrapped ops
+# repeatedly (e.g. a shared cell called 200 times in a loop) _cast_symbol_NDArray
+# allocates a brand-new fp16 NDArray on every call.  With a 200-step RNN / decoder
+# loop and large weight matrices this exhausts GPU memory even on H100-class cards.
+#
+# Fix: maintain a per-(source-id, source-dtype, target-dtype) cache of the
+# already-cast NDArray together with a strong reference back to the *source*.
+# Keeping the source ref prevents id() reuse: Python may recycle the same integer
+# address for a new object if the old one is GC-ed, which would cause a stale hit.
+# The cache entry is only valid while the source NDArray is the exact same object.
+#
+# Thread safety: a plain threading.Lock guards the dict.  The dict maps
+#   (id(source), source_dtype_str, target_dtype_str)
+#     -> (source_ref, cast_result)
+#
+# Note: NDArray does not support weak references, so we use strong refs and
+# rely on clear_weight_cache() to release them (e.g. after parameter updates).
+# ---------------------------------------------------------------------------
+_amp_cast_cache: dict = {}
+_amp_cast_cache_lock = threading.Lock()
+
+
+def clear_weight_cache():
+    """Clear the AMP weight cast cache.
+
+    AMP maintains a cache of already-cast weight NDArrays so that the same
+    fp16 copy is reused across repeated forward passes through a shared layer
+    (see apache/mxnet#19019).  Call this function to free all cached copies,
+    e.g. after a training step when you want to reclaim GPU memory or after
+    updating model weights in-place.
+    """
+    with _amp_cast_cache_lock:
+        _amp_cast_cache.clear()
+
+
 def _cast_symbol_NDArray(s, dtype, is_numpy_module=False):
     if isinstance(s, Symbol):
         amp_cast = symbol.numpy._internal.amp_cast if is_numpy_module else symbol.amp_cast
@@ -62,7 +102,24 @@ def _cast_symbol_NDArray(s, dtype, is_numpy_module=False):
         amp_cast = ndarray.numpy._internal.amp_cast if is_numpy_module else ndarray.amp_cast
         if s.dtype != dtype and (s.dtype in float_types_gpu and s.context.device_type != 'cpu' or
                                  s.dtype in float_types_cpu and s.context.device_type == 'cpu'):
-            return amp_cast(s, dtype=dtype)
+            # Cache key: identity + dtypes.  id() is stable while the source
+            # NDArray is alive (it is owned by the Parameter).  dtype objects
+            # are not always hashable by value, so convert to str.
+            # We also store a strong ref to the source so that if a *different*
+            # NDArray is later allocated at the same address we detect the mismatch
+            # via the stored ref (stored_src is s → same object → valid hit).
+            cache_key = (id(s), str(s.dtype), str(dtype))
+            with _amp_cast_cache_lock:
+                entry = _amp_cast_cache.get(cache_key)
+                if entry is not None:
+                    stored_src, cached_result = entry
+                    # Verify the cached source is still the same object (not an
+                    # id-recycled impostor).
+                    if stored_src is s:
+                        return cached_result
+                result = amp_cast(s, dtype=dtype)
+                _amp_cast_cache[cache_key] = (s, result)
+            return result
     return s
 
 def _get_nd_fun_to_wrap(name, module, submodule_dict):

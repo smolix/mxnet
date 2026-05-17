@@ -102,17 +102,22 @@ class ResourceManagerImpl : public ResourceManager {
 #endif  // MXNET_USE_CUDNN == 1
     engine_ref_  = Engine::_GetSharedRef();
     storage_ref_ = Storage::_GetSharedRef();
-    cpu_rand_    = std::make_unique<ResourceRandom<cpu>>(Context::CPU(), global_seed_);
     cpu_space_   = std::make_unique<ResourceTempSpace<ResourceRequest::kTempSpace>>(
         Context::CPU(), cpu_temp_space_copy_);
-    cpu_parallel_rand_ = std::make_unique<ResourceParallelRandom<cpu>>(
-        Context::CPU(), cpu_native_rand_copy_, global_seed_);
+    // Pre-allocate dev_id=0 entries so that the common case (cpu(0)) has no
+    // lazy-init overhead on the hot path.
+    cpu_rand_.Get(0, [this]() {
+      return new ResourceRandom<cpu>(Context::CPU(0), global_seed_);
+    });
+    cpu_parallel_rand_.Get(0, [this]() {
+      return new ResourceParallelRandom<cpu>(Context::CPU(0), cpu_native_rand_copy_, global_seed_);
+    });
   }
   ~ResourceManagerImpl() override {
     // need explicit delete, before engine get killed
-    cpu_rand_.reset(nullptr);
+    cpu_rand_.Clear();
     cpu_space_.reset(nullptr);
-    cpu_parallel_rand_.reset(nullptr);
+    cpu_parallel_rand_.Clear();
 #if MXNET_USE_CUDA
     gpu_rand_.Clear();
     gpu_space_.Clear();
@@ -134,11 +139,20 @@ class ResourceManagerImpl : public ResourceManager {
     if (ctx.dev_mask() == Context::kCPU) {
       switch (req.type) {
         case ResourceRequest::kRandom:
-          return cpu_rand_->resource;
+          return cpu_rand_
+              .Get(ctx.dev_id,
+                   [ctx, this]() { return new ResourceRandom<cpu>(ctx, global_seed_); })
+              ->resource;
         case ResourceRequest::kTempSpace:
           return cpu_space_->GetNext();
         case ResourceRequest::kParallelRandom:
-          return cpu_parallel_rand_->GetNext();
+          return cpu_parallel_rand_
+              .Get(ctx.dev_id,
+                   [ctx, this]() {
+                     return new ResourceParallelRandom<cpu>(
+                         ctx, cpu_native_rand_copy_, global_seed_);
+                   })
+              ->GetNext();
         default:
           LOG(FATAL) << "Unknown supported type " << req.type;
       }
@@ -193,8 +207,10 @@ class ResourceManagerImpl : public ResourceManager {
 
   void SeedRandom(uint32_t seed) override {
     global_seed_ = seed;
-    cpu_rand_->SeedWithDeviceID(global_seed_);
-    cpu_parallel_rand_->SeedWithDeviceID(global_seed_);
+    cpu_rand_.ForEach(
+        [seed](size_t i, ResourceRandom<cpu>* p) { p->SeedWithDeviceID(seed); });
+    cpu_parallel_rand_.ForEach(
+        [seed](size_t i, ResourceParallelRandom<cpu>* p) { p->SeedWithDeviceID(seed); });
 #if MXNET_USE_CUDA
     gpu_rand_.ForEach([seed](size_t i, ResourceRandom<gpu>* p) { p->SeedWithDeviceID(seed); });
     gpu_parallel_rand_.ForEach(
@@ -208,8 +224,20 @@ class ResourceManagerImpl : public ResourceManager {
   }
 
   void SeedRandom(Context ctx, uint32_t seed) override {
-    cpu_rand_->Seed(seed);
-    cpu_parallel_rand_->Seed(seed);
+    if (ctx.dev_mask() == Context::kCPU) {
+      // Seed only the generator for this specific CPU dev_id so that seeding
+      // cpu(0) and cpu(1) with different values remains independent.
+      cpu_rand_
+          .Get(ctx.dev_id,
+               [ctx, this]() { return new ResourceRandom<cpu>(ctx, global_seed_); })
+          ->Seed(seed);
+      cpu_parallel_rand_
+          .Get(ctx.dev_id,
+               [ctx, this]() {
+                 return new ResourceParallelRandom<cpu>(ctx, cpu_native_rand_copy_, global_seed_);
+               })
+          ->Seed(seed);
+    }
 #if MXNET_USE_CUDA
     if (ctx.dev_type == Context::kGPU) {
       gpu_rand_.Get(ctx.dev_id, [ctx, seed, this]() { return new ResourceRandom<gpu>(ctx, seed); })
@@ -495,12 +523,12 @@ class ResourceManagerImpl : public ResourceManager {
   std::shared_ptr<Storage> storage_ref_;
   /*! \brief internal seed to the random number generator */
   uint32_t global_seed_{static_cast<uint32_t>(time(nullptr))};
-  /*! \brief CPU random number resources */
-  std::unique_ptr<ResourceRandom<cpu>> cpu_rand_;
+  /*! \brief CPU random number resources, indexed by dev_id (one per logical CPU context) */
+  common::LazyAllocArray<ResourceRandom<cpu>> cpu_rand_;
   /*! \brief CPU temp space resources */
   std::unique_ptr<ResourceTempSpace<ResourceRequest::kTempSpace>> cpu_space_;
-  /*! \brief CPU parallel random number resources */
-  std::unique_ptr<ResourceParallelRandom<cpu>> cpu_parallel_rand_;
+  /*! \brief CPU parallel random number resources, indexed by dev_id */
+  common::LazyAllocArray<ResourceParallelRandom<cpu>> cpu_parallel_rand_;
 #if MXNET_USE_CUDA
   /*! \brief random number generator for GPU */
   common::LazyAllocArray<ResourceRandom<gpu>> gpu_rand_;

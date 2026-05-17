@@ -172,7 +172,7 @@ void AdaptiveAvgPoolUpdateOutput(mshadow::Stream<cpu>* s,
 }
 
 #if MXNET_USE_ONEDNN == 1
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_pooling.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_pooling.html
 bool SupportDNNLAveragePooling(const NDArray& input, const NDArray& output) {
   for (int64_t idx = 2; idx < input.shape().ndim(); ++idx) {
     const int s1 = input.shape()[idx];

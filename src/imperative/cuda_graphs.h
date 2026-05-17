@@ -41,6 +41,16 @@
 #define CUDA_GRAPHS_AVAILABLE (0)
 #endif
 
+// F3: the v3 port uses the CUDA-12+ shape of cudaGraphExecUpdate (single
+// cudaGraphExecUpdateResultInfo* out-param). Older toolkits would still
+// link against the legacy form and silently miscompile the switch below.
+#if MXNET_USE_CUDA
+static_assert(CUDA_VERSION >= 12000,
+              "MXNet's onednn-v3-port branch requires CUDA 12.0+ for "
+              "cudaGraphExecUpdate; build with an older CUDA toolkit "
+              "is unsupported.");
+#endif
+
 #if CUDA_GRAPHS_AVAILABLE
 
 namespace mxnet {

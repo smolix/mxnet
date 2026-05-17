@@ -29,7 +29,7 @@
 namespace mxnet {
 namespace op {
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_layer_normalization.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_layer_normalization.html
 bool SupportDNNLLayerNorm(const LayerNormParam& param, const std::vector<NDArray>& inputs) {
   const mxnet::TShape& shape = inputs[layernorm::kData].shape();
 

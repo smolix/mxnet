@@ -32,7 +32,7 @@ namespace mxnet {
 namespace op {
 
 #if MXNET_USE_ONEDNN == 1
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_inner_product.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_inner_product.html
 bool SupportDNNLFC(const NDArray& input) {
   return SupportDNNL<2, 5, DNNLTypeMode::FloatTypes>(input);
 }

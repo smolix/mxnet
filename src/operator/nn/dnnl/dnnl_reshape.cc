@@ -31,7 +31,7 @@
 namespace mxnet {
 namespace op {
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_reorder.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_reorder.html
 bool SupportDNNLReshape(const NDArray& input) {
   return SupportDNNL(input) && input.shape().Size() != 1;
 }

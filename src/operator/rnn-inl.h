@@ -1318,6 +1318,8 @@ class RNNOp {
       workspace_byte_     = 0;
       reserve_space_byte_ = 0;
       workspace_size_     = 0;
+      // AUDIT-F6: only zero .dptr; the rest of Storage::Handle (size/ctx) is
+      // unused by the realloc paths in EnsureDevSeqLengthsBuffer / Forward.
       reserve_space_.dptr = nullptr;
       dev_seq_lengths_.dptr = nullptr;
     }

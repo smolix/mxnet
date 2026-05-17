@@ -92,7 +92,7 @@ static DNNLSoftmaxOutputFwd& GetSoftmaxOutputForward(const SoftmaxOutputParam& p
   return it->second;
 }
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_softmax.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_softmax.html
 bool SupportDNNLSoftmaxOutput(const SoftmaxOutputParam& param, const NDArray& input) {
   return SupportDNNL(input) && !param.multi_output;
 }

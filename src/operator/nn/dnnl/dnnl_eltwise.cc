@@ -28,7 +28,7 @@
 namespace mxnet {
 namespace op {
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_eltwise.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_eltwise.html
 bool SupportDNNLEltwise(const NDArray& input) {
   return SupportDNNL<DNNLTypeMode::FloatTypes>(input);
 }
@@ -60,6 +60,12 @@ DNNLEltwiseFwd::DNNLEltwiseFwd(const NDArray& input, const dnnl::algorithm algor
   // v3: eltwise primitive_desc(engine, prop, algorithm, src_md, dst_md,
   //                            alpha, beta, attr={}). For algorithms that do
   //                            not need alpha/beta the values are ignored.
+  // F8: alpha is hard-coded to 0 here. eltwise_soft_relu / eltwise_log_sigmoid
+  // use alpha as a divisor; if either is ever added to the unary-op dispatch
+  // (elemwise_unary_op.h:472-502) the call must route through DNNLActivation
+  // {Forward,Backward}, not this fast path.
+  CHECK(algorithm != dnnl::algorithm::eltwise_soft_relu)
+      << "eltwise_soft_relu must go through DNNLActivationForward (alpha-aware path)";
   fwd_pd = std::make_shared<eltwise_fwd_pd_t>(mxnet::CpuEngine::Get()->get_engine(),
                                               dnnl::prop_kind::forward_inference,
                                               algorithm, src_desc, src_desc,

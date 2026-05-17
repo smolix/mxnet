@@ -127,7 +127,7 @@ inline bool SupportDNNLPooling(const PoolingParam& param) {
            param.layout.value() == mshadow::kNCDHW));
 }
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_pooling.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_pooling.html
 inline bool SupportDNNLPooling(const PoolingParam& param, const NDArray& input) {
   if (!SupportDNNL<3, 5, DNNLTypeMode::FloatTypes>(input) || !SupportDNNLPooling(param))
     return false;

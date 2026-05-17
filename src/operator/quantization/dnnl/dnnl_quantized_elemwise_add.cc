@@ -207,6 +207,10 @@ static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
       // rescale uint8 to int8 by reorder to temporary memory
       auto s8_desc               = is_A_int8 ? A_mem->get_desc() : B_mem->get_desc();
       rescaled_mem               = TmpMemMgr::Get()->Alloc(s8_desc);
+      // S4: u8∈[0,255] (range 255) → s8∈[-128,127] (range 255), shift+scale
+      // simplifies under symmetric-around-0 quantization to a pure 0.5 scale;
+      // the corresponding range fixup happens at the dequant scale below.
+      // Mirrors dnnl_fc.cc's u8_to_s8_scale constant.
       const float u8_to_s8_scale = 0.5;
       auto engine                = CpuEngine::Get()->get_engine();
       // v3: set_output_scales removed; bind runtime scale tensor.

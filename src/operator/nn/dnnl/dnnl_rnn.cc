@@ -76,7 +76,9 @@ void DNNLRnnLayerParam::SetDims() {
 
   // Get workspace size for cached weights memory
   // multiplication of tensor dimensions
-  static auto tz_volume = [](const memory::dims& tz_dims) {
+  // S10: drop `static`; lambda is stateless and the thread-safe one-time-init
+  // overhead is pure cost.
+  auto tz_volume = [](const memory::dims& tz_dims) {
     return std::accumulate(tz_dims.begin(),
                            tz_dims.end(),
                            static_cast<memory::dim>(1),

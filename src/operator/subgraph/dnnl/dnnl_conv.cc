@@ -329,6 +329,11 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
               &cached_data_min_,
               &cached_data_max_);
         }
+        // S7: this branch only runs when weight_channelwise_scale==false; in
+        // that case GetWeightScales returns {global_scale, min, max} so [0] is
+        // the per-tensor weight scale. Asserting to lock in the assumption.
+        CHECK(!weight_channelwise_scale)
+            << "channelwise-scale weights cannot reach the non-requantize branch";
         weight_scales_.resize(1);
         output_scale = data_scale_ * weight_scales_[0];
         full_conv_param.requantize_scales.resize(0);
@@ -424,8 +429,12 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
   }
 
   if (dnnl_param.quantized && !dnnl_param.enabled_float_output.has_value()) {
-    *outputs[kMin].data().dptr<float>() = cached_output_min_;
-    *outputs[kMax].data().dptr<float>() = cached_output_max_;
+    // S5: only write if the caller actually wants the value; outputs[kMin/kMax]
+    // may be uninitialized when req is kNullOp.
+    if (req[kMin] != kNullOp)
+      *outputs[kMin].data().dptr<float>() = cached_output_min_;
+    if (req[kMax] != kNullOp)
+      *outputs[kMax].data().dptr<float>() = cached_output_max_;
   }
   if (dnnl_param.with_sum) {
     auto out          = const_cast<NDArray&>(outputs[kOut]);

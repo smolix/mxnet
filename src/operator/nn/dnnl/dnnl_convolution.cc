@@ -37,7 +37,7 @@ namespace op {
 
 DMLC_REGISTER_PARAMETER(DNNLConvParam);
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_convolution.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_convolution.html
 bool SupportDNNLConv(const ConvolutionParam& params, const NDArray& input) {
   if (params.kernel.ndim() > 3 || params.kernel.ndim() == 0)
     return false;

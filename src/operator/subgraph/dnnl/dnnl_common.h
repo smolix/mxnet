@@ -28,12 +28,20 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <limits>
 #include <vector>
 
 #include "operator/numpy/np_matrix_op-inl.h"
 
 namespace mxnet {
 namespace op {
+
+// S8: oneDNN historically saturates int32 bias near INT_MAX (see TODO at the
+// per-channel cap below). Halving the int32 max gives one safety bit so the
+// post-acc requantize doesn't trip the saturation path. Shared with
+// dnnl_fc.cc (kept as MaxValue<int32_t>()/2 there for readability) and used
+// inside GetWeightScales' per-channel guard.
+constexpr int32_t kInt32BiasSafetyCap = std::numeric_limits<int32_t>::max() / 2;
 
 template <typename DType>
 static std::vector<float> GetWeightScales(const NDArray& weight,

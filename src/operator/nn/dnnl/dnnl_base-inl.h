@@ -375,9 +375,8 @@ inline static dnnl::memory::desc GetMemDesc(const NDArray& arr, int dtype = -1) 
   return dnnl::memory::desc{dims, get_dnnl_type(dtype), dnnl::memory::format_tag::any};
 }
 
-inline static dnnl::memory::desc GetFCWeightDesc(const NDArray& arr,
-                                                 size_t batch_size,
-                                                 int dtype = -1) {
+// F2: batch_size was never read; dropped from the signature.
+inline static dnnl::memory::desc GetFCWeightDesc(const NDArray& arr, int dtype = -1) {
   int ndim = arr.shape().ndim();
   dnnl::memory::dims dims(ndim);
   dtype = (dtype == -1) ? arr.dtype() : dtype;

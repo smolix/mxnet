@@ -48,7 +48,7 @@ bool SupportDNNLAct(const ActivationParam& param) {
          param.act_type == activation::kSoftReLU || param.act_type == activation::kTanh;
 }
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_eltwise.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_eltwise.html
 bool SupportDNNLAct(const ActivationParam& param, const NDArray& input) {
   return SupportDNNL<DNNLTypeMode::FloatTypes>(input) && SupportDNNLAct(param);
 }
@@ -58,12 +58,12 @@ bool SupportDNNLLeakyRelu(const LeakyReLUParam& param) {
          param.act_type == leakyrelu::kGELU_ERF || param.act_type == leakyrelu::kGELU_TANH;
 }
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_eltwise.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_eltwise.html
 bool SupportDNNLLeakyRelu(const LeakyReLUParam& param, const NDArray& input) {
   return SupportDNNL<DNNLTypeMode::FloatTypes>(input) && SupportDNNLLeakyRelu(param);
 }
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_eltwise.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_eltwise.html
 bool SupportDNNLQuantizedAct(const ActivationParam& param) {
   // Although it is the same as SupportDNNLAct i left it here, so when new activations
   // will be introduced it will be easier to handle.

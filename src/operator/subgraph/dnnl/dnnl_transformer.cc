@@ -200,12 +200,14 @@ class SgDNNLSelfAttQKOp {
   std::shared_ptr<dnnl::memory> cached_out_mem_;
   // v3: runtime scale tensor for set_scales_mask matmul attr.
   std::shared_ptr<dnnl::memory> cached_scale_mem_;
-  float min_data_0_;
-  float max_data_0_;
-  float min_data_1_;
-  float max_data_1_;
-  float min_output_;
-  float max_output_;
+  // F4/F11: default-init so non-quantized paths don't observe garbage if a
+  // future caller drops the param_.quantized guard around the read sites.
+  float min_data_0_{0.0f};
+  float max_data_0_{0.0f};
+  float min_data_1_{0.0f};
+  float max_data_1_{0.0f};
+  float min_output_{0.0f};
+  float max_output_{0.0f};
   float data_scale_0_{0.0f};
   float data_scale_1_{0.0f};
 };
@@ -666,12 +668,13 @@ class DNNLSelfAttValAttOp {
   std::shared_ptr<dnnl::memory> cached_transposed_mem_;  // op output
   // v3: runtime scale tensor for set_scales_mask matmul attr.
   std::shared_ptr<dnnl::memory> cached_scale_mem_;
-  float min_qkv_;
-  float max_qkv_;
-  float min_att_;
-  float max_att_;
-  float min_output_;
-  float max_output_;
+  // F4/F11: default-init for same reason as the QK op above.
+  float min_qkv_{0.0f};
+  float max_qkv_{0.0f};
+  float min_att_{0.0f};
+  float max_att_{0.0f};
+  float min_output_{0.0f};
+  float max_output_{0.0f};
   float qkv_scale_{0.0f};
   float att_scale_{0.0f};
 };

@@ -507,7 +507,19 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
   if (dnnl_param.with_sum && !dnnl_param.enabled_float_output.has_value()) {
     float sum_in_scale =
         GetQuantizeScale(in_data[idx.sum].dtype(), cached_sum_min_, cached_sum_max_);
-    full_param_.sum_scale = out_scale / sum_in_scale;
+    // v2:  dst = output_scales * (acc + bias) + sum_scale_v2 * dst_loaded
+    // v3:  dst = DST_scale * (acc + bias + sum_scale_v3 * dst_loaded)
+    // For the per-tensor DST path, DST_scale = output_scales[0]; therefore the
+    // v3 sum_scale must be pre-divided by DST_scale so the sum contribution
+    // ends up multiplied by sum_scale_v2 in the final result. For per-OC
+    // (weights-side scaling) there is no DST scale, so sum_scale_v2 is used
+    // directly.
+    const float sum_scale_v2 = out_scale / sum_in_scale;
+    if (full_param_.output_scales.size() == 1) {
+      full_param_.sum_scale = sum_scale_v2 / full_param_.output_scales[0];
+    } else {
+      full_param_.sum_scale = sum_scale_v2;
+    }
     if (in_data[idx.sum].dtype() == mshadow::kUint8 && output.dtype() == mshadow::kInt8) {
       // In this case, reorder with scale 0.5 is used on in_data[idx.sum] to
       // scale it to s8 range, so sum_scale has to be rescaled as well

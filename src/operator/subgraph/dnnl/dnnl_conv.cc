@@ -317,7 +317,15 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
         full_conv_param.requantize_scales.resize(0);
       }
       if (dnnl_param.with_sum) {
+        // v2:  dst = output_scales * (acc + bias) + sum_scale_v2 * dst_loaded
+        // v3:  dst = DST_scale * (acc + bias + sum_scale_v3 * dst_loaded)
+        // For per-tensor DST scale, pre-divide so the sum contribution matches
+        // v2's. For per-OC (WEIGHTS-side scaling) there is no DST scale, so
+        // sum_scale_v2 is used directly. With no requantize, no DST scale.
         full_conv_param.sum_scale = output_scale / sum_in_scale;
+        if (full_conv_param.requantize_scales.size() == 1) {
+          full_conv_param.sum_scale /= full_conv_param.requantize_scales[0];
+        }
       }
       if (dnnl_param.with_act &&
           full_conv_param.act_param.alg == dnnl::algorithm::eltwise_clip) {

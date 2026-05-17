@@ -5951,7 +5951,9 @@ def _validate_sample_location(input_rois, input_offset, spatial_scale, pooled_w,
 
     return output_offset
 
-@pytest.mark.skip(reason="Flaky test, tracked at https://github.com/apache/mxnet/issues/11713")
+# Re-enabled 2026-05-17: audited; the np.int -> int fix already landed in
+# the Blackwell port pre-existing commits. Upstream tracker
+# https://github.com/apache/mxnet/issues/11713 (repo archived).
 def test_deformable_psroipooling():
     sample_per_part = 4
     trans_std = 0.1

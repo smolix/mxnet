@@ -536,7 +536,9 @@ def check_consistency_NxM(sym_list, ctx_list):
     check_consistency(repeated_syms, ctx_list * len(sym_list), scale=0.5)
 
 
-@pytest.mark.skip(reason="test fails intermittently. temporarily disabled till it gets fixed. tracked at https://github.com/apache/mxnet/issues/10141")
+# Re-enabled 2026-05-17: audited 5/5 pass on cuDNN 9 + Blackwell after the
+# check_consistency_NxM helper was fixed for NumPy >= 1.24 Symbol expansion.
+# Upstream tracker https://github.com/apache/mxnet/issues/10141 (repo archived).
 @pytest.mark.serial
 def test_convolution_options():
     # 1D convolution

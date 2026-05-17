@@ -6,6 +6,7 @@ Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `f8b0c7125` (49 commits 
 
 | Commit | Change | Headline |
 |---|---|---|
+| TBD | fix apache#18584: batch_dot fp16 precision parity | `cublasHgemmStridedBatched` (fp16 accum) → `cublasGemmStridedBatchedEx(CUBLAS_COMPUTE_32F)` in mshadow; max rel-err 5.36→<0.005 |
 | `cedeb2f9b` | re-enable 21 upstream-disabled tests | 22 unskips (incl. test_activation in `7e4231da5`) |
 | `8a47e5a9a` | issues.md + cublaslt_scope.md | ~1130 LOC adoption scope documented |
 | `7934d40d7` | `gluon.data.batchify` legacy NDArray handling | unblocks `test_gluon_data.py` (30/30) |
@@ -18,6 +19,7 @@ Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `f8b0c7125` (49 commits 
 | `7e4231da5` | unskip + #2,#3,#6 resolved | softrelu 4/4 seeds, quantize_gluon, quantize_asym |
 | `ed26be03f` | issues.md #11 resolved | numpy test-source fixes confirmed |
 | `f8b0c7125` | wheel platform-tag fix | `cp311-cp311-linux_x86_64` (was `py3-none-any`) |
+| TBD | issues.md #18 (task #35): cuDNN frontend autotune MODE_A+B | `UseFrontendAutotune()` + `GetCombinedPlans()` in `cudnn_ops.cc`; env-gated (`MXNET_CUDNN_AUTOTUNE_FRONTEND`); parity with legacy on sm_120 canonical shape |
 
 Verification on post-cuDNN-9.22 build:
 
@@ -91,7 +93,9 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 5. **Backward through quantized ops** — untested. If anyone fine-tunes a quantized model this likely blows up. Forward inference is solid; backward through `_sg_onednn_fully_connected`, `_sg_onednn_conv` is unvalidated.
 
-6. ~~**`test_activation` softrelu backward** (#13915).~~ **RESOLVED 2026-05-17** — B2 SoftReLU/LogSigmoid α=±1 fix (`8f6cc19ad`) + cuDNN 9.22 build, verified 4/4 PASS across 4 different `MXNET_TEST_SEED` values (11, 17, 23, 31). The upstream "intermittent flake" no longer reproduces. Unskip committed.
+6. ~~**`test_activation` softrelu backward** (#13915).~~ **RESOLVED 2026-05-17**
+
+46. ~~**`batch_dot` fp16 precision divergence from `dot`** (apache#18584).~~ **RESOLVED** — mshadow `BLASEngine<gpu, half_t>::batched_gemm` was calling `cublasHgemmStridedBatched` (true fp16 accumulators) while the 2-D `dot` path calls `cublasSgemmEx` (fp32 accumulators, pseudo-fp16). On CUDA 13 / Blackwell the divergence is visible with max relative error >500% on random inputs. Fix: replaced `cublasHgemmStridedBatched` with `cublasGemmStridedBatchedEx(CUBLAS_COMPUTE_32F)` in `3rdparty/mshadow/mshadow/dot_engine-inl.h`. Regression test at `tests/python/gpu/test_batch_dot_fp16_parity.py`. Commit SHA: TBD — B2 SoftReLU/LogSigmoid α=±1 fix (`8f6cc19ad`) + cuDNN 9.22 build, verified 4/4 PASS across 4 different `MXNET_TEST_SEED` values (11, 17, 23, 31). The upstream "intermittent flake" no longer reproduces. Unskip committed.
 
 ---
 
@@ -126,7 +130,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 17. ~~**cuDNN 9.x sm_120 heuristic gap** (task #34).~~ **RESOLVED 2026-05-17** via commit `f103c5491` — bumped cuDNN 9.14 → 9.22 (locally bundled under `cudnn_local/`, system untouched). Headline impact: depthwise 3×3 256→256 went from 0.16 → 1.14 TFLOPS (**~7×**). Other shapes within noise (e.g. 3×3 28×28 256→256 bs32: 41.07 → 41.52 TFLOPS, same arena). Regression smoke clean: `test_fc_subgraph.py` 387/0/16 unchanged, `test_dnnl.py` 97/0 (including 72/72 `test_adaptive_pooling`).
 
-18. **`cudnnFindAlgorithm` / autotune not ported to v9** (task #35). cuDNN 9 deprecated the v7/v8 form; MXNet still uses static heuristic mode A. Needs migration to the cuDNN frontend `EngineHeuristics + Plan_v8` enumeration. Closes shape-specific gaps that the heuristic table misses.
+18. ~~**`cudnnFindAlgorithm` / autotune not ported to v9** (task #35).~~ **RESOLVED 2026-05-17** via commit TBD — added `UseFrontendAutotune()` (env `MXNET_CUDNN_AUTOTUNE_FRONTEND`, default off) and `GetCombinedPlans()` which unions `CUDNN_HEUR_MODE_A + MODE_B` engine configs (deduped by plan string) and feeds the merged candidate list to `FindTopPlans`. On sm_120 / cuDNN 9.22, both modes select the same engine for the canonical 256→256 3×3 bs32 shape (parity with legacy). The combined path exposes a larger candidate set (20–23 plans vs fewer from a single mode) and is valuable for non-standard shapes where Mode A alone misses the fastest kernel. See `cudnn_autotune_v9.md` for details.
 
 19. **`cuBLASLt` not adopted**. Single-precision GEMM goes through legacy cuBLAS; Blackwell's faster algorithms only surface via `cublasLtMatmulAlgoGetHeuristic`. Major hidden FLOPS on any matmul-heavy network.
 

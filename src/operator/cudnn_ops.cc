@@ -508,6 +508,91 @@ cudnnBackendHeurMode_t HeurMode() {
   return static_cast<cudnnBackendHeurMode_t>(dmlc::GetEnv("MXNET_CUDNN_HEUR_MODE", default_mode));
 }
 
+// cuDNN 9 frontend autotune helper. Queries cudnnBackendHeuristic for both
+// MODE_A (NVIDIA-curated picks, low latency, recent kernels) and MODE_B
+// (statistical heuristic, broader coverage), unions the resulting engine
+// configurations, dedupes by global engine index + knob-choices hash, and
+// returns the corresponding execution plans. This is what NVIDIA recommends
+// for "best-of" plan selection on cuDNN 9 in the frontend repo (see
+// `getEngineConfigs` in NVIDIA/cudnn-frontend). On sm_120 / Blackwell,
+// Mode-A frequently contains highly-tuned plans that Mode-B alone misses,
+// while Mode-B contains the broad coverage Mode-A doesn't expose. Feeding
+// the union into FindTopPlans then picks the timed winner per shape.
+//
+// Falls back gracefully if either mode returns empty (older cuDNN, unusual
+// op graphs).
+#if CUDNN_VERSION >= 8100
+std::vector<Descriptor> GetCombinedPlans(
+    cudnnHandle_t handle,
+    const Descriptor& op_graph,
+    size_t workspace_limit,
+    size_t* max_workspace,
+    const std::unordered_set<int64_t>& excl_engines,
+    const std::vector<cudnnBackendNumericalNote_t>& req_numeric,
+    const std::vector<cudnnBackendNumericalNote_t>& excl_numeric,
+#if CUDNN_VERSION >= 8200
+    const std::vector<cudnnBackendBehaviorNote_t>& req_behavior,
+    const std::vector<cudnnBackendBehaviorNote_t>& excl_behavior,
+#endif  // CUDNN_VERSION >= 8200
+    bool verbose_filter) {
+  std::vector<Descriptor> combined;
+  if (max_workspace)
+    *max_workspace = 0;
+
+  // Dedup key: (engine_global_index, hash-of-knob-choices). Two plans with the
+  // same engine but different knob choices are kept separate (find picks the
+  // best). Two plans that are identical in engine and knobs come from both
+  // modes and we keep only one.
+  std::unordered_set<std::string> seen;
+
+  auto add_mode = [&](cudnnBackendHeurMode_t mode) {
+    size_t mode_max = 0;
+    auto plans      = GetPlans(mode,
+                          handle,
+                          op_graph,
+                          workspace_limit,
+                          &mode_max,
+                          excl_engines,
+                          req_numeric,
+                          excl_numeric,
+#if CUDNN_VERSION >= 8200
+                          req_behavior,
+                          excl_behavior,
+#endif  // CUDNN_VERSION >= 8200
+                          verbose_filter);
+    for (auto& plan : plans) {
+      // PlanStr is a stable string representation of "engine_idx + knob choices",
+      // which is exactly the right dedup key here.
+      auto key = PlanStr(plan);
+      if (seen.insert(key).second) {
+        if (max_workspace)
+          *max_workspace =
+              std::max(*max_workspace,
+                       static_cast<size_t>(GetAttr<int64_t>(
+                           plan, CUDNN_ATTR_EXECUTION_PLAN_WORKSPACE_SIZE)));
+        combined.push_back(std::move(plan));
+      }
+    }
+  };
+
+  // Order matters slightly: Mode A first so its (curated) picks come earlier
+  // in the candidate list and get timed first by FindTopPlans. This helps
+  // when the find sampler is configured with a cutoff and a clearly-bad plan
+  // from Mode B would otherwise waste timing budget.
+  add_mode(CUDNN_HEUR_MODE_A);
+  add_mode(CUDNN_HEUR_MODE_B);
+  return combined;
+}
+#endif  // CUDNN_VERSION >= 8100
+
+bool UseFrontendAutotune() {
+#if CUDNN_VERSION >= 8100
+  return dmlc::GetEnv("MXNET_CUDNN_AUTOTUNE_FRONTEND", false);
+#else
+  return false;
+#endif
+}
+
 std::string ConvParamStr(const ConvParam& param) {
   std::ostringstream ss;
   ss << mshadow::toString(static_cast<mshadow::LayoutFlag>(param.layout.value()));
@@ -578,19 +663,51 @@ Descriptor SelectPlan(const OpContext& ctx,
   size_t workspace_limit =
       tune != conv::kFastest ? param.workspace << 20 : std::numeric_limits<size_t>::max();
   auto excl_engines = ExcludeEngines(excl_engines_var);
-  auto plans        = GetPlans(HeurMode(),
-                        s->dnn_handle_,
-                        op_graph,
-                        workspace_limit,
-                        &workspace_size,
-                        excl_engines,
-                        RequireNumerics(),
-                        ExcludeNumerics(),
+  std::vector<Descriptor> plans;
+#if CUDNN_VERSION >= 8100
+  if (UseFrontendAutotune()) {
+    if (verbose > 0)
+      LOG(INFO) << " [frontend autotune] querying CUDNN_HEUR_MODE_A + MODE_B";
+    plans = GetCombinedPlans(s->dnn_handle_,
+                             op_graph,
+                             workspace_limit,
+                             &workspace_size,
+                             excl_engines,
+                             RequireNumerics(),
+                             ExcludeNumerics(),
 #if CUDNN_VERSION >= 8200
-                        {},
-                        {},
+                             {},
+                             {},
 #endif  // CUDNN_VERSION >= 8200
-                        verbose > 1);
+                             verbose > 1);
+    if (verbose > 0)
+      LOG(INFO) << " [frontend autotune] combined plan count: " << plans.size();
+  } else {
+    plans = GetPlans(HeurMode(),
+                     s->dnn_handle_,
+                     op_graph,
+                     workspace_limit,
+                     &workspace_size,
+                     excl_engines,
+                     RequireNumerics(),
+                     ExcludeNumerics(),
+#if CUDNN_VERSION >= 8200
+                     {},
+                     {},
+#endif  // CUDNN_VERSION >= 8200
+                     verbose > 1);
+  }
+#else
+  plans = GetPlans(HeurMode(),
+                   s->dnn_handle_,
+                   op_graph,
+                   workspace_limit,
+                   &workspace_size,
+                   excl_engines,
+                   RequireNumerics(),
+                   ExcludeNumerics(),
+                   verbose > 1);
+#endif  // CUDNN_VERSION >= 8100
   Storage::Handle out_space;
   auto ptrs = tensor_ptrs;
   if (tune != conv::kOff && param.add_to) {

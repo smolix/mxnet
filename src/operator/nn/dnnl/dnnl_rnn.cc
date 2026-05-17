@@ -186,11 +186,13 @@ dnnl::memory* DNNLRnnMemMgr::Alloc(const dnnl::memory::desc& md) {
   addr += padding;
   CHECK_EQ(addr % alignment, 0);
 
-  curr_size -= (md.get_size() + padding);
-  if (curr_size < 0) {
+  // B3: curr_size is size_t; compare-before-subtract to avoid unsigned underflow.
+  const size_t req_size = md.get_size() + padding;
+  if (req_size > curr_size) {
     ret.reset(new dnnl::memory(md, cpu_engine));
   } else {
-    curr_mem += (md.get_size() + padding);
+    curr_size -= req_size;
+    curr_mem += req_size;
     ret.reset(new dnnl::memory(md, cpu_engine, reinterpret_cast<void*>(addr)));
   }
   RegisterMem(ret);

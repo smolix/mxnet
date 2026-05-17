@@ -637,7 +637,9 @@ inline bool same_shape(const dnnl::memory::desc& desc1, const dnnl::memory::desc
 }
 
 inline bool same_shape(const mxnet::TShape& shape, int dtype, const dnnl::memory::desc& desc) {
-  return same_shape(shape, desc.get_dims().data(), desc.get_ndims()) &&
+  // B7: get_dims() returns a std::vector by value in v3; bind it before .data().
+  const auto dims = desc.get_dims();
+  return same_shape(shape, dims.data(), desc.get_ndims()) &&
          get_dnnl_type(dtype) == desc.get_data_type();
 }
 

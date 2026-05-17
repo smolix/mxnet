@@ -109,17 +109,20 @@ class SgDNNLConvOperator {
   dnnl_args_map_t args_;
   NDArray cached_weight_;
   NDArray cached_bias_;
-  // TODO: wire from quantization inputs (see dnnl_fc.cc kBiasMin/kBiasMax)
-  float cached_bias_min_{0.0f};
-  float cached_bias_max_{0.0f};
-  float cached_data_min_;
-  float cached_data_max_;
-  float cached_sum_min_;
-  float cached_sum_max_;
-  float cached_output_min_;
-  float cached_output_max_;
-  size_t weight_ver_;
-  size_t bias_ver_;
+  // B4: the conv subgraph never receives bias_min/max as a separate input the
+  // way dnnl_fc.cc does — its bias-overflow guard runs inside GetWeightScales()
+  // (dnnl_common.h:68-76) on the per-channel int8 bias values directly. The
+  // previously-declared cached_bias_min_/max_{0.0f} members were never wired
+  // and never read; removed.
+  // F10: default-initialize so reuse / re-serialization can't read garbage.
+  float cached_data_min_{0.0f};
+  float cached_data_max_{0.0f};
+  float cached_sum_min_{0.0f};
+  float cached_sum_max_{0.0f};
+  float cached_output_min_{0.0f};
+  float cached_output_max_{0.0f};
+  size_t weight_ver_{0};
+  size_t bias_ver_{0};
   float data_scale_{0.0f};
   std::vector<float> weight_scales_;
 };

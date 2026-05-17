@@ -35,11 +35,11 @@ static inline bool IsUsingPadding(const dnnl::memory::desc& dst_md) {
       dst_md.get_format_kind() == dnnl::memory::format_kind::blocked && dst_md.get_inner_nblks() > 0;
   // v3: get_padded_dims() returns a std::vector (was raw pointer in v2);
   //     pass an iterator-compatible begin() to std::equal.
+  // B7: bind get_dims() to a named temporary; .data() of an rvalue vector is UB.
+  const auto dims   = dst_md.get_dims();
   const auto padded = dst_md.get_padded_dims();
   return is_blocked_format &&
-         !std::equal(dst_md.get_dims().data(),
-                     dst_md.get_dims().data() + dst_md.get_ndims(),
-                     padded.begin());
+         !std::equal(dims.data(), dims.data() + dst_md.get_ndims(), padded.begin());
 }
 
 DNNLConcatFwd::DNNLConcatFwd(int concat_dim, const std::vector<dnnl::memory::desc>& data_md)

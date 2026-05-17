@@ -28,9 +28,20 @@ if "--inplace" in sys.argv:
     from distutils.core import setup
     from distutils.extension import Extension
 else:
-    from setuptools import setup
+    from setuptools import setup, Distribution
     from setuptools.extension import Extension
     kwargs = {'install_requires': ['numpy>=1.17', 'requests>=2.20.0,<3', 'graphviz<0.9.0,>=0.8.1', 'contextvars;python_version<"3.7"'], 'zip_safe': False}
+
+    # We bundle libmxnet.so + libcudnn/libnccl/libcuda* under mxnet/ and
+    # mxnet/lib/. Those are platform-specific binaries, so the resulting
+    # wheel must be tagged as a binary (Root-Is-Purelib=false,
+    # tag=py3-none-linux_x86_64 on x86_64 Linux), not as a pure-python
+    # wheel. Force that by declaring a distclass whose has_ext_modules()
+    # returns True even when ext_modules is empty.
+    class _BinaryDistribution(Distribution):
+        def has_ext_modules(self):
+            return True
+    kwargs['distclass'] = _BinaryDistribution
 
 with_cython = False
 if '--with-cython' in sys.argv:

@@ -19,7 +19,8 @@
 
 /*!
  * \file cublaslt_gemm.cc
- * \brief cuBLASLt-backed fp32 GEMM (PR-A). See cublaslt_gemm.h.
+ * \brief cuBLASLt-backed GEMM wrappers (PR-A: fp32; PR-B: fp16/bf16/fp64).
+ *        See cublaslt_gemm.h.
  */
 
 #include "cublaslt_gemm.h"
@@ -44,18 +45,22 @@ constexpr size_t kWorkspaceBytes      = 32ull * 1024 * 1024;  // 32 MiB cap.
 constexpr size_t kHeuristicCacheCap   = 256;
 
 // Cache key. Quantizes alpha/beta to the three values the legacy fast path
-// cares about (1.0, 0.0, "other"). Math-mode and dtype are fixed for fp32 in
-// this PR; future PRs that add fp16/bf16 will need additional key fields.
+// cares about (1.0, 0.0, "other"). The dtype triplet (a_type, b_type, c_type)
+// + compute type fold into a single uint32 to avoid bloating the key. Scale
+// type is implied by compute type (fp32 for {fp16,bf16,fp32} compute, fp64
+// for fp64 compute), so we don't track it separately.
 struct GemmKey {
   int                m, n, k;
   int                lda, ldb, ldc;
   cublasOperation_t  opA, opB;
   int                alpha_is_one;
   int                beta_class;  // 0: =0, 1: =1, 2: other.
+  uint32_t           dtype_tag;   // packed (io_dtype<<8 | compute_type)
   bool operator==(const GemmKey& o) const {
     return m == o.m && n == o.n && k == o.k && lda == o.lda && ldb == o.ldb &&
            ldc == o.ldc && opA == o.opA && opB == o.opB &&
-           alpha_is_one == o.alpha_is_one && beta_class == o.beta_class;
+           alpha_is_one == o.alpha_is_one && beta_class == o.beta_class &&
+           dtype_tag == o.dtype_tag;
   }
 };
 
@@ -74,6 +79,7 @@ struct GemmKeyHash {
     mix(static_cast<size_t>(k.opB));
     mix(static_cast<size_t>(k.alpha_is_one));
     mix(static_cast<size_t>(k.beta_class));
+    mix(static_cast<size_t>(k.dtype_tag));
     return h;
   }
 };
@@ -182,34 +188,41 @@ class LtPool {
   std::unordered_map<GemmKey, Entry, GemmKeyHash>    cache_;
 };
 
-inline int BetaClass(float beta) {
+inline int BetaClassF32(float beta) {
   if (beta == 0.0f) return 0;
   if (beta == 1.0f) return 1;
   return 2;
 }
 
-}  // namespace
-
-bool UseCuBlasLt() {
-  static const bool flag =
-      dmlc::GetEnv("MXNET_USE_CUBLASLT", dmlc::optional<bool>(false)).value();
-  return flag;
+inline int BetaClassF64(double beta) {
+  if (beta == 0.0) return 0;
+  if (beta == 1.0) return 1;
+  return 2;
 }
 
-cublasStatus_t MaybeCublasLtSgemm(cublasHandle_t legacy_handle,
-                                  cublasOperation_t opA,
-                                  cublasOperation_t opB,
-                                  int m,
-                                  int n,
-                                  int k,
-                                  const float* alpha,
-                                  const float* A,
-                                  int lda,
-                                  const float* B,
-                                  int ldb,
-                                  const float* beta,
-                                  float* C,
-                                  int ldc) {
+inline uint32_t MakeDtypeTag(cudaDataType_t io, cublasComputeType_t compute) {
+  // 16 bits each — both enums are well under that.
+  return (static_cast<uint32_t>(io) << 16) |
+         (static_cast<uint32_t>(compute) & 0xFFFFu);
+}
+
+// Core dispatcher. All dtype-specific wrappers funnel here. alpha/beta are
+// expected to be host pointers of the scale-type size (fp32 for {fp16, bf16,
+// fp32-compute} or fp64 for fp64-compute).
+cublasStatus_t MaybeCublasLtGemmImpl(cublasHandle_t legacy_handle,
+                                     cublasOperation_t opA,
+                                     cublasOperation_t opB,
+                                     int m, int n, int k,
+                                     const void* alpha,
+                                     const void* A, int lda,
+                                     const void* B, int ldb,
+                                     const void* beta,
+                                     void* C, int ldc,
+                                     cudaDataType_t io_dtype,
+                                     cudaDataType_t scale_dtype,
+                                     cublasComputeType_t compute_type,
+                                     int alpha_is_one,
+                                     int beta_class) {
   int dev_id = -1;
   if (cudaGetDevice(&dev_id) != cudaSuccess || dev_id < 0) {
     return CUBLAS_STATUS_NOT_INITIALIZED;
@@ -221,7 +234,8 @@ cublasStatus_t MaybeCublasLtSgemm(cublasHandle_t legacy_handle,
   cublasGetStream(legacy_handle, &stream);
 
   GemmKey key{m, n, k, lda, ldb, ldc, opA, opB,
-              (*alpha == 1.0f) ? 1 : 0, BetaClass(*beta)};
+              alpha_is_one, beta_class,
+              MakeDtypeTag(io_dtype, compute_type)};
 
   // Build descriptors. These are cheap (stack-resident opaques) but the algo
   // selection underneath is what we cache.
@@ -238,14 +252,9 @@ cublasStatus_t MaybeCublasLtSgemm(cublasHandle_t legacy_handle,
     if (op_desc) cublasLtMatmulDescDestroy(op_desc);
   };
 
-  // Compute as TF32 (matches the legacy CUBLAS_TF32_TENSOR_OP_MATH set
-  // around cublasSgemmEx in linalg_impl.h). On Blackwell this is what
-  // dispatches to the new sm_120 TF32 kernels. Future PR can wire
-  // MXNET_CUDA_ALLOW_TENSOR_CORE=0 to fall back to CUBLAS_COMPUTE_32F.
-  s = cublasLtMatmulDescCreate(&op_desc, CUBLAS_COMPUTE_32F_FAST_TF32, CUDA_R_32F);
+  s = cublasLtMatmulDescCreate(&op_desc, compute_type, scale_dtype);
   if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-  // Attribute is documented as int32_t (see cublasLt.h around TRANSA).
-  // cublasOperation_t is enum-backed by int; pass an int32_t to be safe.
+  // Attribute is documented as int32_t.
   int32_t op_a_int = static_cast<int32_t>(opA);
   int32_t op_b_int = static_cast<int32_t>(opB);
   s = cublasLtMatmulDescSetAttribute(op_desc, CUBLASLT_MATMUL_DESC_TRANSA,
@@ -259,11 +268,11 @@ cublasStatus_t MaybeCublasLtSgemm(cublasHandle_t legacy_handle,
   const int a_cols = (opA == CUBLAS_OP_N) ? k : m;
   const int b_rows = (opB == CUBLAS_OP_N) ? k : n;
   const int b_cols = (opB == CUBLAS_OP_N) ? n : k;
-  s = cublasLtMatrixLayoutCreate(&a_lay, CUDA_R_32F, a_rows, a_cols, lda);
+  s = cublasLtMatrixLayoutCreate(&a_lay, io_dtype, a_rows, a_cols, lda);
   if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-  s = cublasLtMatrixLayoutCreate(&b_lay, CUDA_R_32F, b_rows, b_cols, ldb);
+  s = cublasLtMatrixLayoutCreate(&b_lay, io_dtype, b_rows, b_cols, ldb);
   if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-  s = cublasLtMatrixLayoutCreate(&c_lay, CUDA_R_32F, m, n, ldc);
+  s = cublasLtMatrixLayoutCreate(&c_lay, io_dtype, m, n, ldc);
   if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
 
   // Heuristic / algo selection.
@@ -305,6 +314,108 @@ cublasStatus_t MaybeCublasLtSgemm(cublasHandle_t legacy_handle,
                      C, c_lay, C, c_lay, &algo, ws, algo_ws_bytes, stream);
   cleanup();
   return s;
+}
+
+}  // namespace
+
+bool UseCuBlasLt() {
+  static const bool flag =
+      dmlc::GetEnv("MXNET_USE_CUBLASLT", dmlc::optional<bool>(false)).value();
+  return flag;
+}
+
+cublasStatus_t MaybeCublasLtSgemm(cublasHandle_t legacy_handle,
+                                  cublasOperation_t opA,
+                                  cublasOperation_t opB,
+                                  int m,
+                                  int n,
+                                  int k,
+                                  const float* alpha,
+                                  const float* A,
+                                  int lda,
+                                  const float* B,
+                                  int ldb,
+                                  const float* beta,
+                                  float* C,
+                                  int ldc) {
+  // Compute as TF32 (matches the legacy CUBLAS_TF32_TENSOR_OP_MATH set
+  // around cublasSgemmEx in linalg_impl.h). On Blackwell this is what
+  // dispatches to the new sm_120 TF32 kernels.
+  return MaybeCublasLtGemmImpl(legacy_handle, opA, opB, m, n, k,
+                               alpha, A, lda, B, ldb, beta, C, ldc,
+                               CUDA_R_32F, CUDA_R_32F,
+                               CUBLAS_COMPUTE_32F_FAST_TF32,
+                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta));
+}
+
+cublasStatus_t MaybeCublasLtHgemm(cublasHandle_t legacy_handle,
+                                  cublasOperation_t opA,
+                                  cublasOperation_t opB,
+                                  int m,
+                                  int n,
+                                  int k,
+                                  const float* alpha,
+                                  const void* A,
+                                  int lda,
+                                  const void* B,
+                                  int ldb,
+                                  const float* beta,
+                                  void* C,
+                                  int ldc) {
+  // Pseudo-fp16: fp16 I/O, fp32 accumulate, fp32 alpha/beta. Matches the
+  // legacy cublasGemmEx(... CUBLAS_COMPUTE_32F ...) path in
+  // linalg_gemm<gpu, half_t>. Blackwell sm_120 routes this to fp16 tensor
+  // cores via the new heuristic kernels.
+  return MaybeCublasLtGemmImpl(legacy_handle, opA, opB, m, n, k,
+                               alpha, A, lda, B, ldb, beta, C, ldc,
+                               CUDA_R_16F, CUDA_R_32F,
+                               CUBLAS_COMPUTE_32F,
+                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta));
+}
+
+cublasStatus_t MaybeCublasLtBf16Gemm(cublasHandle_t legacy_handle,
+                                     cublasOperation_t opA,
+                                     cublasOperation_t opB,
+                                     int m,
+                                     int n,
+                                     int k,
+                                     const float* alpha,
+                                     const void* A,
+                                     int lda,
+                                     const void* B,
+                                     int ldb,
+                                     const float* beta,
+                                     void* C,
+                                     int ldc) {
+  // bf16 I/O, fp32 accumulate, fp32 alpha/beta. There is no legacy
+  // cublasBgemm; the caller side adds a cublasGemmEx fallback if Lt fails.
+  return MaybeCublasLtGemmImpl(legacy_handle, opA, opB, m, n, k,
+                               alpha, A, lda, B, ldb, beta, C, ldc,
+                               CUDA_R_16BF, CUDA_R_32F,
+                               CUBLAS_COMPUTE_32F,
+                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta));
+}
+
+cublasStatus_t MaybeCublasLtDgemm(cublasHandle_t legacy_handle,
+                                  cublasOperation_t opA,
+                                  cublasOperation_t opB,
+                                  int m,
+                                  int n,
+                                  int k,
+                                  const double* alpha,
+                                  const double* A,
+                                  int lda,
+                                  const double* B,
+                                  int ldb,
+                                  const double* beta,
+                                  double* C,
+                                  int ldc) {
+  // Native fp64. Scale and compute are both fp64. No TF32-style fast path.
+  return MaybeCublasLtGemmImpl(legacy_handle, opA, opB, m, n, k,
+                               alpha, A, lda, B, ldb, beta, C, ldc,
+                               CUDA_R_64F, CUDA_R_64F,
+                               CUBLAS_COMPUTE_64F,
+                               (*alpha == 1.0) ? 1 : 0, BetaClassF64(*beta));
 }
 
 }  // namespace cuda

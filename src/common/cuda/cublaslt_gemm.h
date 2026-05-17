@@ -19,7 +19,12 @@
 
 /*!
  * \file cublaslt_gemm.h
- * \brief Optional cuBLASLt-backed GEMM wrappers (PR-A: fp32 only).
+ * \brief Optional cuBLASLt-backed GEMM wrappers.
+ *
+ * PR-A: fp32 (TF32 compute).
+ * PR-B: fp16 (pseudo-fp16: CUDA_R_16F I/O + CUBLAS_COMPUTE_32F + fp32 scale),
+ *       bf16 (CUDA_R_16BF I/O + CUBLAS_COMPUTE_32F + fp32 scale),
+ *       fp64 (CUDA_R_64F I/O + CUBLAS_COMPUTE_64F + fp64 scale).
  *
  * The MXNET_USE_CUBLASLT environment variable (default off) selects the
  * cuBLASLt heuristic path. On any error or zero-heuristic result the wrapper
@@ -68,6 +73,71 @@ cublasStatus_t MaybeCublasLtSgemm(cublasHandle_t legacy_handle,
                                   int ldb,
                                   const float* beta,
                                   float* C,
+                                  int ldc);
+
+/*!
+ * \brief Attempt to run a half-precision (fp16) GEMM via cuBLASLt.
+ *
+ * I/O dtype is CUDA_R_16F. Compute type is CUBLAS_COMPUTE_32F (pseudo-fp16);
+ * alpha/beta are fp32 to match the legacy cublasSgemmEx fallback path in
+ * linalg_gemm<gpu, half_t>. Returns non-success on any failure -- caller
+ * must fall back to the legacy cuBLAS path.
+ */
+cublasStatus_t MaybeCublasLtHgemm(cublasHandle_t legacy_handle,
+                                  cublasOperation_t opA,
+                                  cublasOperation_t opB,
+                                  int m,
+                                  int n,
+                                  int k,
+                                  const float* alpha,
+                                  const void* A,
+                                  int lda,
+                                  const void* B,
+                                  int ldb,
+                                  const float* beta,
+                                  void* C,
+                                  int ldc);
+
+/*!
+ * \brief Attempt to run a bfloat16 GEMM via cuBLASLt.
+ *
+ * I/O dtype is CUDA_R_16BF. Compute type is CUBLAS_COMPUTE_32F; alpha/beta
+ * are fp32. Returns non-success on any failure -- caller must fall back.
+ */
+cublasStatus_t MaybeCublasLtBf16Gemm(cublasHandle_t legacy_handle,
+                                     cublasOperation_t opA,
+                                     cublasOperation_t opB,
+                                     int m,
+                                     int n,
+                                     int k,
+                                     const float* alpha,
+                                     const void* A,
+                                     int lda,
+                                     const void* B,
+                                     int ldb,
+                                     const float* beta,
+                                     void* C,
+                                     int ldc);
+
+/*!
+ * \brief Attempt to run a double-precision GEMM via cuBLASLt.
+ *
+ * I/O dtype is CUDA_R_64F. Compute type is CUBLAS_COMPUTE_64F. Returns
+ * non-success on any failure -- caller must fall back to cublasDgemm.
+ */
+cublasStatus_t MaybeCublasLtDgemm(cublasHandle_t legacy_handle,
+                                  cublasOperation_t opA,
+                                  cublasOperation_t opB,
+                                  int m,
+                                  int n,
+                                  int k,
+                                  const double* alpha,
+                                  const double* A,
+                                  int lda,
+                                  const double* B,
+                                  int ldb,
+                                  const double* beta,
+                                  double* C,
                                   int ldc);
 
 }  // namespace cuda

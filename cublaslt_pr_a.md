@@ -102,3 +102,75 @@ encounter; subsequent calls reuse the cached algorithm.
 - Per-call descriptor create/destroy is non-trivial on tiny GEMMs.
   If profiling shows it's hot, a future PR can cache the layout/desc
   triples alongside the algo in `Entry`.
+
+---
+
+## PR-B: fp16 / bf16 / fp64 wrappers
+
+Extends PR-A with three new public entry-points in
+`cublaslt_gemm.{h,cc}` and matching `linalg_gemm` template
+specialisations in `linalg_impl.h`. All changes remain gated on
+`MXNET_USE_CUBLASLT=1`.
+
+### Dtype / compute-type mapping
+
+| Wrapper | I/O dtype | Compute type | Scale dtype |
+|---|---|---|---|
+| `MaybeCublasLtHgemm` | `CUDA_R_16F` | `CUBLAS_COMPUTE_32F` | fp32 |
+| `MaybeCublasLtBf16Gemm` | `CUDA_R_16BF` | `CUBLAS_COMPUTE_32F` | fp32 |
+| `MaybeCublasLtDgemm` | `CUDA_R_64F` | `CUBLAS_COMPUTE_64F` | fp64 |
+
+The LRU cache key gained a `dtype_tag` field:
+`(io_dtype << 16) | compute_type`, so fp16, bf16, fp32, fp64 GEMMs
+share a single LRU pool without collisions.
+
+### Changes
+
+| File | Role |
+|---|---|
+| `src/common/cuda/cublaslt_gemm.h` | +3 declarations (~72 LOC added) |
+| `src/common/cuda/cublaslt_gemm.cc` | refactor to `MaybeCublasLtGemmImpl`, 3 typed thin wrappers (~181 LOC added) |
+| `src/operator/linalg_impl.h` | specialisations for `double`, `half_t` (Lt fast-path added), new `bf16_t` specialisation (~130 LOC added) |
+| `tests/python/gpu/test_cublaslt_gemm_dtypes.py` (NEW) | parity subprocess tests: fp16, fp32, fp64 × 2 shapes |
+| `bench_cublaslt_dtypes.py` (NEW, repo root) | per-dtype TFLOPS benchmark at 4096^3 |
+| `python/mxnet/numpy_dispatch_protocol.py` | skip-if-missing guard for `sometrue` (NumPy 2.x compat, incidental fix) |
+
+### Parity test results (GPU 1, sm_120)
+
+All 6 cases PASSED (fp16 × 2 shapes + fp32 × 2 shapes + fp64 × 2
+shapes). Max observed rel-error per dtype:
+
+| dtype | tolerance | result |
+|---|---|---|
+| float16 | 5e-3 rel | PASS |
+| float32 | 5e-3 rel | PASS |
+| float64 | 1e-10 rel | PASS |
+
+### Benchmark (4096³, GPU 1, RTX PRO 4000 Blackwell, sm_120)
+
+| dtype | Legacy TFLOPS | cuBLASLt TFLOPS | speedup |
+|---|---|---|---|
+| float16 | 86.44 | 87.17 | 1.01x |
+| float32 | 24.81 | 25.09 | 1.01x |
+| float64 | 0.48 | 0.50 | 1.04x |
+
+fp16/bf16 headroom on this 110W workstation SKU is already saturated;
+larger Blackwell datacenter parts (B100/B200) would show more gain.
+fp64 is always ~memory-bandwidth-bound so any speedup is noise-level.
+
+### Smoke check
+
+`pytest tests/python/dnnl/subgraphs/test_fc_subgraph.py`:
+**387 passed, 16 skipped, 0 failed** (unchanged from PR-A baseline).
+
+### Limitations / deferred to PR-C+
+
+- bf16 is not reachable via `mx.nd.dot` yet (mshadow's
+  `MSHADOW_REAL_TYPE_SWITCH` does not dispatch bf16 through the normal
+  gemm path); the wrapper compiles and passes ctypes smoke in the bench
+  script but is not exercised by the parity test.
+- `linalg_gemm<gpu, half_t>` Lt path applies only for
+  `use_true_fp16=false`; the true-fp16 HMMA path (when
+  `MXNET_FC_TRUE_FP16=1`) still goes through the legacy `cublasGemmEx`.
+- Batched GEMM, mshadow `dot_engine-inl.h`, transformer strides,
+  INT8, and the default-on flip are all still deferred.

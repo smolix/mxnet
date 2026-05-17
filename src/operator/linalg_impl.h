@@ -338,7 +338,53 @@ inline void linalg_gemm<gpu, float>(const Tensor<gpu, 2, float>& A,
 #else
 LINALG_GPU_GEMM(Sgemm, float)
 #endif
-LINALG_GPU_GEMM(Dgemm, double)
+
+// fp64 GEMM, optionally routed through cuBLASLt when MXNET_USE_CUBLASLT=1.
+template <>
+inline void linalg_gemm<gpu, double>(const Tensor<gpu, 2, double>& A,
+                                     const Tensor<gpu, 2, double>& B,
+                                     const Tensor<gpu, 2, double>& C,
+                                     double alpha,
+                                     double beta,
+                                     bool tA,
+                                     bool tB,
+                                     Stream<gpu>* s) {
+  using namespace mxnet;
+  using mshadow::gpu;
+  CHECK_NOTNULL(s);
+  check_gemm(A, B, C, alpha, beta, tA, tB);
+  auto handle                  = Stream<gpu>::GetBlasHandle(s);
+  const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const int gemm_m             = C.size(1);
+  const int gemm_n             = C.size(0);
+  const int gemm_k             = (tB ? B.size(1) : B.size(0));
+  bool used_lt                 = false;
+  if (mxnet::common::cuda::UseCuBlasLt()) {
+    cublasStatus_t lt_status =
+        mxnet::common::cuda::MaybeCublasLtDgemm(handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
+                                                &alpha, B.dptr_, B.stride_,
+                                                A.dptr_, A.stride_, &beta,
+                                                C.dptr_, C.stride_);
+    used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (!used_lt) {
+    CUBLAS_CALL(cublasDgemm(handle,
+                            op_a,
+                            op_b,
+                            gemm_m,
+                            gemm_n,
+                            gemm_k,
+                            &alpha,
+                            B.dptr_,
+                            B.stride_,
+                            A.dptr_,
+                            A.stride_,
+                            &beta,
+                            C.dptr_,
+                            C.stride_));
+  }
+}
 
 // Version where matrix rows are given by first axis.
 #define LINALG_GPU_GEMM_AXIS(fname, DType)                                                \
@@ -430,7 +476,27 @@ inline void linalg_gemm<gpu, mshadow::half::half_t>(const Tensor<gpu, 2, mshadow
     beta_ptr    = &pseudoFP16_beta;
     computeType = CublasType<PseudoFP16Type>::kCudaFlag;
   }
-  if (SupportsFloat16Compute(s->dev_id)) {
+  // cuBLASLt fast path. Uses pseudo-fp16 (fp16 I/O, fp32 compute, fp32
+  // alpha/beta), which matches what cublasGemmEx + CUBLAS_COMPUTE_32F does
+  // when MXNET_FC_TRUE_FP16=0. Any failure falls through to the legacy
+  // dispatch below.
+  bool used_lt_fp16 = false;
+  if (!use_true_fp16 && mxnet::common::cuda::UseCuBlasLt()) {
+    float alpha_f                = static_cast<float>(alpha);
+    float beta_f                 = static_cast<float>(beta);
+    const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+    const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+    cublasStatus_t lt_status     = mxnet::common::cuda::MaybeCublasLtHgemm(
+        blas_handle, op_a, op_b,
+        C.size(1), C.size(0), (tB ? B.size(1) : B.size(0)),
+        &alpha_f, B.dptr_, B.stride_,
+        A.dptr_, A.stride_, &beta_f,
+        C.dptr_, C.stride_);
+    used_lt_fp16 = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (used_lt_fp16) {
+    // skipped; lt path completed.
+  } else if (SupportsFloat16Compute(s->dev_id)) {
     CUBLAS_CALL(cublasGemmEx(blas_handle,
                              (tB ? CUBLAS_OP_T : CUBLAS_OP_N),
                              (tA ? CUBLAS_OP_T : CUBLAS_OP_N),
@@ -484,6 +550,66 @@ inline void linalg_gemm<gpu, mshadow::half::half_t>(const Tensor<gpu, 2, mshadow
 #else
   LOG(FATAL) << "FP16 gemm requires CUDA version >= 7.5!";
 #endif  // CUDA_VERSION >= 7050
+}
+
+// Specialization of linalg_gemm<gpu, DType> for DType=mshadow::bfloat::bf16_t.
+//
+// There is no legacy cublasBgemm/cublasBgemmEx-equivalent specialized API; bf16
+// is reached either via cuBLASLt (preferred) or via cublasGemmEx with CUDA_R_16BF
+// and CUBLAS_COMPUTE_32F. When MXNET_USE_CUBLASLT=1 we try the Lt path first;
+// on any failure we fall back to the legacy cublasGemmEx path.
+template <>
+inline void linalg_gemm<gpu, mshadow::bfloat::bf16_t>(
+    const Tensor<gpu, 2, mshadow::bfloat::bf16_t>& A,
+    const Tensor<gpu, 2, mshadow::bfloat::bf16_t>& B,
+    const Tensor<gpu, 2, mshadow::bfloat::bf16_t>& C,
+    mshadow::bfloat::bf16_t alpha,
+    mshadow::bfloat::bf16_t beta,
+    bool tA,
+    bool tB,
+    Stream<gpu>* s) {
+  using namespace mxnet;
+  using mshadow::gpu;
+  CHECK_NOTNULL(s);
+  check_gemm(A, B, C, alpha, beta, tA, tB);
+  auto blas_handle             = Stream<gpu>::GetBlasHandle(s);
+  const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const int gemm_m             = C.size(1);
+  const int gemm_n             = C.size(0);
+  const int gemm_k             = (tB ? B.size(1) : B.size(0));
+  float alpha_f                = static_cast<float>(alpha);
+  float beta_f                 = static_cast<float>(beta);
+  bool used_lt                 = false;
+  if (mxnet::common::cuda::UseCuBlasLt()) {
+    cublasStatus_t lt_status = mxnet::common::cuda::MaybeCublasLtBf16Gemm(
+        blas_handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
+        &alpha_f, B.dptr_, B.stride_,
+        A.dptr_, A.stride_, &beta_f,
+        C.dptr_, C.stride_);
+    used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (!used_lt) {
+    CUBLAS_CALL(cublasGemmEx(blas_handle,
+                             op_a,
+                             op_b,
+                             gemm_m,
+                             gemm_n,
+                             gemm_k,
+                             &alpha_f,
+                             B.dptr_,
+                             CUDA_R_16BF,
+                             B.stride_,
+                             A.dptr_,
+                             CUDA_R_16BF,
+                             A.stride_,
+                             &beta_f,
+                             C.dptr_,
+                             CUDA_R_16BF,
+                             C.stride_,
+                             CUBLAS_COMPUTE_32F,
+                             CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+  }
 }
 
 // As of cuda8, cublas has implemented a strided version of batch gemm.

@@ -43,6 +43,12 @@ namespace op {
 // inside GetWeightScales' per-channel guard.
 constexpr int32_t kInt32BiasSafetyCap = std::numeric_limits<int32_t>::max() / 2;
 
+// Reorder scale applied to convert u8 storage to s8 quantization when an op
+// (FC + sum, quantized_elemwise_add) needs to align an unsigned operand with
+// a signed accumulator. 0.5 not 127/255 — chosen historically to keep the
+// reorder exact at 8-bit precision; preserved here for behavioural parity.
+constexpr float kU8ToS8Scale = 0.5f;
+
 template <typename DType>
 static std::vector<float> GetWeightScales(const NDArray& weight,
                                           const NDArray* bias,

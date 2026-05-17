@@ -18,14 +18,119 @@
   ~
 -->
 
+Blackwell / CUDA 13 fork
+========================
+
+> Unofficial fork at [`smolix/mxnet`](https://github.com/smolix/mxnet) — Blackwell
+> (sm_120) port of MXNet 2.0.
+>
+> Apache MXNet was **archived on 2023-11-17**. The upstream tree is frozen at
+> CUDA 11 / cuDNN 8 / oneDNN v2 and does not build on Blackwell GPUs or modern
+> CUDA toolchains. This fork carries the minimum set of patches needed to run
+> existing MXNet code on current hardware. It is not an official Apache release.
+
+Current version string: `2.0.0+cu13.bw.20260517`
+(`<upstream-version>+cu<cuda-major>.bw.<YYYYMMDD>`).
+
+Why this fork exists
+--------------------
+
+The primary goal is to **run existing MXNet notebooks on Blackwell** (RTX PRO
+4000 / RTX 50-series / B100-class) hardware with the current CUDA 13 +
+cuDNN 9 + oneDNN v3 + NCCL 2.28 stack. The secondary goal is to keep the
+residual MXNet user community (legacy research code, frozen production
+pipelines, niche operators like `_contrib_quantize_*`) able to use current
+GPUs without a full rewrite to PyTorch / JAX. See [`issues.md`](issues.md) for
+the open work list and priority-ordered triage.
+
+What works
+----------
+
+* Blackwell `sm_120` SASS / PTX (CUDA 13.0).
+* cuDNN 9.14 — including the rewritten v8 RNN path (LSTM / GRU / vanilla
+  RNN, fwd + bwd).
+* oneDNN v3.11 — full INT8 path (per-OC weight scales, fused conv/FC, fused
+  sum, dequant-to-fp32 output).
+* NCCL 2.28 — single-process / multi-GPU.
+* INT8 quantization (`quantize_net`, `_sg_onednn_conv`, `_sg_onednn_fully_connected`).
+* fp16 and fp32 forward + backward training.
+* F16C CPU intrinsics for fast fp16 host (de)serialization.
+* DNNL subgraph fusion, the activation/eltwise/layer-norm/softmax stack,
+  pooling, batch norm fwd+bwd, transpose, concat, where, masked softmax.
+
+What is experimental or known-broken
+------------------------------------
+
+* **bf16 on non-AVX-512-BF16 CPUs** — oneDNN falls back to fp32 emulation;
+  not fixable in software, test on Intel SPR or AMD Zen 4 / Granite Rapids.
+* **Backward through quantized ops** — forward inference is solid; backward
+  through `_sg_onednn_fully_connected` and `_sg_onednn_conv` is unvalidated.
+* **AMP (automatic mixed precision) subgraph** — 6 known failures with
+  `inner_product` primitive creation; investigation pending.
+* **`adaptive_avg_pool` backward** — 36 known failures when
+  `output_size < input_size` (gradient normalization bug).
+* **ONNX export / import** — both `tests/python/onnx/test_models.py` and
+  `test_operators.py` error at collect time; the ONNX path was not updated
+  for MXNet 2.0 numpy ops.
+* **`_contrib_quantize_asym`** — still uses v2-style attr-on-reorder; broken
+  for asymmetric quantization.
+* See [`issues.md`](issues.md) for the full open list (45 items).
+
+System requirements
+-------------------
+
+* Linux x86_64 (tested on Ubuntu 22.04 / 24.04).
+* NVIDIA driver supporting CUDA 13 (R570+).
+* CUDA 13.0 toolkit.
+* cuDNN **9.14+** (cuDNN 9.7+ has the best `sm_120` heuristic coverage;
+  earlier 9.x works but routes more conv shapes through generic fallback
+  engines).
+* NCCL 2.28.3.
+* Python 3.10+ (3.11 / 3.12 / 3.13 are CI-tested).
+
+Installation
+------------
+
+The release wheel does **not** currently bundle CUDA / cuDNN / NCCL runtimes
+(tracked in [`issues.md`](issues.md) item 30). Install the runtime packages
+first, then the wheel:
+
+```bash
+# 1. CUDA 13 / cuDNN 9 / NCCL runtime
+sudo apt install cuda-13 libcudnn9-cuda-13 libnccl2
+
+# 2. MXNet wheel from the GitHub release
+pip install mxnet-2.0.0+cu13.bw.20260517-py3-none-linux_x86_64.whl
+```
+
+To **build from source** see [`BUILDING.md`](BUILDING.md). The short version
+is: clone with submodules, install `libnccl-dev` *before* invoking `cmake`,
+then `cmake -DUSE_CUDA=ON -DCUDA_ARCH_LIST="12.0" ..`.
+
+Acknowledgements
+----------------
+
+This fork builds on the work of the Apache MXNet community and its
+contributors. All upstream code is Apache 2.0; the Blackwell / CUDA 13
+patches in this fork are likewise Apache 2.0. The original project history
+follows below — its build status badges, social links, and roadmap targets
+refer to the (now archived) upstream and are kept for historical reference.
+
+---
+
 <div align="center">
   <a href="https://mxnet.apache.org/"><img src="https://raw.githubusercontent.com/dmlc/web-data/master/mxnet/image/mxnet_logo_2.png"></a><br>
 </div>
 
 [![banner](https://raw.githubusercontent.com/dmlc/web-data/master/mxnet/image/banner.png)](https://mxnet.apache.org)
 
-Apache MXNet for Deep Learning
-===========================================
+Apache MXNet for Deep Learning (upstream — archived 2023-11-17)
+================================================================
+
+> **Note:** the sections below describe the original Apache MXNet 2.0
+> project. They are kept verbatim for historical context. Build status
+> badges, mailing lists, Slack channels, and Twitter/Medium links refer to
+> the **archived** upstream project and are not actively monitored.
 [![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/apache/mxnet)](https://github.com/apache/mxnet/releases) [![GitHub stars](https://img.shields.io/github/stars/apache/mxnet)](https://github.com/apache/mxnet/stargazers) [![GitHub forks](https://img.shields.io/github/forks/apache/mxnet)](https://github.com/apache/mxnet/network) [![GitHub contributors](https://img.shields.io/github/contributors-anon/apache/mxnet)](https://github.com/apache/mxnet/graphs/contributors) [![GitHub issues](https://img.shields.io/github/issues/apache/mxnet)](https://github.com/apache/mxnet/issues) [![good first issue](https://img.shields.io/github/issues/apache/mxnet/good%20first%20issue)](https://github.com/apache/mxnet/labels/good%20first%20issue) [![GitHub pull requests by-label](https://img.shields.io/github/issues-pr/apache/mxnet/pr-awaiting-review)](https://github.com/apache/mxnet/labels/pr-awaiting-review) [![GitHub license](https://img.shields.io/github/license/apache/mxnet)](https://github.com/apache/mxnet/blob/master/LICENSE) [![Twitter](https://img.shields.io/twitter/url?style=social&url=https%3A%2F%2Fgithub.com%2Fapache%2Fmxnet)](https://twitter.com/intent/tweet?text=Wow:%20https%3A%2F%2Fgithub.com%2Fapache%2Fmxnet%20@ApacheMXNet) [![Twitter Follow](https://img.shields.io/twitter/follow/ApacheMXNet?style=social)](https://twitter.com/ApacheMXNet)
 
 Apache MXNet is a deep learning framework designed for both *efficiency* and *flexibility*.

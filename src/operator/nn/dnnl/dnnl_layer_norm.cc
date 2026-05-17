@@ -29,7 +29,7 @@
 namespace mxnet {
 namespace op {
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_layer_normalization.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_layer_normalization.html
 bool SupportDNNLLayerNorm(const LayerNormParam& param, const std::vector<NDArray>& inputs) {
   const mxnet::TShape& shape = inputs[layernorm::kData].shape();
 
@@ -184,21 +184,33 @@ void DNNLLayerNormBwd::Execute(const std::vector<NDArray>& inputs,
   auto scale_mem = GetGammaOrBetaMem(inputs[layernorm::kBwdGamma]);
   auto shift_mem = GetGammaOrBetaMem(inputs[layernorm::kBwdBeta]);
 
-  // Allocate diff_scale / diff_shift sized to the C dimension. The v3
-  // primitive_desc reports each separately via diff_weights_desc() (scale)
-  // and diff_weights_desc()'s shift cousin (we reuse the same 1-D shape).
-  auto cpu_engine    = CpuEngine::Get()->get_engine();
-  auto diff_weights_md = bwd_pd->diff_weights_desc();
-  auto diff_scale_mem  = dnnl::memory(diff_weights_md, cpu_engine);
-  auto diff_shift_mem  = dnnl::memory(diff_weights_md, cpu_engine);
+  // Allocate diff_scale / diff_shift sized to the C dimension.
+  // AUDIT-F1: oneDNN v3 layer_normalization_backward exposes only a single
+  // diff_weights_desc() (it's shared between scale and shift; no diff_weights_desc(i)).
+  // If a future v3.x splits them, switch to per-arg descriptors here.
+  auto cpu_engine        = CpuEngine::Get()->get_engine();
+  auto diff_weights_md   = bwd_pd->diff_weights_desc();
+  auto diff_scale_mem    = dnnl::memory(diff_weights_md, cpu_engine);
+  auto diff_shift_mem    = dnnl::memory(diff_weights_md, cpu_engine);
 
-  const auto bytes = inputs[layernorm::kBwdGamma].shape()[0] *
-                     mshadow::mshadow_sizeof(inputs[layernorm::kBwdGamma].dtype());
-  if (req[layernorm::kBwdGammaGrad] == kAddTo) {
+  const auto gamma_bytes = inputs[layernorm::kBwdGamma].shape()[0] *
+                           mshadow::mshadow_sizeof(inputs[layernorm::kBwdGamma].dtype());
+  const auto beta_bytes  = inputs[layernorm::kBwdBeta].shape()[0] *
+                           mshadow::mshadow_sizeof(inputs[layernorm::kBwdBeta].dtype());
+  const auto gamma_req = req[layernorm::kBwdGammaGrad];
+  const auto beta_req  = req[layernorm::kBwdBetaGrad];
+  // B5: seed the v3 primitive's diff_scale/diff_shift buffers from the
+  // existing outputs only when the caller wants accumulation. NOTE: oneDNN
+  // layer_norm bwd writes (not accumulates) into DIFF_SCALE/SHIFT; the seed
+  // here matches pre-v3 behavior but a true kAddTo accumulation would need
+  // a post-op add (AUDIT-B5: tracked alongside the kAddTo accuracy item).
+  if (gamma_req == kAddTo) {
     memcpy(diff_scale_mem.get_data_handle(),
-           outputs[layernorm::kBwdGammaGrad].data().dptr_, bytes);
+           outputs[layernorm::kBwdGammaGrad].data().dptr_, gamma_bytes);
+  }
+  if (beta_req == kAddTo) {
     memcpy(diff_shift_mem.get_data_handle(),
-           outputs[layernorm::kBwdBetaGrad].data().dptr_, bytes);
+           outputs[layernorm::kBwdBetaGrad].data().dptr_, beta_bytes);
   }
   dnnl_output_t diff_src_mem = CreateDNNLMem(
       outputs[layernorm::kBwdDataGrad], bwd_pd->diff_src_desc(), req[layernorm::kBwdDataGrad]);
@@ -214,8 +226,17 @@ void DNNLLayerNormBwd::Execute(const std::vector<NDArray>& inputs,
   DNNLStream::Get()->RegisterPrimArgs(*bwd, args);
   CommitOutput(outputs[layernorm::kBwdDataGrad], diff_src_mem);
   DNNLStream::Get()->Submit();
-  memcpy(outputs[layernorm::kBwdGammaGrad].data().dptr_, diff_scale_mem.get_data_handle(), bytes);
-  memcpy(outputs[layernorm::kBwdBetaGrad].data().dptr_, diff_shift_mem.get_data_handle(), bytes);
+  // B5: respect kNullOp / kAddTo — the v3 primitive writes its accumulated
+  // result (seeded above for kAddTo) into diff_scale/shift_mem; don't stomp the
+  // output when the caller didn't ask for it.
+  if (gamma_req != kNullOp) {
+    memcpy(outputs[layernorm::kBwdGammaGrad].data().dptr_,
+           diff_scale_mem.get_data_handle(), gamma_bytes);
+  }
+  if (beta_req != kNullOp) {
+    memcpy(outputs[layernorm::kBwdBetaGrad].data().dptr_,
+           diff_shift_mem.get_data_handle(), beta_bytes);
+  }
 }
 
 DNNLLayerNormBwd& DNNLLayerNormBwd::GetCached(const LayerNormParam& param,

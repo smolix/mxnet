@@ -29,7 +29,7 @@
 namespace mxnet {
 namespace op {
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_softmax.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_softmax.html
 bool SupportDNNLSoftmax(const SoftmaxParam& param, const NDArray& data) {
   const int ndim      = data.shape().ndim();
   const int out_dtype = param.dtype.has_value() ? param.dtype.value() : data.dtype();

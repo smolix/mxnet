@@ -54,7 +54,7 @@ static dnnl::softmax_backward::primitive_desc GetLogSoftmaxBwdPd(
       hint_fwd_pd);
 }
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_logsoftmax.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_logsoftmax.html
 bool SupportDNNLLogSoftmax(const SoftmaxParam& param, const NDArray& data) {
   const int ndim      = data.shape().ndim();
   const int out_dtype = param.dtype.has_value() ? param.dtype.value() : data.dtype();

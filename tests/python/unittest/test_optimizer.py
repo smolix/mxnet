@@ -507,7 +507,8 @@ def test_sparse_adam():
 
 
 @xfail_when_nonstandard_decimal_separator
-@pytest.mark.skip(reason="Flaky test https://github.com/apache/incubator-mxnet/issues/18400")
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason="Flaky test https://github.com/apache/incubator-mxnet/issues/18400")
 def test_adamax():
     opt1 = mx.optimizer.Adamax
     opt2 = mx.optimizer.Adamax

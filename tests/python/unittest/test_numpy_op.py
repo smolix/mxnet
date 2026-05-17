@@ -5437,7 +5437,8 @@ def test_np_randn():
 
 
 @use_np
-@pytest.mark.skip(reason='Test hangs. Tracked in #18144')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='Test hangs. Tracked in #18144')
 def test_np_multivariate_normal():
     class TestMultivariateNormal(HybridBlock):
         def __init__(self, size=None):
@@ -5596,7 +5597,8 @@ def test_np_cumsum():
 
 
 @use_np
-@pytest.mark.skip(reason='Skipped as the test is flaky and the feature causes curand error. Tracked in #18100')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='Skipped as the test is flaky and the feature causes curand error. Tracked in #18100')
 def test_np_histogram():
     shapes = [(), (3, 4), (3, 0)]
 
@@ -5613,7 +5615,8 @@ def test_np_histogram():
 
 
 @use_np
-@pytest.mark.skip(reason='Skipped as the test is flaky and the feature causes curand error. Tracked in #18100')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='Skipped as the test is flaky and the feature causes curand error. Tracked in #18100')
 def test_np_choice():
     class TestUniformChoice(HybridBlock):
         def __init__(self, sample_size, replace):
@@ -7864,7 +7867,8 @@ def test_np_full():
 
 
 @use_np
-@pytest.mark.skip(reason='Skipped as the test is flaky and the feature causes curand error. Tracked in #18100')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='Skipped as the test is flaky and the feature causes curand error. Tracked in #18100')
 def test_np_full_like():
     class TestFullLike(HybridBlock):
         def __init__(self, fill_value, dtype, device):
@@ -9036,7 +9040,8 @@ def test_np_einsum():
 
 
 @use_np
-@pytest.mark.skip(reason='Skipped as the test is flaky and the feature causes curand error. Tracked in #18100')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='Skipped as the test is flaky and the feature causes curand error. Tracked in #18100')
 def test_np_diagflat():
     class TestDiagflat(HybridBlock):
         def __init__(self, k=0):
@@ -9766,7 +9771,8 @@ def test_np_column_stack():
 
 
 @use_np
-@pytest.mark.skip(reason='Test hangs. Tracked in #18144')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='Test hangs. Tracked in #18144')
 def test_np_resize():
     class TestResize(HybridBlock):
         def __init__(self, new_shape):
@@ -10553,7 +10559,7 @@ def test_np_bincount():
 
 
 @use_np
-@pytest.mark.skip(reason='Test hangs. Tracked in #18144')
+@pytest.mark.skip(reason='mx.np.empty_like operator does not support int8/uint8/bool dtypes (raises NotImplementedError); separate from the test-source signature fix in this commit')
 def test_np_empty_like():
     class TestEmptyLike(HybridBlock):
         def __init__(self, dtype, order, subok):
@@ -10563,7 +10569,7 @@ def test_np_empty_like():
             self._subok = subok
 
         def forward(self, x, *args, **kwargs):
-            return np.empty_like(x, self._dtype, self._order, self._subok)
+            return np.empty_like(x, dtype=self._dtype, order=self._order, subok=self._subok)
 
     if StrictVersion(platform.python_version()) < StrictVersion('3.0.0'):
         return
@@ -10606,7 +10612,7 @@ def test_np_empty_like():
         assert ret.asnumpy().shape == expected_ret.shape
 
         # check imperative again
-        ret = np.empty_like(prototype, dtype, order, subok)
+        ret = np.empty_like(prototype, dtype=dtype, order=order, subok=subok)
         assert ret.asnumpy().shape == expected_ret.shape
 
 

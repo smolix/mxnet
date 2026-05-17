@@ -28,9 +28,20 @@ if "--inplace" in sys.argv:
     from distutils.core import setup
     from distutils.extension import Extension
 else:
-    from setuptools import setup
+    from setuptools import setup, Distribution
     from setuptools.extension import Extension
     kwargs = {'install_requires': ['numpy>=1.17', 'requests>=2.20.0,<3', 'graphviz<0.9.0,>=0.8.1', 'contextvars;python_version<"3.7"'], 'zip_safe': False}
+
+    # We bundle libmxnet.so + libcudnn/libnccl/libcuda* under mxnet/ and
+    # mxnet/lib/. Those are platform-specific binaries, so the resulting
+    # wheel must be tagged as a binary (Root-Is-Purelib=false,
+    # tag=py3-none-linux_x86_64 on x86_64 Linux), not as a pure-python
+    # wheel. Force that by declaring a distclass whose has_ext_modules()
+    # returns True even when ext_modules is empty.
+    class _BinaryDistribution(Distribution):
+        def has_ext_modules(self):
+            return True
+    kwargs['distclass'] = _BinaryDistribution
 
 with_cython = False
 if '--with-cython' in sys.argv:
@@ -49,15 +60,29 @@ __version__ = libinfo['__version__']
 
 sys.path.insert(0, CURRENT_DIR)
 
-# Try to generate auto-complete code
-try:
-    from mxnet.base import _generate_op_module_signature
-    from mxnet.ndarray.register import _generate_ndarray_function_code
-    from mxnet.symbol.register import _generate_symbol_function_code
-    _generate_op_module_signature('mxnet', 'symbol', _generate_symbol_function_code)
-    _generate_op_module_signature('mxnet', 'ndarray', _generate_ndarray_function_code)
-except: # pylint: disable=bare-except
-    pass
+# Discover bundled runtime libraries (cuDNN/NCCL/CUDA runtime) shipped under
+# mxnet/lib/. When present, they are packaged as data and libmxnet.so is
+# expected to have RUNPATH=$ORIGIN/lib so it locates them without needing a
+# system-wide CUDA/cuDNN/NCCL install.
+BUNDLED_LIB_DIR = os.path.join(CURRENT_DIR, 'mxnet', 'lib')
+bundled_libs = []
+if os.path.isdir(BUNDLED_LIB_DIR):
+    for fn in sorted(os.listdir(BUNDLED_LIB_DIR)):
+        if '.so' in fn:
+            bundled_libs.append(os.path.join('lib', fn))
+
+# Try to generate auto-complete code (skipped when MXNET_SETUP_SKIP_AUTOCOMPLETE=1
+# is set; useful when packaging in environments where loading libmxnet.so is slow
+# or undesirable).
+if not os.environ.get('MXNET_SETUP_SKIP_AUTOCOMPLETE'):
+    try:
+        from mxnet.base import _generate_op_module_signature
+        from mxnet.ndarray.register import _generate_ndarray_function_code
+        from mxnet.symbol.register import _generate_symbol_function_code
+        _generate_op_module_signature('mxnet', 'symbol', _generate_symbol_function_code)
+        _generate_op_module_signature('mxnet', 'ndarray', _generate_ndarray_function_code)
+    except: # pylint: disable=bare-except
+        pass
 
 def config_cython():
     """Try to configure cython and return cython configuration"""
@@ -121,10 +146,11 @@ setup(name='mxnet',
       version=__version__,
       description=open(os.path.join(CURRENT_DIR, 'README.md')).read(),
       packages=find_packages(),
-      # Bundle libmxnet.so inside the package directory so it's discoverable
-      # via package layout regardless of installation path (data_files goes
-      # to <sysprefix>/mxnet/ which libinfo.find_lib_path() doesn't search).
-      package_data={'mxnet': ['libmxnet.so']},
+      # Bundle libmxnet.so plus any discovered runtime libs (CUDA/cuDNN/NCCL)
+      # inside the package so libinfo.find_lib_path() can find them under
+      # mxnet/ at install time. data_files goes to <sysprefix>/mxnet/ which
+      # find_lib_path() doesn't search.
+      package_data={'mxnet': ['libmxnet.so'] + bundled_libs},
       include_package_data=True,
       url='https://github.com/apache/mxnet',
       ext_modules=config_cython(),

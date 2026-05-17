@@ -76,7 +76,9 @@ void DNNLRnnLayerParam::SetDims() {
 
   // Get workspace size for cached weights memory
   // multiplication of tensor dimensions
-  static auto tz_volume = [](const memory::dims& tz_dims) {
+  // S10: drop `static`; lambda is stateless and the thread-safe one-time-init
+  // overhead is pure cost.
+  auto tz_volume = [](const memory::dims& tz_dims) {
     return std::accumulate(tz_dims.begin(),
                            tz_dims.end(),
                            static_cast<memory::dim>(1),
@@ -186,11 +188,13 @@ dnnl::memory* DNNLRnnMemMgr::Alloc(const dnnl::memory::desc& md) {
   addr += padding;
   CHECK_EQ(addr % alignment, 0);
 
-  curr_size -= (md.get_size() + padding);
-  if (curr_size < 0) {
+  // B3: curr_size is size_t; compare-before-subtract to avoid unsigned underflow.
+  const size_t req_size = md.get_size() + padding;
+  if (req_size > curr_size) {
     ret.reset(new dnnl::memory(md, cpu_engine));
   } else {
-    curr_mem += (md.get_size() + padding);
+    curr_size -= req_size;
+    curr_mem += req_size;
     ret.reset(new dnnl::memory(md, cpu_engine, reinterpret_cast<void*>(addr)));
   }
   RegisterMem(ret);
@@ -540,18 +544,44 @@ inline void DNNLMemoryReorder(const dnnl::memory& src, const dnnl::memory& dst) 
  */
 void DNNLRnnForward::ReorderWeights() {
   if (param_.quantized) {
-    const dnnl::primitive_attr& attr = this->fwd_inf_.GetPrimAttr();
-    auto ReorderWithAttr             = [&](dnnl::memory& src, dnnl::memory& dst) {
-      auto reorder_pd = dnnl::reorder::primitive_desc(src, dst, attr);
+    // v3 brgemm RNN expects s8 weights in a packed format with embedded u8s8
+    // compensation (e.g. ldgOI16o4i, extra-flag rnn_u8s8_compensation). The
+    // specialised "rnn_brgemm_weights_reorder_s8" oneDNN impl that builds that
+    // packed layout only accepts an f32 ldigo source -- but MXNet stores its
+    // native weights in ldgoi. Bridge with a plain f32 ldgoi -> ldigo reorder,
+    // then run the RNN-attr-bearing f32 ldigo -> s8 packed reorder which both
+    // applies set_rnn_weights_qparams scales and computes the compensation.
+    using format_tag = dnnl::memory::format_tag;
+    // Carry only the RNN-weights qparams across to the reorder (drop
+    // rnn_data_qparams -- those are RNN-primitive-only and the weights reorder
+    // rejects unrelated qparams).
+    int w_mask = 0;
+    std::vector<float> w_scales;
+    dnnl::primitive_attr full_attr = this->fwd_inf_.GetPrimAttr();
+    full_attr.get_rnn_weights_qparams(w_mask, w_scales);
+    quantized_w_scales_ = w_scales;
+    auto ReorderToS8 = [&](dnnl::memory& src_ldgoi, dnnl::memory& dst_s8_packed) {
+      // Step 1: plain layout transpose ldgoi -> ldigo (still f32).
+      const auto src_desc = src_ldgoi.get_desc();
+      dnnl::memory::desc ldigo_desc(
+          src_desc.get_dims(), src_desc.get_data_type(), format_tag::ldigo);
+      auto* tmp_ldigo = TmpMemMgr::Get()->Alloc(ldigo_desc);
+      DNNLMemoryReorder(src_ldgoi, *tmp_ldigo);
+      // Step 2: RNN-aware f32 ldigo -> s8 packed (applies scales and writes
+      // s8s8/u8s8 compensation into the destination extra buffer).
+      dnnl::primitive_attr reorder_attr;
+      reorder_attr.set_rnn_weights_qparams(w_mask, quantized_w_scales_);
+      auto reorder_pd =
+          dnnl::reorder::primitive_desc(*tmp_ldigo, dst_s8_packed, reorder_attr);
       dnnl_args_map_t net_args;
-      net_args[DNNL_ARG_SRC] = src;
-      net_args[DNNL_ARG_DST] = dst;
+      net_args[DNNL_ARG_SRC] = *tmp_ldigo;
+      net_args[DNNL_ARG_DST] = dst_s8_packed;
       DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd), net_args);
     };
-    ReorderWithAttr(*weights_layer_r_, *weights_layer_);
-    ReorderWithAttr(*weights_iter_r_, *weights_iter_);
+    ReorderToS8(*weights_layer_r_, *weights_layer_);
+    ReorderToS8(*weights_iter_r_, *weights_iter_);
     if (param_.proj_size > 0)
-      ReorderWithAttr(*weights_proj_r_, *weights_proj_);
+      ReorderToS8(*weights_proj_r_, *weights_proj_);
   } else {
     DNNLMemoryReorder(*weights_layer_r_, *weights_layer_);
     DNNLMemoryReorder(*weights_iter_r_, *weights_iter_);

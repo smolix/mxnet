@@ -83,7 +83,7 @@ mxnet::Tuple<int> CanonicalizeAndSortAxes(const NDArray& input,
   return axes;
 }
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_reduction.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_reduction.html
 bool SupportDNNLReduceImpl(const NumpyReduceAxesParam& param,
                            const NDArray& input,
                            const NDArray& output) {

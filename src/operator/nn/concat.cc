@@ -248,7 +248,7 @@ inline static bool BackwardConcatStorageType(const nnvm::NodeAttrs& attrs,
   return storage_type_assign(out_attrs, mxnet::kDefaultStorage, dispatch_mode, wanted_mode);
 }
 #if MXNET_USE_ONEDNN == 1
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_concat.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_concat.html
 bool SupportDNNLConcat(const std::vector<NDArray>& arrs) {
   for (auto& arr : arrs) {
     if (arr.IsView() || !SupportDNNL<2, 12, AllTypes>(arr))

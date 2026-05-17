@@ -679,8 +679,10 @@ const dnnl::memory* NDArray::GetDNNLDataReorder(const void* mem_desc) const {
     // Since this method will only be used inside an operator, we can call
     // DNNLDataReshape to reshape an array.
     mxnet::TShape required_shape(new_desc.get_ndims(), -1);
+    // F7: get_dims() returns a vector by value in v3; hoist before the loop.
+    const auto new_dims = new_desc.get_dims();
     for (int i = 0; i < new_desc.get_ndims(); i++)
-      required_shape[i] = new_desc.get_dims()[i];
+      required_shape[i] = new_dims[i];
     NDArray reshaped        = DNNLDataReshape(required_shape);
     const dnnl::memory* ret = reshaped.GetDNNLData();
     if (ret->get_desc() == new_desc) {
@@ -705,8 +707,10 @@ NDArray NDArray::Reorder2Default() const {
   // create new ndarray from dnnl layout
   dnnl::memory::desc from_desc = ptr_->dnnl_mem_->GetDesc();
   mxnet::TShape tshape(from_desc.get_ndims(), -1);
+  // F7: get_dims() returns a vector by value in v3; hoist before the loop.
+  const auto from_dims = from_desc.get_dims();
   for (int i = 0; i < from_desc.get_ndims(); i++)
-    tshape[i] = from_desc.get_dims()[i];
+    tshape[i] = from_dims[i];
   NDArray ret(tshape, ctx(), false, dtype());
   dnnl_format_tag_t format    = ptr_->dnnl_mem_->GetDefaultFormat();
   dnnl::memory::desc def_desc = ptr_->dnnl_mem_->GetDesc(format);
@@ -733,8 +737,10 @@ void NDArray::SelfReorder2Default() {
   // create new ndarray from  dnnl layout
   dnnl::memory::desc from_desc = dnnl_mem->GetDesc();
   mxnet::TShape tshape(from_desc.get_ndims(), -1);
+  // F7: get_dims() returns a vector by value in v3; hoist before the loop.
+  const auto from_dims = from_desc.get_dims();
   for (int i = 0; i < from_desc.get_ndims(); i++)
-    tshape[i] = from_desc.get_dims()[i];
+    tshape[i] = from_dims[i];
 
   const auto saved_shape       = shape_;
   const auto saved_byte_offset = byte_offset_;

@@ -375,9 +375,8 @@ inline static dnnl::memory::desc GetMemDesc(const NDArray& arr, int dtype = -1) 
   return dnnl::memory::desc{dims, get_dnnl_type(dtype), dnnl::memory::format_tag::any};
 }
 
-inline static dnnl::memory::desc GetFCWeightDesc(const NDArray& arr,
-                                                 size_t batch_size,
-                                                 int dtype = -1) {
+// F2: batch_size was never read; dropped from the signature.
+inline static dnnl::memory::desc GetFCWeightDesc(const NDArray& arr, int dtype = -1) {
   int ndim = arr.shape().ndim();
   dnnl::memory::dims dims(ndim);
   dtype = (dtype == -1) ? arr.dtype() : dtype;
@@ -637,7 +636,9 @@ inline bool same_shape(const dnnl::memory::desc& desc1, const dnnl::memory::desc
 }
 
 inline bool same_shape(const mxnet::TShape& shape, int dtype, const dnnl::memory::desc& desc) {
-  return same_shape(shape, desc.get_dims().data(), desc.get_ndims()) &&
+  // B7: get_dims() returns a std::vector by value in v3; bind it before .data().
+  const auto dims = desc.get_dims();
+  return same_shape(shape, dims.data(), desc.get_ndims()) &&
          get_dnnl_type(dtype) == desc.get_data_type();
 }
 

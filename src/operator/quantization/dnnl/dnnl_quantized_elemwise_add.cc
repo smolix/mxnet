@@ -207,6 +207,10 @@ static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
       // rescale uint8 to int8 by reorder to temporary memory
       auto s8_desc               = is_A_int8 ? A_mem->get_desc() : B_mem->get_desc();
       rescaled_mem               = TmpMemMgr::Get()->Alloc(s8_desc);
+      // S4: u8∈[0,255] (range 255) → s8∈[-128,127] (range 255), shift+scale
+      // simplifies under symmetric-around-0 quantization to a pure 0.5 scale;
+      // the corresponding range fixup happens at the dequant scale below.
+      // Mirrors dnnl_fc.cc's u8_to_s8_scale constant.
       const float u8_to_s8_scale = 0.5;
       auto engine                = CpuEngine::Get()->get_engine();
       // v3: set_output_scales removed; bind runtime scale tensor.
@@ -265,8 +269,16 @@ static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
                             req[q_elemwise_add::kOut],
                             &inputs[potentially_inplace_input]);
 
+    // v3: per-input scales were declared on the primitive via set_scales_mask;
+    // their values MUST be bound at execute time as runtime memory args, otherwise
+    // oneDNN dereferences an uninitialized scale pointer and segfaults inside
+    // ref_binary_t::execute_ref.
     const dnnl_args_map_t args(
-        {{DNNL_ARG_SRC_0, *A_mem}, {DNNL_ARG_SRC_1, *B_mem}, {DNNL_ARG_DST, *out_mem.second}});
+        {{DNNL_ARG_SRC_0, *A_mem},
+         {DNNL_ARG_SRC_1, *B_mem},
+         {DNNL_ARG_DST, *out_mem.second},
+         {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC_0, fwd.GetSrc0Scale()},
+         {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC_1, fwd.GetSrc1Scale()}});
     stream->RegisterPrimArgs(fwd.GetFwd(), args);
   }
   CommitOutput(outputs[q_elemwise_add::kOut], out_mem);

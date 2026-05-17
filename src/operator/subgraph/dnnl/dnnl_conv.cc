@@ -19,8 +19,6 @@
 
 #if MXNET_USE_ONEDNN == 1
 
-#include <cmath>
-#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -111,17 +109,20 @@ class SgDNNLConvOperator {
   dnnl_args_map_t args_;
   NDArray cached_weight_;
   NDArray cached_bias_;
-  // TODO: wire from quantization inputs (see dnnl_fc.cc kBiasMin/kBiasMax)
-  float cached_bias_min_{0.0f};
-  float cached_bias_max_{0.0f};
-  float cached_data_min_;
-  float cached_data_max_;
-  float cached_sum_min_;
-  float cached_sum_max_;
-  float cached_output_min_;
-  float cached_output_max_;
-  size_t weight_ver_;
-  size_t bias_ver_;
+  // B4: the conv subgraph never receives bias_min/max as a separate input the
+  // way dnnl_fc.cc does — its bias-overflow guard runs inside GetWeightScales()
+  // (dnnl_common.h:68-76) on the per-channel int8 bias values directly. The
+  // previously-declared cached_bias_min_/max_{0.0f} members were never wired
+  // and never read; removed.
+  // F10: default-initialize so reuse / re-serialization can't read garbage.
+  float cached_data_min_{0.0f};
+  float cached_data_max_{0.0f};
+  float cached_sum_min_{0.0f};
+  float cached_sum_max_{0.0f};
+  float cached_output_min_{0.0f};
+  float cached_output_max_{0.0f};
+  size_t weight_ver_{0};
+  size_t bias_ver_{0};
   float data_scale_{0.0f};
   std::vector<float> weight_scales_;
 };
@@ -268,31 +269,6 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
                                                 data_scale_,
                                                 weight_channelwise_scale);
       });
-      // Bias-overflow guard: GetQuantizeScale returns MaxValue<int32_t> when the
-      // tensor's real range is zero (degenerate calibration). Multiplied by
-      // data_scale to form the bias rescale in ConvertWeightBias2DNNL, this
-      // saturates the int32 bias and corrupts the output. Cap weight_scales_[c]
-      // so bias_real * (data_scale * weight_scale[c]) stays within int32/2.
-      // Mirrors dnnl_fc.cc:421-437; downstream requantize_scales is recomputed
-      // from the capped weight_scales_, so the math stays consistent.
-      if (has_bias && cached_bias_.dtype() == mshadow::kInt8) {
-        const float bias_abs_max = std::max(std::abs(cached_bias_min_),
-                                            std::abs(cached_bias_max_));
-        if (bias_abs_max > 0) {
-          const float bias_quant_scale =
-              GetQuantizeScale(mshadow::kInt8, cached_bias_min_, cached_bias_max_);
-          const float bias_int32_rescale_cap =
-              static_cast<float>(std::numeric_limits<int32_t>::max()) / 2.0f /
-              bias_abs_max / bias_quant_scale;
-          const float weight_scale_cap =
-              bias_int32_rescale_cap * bias_quant_scale / data_scale_;
-          for (size_t c = 0; c < weight_scales_.size(); ++c) {
-            if (weight_scales_[c] > weight_scale_cap) {
-              weight_scales_[c] = weight_scale_cap;
-            }
-          }
-        }
-      }
       // Collect scale.
       size_t channel     = cached_weight_.shape()[0];
       float sum_in_scale = 1.0;
@@ -308,15 +284,26 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
         } else {
           output_scale = 1.0;
         }
-        full_conv_param.requantize_scales.resize(weight_channelwise_scale ? channel : 1);
-        for (size_t c = 0; c < full_conv_param.requantize_scales.size(); c++) {
-          full_conv_param.requantize_scales[c] = 1.0 / data_scale_ / weight_scales_[c];
-        }
-        if (dnnl_param.with_act) {
-          full_conv_param.act_param.scale = output_scale;
-        } else {
+        if (dnnl_param.enabled_float_output.has_value()) {
+          // v3 dequant: split dequant into SRC (1/data_scale) + WEIGHTS
+          // (1/weight_scale[c]); bias is f32 in real units. Mirrors
+          // dnnl_fc.cc:471-482 to avoid the rejected s32-bias + f32-dst combo.
+          full_conv_param.src_scale = 1.0f / data_scale_;
+          full_conv_param.requantize_scales.resize(weight_channelwise_scale ? channel : 1);
           for (size_t c = 0; c < full_conv_param.requantize_scales.size(); c++) {
-            full_conv_param.requantize_scales[c] *= output_scale;
+            full_conv_param.requantize_scales[c] = 1.0f / weight_scales_[c];
+          }
+        } else {
+          full_conv_param.requantize_scales.resize(weight_channelwise_scale ? channel : 1);
+          for (size_t c = 0; c < full_conv_param.requantize_scales.size(); c++) {
+            full_conv_param.requantize_scales[c] = 1.0 / data_scale_ / weight_scales_[c];
+          }
+          if (dnnl_param.with_act) {
+            full_conv_param.act_param.scale = output_scale;
+          } else {
+            for (size_t c = 0; c < full_conv_param.requantize_scales.size(); c++) {
+              full_conv_param.requantize_scales[c] *= output_scale;
+            }
           }
         }
       } else {
@@ -342,6 +329,11 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
               &cached_data_min_,
               &cached_data_max_);
         }
+        // S7: this branch only runs when weight_channelwise_scale==false; in
+        // that case GetWeightScales returns {global_scale, min, max} so [0] is
+        // the per-tensor weight scale. Asserting to lock in the assumption.
+        CHECK(!weight_channelwise_scale)
+            << "channelwise-scale weights cannot reach the non-requantize branch";
         weight_scales_.resize(1);
         output_scale = data_scale_ * weight_scales_[0];
         full_conv_param.requantize_scales.resize(0);
@@ -394,6 +386,9 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
     if (auto* sm = fwd_->GetOutputScaleMem()) {
       args_[DNNL_ARG_ATTR_SCALES | fwd_->GetOutputScaleArg()] = *sm;
     }
+    if (auto* ssm = fwd_->GetSrcScaleMem()) {
+      args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = *ssm;
+    }
     initialized_        = true;
   }
 
@@ -434,8 +429,12 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
   }
 
   if (dnnl_param.quantized && !dnnl_param.enabled_float_output.has_value()) {
-    *outputs[kMin].data().dptr<float>() = cached_output_min_;
-    *outputs[kMax].data().dptr<float>() = cached_output_max_;
+    // S5: only write if the caller actually wants the value; outputs[kMin/kMax]
+    // may be uninitialized when req is kNullOp.
+    if (req[kMin] != kNullOp)
+      *outputs[kMin].data().dptr<float>() = cached_output_min_;
+    if (req[kMax] != kNullOp)
+      *outputs[kMax].data().dptr<float>() = cached_output_max_;
   }
   if (dnnl_param.with_sum) {
     auto out          = const_cast<NDArray&>(outputs[kOut]);

@@ -93,6 +93,10 @@ struct DNNLFCFullParam : public dmlc::Parameter<DNNLFCFullParam> {
   // (data_scale * weight_scale[c])). For f32 output (dequant-as-output):
   // per-OC or per-tensor WEIGHTS-only dequant (= 1 / weight_scale[c]); the
   // matching SRC scale (= 1 / data_scale) is stored in src_scale below.
+  // S3: default-init contains a single placeholder 0.0f. The quantized FC
+  // subgraph always resize()s before reading (dnnl_fc.cc:478,497,506,542).
+  // Non-quantized paths skip the size() check entirely (see callers); the
+  // sentinel here is "scale list owned by upstream config" rather than "empty".
   std::vector<float> output_scales = {0.0f};
   float src_scale                  = {0.0f};
   DMLC_DECLARE_PARAMETER(DNNLFCFullParam) {}

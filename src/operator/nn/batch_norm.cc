@@ -462,7 +462,7 @@ static bool BNChangeLayout(nnvm::NodeAttrs* attrs,
 }
 
 #if MXNET_USE_ONEDNN == 1
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_batch_normalization.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_batch_normalization.html
 static inline bool SupportDNNLBN(const NDArray& input) {
   return SupportDNNL<DNNLTypeMode::FloatTypes>(input) && !mxnet::op::batchnorm::disable_mkl;
 }

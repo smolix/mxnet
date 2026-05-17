@@ -154,7 +154,8 @@ def gen_rsp_random_indices(shape, density=.5, force_indices=None):
 def all_zero(var):
     return 0
 
-@pytest.mark.skip(reason="https://github.com/apache/incubator-mxnet/issues/18740")
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason="https://github.com/apache/incubator-mxnet/issues/18740")
 def test_elemwise_binary_ops():
     # skip testing on GPU because only CPU ops are implemented
     if default_device().device_type is 'gpu':
@@ -695,7 +696,8 @@ def check_sparse_mathematical_core(name, stype,
 
 
 @pytest.mark.serial
-@pytest.mark.skip(reason='https://github.com/apache/incubator-mxnet/issues/18829')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='https://github.com/apache/incubator-mxnet/issues/18829')
 def test_sparse_mathematical_core():
     def util_sign(a):
         if np.isclose(a, -0, rtol=1.e-3, atol=1.e-3, equal_nan=True):

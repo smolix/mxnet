@@ -1779,7 +1779,8 @@ def test_convolution_grouping():
                 assert_almost_equal(arr1, arr2)
 
 
-@pytest.mark.skip(reason="Flaky test https://github.com/apache/mxnet/issues/14052")
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason="Flaky test https://github.com/apache/mxnet/issues/14052")
 def test_depthwise_convolution():
     for dim in [1,2]:
         for num_base in [1, 4, 16, 32, 64]:
@@ -3673,7 +3674,8 @@ def check_sequence_func(ftype, mask_value=0, axis=0):
                         numeric_eps=1e-3, rtol=1e-2, atol=1E-4)
 
 
-@pytest.mark.skip(reason="Flaky test: https://github.com/apache/mxnet/issues/11395")
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason="Flaky test: https://github.com/apache/mxnet/issues/11395")
 def test_sequence_last():
     check_sequence_func("last", axis=0)
     check_sequence_func("last", axis=1)
@@ -5688,7 +5690,8 @@ def test_custom_op():
         x = mx.nd.Custom(length=10, depth=10, op_type="no_input_op")
     assert_almost_equal(x, np.ones(shape=(10, 10), dtype=np.float32))
 
-@pytest.mark.skip(reason="Flaky test, tracked at https://github.com/apache/mxnet/issues/17467")
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason="Flaky test, tracked at https://github.com/apache/mxnet/issues/17467")
 def test_custom_op_fork():
     # test custom operator fork
     # see https://github.com/apache/mxnet/issues/14396
@@ -5951,7 +5954,9 @@ def _validate_sample_location(input_rois, input_offset, spatial_scale, pooled_w,
 
     return output_offset
 
-@pytest.mark.skip(reason="Flaky test, tracked at https://github.com/apache/mxnet/issues/11713")
+# Re-enabled 2026-05-17: audited; the np.int -> int fix already landed in
+# the Blackwell port pre-existing commits. Upstream tracker
+# https://github.com/apache/mxnet/issues/11713 (repo archived).
 def test_deformable_psroipooling():
     sample_per_part = 4
     trans_std = 0.1
@@ -6589,7 +6594,8 @@ def test_laop_5():
                     check_numeric_gradient(test_trian, [data_in])
 
 # Tests for linalg.inverse
-@pytest.mark.skip(reason="Test crashes https://github.com/apache/mxnet/issues/15975")
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason="Test crashes https://github.com/apache/mxnet/issues/15975")
 def test_laop_6():
     dtype = np.float64
     rtol_fw = 1e-7
@@ -6823,7 +6829,8 @@ def test_dropout():
         check_dropout_axes(0.25, nshape, axes = (1, 2, 3), cudnn_off=False)
 
 
-@pytest.mark.skip(reason="test fails intermittently. temporarily disabled till it gets fixed. tracked at https://github.com/apache/mxnet/issues/11290")
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason="test fails intermittently. temporarily disabled till it gets fixed. tracked at https://github.com/apache/mxnet/issues/11290")
 def test_scatter_gather_nd():
     def check(data, idx):
         data.attach_grad()
@@ -7805,7 +7812,8 @@ def test_histogram():
         assert_almost_equal(np_histo2, executor2.outputs[0].asnumpy(), 0, 0, ("EXPECTED_histo2", "FORWARD_histo2"), equal_nan=False)
 
 
-@pytest.mark.skip(reason="test fails intermittently. temporarily disabled till it gets fixed. tracked at https://github.com/apache/mxnet/issues/13915")
+# Re-enabled 2026-05-17 — audit at HEAD f103c5491 (cuDNN 9.22 + B2 SoftReLU/LogSigmoid fix).
+# @pytest.mark.skip(reason="test fails intermittently. temporarily disabled till it gets fixed. tracked at https://github.com/apache/mxnet/issues/13915")
 def test_activation():
     shapes = [(9,), (9, 10), (9, 10, 10), (1, 9, 10, 10)]
     dtype_l = [np.float64, np.float32, np.float16]

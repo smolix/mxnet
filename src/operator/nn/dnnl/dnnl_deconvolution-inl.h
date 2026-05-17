@@ -229,7 +229,10 @@ inline void DNNLDeconvBwd::IOSwapWeightsTensors(const uint32_t num_group,
   if (req[deconv::kData]) {
     IOLogicalSwapDNNLMem(weights, num_group);
   }
-  if (req[deconv::kWeight] || (req.size() < deconv::kBias && req[deconv::kBias])) {
+  // F9: original condition was `req.size() < kBias && req[kBias]`, which is
+  // both vacuous (the second clause OOB-reads when the first is true) and
+  // backwards. Intent: also swap when bias gradient is requested.
+  if (req[deconv::kWeight] || (req.size() > deconv::kBias && req[deconv::kBias])) {
     IOLogicalSwapDNNLMem(weights_grad, num_group);
   }
 }

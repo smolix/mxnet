@@ -18,6 +18,18 @@
 # coding: utf-8
 """ONNX Export module"""
 
+# Install onnx.mapping compatibility shim before any submodule looks it up.
+# onnx >= 1.17 removed the ``onnx.mapping`` module; the exporter still
+# references ``mapping.NP_TYPE_TO_TENSOR_TYPE`` / ``TENSOR_TYPE_TO_NP_TYPE``
+# in many places.  Importing _onnx_compat patches ``onnx.mapping`` back in
+# when missing, regardless of which onnx version is installed.
+try:
+    from . import _onnx_compat  # noqa: F401
+except ImportError:
+    # onnx itself is optional; the exporter will raise a clear error later
+    # if onnx isn't installed.
+    pass
+
 from ._export_model import export_model, get_operator_support
 from ._op_translations import _op_translations_opset12
 from ._op_translations import _op_translations_opset13

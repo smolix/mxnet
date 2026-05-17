@@ -40,7 +40,7 @@ inline static bool QuantizedTransposeStorageType(const nnvm::NodeAttrs& attrs,
   return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
 }
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_reorder.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_reorder.html
 bool SupportDNNLQuantizedTranspose(const NDArray& data) {
   return SupportDNNL<DNNLTypeMode::ByteTypes>(data);
 }

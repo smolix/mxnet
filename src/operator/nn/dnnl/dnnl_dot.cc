@@ -31,7 +31,7 @@
 namespace mxnet {
 namespace op {
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_matmul.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_matmul.html
 bool SupportDNNLDot(const std::vector<NDArray>& inputs) {
 #if MXNET_USE_BLAS_MKL == 1
   return false;

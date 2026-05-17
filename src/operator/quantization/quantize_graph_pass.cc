@@ -25,6 +25,7 @@
 #include <mxnet/op_attr_types.h>
 #include <nnvm/graph.h>
 #include <nnvm/pass.h>
+#include <cmath>
 #include <queue>
 #include <stack>
 #include <unordered_map>
@@ -636,8 +637,24 @@ static inline void SetCalibTableForEntry(
                 << " : min=" << calib_table_iter->second.first
                 << " max=" << calib_table_iter->second.second;
     }
-    node->attrs.dict["min_calib_range"] = std::to_string(calib_table_iter->second.first);
-    node->attrs.dict["max_calib_range"] = std::to_string(calib_table_iter->second.second);
+    // std::to_string(NaN) yields the literal string "nan", which the
+    // dmlc::optional<float> parameter parser rejects ("Invalid Parameter
+    // format ... expect float or None but value='nan'"). When the calibrated
+    // range is NaN (can happen if the calibration data triggers a NaN
+    // activation in the FP reference run), fall back to "None" so the
+    // operator picks runtime min/max instead.
+    const float min_val = calib_table_iter->second.first;
+    const float max_val = calib_table_iter->second.second;
+    if (std::isnan(min_val) || std::isnan(max_val)) {
+      LOG(WARNING) << "Calibration produced NaN min/max for node " << node->attrs.name
+                   << " (min=" << min_val << " max=" << max_val
+                   << "); falling back to runtime range.";
+      node->attrs.dict["min_calib_range"] = "None";
+      node->attrs.dict["max_calib_range"] = "None";
+    } else {
+      node->attrs.dict["min_calib_range"] = std::to_string(min_val);
+      node->attrs.dict["max_calib_range"] = std::to_string(max_val);
+    }
     if (node->op() && node->op()->attr_parser)
       node->op()->attr_parser(&(node->attrs));
   } else {

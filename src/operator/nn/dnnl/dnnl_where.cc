@@ -32,7 +32,7 @@
 namespace mxnet {
 namespace op {
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_binary.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_binary.html
 bool SupportDNNLWhere(const std::vector<NDArray>& inputs) {
   if (inputs[0].dtype() == mshadow::kBool) {
     // oneDNN natively doesn't support bool type, however this operator was written

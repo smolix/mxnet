@@ -29,7 +29,7 @@
 namespace mxnet {
 namespace op {
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_convolution.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_convolution.html
 bool SupportDNNLDeconv(const DeconvolutionParam& params, const NDArray& input) {
   return params.kernel.ndim() >= 1 && params.kernel.ndim() <= 3 &&
          SupportDNNL<3, 5, DNNLTypeMode::FloatTypes>(input);

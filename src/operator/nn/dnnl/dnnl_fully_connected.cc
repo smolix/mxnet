@@ -40,8 +40,8 @@ dnnl::inner_product_forward::primitive_desc GetFCFwdImpl(const DNNLFCFullParam& 
   auto engine    = CpuEngine::Get()->get_engine();
   auto data_md   = GetMemDesc(data);
   auto weight_md = full_param.dnnl_param.quantized ?
-                       GetFCWeightDesc(weight, data.shape()[0], mshadow::kInt8) :
-                       GetFCWeightDesc(weight, data.shape()[0]);
+                       GetFCWeightDesc(weight, mshadow::kInt8) :
+                       GetFCWeightDesc(weight);
   auto propagation =
       is_train ? dnnl::prop_kind::forward_training : dnnl::prop_kind::forward_inference;
 
@@ -108,7 +108,7 @@ inline static dnnl::inner_product_backward_data::primitive_desc GetFCBwdData(
     const NDArray& output,
     dnnl::inner_product_forward::primitive_desc fwd_pd) {
   auto data_md   = GetMemDesc(data);
-  auto weight_md = GetFCWeightDesc(weight, data.shape()[0]);
+  auto weight_md = GetFCWeightDesc(weight);
   auto out_md    = GetMemDesc(output);
   auto engine    = CpuEngine::Get()->get_engine();
   // v3: ::desc removed; primitive_desc takes args directly.
@@ -123,7 +123,7 @@ inline static dnnl::inner_product_backward_weights::primitive_desc GetFCBwdWeigh
     const NDArray& output,
     dnnl::inner_product_forward::primitive_desc fwd_pd) {
   auto data_md   = GetMemDesc(data);
-  auto weight_md = GetFCWeightDesc(weight, data.shape()[0]);
+  auto weight_md = GetFCWeightDesc(weight);
   auto out_md    = GetMemDesc(output);
   auto engine    = CpuEngine::Get()->get_engine();
   // v3: ::desc removed; primitive_desc takes args directly.

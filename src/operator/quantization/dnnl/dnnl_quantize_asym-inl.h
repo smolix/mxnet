@@ -26,6 +26,8 @@
 #define MXNET_OPERATOR_QUANTIZATION_DNNL_DNNL_QUANTIZE_ASYM_INL_H_
 #if MXNET_USE_ONEDNN == 1
 
+#include <cmath>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include "operator/nn/dnnl/dnnl_base-inl.h"
@@ -52,6 +54,14 @@ class DNNLQuantizeAsymOp {
   dnnl::memory::desc o_desc_;
   dnnl_args_map_t args_;
   std::shared_ptr<dnnl::reorder> fwd_pd_;
+  // v3 oneDNN: scale and zero-point are bound as runtime memories via
+  // DNNL_ARG_ATTR_SCALES|DNNL_ARG_DST and DNNL_ARG_ATTR_ZERO_POINTS|DNNL_ARG_DST.
+  // The memory objects must outlive the cached primitive args; the underlying
+  // storage lives in the cached_inv_scale_/cached_zp_ members below.
+  std::shared_ptr<dnnl::memory> scale_mem_;
+  std::shared_ptr<dnnl::memory> zp_mem_;
+  float cached_inv_scale_{0.f};
+  int32_t cached_zp_{0};
 };
 
 void DNNLQuantizeAsymOp::Forward(const OpContext& ctx,
@@ -122,19 +132,51 @@ void DNNLQuantizeAsymOp::Forward(const OpContext& ctx,
     if (!initialized_) {
       cached_scale_ = scale;
       cached_shift_ = shift;
-      dnnl::primitive_attr attr;
-      attr.set_rnn_data_qparams(scale, shift);
+      // oneDNN v3 reorder applies: dst = (src - src_zp) * src_scale / dst_scale + dst_zp.
+      // We want dst_u8 = scale * src_f32 + shift, so set dst_scale = 1/scale and
+      // dst_zp = round(shift) (bound at execute time as int32). The fractional part of
+      // shift is rounded to the nearest integer; the output is u8 so the rounding
+      // error is bounded by the inherent u8 quantization tolerance.
+      //
+      // The previous code called attr.set_rnn_data_qparams(scale, shift) on the reorder
+      // primitive_attr. oneDNN v3 only accepts that attribute on RNN primitives and
+      // rejects it on reorders, which manifests as "could not create a primitive
+      // descriptor for the reorder primitive". Mirrors the fix from commit 5a8d2e1ab
+      // for the quantized RNN weight reorder: drop the RNN-specific attribute and use
+      // the v3-equivalent scales/zero-points runtime bindings instead.
+      cached_inv_scale_ = 1.0f / scale;
+      cached_zp_        = static_cast<int32_t>(std::nearbyint(shift));
       const dnnl::engine& cpu_engine   = mxnet::CpuEngine::Get()->get_engine();
       const dnnl::memory::desc& i_desc = i_mem->get_desc();
       o_desc_                          = i_desc;
       o_desc_ = CloneMemDescWithDtype(o_desc_, get_dnnl_type_t(outputs[0].dtype()));
+
+      dnnl::primitive_attr attr;
+      attr.set_scales_mask(DNNL_ARG_DST, 0);
+      attr.set_zero_points_mask(DNNL_ARG_DST, 0);
       dnnl::reorder::primitive_desc reorder_pd(cpu_engine, i_desc, cpu_engine, o_desc_, attr);
-      fwd_pd_      = std::make_shared<dnnl::reorder>(reorder_pd);
+      fwd_pd_ = std::make_shared<dnnl::reorder>(reorder_pd);
+
+      // Runtime scale / zero-point memories. They point at the cached_* scalars so
+      // their storage is stable across calls; we just refresh the contents below.
+      const dnnl::memory::desc scale_md(
+          {1}, dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+      const dnnl::memory::desc zp_md(
+          {1}, dnnl::memory::data_type::s32, dnnl::memory::format_tag::x);
+      scale_mem_ = std::make_shared<dnnl::memory>(scale_md, cpu_engine, &cached_inv_scale_);
+      zp_mem_    = std::make_shared<dnnl::memory>(zp_md, cpu_engine, &cached_zp_);
       initialized_ = true;
+    } else {
+      // Keep runtime scratch in sync with the (possibly refreshed) cached scalars; the
+      // dnnl::memory handles still point at these addresses.
+      cached_inv_scale_ = 1.0f / cached_scale_;
+      cached_zp_        = static_cast<int32_t>(std::nearbyint(cached_shift_));
     }
     dnnl_output_t o_mem  = CreateDNNLMem(outputs[0], o_desc_, req[0]);
     args_[DNNL_ARG_FROM] = *i_mem;
     args_[DNNL_ARG_TO]   = *o_mem.second;
+    args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST]      = *scale_mem_;
+    args_[DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_DST] = *zp_mem_;
     DNNLStream::Get()->RegisterPrimArgs(*fwd_pd_, args_);
     CommitOutput(outputs[0], o_mem);
     DNNLStream::Get()->Submit();

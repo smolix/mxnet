@@ -42,7 +42,7 @@ void DNNLMemorySum(const dnnl::memory& arr1, const dnnl::memory& arr2, const dnn
   std::vector<float> scales(2, 1);
   input_pds[0] = arr1.get_desc();
   input_pds[1] = arr2.get_desc();
-  CHECK(input_pds[0] == input_pds[0]);
+  // B8: removed tautological CHECK(input_pds[0] == input_pds[0]).
   const dnnl::memory* in_mem1 = &arr1;
   const dnnl::memory* in_mem2 = &arr2;
   auto output_pd              = out.get_desc();
@@ -95,7 +95,7 @@ dnnl::memory* TmpMemMgr::Alloc(const dnnl::memory::desc& md) {
     // operator. It'll only become invalid after we exit from the operator.
     dnnl_mem_ptr ret(new dnnl::memory(md, CpuEngine::Get()->get_engine(), mem));
     DNNLStream::Get()->RegisterMem(ret);
-    CHECK_EQ(mem, mem);
+    // B8: removed tautological CHECK_EQ(mem, mem).
     this->curr_size -= md.get_size();
     this->curr_mem = static_cast<char*>(mem) + md.get_size();
     return ret.get();

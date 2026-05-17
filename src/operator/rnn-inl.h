@@ -685,32 +685,41 @@ class RNNOp {
   ~RNNOp() {
     if (ctx_.dev_type == kGPU) {
 #if MXNET_USE_CUDNN == 1
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(hx_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(cx_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(hy_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(cy_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(dhx_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(dcx_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(dhy_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(dcy_desc_));
+      // B6: guard every destroy against a partially-constructed instance —
+      // any cudnnCreate* in the ctor may have thrown before the rest were
+      // assigned; the corresponding handle is still nullptr from its
+      // member initializer.
+      if (hx_desc_)  CUDNN_CALL(cudnnDestroyTensorDescriptor(hx_desc_));
+      if (cx_desc_)  CUDNN_CALL(cudnnDestroyTensorDescriptor(cx_desc_));
+      if (hy_desc_)  CUDNN_CALL(cudnnDestroyTensorDescriptor(hy_desc_));
+      if (cy_desc_)  CUDNN_CALL(cudnnDestroyTensorDescriptor(cy_desc_));
+      if (dhx_desc_) CUDNN_CALL(cudnnDestroyTensorDescriptor(dhx_desc_));
+      if (dcx_desc_) CUDNN_CALL(cudnnDestroyTensorDescriptor(dcx_desc_));
+      if (dhy_desc_) CUDNN_CALL(cudnnDestroyTensorDescriptor(dhy_desc_));
+      if (dcy_desc_) CUDNN_CALL(cudnnDestroyTensorDescriptor(dcy_desc_));
 
-      CUDNN_CALL(cudnnDestroyRNNDescriptor(rnn_desc_));
-      CUDNN_CALL(cudnnDestroyDropoutDescriptor(dropout_desc_));
+      if (rnn_desc_)     CUDNN_CALL(cudnnDestroyRNNDescriptor(rnn_desc_));
+      if (dropout_desc_) CUDNN_CALL(cudnnDestroyDropoutDescriptor(dropout_desc_));
       if (dgrad_sync_event_created_)
         CUDA_CALL(cudaEventDestroy(dgrad_sync_event_));
 
       if (init_cudnn_) {
         init_cudnn_ = false;
-        Storage::Get()->Free(reserve_space_);
+        // F5: reserve_space_ may have been default-constructed (dptr==nullptr)
+        // if init bailed before allocation; guard the Free() like dev_seq_lengths_.
+        if (reserve_space_.dptr != nullptr) {
+          Storage::Get()->Free(reserve_space_);
+          reserve_space_.dptr = nullptr;
+        }
         if (dev_seq_lengths_.dptr != nullptr) {
           Storage::Get()->Free(dev_seq_lengths_);
           dev_seq_lengths_.dptr = nullptr;
         }
       }
-      CUDNN_CALL(cudnnDestroyRNNDataDescriptor(x_data_desc_));
-      CUDNN_CALL(cudnnDestroyRNNDataDescriptor(y_data_desc_));
-      CUDNN_CALL(cudnnDestroyRNNDataDescriptor(dx_data_desc_));
-      CUDNN_CALL(cudnnDestroyRNNDataDescriptor(dy_data_desc_));
+      if (x_data_desc_)  CUDNN_CALL(cudnnDestroyRNNDataDescriptor(x_data_desc_));
+      if (y_data_desc_)  CUDNN_CALL(cudnnDestroyRNNDataDescriptor(y_data_desc_));
+      if (dx_data_desc_) CUDNN_CALL(cudnnDestroyRNNDataDescriptor(dx_data_desc_));
+      if (dy_data_desc_) CUDNN_CALL(cudnnDestroyRNNDataDescriptor(dy_data_desc_));
 #endif  // MXNET_USE_CUDNN
     }
   }
@@ -1309,6 +1318,8 @@ class RNNOp {
       workspace_byte_     = 0;
       reserve_space_byte_ = 0;
       workspace_size_     = 0;
+      // AUDIT-F6: only zero .dptr; the rest of Storage::Handle (size/ctx) is
+      // unused by the realloc paths in EnsureDevSeqLengthsBuffer / Forward.
       reserve_space_.dptr = nullptr;
       dev_seq_lengths_.dptr = nullptr;
     }
@@ -1361,21 +1372,24 @@ class RNNOp {
 #if MXNET_USE_CUDNN == 1
   cudnnDataType_t dtype_;
   bool init_cudnn_;
-  cudnnRNNDescriptor_t rnn_desc_;
+  cudnnRNNDescriptor_t rnn_desc_{nullptr};
   cudnnRNNMode_t mode_;
   cudnnDirectionMode_t direction_;
   cudnnRNNInputMode_t input_mode_;
-  cudnnDropoutDescriptor_t dropout_desc_;
+  cudnnDropoutDescriptor_t dropout_desc_{nullptr};
   Storage::Handle reserve_space_;
   Storage::Handle dev_seq_lengths_;
   size_t workspace_byte_, reserve_space_byte_, weight_space_byte_;
   int workspace_size_;
-  cudnnRNNDataDescriptor_t x_data_desc_, y_data_desc_, dx_data_desc_, dy_data_desc_;
+  // B6: default-init cuDNN descriptor handles so the destructor can skip them
+  // if the constructor's cudnnCreate* throws before they were assigned.
+  cudnnRNNDataDescriptor_t x_data_desc_{nullptr}, y_data_desc_{nullptr};
+  cudnnRNNDataDescriptor_t dx_data_desc_{nullptr}, dy_data_desc_{nullptr};
   DType padding_fill_ = 0;
-  cudnnTensorDescriptor_t hx_desc_, cx_desc_;
-  cudnnTensorDescriptor_t hy_desc_, cy_desc_;
-  cudnnTensorDescriptor_t dhx_desc_, dcx_desc_;
-  cudnnTensorDescriptor_t dhy_desc_, dcy_desc_;
+  cudnnTensorDescriptor_t hx_desc_{nullptr}, cx_desc_{nullptr};
+  cudnnTensorDescriptor_t hy_desc_{nullptr}, cy_desc_{nullptr};
+  cudnnTensorDescriptor_t dhx_desc_{nullptr}, dcx_desc_{nullptr};
+  cudnnTensorDescriptor_t dhy_desc_{nullptr}, dcy_desc_{nullptr};
 
   // Allow TensorCore algo policy
   bool cudnn_tensor_core_;

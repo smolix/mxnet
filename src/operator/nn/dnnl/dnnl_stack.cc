@@ -32,7 +32,7 @@
 namespace mxnet {
 namespace op {
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_reorder.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_reorder.html
 bool SupportDNNLStack(const std::vector<NDArray>& inputs) {
   return SupportDNNL<DNNLTypeMode::FloatTypes, DNNLTensorsDtypes::AllSame>(inputs);
 }

@@ -220,9 +220,14 @@ void DNNLQuantizedRnnOp::Forward(const OpContext& op_ctx,
     cached_data_scale_ = data_scale;
     cached_data_shift_ = data_shift;
     rnn_attr_->set_rnn_data_qparams(data_scale, data_shift);
-    if (need_reset_weight || fwd_inf_vec_.empty())
-      rnn_attr_->set_rnn_weights_qparams(0 + (1 << 3) + (1 << 4),
+    if (need_reset_weight || fwd_inf_vec_.empty()) {
+      // F12: per-OC mask for ldigo-layout RNN weights — bit 3 = gates (G axis),
+      // bit 4 = output channel (O axis). Other axes (L, D, I) share scales.
+      // Renumber here if oneDNN ever reorders LDIGO dims.
+      constexpr int kRnnWeightsPerOCMask = (1 << 3) | (1 << 4);
+      rnn_attr_->set_rnn_weights_qparams(kRnnWeightsPerOCMask,
                                          GetDNNLRnnWeightsQParams(full_param_, weights_ptr));
+    }
   }
 
   // Initialize weights version

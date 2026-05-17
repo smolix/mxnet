@@ -36,7 +36,7 @@ namespace op {
 
 DMLC_REGISTER_PARAMETER(DNNLDotParam);
 
-// Support for https://oneapi-src.github.io/oneDNN/v2.6/dev_guide_matmul.html
+// Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_matmul.html
 bool SupportDNNLBatchDot(const std::vector<NDArray>& inputs) {
   return SupportDNNL<2, 12, DNNLTypeMode::FloatTypes>(inputs[DotIn::lhs]) &&
          SupportDNNL<2, 12, DNNLTypeMode::FloatTypes>(inputs[DotIn::rhs]);

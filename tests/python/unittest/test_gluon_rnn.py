@@ -480,7 +480,8 @@ def check_rnn_forward_backward(layer, merged_inputs, hybridize, merge_outputs, d
 @pytest.mark.parametrize('merged_inputs', [True, False])
 @pytest.mark.parametrize('hybridize', [True, False])
 @pytest.mark.parametrize('merge_outputs', [True, False, None])
-@pytest.mark.skip(reason='https://github.com/apache/incubator-mxnet/issues/18225')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='https://github.com/apache/incubator-mxnet/issues/18225')
 def test_rnn_forward_backward(layer, merged_inputs, hybridize, merge_outputs, determinism):
     check_rnn_forward_backward(layer, merged_inputs, hybridize, merge_outputs, determinism)
 
@@ -493,7 +494,8 @@ def test_rnn_forward_backward(layer, merged_inputs, hybridize, merge_outputs, de
 @pytest.mark.parametrize('merged_inputs', [True, False])
 @pytest.mark.parametrize('hybridize', [True, False])
 @pytest.mark.parametrize('merge_outputs', [True, False, None])
-@pytest.mark.skip(reason='https://github.com/apache/incubator-mxnet/issues/18291')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='https://github.com/apache/incubator-mxnet/issues/18291')
 def test_sequential_rnn_cells(seq_rnn_type, determinism, merged_inputs, hybridize, merge_outputs):
     net = gluon.rnn.SequentialRNNCell()
     net.add(gluon.rnn.LSTMCell(10, input_size=5))

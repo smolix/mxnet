@@ -28,12 +28,26 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <limits>
 #include <vector>
 
 #include "operator/numpy/np_matrix_op-inl.h"
 
 namespace mxnet {
 namespace op {
+
+// S8: oneDNN historically saturates int32 bias near INT_MAX (see TODO at the
+// per-channel cap below). Halving the int32 max gives one safety bit so the
+// post-acc requantize doesn't trip the saturation path. Shared with
+// dnnl_fc.cc (kept as MaxValue<int32_t>()/2 there for readability) and used
+// inside GetWeightScales' per-channel guard.
+constexpr int32_t kInt32BiasSafetyCap = std::numeric_limits<int32_t>::max() / 2;
+
+// Reorder scale applied to convert u8 storage to s8 quantization when an op
+// (FC + sum, quantized_elemwise_add) needs to align an unsigned operand with
+// a signed accumulator. 0.5 not 127/255 — chosen historically to keep the
+// reorder exact at 8-bit precision; preserved here for behavioural parity.
+constexpr float kU8ToS8Scale = 0.5f;
 
 template <typename DType>
 static std::vector<float> GetWeightScales(const NDArray& weight,
@@ -134,9 +148,13 @@ static inline void ConvertWeightBias2DNNL(NDArray* weight,
   DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(weight_reorder_pd), weight_reorder_args);
   NDArray new_bias;
   if (has_bias && data_scale) {
+    // v3 dequant: when conv requested f32 bias (float-output dequant path),
+    // the cached f32 bias is already in real units; skip the s32 rescale.
+    const bool f32_bias =
+        bias_md != nullptr && bias_md->get_data_type() == dnnl::memory::data_type::f32;
     std::vector<float> bias_scales(weight_scales.size());
     for (size_t c = 0; c < weight_scales.size(); ++c) {
-      bias_scales[c] = weight_scales[c] * data_scale;
+      bias_scales[c] = f32_bias ? 1.0f : weight_scales[c] * data_scale;
     }
     new_bias                    = NDArray(bias_md);
     const auto conv_bias_memory = new_bias.GetDNNLData();

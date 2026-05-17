@@ -67,7 +67,8 @@ class SgDNNLFCOp {
  private:
   enum { kDataMin = 0, kDataMax, kWeightMin, kWeightMax, kBiasMin, kBiasMax, kSumMin, kSumMax };
   const size_t MIN_MAX_COUNT = 8;
-  const float u8_to_s8_scale = 0.5;
+  // AUDIT-S4-fc: shared with quantized_elemwise_add / dnnl_common.h. See kU8ToS8Scale.
+  static constexpr float u8_to_s8_scale = kU8ToS8Scale;
 
   NDArray PrepareOutputWithSum(const NDArray& sum_input, const NDArray& output);
   bool CheckInitializationConditions(const std::vector<NDArray>& inputs,
@@ -93,18 +94,20 @@ class SgDNNLFCOp {
   std::shared_ptr<dnnl::memory> cached_out_mem_;
   NDArray cached_weight_;
   NDArray cached_bias_;
-  float cached_data_min_;
-  float cached_data_max_;
-  float cached_weight_min_;
-  float cached_weight_max_;
-  float cached_sum_min_;
-  float cached_sum_max_;
-  float cached_bias_min_;
-  float cached_bias_max_;
-  size_t weight_ver_;
-  size_t bias_ver_;
-  float cached_output_min_;
-  float cached_output_max_;
+  // AUDIT-F4-fc: default-initialise to avoid UB on the version-check fast-path
+  // that reads cached_*_min_/max_ before the first PrepareQuantization() call.
+  float cached_data_min_{0.0f};
+  float cached_data_max_{0.0f};
+  float cached_weight_min_{0.0f};
+  float cached_weight_max_{0.0f};
+  float cached_sum_min_{0.0f};
+  float cached_sum_max_{0.0f};
+  float cached_bias_min_{0.0f};
+  float cached_bias_max_{0.0f};
+  size_t weight_ver_{0};
+  size_t bias_ver_{0};
+  float cached_output_min_{0.0f};
+  float cached_output_max_{0.0f};
   float data_scale_{0.0f};
   std::vector<float> weight_scales_;
 };
@@ -241,7 +244,10 @@ void SgDNNLFCOp::Forward(const OpContext& ctx,
   DNNLStream::Get()->RegisterPrimArgs(fwd_->GetFwd(), args_);
   DNNLStream::Get()->Submit();
 
-  if (!dnnl_param.enabled_float_output.has_value()) {
+  // AUDIT-S5-fc: only write min/max scalars when the caller actually asked for
+  // the quantized output to be produced (req != kNullOp for those outputs).
+  if (!dnnl_param.enabled_float_output.has_value() &&
+      req[out_min_index] != kNullOp && req[out_max_index] != kNullOp) {
     float* output_min_ptr = out_data[out_min_index].data().dptr<float>();
     float* output_max_ptr = out_data[out_max_index].data().dptr<float>();
 
@@ -492,22 +498,20 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
       }
 
       if (support_channelwise_scale) {
+        // Per-OC: scale binds to WEIGHTS as v3 multiplier (s_w * weight = real).
+        // tmp_scale_/weight_scale[i] keeps the v2 multiplicative meaning.
         full_param_.output_scales.resize(num_channel);
 #pragma omp parallel for num_threads(nthreads)
         for (index_t i = 0; i < static_cast<index_t>(num_channel); ++i) {
           full_param_.output_scales[i] = tmp_scale_ / weight_scales_[i];
         }
       } else {
+        // Per-tensor: scale binds to DST as v3 divisor (dst = acc / s_dst).
+        // v2 stored out_scale/(data_scale*weight_scale) as a multiplier; v3
+        // needs its reciprocal here so the s32 accumulator is divided down.
         full_param_.output_scales.resize(1);
-        full_param_.output_scales[0] = tmp_scale_ / weight_scales_[0];
-      }
-      if (dmlc::GetEnv("MX_FC_DBG", 0)) {
-        std::fprintf(stderr,
-                     "FC_DBG: out=%d ds=%g ws=%g out_min=%g out_max=%g out_scale=%g tmp=%g os[0]=%g bias_min=%g bias_max=%g\n",
-                     output.dtype(), data_scale_, weight_scales_[0],
-                     cached_output_min_, cached_output_max_,
-                     out_scale, tmp_scale_, full_param_.output_scales[0],
-                     cached_bias_min_, cached_bias_max_);
+        full_param_.output_scales[0] =
+            (weight_scales_[0] * data_scale_) / out_scale;
       }
     }
   } else {

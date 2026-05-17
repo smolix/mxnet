@@ -46,9 +46,12 @@ the open work list and priority-ordered triage.
 What works
 ----------
 
-* Blackwell `sm_120` SASS / PTX (CUDA 13.0).
-* cuDNN 9.14 — including the rewritten v8 RNN path (LSTM / GRU / vanilla
-  RNN, fwd + bwd).
+* Blackwell `sm_120` SASS / PTX (CUDA 13.0), plus sm_80 (Ampere), sm_86
+  (Ada), sm_89 (RTX 40), sm_90 (H100), and PTX 120 fallback in fatbin.
+* cuDNN 9.22 — including the rewritten v8 RNN path (LSTM / GRU / vanilla
+  RNN, fwd + bwd). TF32 enabled by default on FP32 conv (mirrors PyTorch /
+  TensorFlow defaults; ~2.87× speedup on sm_120 vs the legacy
+  `MXNET_CUDA_TENSOR_OP_MATH_ALLOW_CONVERSION=0` mode).
 * oneDNN v3.11 — full INT8 path (per-OC weight scales, fused conv/FC, fused
   sum, dequant-to-fp32 output).
 * NCCL 2.28 — single-process / multi-GPU.
@@ -67,13 +70,12 @@ What is experimental or known-broken
   through `_sg_onednn_fully_connected` and `_sg_onednn_conv` is unvalidated.
 * **AMP (automatic mixed precision) subgraph** — 6 known failures with
   `inner_product` primitive creation; investigation pending.
-* **`adaptive_avg_pool` backward** — 36 known failures when
-  `output_size < input_size` (gradient normalization bug).
+* **int8 quantized concat** — `test_pos_single_concat_pos_neg[*-data_shape1]`
+  fails with entire output channels zeroed; suspect oneDNN v3 uint8→int8
+  reorder semantics.
 * **ONNX export / import** — both `tests/python/onnx/test_models.py` and
   `test_operators.py` error at collect time; the ONNX path was not updated
   for MXNet 2.0 numpy ops.
-* **`_contrib_quantize_asym`** — still uses v2-style attr-on-reorder; broken
-  for asymmetric quantization.
 * See [`issues.md`](issues.md) for the full open list (45 items).
 
 System requirements
@@ -82,25 +84,23 @@ System requirements
 * Linux x86_64 (tested on Ubuntu 22.04 / 24.04).
 * NVIDIA driver supporting CUDA 13 (R570+).
 * CUDA 13.0 toolkit.
-* cuDNN **9.14+** (cuDNN 9.7+ has the best `sm_120` heuristic coverage;
+* cuDNN **9.22+** (cuDNN 9.22 has the best `sm_120` heuristic coverage;
   earlier 9.x works but routes more conv shapes through generic fallback
-  engines).
+  engines — notably depthwise 3×3 is ~7× faster on 9.22 vs 9.14). The
+  release wheel bundles 9.22 under `mxnet/lib/`.
 * NCCL 2.28.3.
 * Python 3.10+ (3.11 / 3.12 / 3.13 are CI-tested).
 
 Installation
 ------------
 
-The release wheel does **not** currently bundle CUDA / cuDNN / NCCL runtimes
-(tracked in [`issues.md`](issues.md) item 30). Install the runtime packages
-first, then the wheel:
+The release wheel is self-contained — cuDNN 9.22, NCCL 2.28, CUDA 13
+runtime libs are bundled under `mxnet/lib/` and `libmxnet.so` has
+RUNPATH set to `$ORIGIN/lib`, so a system-wide CUDA install is *not*
+required (the NVIDIA driver alone is sufficient).
 
 ```bash
-# 1. CUDA 13 / cuDNN 9 / NCCL runtime
-sudo apt install cuda-13 libcudnn9-cuda-13 libnccl2
-
-# 2. MXNet wheel from the GitHub release
-pip install mxnet-2.0.0+cu13.bw.20260517-py3-none-linux_x86_64.whl
+pip install mxnet-2.0.0+cu13.bw.20260517-cp311-cp311-linux_x86_64.whl
 ```
 
 To **build from source** see [`BUILDING.md`](BUILDING.md). The short version

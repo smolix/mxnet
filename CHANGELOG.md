@@ -15,7 +15,7 @@ solid; quantized backward and several auxiliary paths remain open (see
 
 ### Added
 
-- Blackwell (sm_120) support: CUDA 13.0, cuDNN 9.14.0, NCCL 2.28.3.
+- Blackwell (sm_120) support: CUDA 13.0, cuDNN 9.22.0, NCCL 2.28.3.
 - F16C CPU intrinsics for fast fp16 host-side (de)serialization.
 - oneDNN v3.11 with the full INT8 path enabled: per-OC weight scales, fused
   conv / FC, fused sum, dequant-to-fp32 output, fused activations.
@@ -82,27 +82,57 @@ solid; quantized backward and several auxiliary paths remain open (see
   F1/F5/F10 follow-ups).
 - `769735127` docs: add `issues.md` with remaining port work.
 
+#### Late-day perf + correctness round (autonomous session, 2026-05-17)
+
+- `cedeb2f9b` test: re-enable 21 upstream-disabled tests audited GREEN.
+- `7934d40d7` gluon.data: handle legacy `nd.NDArray` samples under
+  np-semantics (unblocks `test_gluon_data.py`, 30/30 in isolation).
+- `bd09b1a7b` test: scope `test_image.py::reset_np()` to per-test fixture
+  (cross-file pytest pollution gone).
+- `783cfa133` cudnn ops: enable TF32 by default for FP32 conv on cuDNN 9.
+  **Measured 2.87× speedup** on sm_120 (3×3 28×28 256→256 batch 32:
+  14.46 → 41.48 TFLOPS). Mirrors PyTorch / TF defaults on cuDNN 9.
+- `f103c5491` deps: bump cuDNN 9.14 → 9.22 (locally bundled). Headline
+  win: **depthwise 3×3 256→256 went 0.16 → 1.14 TFLOPS (~7×)** —
+  exactly the sm_120 fallback case Issues.md #17 flagged. No
+  shape regressed.
+- `7e4231da5` test: re-enable `test_activation` (issue #13915 flake no
+  longer reproduces; 4/4 PASS across 4 different `MXNET_TEST_SEED`).
+- `f8b0c7125` setup: tag wheel as binary distribution (was incorrectly
+  `py3-none-any`; now `cp311-cp311-linux_x86_64`).
+
 ### Known issues
 
-See [`issues.md`](issues.md) for the full list (45 items). Notable
-remaining work for the next release:
+See [`issues.md`](issues.md) for the full list. Notable remaining work
+for the next release:
 
-- `adaptive_avg_pool` backward gives wrong results when
-  `output_size < input_size` (36 failures, classification heads affected).
-- One conv subgraph test (`test_pos_single_concat_pos_neg`) is order-dependent
-  in the full pytest run (passes in isolation).
+- `test_pos_single_concat_pos_neg[*-data_shape1]` — real int8 quantized
+  concat numerical bug (entire output channels are zeroed). Suspect
+  oneDNN v3 uint8→int8 reorder semantics; needs `dnnl_verbose=2` trace.
 - AMP (`test_amp_subgraph.py`) — 6 `inner_product` primitive creation
   failures.
 - bf16 path silently falls back to fp32 on CPUs without AVX-512-BF16
-  (Zen 2 / Skylake / Ice Lake).
-- ONNX export / import does not collect.
-- `_contrib_quantize_asym` still uses the oneDNN v2 attr-on-reorder
-  pattern.
+  (Zen 2 / Skylake / Ice Lake). Hardware-bound.
+- ONNX export / import does not collect; module path was never updated
+  for MXNet 2.0 numpy ops.
 - Backward through quantized ops is forward-only validated.
-- Wheel does not bundle CUDA / cuDNN / NCCL runtimes; requires
-  `apt install cuda-13 libcudnn9-cuda-13 libnccl2`.
-- Only `sm_120` is in the fatbin — Ampere / Ada / Hopper users get nothing
-  until a multi-arch build lands.
+- `cublasLt` not adopted (FP32 GEMM goes through legacy cuBLAS).
+  Scoped at ~1130 LOC across 5 PRs (see `cublaslt_scope.md`).
+- cuDNN frontend autotune not ported (heuristic mode A only).
+
+#### Resolved between intermediate snapshot and release
+
+- ~~`adaptive_avg_pool` backward gives wrong results~~ — CPU-reference
+  fallback path; 72/72 PASS.
+- ~~order-dependent conv subgraph test~~ — re-tested and identified as
+  a real bug (no longer marked flake; see above).
+- ~~Only `sm_120` in fatbin~~ — multi-arch (sm_80, 86, 89, 90, 120 +
+  PTX 120 fallback) shipped.
+- ~~Wheel does not bundle CUDA/cuDNN/NCCL runtimes~~ — wheel is now
+  self-contained (cuDNN 9.22, NCCL 2.28, CUDA 13 runtime libs bundled
+  under `mxnet/lib/` with RUNPATH = `$ORIGIN/lib`).
+- ~~`_contrib_quantize_asym` v3 attr-on-reorder pattern~~ — fixed via
+  agent #45 commit (`set_scales_mask` on the reorder primitive_attr).
 
 ---
 

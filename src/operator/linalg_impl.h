@@ -30,6 +30,9 @@
 #include <algorithm>
 
 #include "../common/cuda/utils.h"
+#if MXNET_USE_CUDA
+#include "../common/cuda/cublaslt_gemm.h"
+#endif
 #include "mxnet_op.h"
 
 // Convenience functions.
@@ -296,23 +299,39 @@ inline void linalg_gemm<gpu, float>(const Tensor<gpu, 2, float>& A,
 #endif
   auto handle                  = Stream<gpu>::GetBlasHandle(s);
   cublasMath_t saved_math_mode = SetCublasMathMode(handle, VERSION_ADJUSTED_TF32_MATH);
-  CUBLAS_CALL(cublasSgemmEx(handle,
-                            (tB ? CUBLAS_OP_T : CUBLAS_OP_N),
-                            (tA ? CUBLAS_OP_T : CUBLAS_OP_N),
-                            C.size(1),
-                            C.size(0),
-                            (tB ? B.size(1) : B.size(0)),
-                            &alpha,
-                            B.dptr_,
-                            full_datatype,
-                            B.stride_,
-                            A.dptr_,
-                            full_datatype,
-                            A.stride_,
-                            &beta,
-                            C.dptr_,
-                            full_datatype,
-                            C.stride_));
+  const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const int gemm_m             = C.size(1);
+  const int gemm_n             = C.size(0);
+  const int gemm_k             = (tB ? B.size(1) : B.size(0));
+  bool used_lt                 = false;
+  if (mxnet::common::cuda::UseCuBlasLt()) {
+    cublasStatus_t lt_status =
+        mxnet::common::cuda::MaybeCublasLtSgemm(handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
+                                                &alpha, B.dptr_, B.stride_,
+                                                A.dptr_, A.stride_, &beta,
+                                                C.dptr_, C.stride_);
+    used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (!used_lt) {
+    CUBLAS_CALL(cublasSgemmEx(handle,
+                              op_a,
+                              op_b,
+                              gemm_m,
+                              gemm_n,
+                              gemm_k,
+                              &alpha,
+                              B.dptr_,
+                              full_datatype,
+                              B.stride_,
+                              A.dptr_,
+                              full_datatype,
+                              A.stride_,
+                              &beta,
+                              C.dptr_,
+                              full_datatype,
+                              C.stride_));
+  }
   CUBLAS_CALL(cublasSetMathMode(handle, saved_math_mode));
 }
 

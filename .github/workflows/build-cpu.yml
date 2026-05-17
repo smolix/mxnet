@@ -1,0 +1,126 @@
+name: build-cpu
+
+on:
+  push:
+    branches: [master, onednn-v3-port]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-cpu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: CPU build (oneDNN, no CUDA)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      CMAKE_BUILD_DIR: build
+      CMAKE_BUILD_TYPE: Release
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: "2G"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # CPU-only build: openblas + opencv + ninja + ccache. NCCL is GPU-only, skip.
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ninja-build \
+            cmake \
+            ccache \
+            g++ \
+            libopenblas-dev \
+            libopencv-dev \
+            libomp-dev \
+            python3 \
+            python3-pip \
+            python3-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-build-cpu-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ccache-build-cpu-${{ github.ref }}-
+            ccache-build-cpu-
+
+      - name: Cache CMake build dir
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CMAKE_BUILD_DIR }}
+          key: cmake-build-cpu-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            cmake-build-cpu-${{ github.ref }}-
+            cmake-build-cpu-
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B "$CMAKE_BUILD_DIR" -G Ninja \
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DUSE_CUDA=OFF \
+            -DUSE_CUDNN=OFF \
+            -DUSE_NCCL=OFF \
+            -DUSE_ONEDNN=ON \
+            -DUSE_OPENMP=ON \
+            -DUSE_OPENCV=ON \
+            -DUSE_BLAS=open \
+            -DUSE_DIST_KVSTORE=OFF \
+            -DBUILD_CPP_EXAMPLES=OFF
+
+      - name: Build (ninja mxnet)
+        timeout-minutes: 60
+        run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j"$(nproc)"
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s || true
+
+      - name: Locate libmxnet.so
+        id: locate
+        run: |
+          set -e
+          libpath=$(find "$CMAKE_BUILD_DIR" -maxdepth 3 -name 'libmxnet.so' | head -n1)
+          if [ -z "$libpath" ]; then
+            echo "libmxnet.so not produced" >&2
+            exit 1
+          fi
+          echo "libpath=$libpath" >> "$GITHUB_OUTPUT"
+          ls -lh "$libpath"
+
+      - name: Smoke test (import mxnet)
+        env:
+          MXNET_LIBRARY_PATH: ${{ github.workspace }}/${{ steps.locate.outputs.libpath }}
+        run: |
+          python -m pip install --upgrade pip
+          # Install runtime deps used by python/mxnet (keep minimal).
+          python -m pip install "numpy<2" requests
+          # Install the in-tree python package in editable mode, pointing at the freshly built .so.
+          cd python
+          python -m pip install -e .
+          cd ..
+          python -c "import mxnet; import mxnet.numpy as np; x = np.array([1,2,3]); print(x*2)"
+
+      - name: Upload libmxnet.so artefact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmxnet-cpu-${{ github.sha }}
+          path: ${{ steps.locate.outputs.libpath }}
+          if-no-files-found: warn
+          retention-days: 14

@@ -6,7 +6,7 @@ Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `f8b0c7125` (49 commits 
 
 | Commit | Change | Headline |
 |---|---|---|
-| TBD | fix apache#18751: BatchNorm running_mean/var swap (DNNL CPU path) | Move running-stats update from backward to forward in `dnnl_batch_norm.cc`; both CPU+GPU now show mean≈1/var≈0 after forward on all-ones input. Regression test at `tests/python/gpu/test_batchnorm_running_stats.py` (6/6 PASS). Note: residual CPU/GPU running_var discrepancy ~4e-4 is pre-existing (DNNL biased-N vs cuDNN unbiased-N-1 variance estimator). |
+| `a47ce39d9` | fix apache#18751: BatchNorm running_mean/var updated in forward, not backward | Move running-stats update from backward to forward in `dnnl_batch_norm.cc`; both CPU+GPU now show mean≈1/var≈0 after forward on all-ones input. Regression test at `tests/python/gpu/test_batchnorm_running_stats.py` (6/6 PASS). Note: residual CPU/GPU running_var discrepancy ~4e-4 is pre-existing (DNNL biased-N vs cuDNN unbiased-N-1 variance estimator). |
 | `08cb44d1d` | fix apache#18584: batch_dot fp16 precision parity | `cublasHgemmStridedBatched` (fp16 accum) → `cublasGemmStridedBatchedEx(CUBLAS_COMPUTE_32F)` in mshadow; max rel-err >500%→0.00e+00 (exact bit-match on (8,64,64,64)); 6/6 regression tests PASS |
 | `cedeb2f9b` | re-enable 21 upstream-disabled tests | 22 unskips (incl. test_activation in `7e4231da5`) |
 | `8a47e5a9a` | issues.md + cublaslt_scope.md | ~1130 LOC adoption scope documented |

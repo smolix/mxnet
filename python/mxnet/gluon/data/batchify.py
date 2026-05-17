@@ -78,6 +78,13 @@ class Stack(object):
         """
         _arr = _np if is_np_array() else nd
         _arr_cls = _arr.ndarray if is_np_array() else _arr.NDArray
+        # If running with np semantics but the user supplied legacy mx.nd.NDArray
+        # samples, transparently convert them to the np ndarray (zero-copy) so
+        # that the proper stacking path is taken instead of falling back to a
+        # numpy.asarray(...) call that produces a dtype=object array.
+        if is_np_array() and isinstance(data[0], nd.NDArray) \
+                and not isinstance(data[0], _arr_cls):
+            data = [item.as_np_ndarray() for item in data]
         if isinstance(data[0], _arr_cls):
             dtype = data[0].dtype
             if self._use_shared_mem:

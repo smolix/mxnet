@@ -1,6 +1,13 @@
 name: mkl continuous build
 
-on: [push, pull_request]
+# Blackwell-port fork: macOS+MKL isn't a target for this branch
+# (Blackwell port is linux x86_64 + CUDA 13). Restrict to master so it
+# doesn't fire on every port commit.
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
 
 jobs:
   macosx-x86_64:

@@ -30,14 +30,39 @@ if "--inplace" in sys.argv:
 else:
     from setuptools import setup, Distribution
     from setuptools.extension import Extension
-    kwargs = {'install_requires': ['numpy>=1.17', 'requests>=2.20.0,<3', 'graphviz<0.9.0,>=0.8.1', 'contextvars;python_version<"3.7"'], 'zip_safe': False}
+    # CUDA / cuDNN / NCCL runtime libraries are NOT bundled in this wheel.
+    # libmxnet.so is patched with RUNPATH=$ORIGIN/lib:$ORIGIN/../nvidia/<pkg>/lib:/usr/local/cuda/lib64
+    # so the loader finds:
+    #   - cuDNN / NCCL via the pip-installed nvidia-*-cu13 wheels under
+    #     site-packages/nvidia/<pkg>/lib/  (PyTorch/JAX install layout)
+    #   - libcudart / libcublas / libcufft / libcusolver / libcurand /
+    #     libnvrtc out of the system CUDA 13 toolkit at /usr/local/cuda/
+    #
+    # As of 2026-05-17 NVIDIA has published only `nvidia-cudnn-cu13`
+    # (9.22) and `nvidia-nccl-cu13` (2.30) on PyPI for CUDA 13; the other
+    # nvidia-*-cu13 packages are placeholder stubs (0.0.1). When they
+    # ship real, append them to install_requires below.
+    kwargs = {
+        'install_requires': [
+            # numpy 2.x removed np.PZERO / np.NZERO; mxnet/numpy/utils.py
+            # still uses them and would need a port (issues.md item #44).
+            # Cap at <2 for now.
+            'numpy>=1.17,<2',
+            'requests>=2.20.0,<3',
+            'graphviz<0.9.0,>=0.8.1',
+            'contextvars;python_version<"3.7"',
+            # NVIDIA runtime libraries available on PyPI for CUDA 13.
+            'nvidia-cudnn-cu13>=9.22,<10',
+            'nvidia-nccl-cu13>=2.28,<3',
+        ],
+        'zip_safe': False,
+    }
 
-    # We bundle libmxnet.so + libcudnn/libnccl/libcuda* under mxnet/ and
-    # mxnet/lib/. Those are platform-specific binaries, so the resulting
-    # wheel must be tagged as a binary (Root-Is-Purelib=false,
-    # tag=py3-none-linux_x86_64 on x86_64 Linux), not as a pure-python
-    # wheel. Force that by declaring a distclass whose has_ext_modules()
-    # returns True even when ext_modules is empty.
+    # The wheel ships libmxnet.so (an ELF .so under mxnet/), so it must be
+    # tagged as a binary, platform-specific distribution (Root-Is-Purelib=
+    # false, tag=cp3X-cp3X-linux_x86_64), not as a pure-python wheel.
+    # Force that by declaring a distclass whose has_ext_modules() returns
+    # True even when ext_modules is empty.
     class _BinaryDistribution(Distribution):
         def has_ext_modules(self):
             return True
@@ -60,16 +85,9 @@ __version__ = libinfo['__version__']
 
 sys.path.insert(0, CURRENT_DIR)
 
-# Discover bundled runtime libraries (cuDNN/NCCL/CUDA runtime) shipped under
-# mxnet/lib/. When present, they are packaged as data and libmxnet.so is
-# expected to have RUNPATH=$ORIGIN/lib so it locates them without needing a
-# system-wide CUDA/cuDNN/NCCL install.
-BUNDLED_LIB_DIR = os.path.join(CURRENT_DIR, 'mxnet', 'lib')
+# NVIDIA runtime libs are NOT bundled — see install_requires above.
+# libmxnet.so's RUNPATH points at site-packages/nvidia/<pkg>/lib/ for them.
 bundled_libs = []
-if os.path.isdir(BUNDLED_LIB_DIR):
-    for fn in sorted(os.listdir(BUNDLED_LIB_DIR)):
-        if '.so' in fn:
-            bundled_libs.append(os.path.join('lib', fn))
 
 # Try to generate auto-complete code (skipped when MXNET_SETUP_SKIP_AUTOCOMPLETE=1
 # is set; useful when packaging in environments where loading libmxnet.so is slow

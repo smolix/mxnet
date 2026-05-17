@@ -24,6 +24,10 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cmath>
+#include <cstring>
+#include <limits>
+
 #include "dnnl_batch_dot-inl.h"
 #include "operator/quantization/quantization_utils.h"
 
@@ -61,11 +65,15 @@ DNNLBatchDotFwd& DNNLBatchDotFwd::GetCached(const DNNLDotParam& param,
   return it->second;
 }
 
+// Returns the v3 primitive_attr for a quantized batch_dot and, via *out_scale,
+// the scalar output scale that must be bound at execute time as the runtime
+// DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST memory. *out_scale is left unchanged
+// (caller initializes to NaN) when no requantize / float-output path is taken.
 dnnl::primitive_attr GetQuantizationAttributes(const DNNLDotParam& param,
                                                const std::vector<NDArray>& inputs,
-                                               const std::vector<NDArray>& outputs) {
+                                               const std::vector<NDArray>& outputs,
+                                               float* out_scale) {
   dnnl::primitive_attr attr;
-  float out_scale_ = 1.f;
   float lhs_scale_ = GetQuantizeScale(inputs[DotIn::lhs].dtype(),
                                       inputs[DotIn::lhs_min].data().dptr<float>()[0],
                                       inputs[DotIn::lhs_max].data().dptr<float>()[0]);
@@ -73,20 +81,15 @@ dnnl::primitive_attr GetQuantizationAttributes(const DNNLDotParam& param,
                                       inputs[DotIn::rhs_min].data().dptr<float>()[0],
                                       inputs[DotIn::rhs_max].data().dptr<float>()[0]);
   if (param.min_calib_range.has_value() && param.max_calib_range.has_value()) {
-    // fused requantize => output is int
-    out_scale_ = GetQuantizeScale(outputs[DotOut::out].dtype(),
+    *out_scale = GetQuantizeScale(outputs[DotOut::out].dtype(),
                                   param.min_calib_range.value(),
                                   param.max_calib_range.value()) /
                  lhs_scale_ / rhs_scale_;
-    // v3: set_output_scales removed; use set_scales_mask + runtime scale
-    //     arg DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST. TODO: wire runtime
-    //     scale memory through the quantized batch-dot execute path.
     attr.set_scales_mask(DNNL_ARG_DST, 0);
   } else if (param.enabled_float_output.has_value()) {
-    out_scale_ = 1.0 / lhs_scale_ / rhs_scale_;
+    *out_scale = 1.0f / lhs_scale_ / rhs_scale_;
     attr.set_scales_mask(DNNL_ARG_DST, 0);
   }
-  (void)out_scale_;
   return attr;
 }
 
@@ -122,9 +125,19 @@ DNNLBatchDotFwd::DNNLBatchDotFwd(const DNNLDotParam& param,
   // v3: matmul ::desc removed; primitive_desc takes args directly.
   auto engine = mxnet::CpuEngine::Get()->get_engine();
   if (param.quantized) {
-    auto attrs = GetQuantizationAttributes(param, inputs, outputs);
+    float out_scale = std::numeric_limits<float>::quiet_NaN();
+    auto attrs = GetQuantizationAttributes(param, inputs, outputs, &out_scale);
     fwd_pd     = std::make_shared<batch_dot_fwd_pd_t>(
         engine, data_md, weights_md, out_md, attrs);
+    if (!std::isnan(out_scale)) {
+      // v3 runtime DNNL_ARG_DST scale memory matching attr.set_scales_mask
+      // above. Built once at PD-create time and bound at Execute.
+      dnnl::memory::desc scale_md(
+          dnnl::memory::dims{1}, dnnl::memory::data_type::f32,
+          dnnl::memory::format_tag::x);
+      out_scale_mem = std::make_shared<dnnl::memory>(scale_md, engine);
+      std::memcpy(out_scale_mem->get_data_handle(), &out_scale, sizeof(float));
+    }
   } else {
     fwd_pd = std::make_shared<batch_dot_fwd_pd_t>(
         engine, data_md, weights_md, out_md);
@@ -159,6 +172,10 @@ void DNNLBatchDotFwd::Execute(const OpContext& ctx,
       {DNNL_ARG_WEIGHTS, rhs_mem},
       {DNNL_ARG_DST, *out_mem.second},
   };
+  // v3 bind runtime DNNL_ARG_DST output scale for quantized batch_dot.
+  if (out_scale_mem) {
+    args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = *out_scale_mem;
+  }
 
   DNNLStream::Get()->RegisterPrimArgs(*fwd, args);
   CommitOutput(outputs[0], out_mem);

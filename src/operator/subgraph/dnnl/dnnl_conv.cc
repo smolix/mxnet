@@ -349,6 +349,13 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
     if (has_bias)
       args_[DNNL_ARG_BIAS] = *cached_bias_.GetDNNLData();
     args_[DNNL_ARG_DST] = *output.GetDNNLData();
+    // v3: bind runtime output-scale tensor for quantized (requantize) conv.
+    // ARG key is WEIGHTS for per-OC scales (mask=1) or DST for per-tensor
+    // (mask=0) — determined inside DNNLConvForward to match the
+    // set_scales_mask attr installed in GetConvFwdImpl.
+    if (auto* sm = fwd_->GetOutputScaleMem()) {
+      args_[DNNL_ARG_ATTR_SCALES | fwd_->GetOutputScaleArg()] = *sm;
+    }
     initialized_        = true;
   }
 

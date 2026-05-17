@@ -320,9 +320,10 @@ static inline dnnl::memory::data_type get_dnnl_type_t(int dtype) {
 
 template <typename T>
 static inline dnnl::memory::data_type get_dnnl_type_t() {
-  // data_type_enum<T>::type is an mshadow type enum; convert through the
-  // int-overloaded helper to the dnnl C++ enum.
-  return get_dnnl_type(static_cast<int>(data_type_enum<T>::type));
+  // data_type_enum<T>::type already holds the raw value of dnnl::memory::data_type;
+  // cast back. (Earlier mistake: it was being treated as an mshadow type code
+  // and re-mapped, which silently produced u8 for float etc.)
+  return static_cast<dnnl::memory::data_type>(data_type_enum<T>::type);
 }
 
 static inline int get_mxnet_type(dnnl::memory::data_type dnnl_dtype) {

@@ -28,6 +28,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cstring>
 #include <memory>
 #include <unordered_map>
 #include <string>
@@ -193,14 +194,35 @@ class DNNLFullyConnectedForward {
                             const dnnl::memory::desc& out_md)
       : fwd_pd(GetFCFwdImpl(full_param, is_train, data, weight, bias, out_md)) {
     fwd_ = std::make_shared<dnnl::inner_product_forward>(fwd_pd);
+    // v3: build runtime scale tensor for quantized inner_product. ARG key
+    // depends on per-OC (WEIGHTS, mask=1) vs per-tensor (DST, mask=0) and must
+    // match the set_scales_mask call in GetFCFwdImpl.
+    if (full_param.dnnl_param.quantized && full_param.output_scales.size()) {
+      auto engine = CpuEngine::Get()->get_engine();
+      dnnl::memory::desc scale_md(
+          dnnl::memory::dims{static_cast<dnnl::memory::dim>(full_param.output_scales.size())},
+          dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+      out_scale_mem_ = std::make_shared<dnnl::memory>(scale_md, engine);
+      std::memcpy(out_scale_mem_->get_data_handle(),
+                  full_param.output_scales.data(),
+                  full_param.output_scales.size() * sizeof(float));
+      out_scale_arg_ = (full_param.output_scales.size() > 1) ? DNNL_ARG_WEIGHTS : DNNL_ARG_DST;
+    }
   }
 
   const dnnl::inner_product_forward& GetFwd() const {
     return *fwd_;
   }
 
+  // v3 quantized: runtime scale tensor (nullptr if not quantized) plus the
+  // ARG key (DNNL_ARG_DST per-tensor, DNNL_ARG_WEIGHTS per-OC).
+  const dnnl::memory* GetOutputScaleMem() const { return out_scale_mem_.get(); }
+  int GetOutputScaleArg() const { return out_scale_arg_; }
+
  private:
   std::shared_ptr<dnnl::inner_product_forward> fwd_;
+  std::shared_ptr<dnnl::memory> out_scale_mem_;
+  int out_scale_arg_{DNNL_ARG_DST};
 };
 
 typedef ParamOpSign<DNNLFCFullParam> DNNLFullyconSignature;

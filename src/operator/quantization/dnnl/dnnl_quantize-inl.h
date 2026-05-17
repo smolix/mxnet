@@ -61,10 +61,12 @@ static void DNNLQuantizeComputeKer(const std::vector<NDArray>& inputs,
     LOG(FATAL) << "oneDNN quantize op only supports int8 and uint8 as output type";
   }
   float scale = quantized_range / real_range;
-  // v3: set_output_scales removed; use set_scales_mask + runtime arg.
+  // v3: set_output_scales removed. For reorder primitives, DNNL_ARG_DST scale
+  // is *inverse* (divides the output), unlike v2 set_output_scales which
+  // multiplied. Use DNNL_ARG_SRC for the multiplicative quantize factor.
   dnnl::primitive_attr attr;
   const int mask = 0;
-  attr.set_scales_mask(DNNL_ARG_DST, mask);
+  attr.set_scales_mask(DNNL_ARG_SRC, mask);
   dnnl::engine cpu_engine = mxnet::CpuEngine::Get()->get_engine();
   NDArray in_buffer       = inputs[0];
   auto i_mem    = in_buffer.GetDNNLData();
@@ -91,7 +93,7 @@ static void DNNLQuantizeComputeKer(const std::vector<NDArray>& inputs,
   DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd),
                                       {{DNNL_ARG_FROM, *i_mem},
                                        {DNNL_ARG_TO, *o_mem.second},
-                                       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, scale_mem}});
+                                       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC, scale_mem}});
   CommitOutput(outputs[0], o_mem);
   DNNLStream::Get()->Submit();
 }

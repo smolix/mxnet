@@ -211,7 +211,8 @@ static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
       auto engine                = CpuEngine::Get()->get_engine();
       // v3: set_output_scales removed; bind runtime scale tensor.
       dnnl::primitive_attr reorder_attr;
-      reorder_attr.set_scales_mask(DNNL_ARG_DST, 0);
+      // v3 reorder: DNNL_ARG_DST divides; use DNNL_ARG_SRC to multiply by u8_to_s8_scale.
+      reorder_attr.set_scales_mask(DNNL_ARG_SRC, 0);
       auto u8_mem = (is_A_int8 == true) ? B_mem : A_mem;
       const auto reorder_pd =
           dnnl::reorder::primitive_desc(engine, u8_mem->get_desc(), engine, s8_desc, reorder_attr);
@@ -221,7 +222,7 @@ static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
       *reinterpret_cast<float*>(scale_mem.get_data_handle()) = u8_to_s8_scale;
       dnnl_args_map_t args({{DNNL_ARG_FROM, *u8_mem},
                             {DNNL_ARG_TO, *rescaled_mem},
-                            {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, scale_mem}});
+                            {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC, scale_mem}});
       DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd), args);
       // Modify scale to restore original uint8 values:
       if (is_A_int8) {

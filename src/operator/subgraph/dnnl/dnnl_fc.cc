@@ -220,6 +220,11 @@ void SgDNNLFCOp::Forward(const OpContext& ctx,
     if (has_bias)
       args_[DNNL_ARG_BIAS] = *static_cast<const dnnl::memory*>(cached_bias_.GetDNNLData());
     args_[DNNL_ARG_DST] = *cached_out_mem_;
+    // v3: bind runtime scale tensor — ARG key is WEIGHTS for per-OC, DST for
+    // per-tensor — to match the set_scales_mask attr from GetFCFwdImpl.
+    if (auto* sm = fwd_->GetOutputScaleMem()) {
+      args_[DNNL_ARG_ATTR_SCALES | fwd_->GetOutputScaleArg()] = *sm;
+    }
     initialized_        = true;
   }
 
@@ -278,7 +283,8 @@ NDArray SgDNNLFCOp::PrepareOutputWithSum(const NDArray& sum_input, const NDArray
       DNNLStream::Get()->RegisterMem(tmp_mem);
       // v3: set_output_scales removed; bind runtime scale tensor.
       dnnl::primitive_attr reorder_attr;
-      reorder_attr.set_scales_mask(DNNL_ARG_DST, 0);
+      // v3 reorder: DNNL_ARG_DST divides; use DNNL_ARG_SRC to multiply by u8_to_s8_scale.
+      reorder_attr.set_scales_mask(DNNL_ARG_SRC, 0);
       const auto reorder_pd = dnnl::reorder::primitive_desc(CpuEngine::Get()->get_engine(),
                                                             in_dnnl_mem->get_desc(),
                                                             CpuEngine::Get()->get_engine(),
@@ -292,7 +298,7 @@ NDArray SgDNNLFCOp::PrepareOutputWithSum(const NDArray& sum_input, const NDArray
           dnnl::reorder(reorder_pd),
           {{DNNL_ARG_FROM, *in_dnnl_mem},
            {DNNL_ARG_TO, *tmp_mem},
-           {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, scale_mem}});
+           {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC, scale_mem}});
       return NDArray(tmp_mem);
     } else {
       dnnl_mem_ptr tmp_mem(new dnnl::memory(in_dnnl_mem->get_desc(),

@@ -96,9 +96,14 @@ class DNNLBatchDotFwd {
                const std::vector<OpReqType>& req,
                const std::vector<NDArray>& outputs);
 
+  // v3 quantized: runtime DNNL_ARG_DST scale tensor (nullptr if not quantized).
+  const dnnl::memory* GetOutputScaleMem() const { return out_scale_mem.get(); }
+
  private:
   std::shared_ptr<batch_dot_fwd_t> fwd;
   std::shared_ptr<batch_dot_fwd_pd_t> fwd_pd;
+  // v3: scale tensor bound at execute via DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST.
+  std::shared_ptr<dnnl::memory> out_scale_mem;
 };
 
 template <bool subgraph = true>

@@ -87,10 +87,10 @@ void SgDNNLDequantizeOperator::Forward(const OpContext& ctx,
     float scale = real_range / quantized_range;
     // v3: set_output_scales removed. For reorder, declare a scale-by-mask
     //     and bind the scale tensor as a runtime memory arg
-    //     DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST.
+    //     DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC.
     dnnl::primitive_attr attr;
     const int mask = 0;
-    attr.set_scales_mask(DNNL_ARG_DST, mask);
+    attr.set_scales_mask(DNNL_ARG_SRC, mask);
     dnnl::engine cpu_engine = mxnet::CpuEngine::Get()->get_engine();
     auto i_desc             = i_mem->get_desc();
     size_t i_ndim           = in_buffer.shape().ndim();
@@ -116,7 +116,7 @@ void SgDNNLDequantizeOperator::Forward(const OpContext& ctx,
   auto o_mem           = CreateDNNLMem(outputs[0], o_desc_, req[0]);
   args_[DNNL_ARG_FROM] = *i_mem;
   args_[DNNL_ARG_TO]   = *o_mem.second;
-  args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = scale_mem_;
+  args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = scale_mem_;
   DNNLStream::Get()->RegisterPrimArgs(*fwd_pd_, args_);
   CommitOutput(outputs[0], o_mem);
   DNNLStream::Get()->Submit();

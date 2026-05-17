@@ -73,7 +73,7 @@ static void DNNLRequantizeForwardKer(const nnvm::NodeAttrs& attrs,
   // v3: set_output_scales removed; use set_scales_mask + runtime arg.
   dnnl::primitive_attr attr;
   const int mask = 0;
-  attr.set_scales_mask(DNNL_ARG_DST, mask);
+  attr.set_scales_mask(DNNL_ARG_SRC, mask);
   dnnl::engine cpu_engine = mxnet::CpuEngine::Get()->get_engine();
 
   NDArray in_buffer = inputs[0];
@@ -94,7 +94,7 @@ static void DNNLRequantizeForwardKer(const nnvm::NodeAttrs& attrs,
   DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd),
                                       {{DNNL_ARG_FROM, *i_mem},
                                        {DNNL_ARG_TO, *o_mem.second},
-                                       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, scale_mem}});
+                                       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC, scale_mem}});
   CommitOutput(outputs[0], o_mem);
   DNNLStream::Get()->Submit();
 }

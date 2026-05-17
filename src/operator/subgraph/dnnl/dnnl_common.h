@@ -110,7 +110,9 @@ static inline void ConvertWeightBias2DNNL(NDArray* weight,
   dnnl::memory weight_scale_mem;
   if (weight_scales.size()) {
     const int weight_mask = (weight_scales.size()) == 1 ? 0 : 1;
-    weight_attr.set_scales_mask(DNNL_ARG_DST, weight_mask);
+    // v3 reorder: DNNL_ARG_DST scale divides (inverse of v2 set_output_scales);
+    // use DNNL_ARG_SRC to multiply by weight_scales as intended.
+    weight_attr.set_scales_mask(DNNL_ARG_SRC, weight_mask);
     dnnl::memory::desc scale_md(
         dnnl::memory::dims{static_cast<dnnl::memory::dim>(weight_scales.size())},
         dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
@@ -127,7 +129,7 @@ static inline void ConvertWeightBias2DNNL(NDArray* weight,
       {DNNL_ARG_FROM, *default_weights_memory},
       {DNNL_ARG_TO, *conv_weights_memory}};
   if (weight_scales.size()) {
-    weight_reorder_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = weight_scale_mem;
+    weight_reorder_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = weight_scale_mem;
   }
   DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(weight_reorder_pd), weight_reorder_args);
   NDArray new_bias;
@@ -140,7 +142,7 @@ static inline void ConvertWeightBias2DNNL(NDArray* weight,
     const auto conv_bias_memory = new_bias.GetDNNLData();
     const int bias_mask         = (bias_scales.size()) == 1 ? 0 : 1;
     dnnl::primitive_attr bias_attr;
-    bias_attr.set_scales_mask(DNNL_ARG_DST, bias_mask);
+    bias_attr.set_scales_mask(DNNL_ARG_SRC, bias_mask);
     dnnl::memory::desc bias_scale_md(
         dnnl::memory::dims{static_cast<dnnl::memory::dim>(bias_scales.size())},
         dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
@@ -154,7 +156,7 @@ static inline void ConvertWeightBias2DNNL(NDArray* weight,
         dnnl::reorder(bias_reorder_pd),
         {{DNNL_ARG_FROM, *bias_weights_memory},
          {DNNL_ARG_TO, *conv_bias_memory},
-         {DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, bias_scale_mem}});
+         {DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC, bias_scale_mem}});
   }
   if (submit)
     stream->Submit();

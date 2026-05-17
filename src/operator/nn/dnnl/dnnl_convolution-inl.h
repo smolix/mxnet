@@ -107,9 +107,18 @@ class DNNLConvForward {
     return *pd_;
   }
 
+  // v3 quantized path: runtime output-scale tensor. Per-tensor scales bind on
+  // DNNL_ARG_DST (mask=0); per-OC scales bind on DNNL_ARG_WEIGHTS (mask=1)
+  // because v3 conv rejects per-channel DST masks. Caller queries the arg key
+  // via GetOutputScaleArg(). Returns nullptr if not quantized.
+  const dnnl::memory* GetOutputScaleMem() const { return out_scale_mem_.get(); }
+  int GetOutputScaleArg() const { return out_scale_arg_; }
+
  private:
   std::shared_ptr<dnnl::convolution_forward> fwd_;
   std::shared_ptr<dnnl::convolution_forward::primitive_desc> pd_;
+  std::shared_ptr<dnnl::memory> out_scale_mem_;
+  int out_scale_arg_{DNNL_ARG_DST};
 };
 
 typedef ParamOpSign<ConvolutionParam> DNNLConvSignature;

@@ -59,11 +59,14 @@ dnnl::inner_product_forward::primitive_desc GetFCFwdImpl(const DNNLFCFullParam& 
   attr.set_post_ops(ops);
 
   if (full_param.dnnl_param.quantized && full_param.output_scales.size()) {
-    // v3: set_output_scales removed; use set_scales_mask + runtime scale arg
-    //     bound at execution time. TODO: wire runtime scale memory through
-    //     the quantized FC execute path.
-    int mask = (full_param.output_scales.size() == 1) ? 0 : (1 << 1);
-    attr.set_scales_mask(DNNL_ARG_DST, mask);
+    // v3: per-OC output scales must go on DNNL_ARG_WEIGHTS (mask=1<<0=1 along
+    // weights' OC axis); v3 inner_product rejects per-channel DST masks.
+    // Per-tensor case keeps DNNL_ARG_DST mask=0.
+    if (full_param.output_scales.size() > 1) {
+      attr.set_scales_mask(DNNL_ARG_WEIGHTS, 1);
+    } else {
+      attr.set_scales_mask(DNNL_ARG_DST, 0);
+    }
   }
 
   // v3: ::desc removed; primitive_desc takes args directly.
@@ -215,6 +218,11 @@ void DNNLFCForwardFullFeature(const DNNLFCFullParam& full_param,
     auto fwd_bias_desc  = fwd->fwd_pd.bias_desc();
     auto bias_mem       = in_data[fullc::kBias].GetDNNLDataReorder(&fwd_bias_desc);
     args[DNNL_ARG_BIAS] = *bias_mem;
+  }
+  // v3: bind runtime scale tensor — ARG key is WEIGHTS for per-OC, DST for
+  // per-tensor — to match the set_scales_mask attr from GetFCFwdImpl.
+  if (auto* sm = fwd->GetOutputScaleMem()) {
+    args[DNNL_ARG_ATTR_SCALES | fwd->GetOutputScaleArg()] = *sm;
   }
   DNNLStream::Get()->RegisterPrimArgs(fwd->GetFwd(), args);
   CommitOutput(out_data[fullc::kOut], out_mem);

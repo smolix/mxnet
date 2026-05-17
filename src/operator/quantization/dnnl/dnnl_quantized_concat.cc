@@ -86,7 +86,7 @@ static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
       new_data_mem.push_back(rescaled_mem);
       // v3: set_output_scales removed; use set_scales_mask + runtime arg.
       dnnl::primitive_attr reorder_attr;
-      reorder_attr.set_scales_mask(DNNL_ARG_DST, 0);
+      reorder_attr.set_scales_mask(DNNL_ARG_SRC, 0);
       const auto reorder_pd = dnnl::reorder::primitive_desc(*mem, *rescaled_mem, reorder_attr);
       dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
                                   dnnl::memory::format_tag::x);
@@ -95,7 +95,7 @@ static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
       dnnl_args_map_t reorder_args;
       reorder_args[DNNL_ARG_SRC] = *mem;
       reorder_args[DNNL_ARG_DST] = *rescaled_mem;
-      reorder_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = scale_mem;
+      reorder_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = scale_mem;
       DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd), reorder_args);
       data_mem.push_back(rescaled_mem.get());
       data_md.push_back(mem_desc);

@@ -25,6 +25,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cstring>
 #include <string>
 
 #include "operator/nn/convolution-inl.h"
@@ -108,12 +109,16 @@ std::shared_ptr<dnnl::convolution_forward::primitive_desc> GetConvFwdImpl(
   attr.set_post_ops(ops);
 
   if (param.dnnl_param.quantized && param.requantize_scales.size()) {
-    // v3: set_output_scales removed; use set_scales_mask + runtime scale arg
-    //     DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST. The caller must bind the
-    //     scale memory at execution time. TODO: wire runtime scale memory
-    //     through the quantized convolution execute path.
-    int mask = (param.requantize_scales.size() > 1) ? 2 : 0;
-    attr.set_scales_mask(DNNL_ARG_DST, mask);
+    // v3: per-OC output scales must go on DNNL_ARG_WEIGHTS (mask=1<<0=1 along
+    // the OC axis of weights) because v3 conv rejects per-channel DNNL_ARG_DST
+    // scales (only per-tensor mask=0 supported on DST). Mathematically
+    // equivalent to v2 set_output_scales(mask=2): each OC's output is scaled
+    // by scales[oc]. Per-tensor case (size==1) keeps DNNL_ARG_DST mask=0.
+    if (param.requantize_scales.size() > 1) {
+      attr.set_scales_mask(DNNL_ARG_WEIGHTS, 1);
+    } else {
+      attr.set_scales_mask(DNNL_ARG_DST, 0);
+    }
   }
 
   // v3 dilation is always required; build it once (zeros if no dilation).
@@ -339,6 +344,20 @@ DNNLConvForward::DNNLConvForward(const DNNLConvFullParam& param,
                                  const NDArray& output)
     : pd_(GetConvFwdImpl(param, is_train, data, weight, bias, output)) {
   fwd_ = std::make_shared<dnnl::convolution_forward>(GetPd());
+  // v3: build runtime output-scale tensor for the quantized path. ARG key
+  // depends on per-OC (WEIGHTS, mask=1) vs per-tensor (DST, mask=0) — must
+  // match the set_scales_mask call in GetConvFwdImpl.
+  if (param.dnnl_param.quantized && param.requantize_scales.size()) {
+    auto engine = CpuEngine::Get()->get_engine();
+    dnnl::memory::desc scale_md(
+        dnnl::memory::dims{static_cast<dnnl::memory::dim>(param.requantize_scales.size())},
+        dnnl::memory::data_type::f32, dnnl::memory::format_tag::x);
+    out_scale_mem_ = std::make_shared<dnnl::memory>(scale_md, engine);
+    std::memcpy(out_scale_mem_->get_data_handle(),
+                param.requantize_scales.data(),
+                param.requantize_scales.size() * sizeof(float));
+    out_scale_arg_ = (param.requantize_scales.size() > 1) ? DNNL_ARG_WEIGHTS : DNNL_ARG_DST;
+  }
 }
 
 DNNLConvForward& GetConvFwd(const DNNLConvFullParam& param,
@@ -426,6 +445,11 @@ void DNNLConvolutionForwardFullFeature(const DNNLConvFullParam& param,
   net_args.insert({DNNL_ARG_SRC, *data_mem});
   net_args.insert({DNNL_ARG_WEIGHTS, *weight_mem});
   net_args.insert({DNNL_ARG_DST, *out_mem.second});
+  // v3: bind the runtime DNNL_ARG_DST scale tensor declared via
+  // attr.set_scales_mask in GetConvFwdImpl for quantized requantize output.
+  if (auto* sm = fwd->GetOutputScaleMem()) {
+    net_args.insert({DNNL_ARG_ATTR_SCALES | fwd->GetOutputScaleArg(), *sm});
+  }
   DNNLStream::Get()->RegisterPrimArgs(fwd->GetFwd(), net_args);
   CommitOutput(out_data[conv::kOut], out_mem);
   DNNLStream::Get()->Submit();

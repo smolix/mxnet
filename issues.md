@@ -48,15 +48,15 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 1. ~~**`adaptive_avg_pool` backward correctness** (task #33).~~ **RESOLVED 2026-05-17** via commit `1d2198862` (force CPU-reference fallback in `SupportDNNLAveragePooling`) — the CPU kernel correctly normalises by pool-window overlap, so 36→0 failures. Re-verified post-cuDNN-9.22 rebuild: `test_adaptive_pooling` is 72/72 PASS across all shape×stype combos. A latent DNNL backward bug remains in `dnnl_pooling.cc::GetPoolingBwd` (in_data aliased to out_grad for adaptive) but is unreachable while SupportDNNL returns false; a partial attempt to re-enable DNNL adaptive pooling failed smoke and was reverted.
 
-2. **`test_quantize_gluon_with_forward`** (gluon `quantize_net` of resnet18). Still fails post-`1df0ff579`. May already be fixed by the FC saturation fix; re-test after rebuild. If still failing, likely composite-fusion calibration in the `quantize_net` path.
+2. ~~**`test_quantize_gluon_with_forward`** (gluon `quantize_net` of resnet18).~~ **RESOLVED 2026-05-17** — confirmed PASSING on post-cuDNN-9.22 rebuild (`HEAD=f103c5491`). The combination of the FC saturation fix + B2 NaN guard (`f5934f094`) + TF32 selection on cuDNN 9 (`783cfa133`) closed this together. 1/1 PASS in 0.25s.
 
-3. **`_contrib_quantize_asym`** v3 attr-on-reorder bug. `src/operator/quantization/dnnl/dnnl_quantize_asym-inl.h:126` still uses `set_rnn_data_qparams` on a reorder primitive — same v3 issue the RNN-quant agent fixed in commit `5a8d2e1ab` for the LSTM path. Doesn't trigger from the two RNN tests but breaks asymmetric quantization.
+3. ~~**`_contrib_quantize_asym`** v3 attr-on-reorder bug.~~ **RESOLVED** via agent #45 commit — `src/operator/quantization/dnnl/dnnl_quantize_asym-inl.h:141-155` now uses `set_scales_mask(DNNL_ARG_DST, 0)` instead of the removed v2 `set_rnn_data_qparams`. (Asymmetric quantization is not exercised by any in-tree test, so verification remains by code inspection only.)
 
 4. **`test_pos_single_concat_pos_neg[int8/auto-data_shape1]`** — re-tested 2026-05-17 against HEAD `cedeb2f9b`: failure is **NOT** order-dependent. Test fails in isolation with `MXNET_TEST_SEED=11`. Failure mode: max int8 quantization error 5.0 on output (atol=0.12, so 40× exceeded) where most error locations have `a=0, b≈1.2` — entire output channels are being zeroed. data_shape1 is `(4, 3, 24, 24)`; channels 3-6 of output (the `relu(conv0(x))` half of the concat) are corrupted. Suspect: oneDNN v3 reorder uint8→int8 with `set_scales_mask(DNNL_ARG_SRC, 0)` in `src/operator/quantization/dnnl/dnnl_quantized_concat.cc:88-99` — scale math looks right (`out_scale / i_scale`) but observed behavior is zeros. Either reorder primitive caches a stale desc, the rescaled memory is being dropped before Submit(), or v3 reorder semantics for uint8→int8 differ from what the code assumes. Needs DNNL `dnnl_verbose=2` trace to pin down.
 
 5. **Backward through quantized ops** — untested. If anyone fine-tunes a quantized model this likely blows up. Forward inference is solid; backward through `_sg_onednn_fully_connected`, `_sg_onednn_conv` is unvalidated.
 
-6. **`test_activation` softrelu backward** (#13915). Audit reported 3.6e5× gradient mismatch — but the audit ran against pre-`8f6cc19ad` libmxnet. My commit `8f6cc19ad` (B2 fix) added `alpha = ±1` for SoftReLU/LogSigmoid backward. Likely now fixed; retest.
+6. ~~**`test_activation` softrelu backward** (#13915).~~ **RESOLVED 2026-05-17** — B2 SoftReLU/LogSigmoid α=±1 fix (`8f6cc19ad`) + cuDNN 9.22 build, verified 4/4 PASS across 4 different `MXNET_TEST_SEED` values (11, 17, 23, 31). The upstream "intermittent flake" no longer reproduces. Unskip committed.
 
 ---
 

@@ -7812,7 +7812,8 @@ def test_histogram():
         assert_almost_equal(np_histo2, executor2.outputs[0].asnumpy(), 0, 0, ("EXPECTED_histo2", "FORWARD_histo2"), equal_nan=False)
 
 
-@pytest.mark.skip(reason="test fails intermittently. temporarily disabled till it gets fixed. tracked at https://github.com/apache/mxnet/issues/13915")
+# Re-enabled 2026-05-17 — audit at HEAD f103c5491 (cuDNN 9.22 + B2 SoftReLU/LogSigmoid fix).
+# @pytest.mark.skip(reason="test fails intermittently. temporarily disabled till it gets fixed. tracked at https://github.com/apache/mxnet/issues/13915")
 def test_activation():
     shapes = [(9,), (9, 10), (9, 10, 10), (1, 9, 10, 10)]
     dtype_l = [np.float64, np.float32, np.float16]

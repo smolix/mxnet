@@ -46,7 +46,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 ## CORRECTNESS gaps (block "the port is done")
 
-1. **`adaptive_avg_pool` backward correctness** (task #33). 36 failures when `output_size < input_size`. Bug in `src/operator/contrib/adaptive_avg_pooling.cu`: gradient distribution doesn't normalise by pool-window overlap count. Affects classification heads (very common). Fix: pass count-of-contributing-output-positions back through the kernel.
+1. ~~**`adaptive_avg_pool` backward correctness** (task #33).~~ **RESOLVED 2026-05-17** via commit `1d2198862` (force CPU-reference fallback in `SupportDNNLAveragePooling`) — the CPU kernel correctly normalises by pool-window overlap, so 36→0 failures. Re-verified post-cuDNN-9.22 rebuild: `test_adaptive_pooling` is 72/72 PASS across all shape×stype combos. A latent DNNL backward bug remains in `dnnl_pooling.cc::GetPoolingBwd` (in_data aliased to out_grad for adaptive) but is unreachable while SupportDNNL returns false; a partial attempt to re-enable DNNL adaptive pooling failed smoke and was reverted.
 
 2. **`test_quantize_gluon_with_forward`** (gluon `quantize_net` of resnet18). Still fails post-`1df0ff579`. May already be fixed by the FC saturation fix; re-test after rebuild. If still failing, likely composite-fusion calibration in the `quantize_net` path.
 
@@ -90,7 +90,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 ## PERFORMANCE gaps (works but suboptimal)
 
-17. **cuDNN 9.x sm_120 heuristic gap** (task #34). cuDNN 9.0–9.3 ship heuristic tables copied from sm_90 with light adjustment; many conv shapes route through generic fallback engines instead of Blackwell-tuned ones. Bumping to cuDNN 9.5+ progressively closes this; cuDNN 9.7+ has the best sm_120 coverage. **Highest perf payoff.**
+17. ~~**cuDNN 9.x sm_120 heuristic gap** (task #34).~~ **RESOLVED 2026-05-17** via commit `f103c5491` — bumped cuDNN 9.14 → 9.22 (locally bundled under `cudnn_local/`, system untouched). Headline impact: depthwise 3×3 256→256 went from 0.16 → 1.14 TFLOPS (**~7×**). Other shapes within noise (e.g. 3×3 28×28 256→256 bs32: 41.07 → 41.52 TFLOPS, same arena). Regression smoke clean: `test_fc_subgraph.py` 387/0/16 unchanged, `test_dnnl.py` 97/0 (including 72/72 `test_adaptive_pooling`).
 
 18. **`cudnnFindAlgorithm` / autotune not ported to v9** (task #35). cuDNN 9 deprecated the v7/v8 form; MXNet still uses static heuristic mode A. Needs migration to the cuDNN frontend `EngineHeuristics + Plan_v8` enumeration. Closes shape-specific gaps that the heuristic table misses.
 

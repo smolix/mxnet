@@ -1,6 +1,21 @@
 # MXNet Blackwell port — open issues
 
-Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `1df0ff579` (plus agent #42 work still incoming).
+Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `3570d453d` (36 commits since start of port).
+
+## Status at this snapshot
+
+Final clean rebuild + 3-way parallel test sweep complete:
+
+| Surface | Pass | Fail | Skipped |
+|---|---|---|---|
+| GPU0 — conv subgraph + FC subgraph + INT8 (`test_conv_subgraph.py` + `test_fc_subgraph.py` + `test_quantization_dnnl.py`) | **837** | 3 | 16 |
+| GPU1 — `test_gluon_gpu.py` | **255** | 0 | 142 |
+| CPU 8-way xdist — `test_gluon_rnn.py` + `test_gluon.py` | **232** | 0 | 138 |
+| **Total** | **1324** | **3** | **296** |
+
+99.8% pass rate. The 3 remaining failures and their root causes are documented below (items 4, 2, plus the test-order flake).
+
+libmxnet.so is 792 MB with all 5 SASS variants + PTX 120 fallback. Wheel is `mxnet-2.0.0+cu13.bw.20260517-py3-none-linux_x86_64.whl`, 1.9 GB self-contained.
 
 ## Motivation / context
 

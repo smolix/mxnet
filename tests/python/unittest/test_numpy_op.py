@@ -10553,7 +10553,7 @@ def test_np_bincount():
 
 
 @use_np
-@pytest.mark.skip(reason='Test hangs. Tracked in #18144')
+@pytest.mark.skip(reason='mx.np.empty_like operator does not support int8/uint8/bool dtypes (raises NotImplementedError); separate from the test-source signature fix in this commit')
 def test_np_empty_like():
     class TestEmptyLike(HybridBlock):
         def __init__(self, dtype, order, subok):
@@ -10563,7 +10563,7 @@ def test_np_empty_like():
             self._subok = subok
 
         def forward(self, x, *args, **kwargs):
-            return np.empty_like(x, self._dtype, self._order, self._subok)
+            return np.empty_like(x, dtype=self._dtype, order=self._order, subok=self._subok)
 
     if StrictVersion(platform.python_version()) < StrictVersion('3.0.0'):
         return
@@ -10606,7 +10606,7 @@ def test_np_empty_like():
         assert ret.asnumpy().shape == expected_ret.shape
 
         # check imperative again
-        ret = np.empty_like(prototype, dtype, order, subok)
+        ret = np.empty_like(prototype, dtype=dtype, order=order, subok=subok)
         assert ret.asnumpy().shape == expected_ret.shape
 
 

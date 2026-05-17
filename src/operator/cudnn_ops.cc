@@ -112,9 +112,18 @@ std::vector<cudnnBackendNumericalNote_t> RequireNumerics() {
 
 std::vector<cudnnBackendNumericalNote_t> ExcludeNumerics() {
   std::vector<cudnnBackendNumericalNote_t> ret;
-  if (!dmlc::GetEnv("MXNET_CUDA_ALLOW_TENSOR_CORE", true))
+  bool allow_tensor_core = dmlc::GetEnv("MXNET_CUDA_ALLOW_TENSOR_CORE", true);
+  if (!allow_tensor_core)
     ret.push_back(CUDNN_NUMERICAL_NOTE_TENSOR_CORE);
-  if (!dmlc::GetEnv("MXNET_CUDA_TENSOR_OP_MATH_ALLOW_CONVERSION", false))
+  // cuDNN tags TF32 (and other reduced-precision input) engines with
+  // CUDNN_NUMERICAL_NOTE_DOWN_CONVERT_INPUTS. On Ampere+ (and especially
+  // sm_120/Blackwell) FP32 convolutions can run ~2-3x faster on tensor cores
+  // via TF32. We default to allowing this whenever tensor cores are allowed,
+  // mirroring the default behavior of PyTorch / TF on cuDNN 9. Users who need
+  // strict FP32 numerics can disable it via
+  //   MXNET_CUDA_TENSOR_OP_MATH_ALLOW_CONVERSION=0
+  // or by setting MXNET_CUDA_ALLOW_TENSOR_CORE=0.
+  if (!dmlc::GetEnv("MXNET_CUDA_TENSOR_OP_MATH_ALLOW_CONVERSION", allow_tensor_core))
     ret.push_back(CUDNN_NUMERICAL_NOTE_DOWN_CONVERT_INPUTS);
   if (!dmlc::GetEnv("MXNET_CUDNN_ALLOW_REDUCED_PRECISION_REDUCTION", true))
     ret.push_back(CUDNN_NUMERICAL_NOTE_REDUCED_PRECISION_REDUCTION);

@@ -613,7 +613,14 @@ inline bool GetEnvAllowTensorCore() {
 }
 
 // The policy if the user hasn't set the environment variable
-// CUDNN_TENSOR_OP_MATH_ALLOW_CONVERSION
+// MXNET_CUDA_TENSOR_OP_MATH_ALLOW_CONVERSION.
+//
+// NOTE: this default (false) only governs the *legacy* cuDNN v7-style
+// CUDNN_TENSOR_OP_MATH_ALLOW_CONVERSION path used by cudnn_convolution-inl.h
+// (which is currently FP16-only — see cudnn_tensor_core_ in that file).
+// The active cuDNN v9 backend path in src/operator/cudnn_ops.cc reads
+// MXNET_CUDA_TENSOR_OP_MATH_ALLOW_CONVERSION with a default that follows
+// MXNET_CUDA_ALLOW_TENSOR_CORE (i.e. TF32-on-by-default on Ampere+).
 #define MXNET_CUDA_TENSOR_OP_MATH_ALLOW_CONVERSION_DEFAULT false
 
 /*!

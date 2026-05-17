@@ -25,7 +25,7 @@ CUDA compile phase dominates; expect `nvcc` to be the long pole.
 | Component   | Version    | Notes                                          |
 | ----------- | ---------- | ---------------------------------------------- |
 | CUDA        | 13.0       | system install at `/usr/local/cuda-13`         |
-| cuDNN       | 9.14.0     | `libcudnn9-cuda-13` + `libcudnn9-dev-cuda-13`  |
+| cuDNN       | 9.22.0     | local `cudnn_local/unpacked/nvidia/cudnn/` from `nvidia-cudnn-cu13==9.22.0.52` wheel (system 9.14 still works too) |
 | NCCL        | 2.28.3     | `libnccl2` + **`libnccl-dev`** (see gotcha 1)  |
 | oneDNN      | 3.11       | vendored as submodule under `3rdparty/onednn`  |
 | GCC         | 11 - 13    | 12 used for the release wheel                  |
@@ -168,10 +168,11 @@ expected — see [`issues.md`](issues.md).
    them in fp32 — so bf16 numerics are *correct* but the perf is no
    better than fp32. Not a build error.
 
-5. **cuDNN heuristic gap.** cuDNN 9.0 - 9.3 ship `sm_120` heuristic
-   tables copied from `sm_90`; many conv shapes route through generic
-   fallback engines. Use cuDNN **9.7+** if you care about conv perf;
-   the build is happy with 9.0 but you leave 1.3 - 2x on the table.
+5. **cuDNN heuristic gap (now narrow).** cuDNN 9.0 - 9.20 ship `sm_120`
+   heuristic tables with incomplete coverage. The 2026-05-17 release
+   wheel ships 9.22 which closes the depthwise gap (depthwise 3×3
+   256→256: 0.16 → 1.14 TFLOPS, ~7×); other shapes are within noise of
+   9.14. The build is happy with 9.0+ but cuDNN 9.22 is recommended.
 
 6. **`libnccl2` and `libcudnn9-cuda-13` ABI lock.** The wheel binds to
    the exact `SONAME` of these libraries at link time. If you upgrade

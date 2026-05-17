@@ -558,18 +558,27 @@ struct BLASEngine<gpu, half::half_t> {
     int minor = stream->prop.minor;
     // fp16 is not supported before ARCH 53
     if ((major > 5) || (major == 5 && minor >= 3)) {
-      const __half* A_h = reinterpret_cast<const __half*>(A);
-      const __half* B_h = reinterpret_cast<const __half*>(B);
-      __half* alpha_h = reinterpret_cast<__half*>(&alpha);
-      __half* beta_h = reinterpret_cast<__half*>(&beta);
-      __half* C_h = reinterpret_cast<__half*>(C);
-      cublasStatus_t err = cublasHgemmStridedBatched(Stream<gpu>::GetBlasHandle(stream),
-        GetT(transa), GetT(transb), m, n, k, alpha_h,
-        A_h, lda, m * k,
-        B_h, ldb, k * n,
-        beta_h, C_h, ldc, m * n,
-        batch_count);
-      CHECK_EQ(err, CUBLAS_STATUS_SUCCESS) << "Cublas: HgemmStridedBatched fail";
+      // Use pseudo-fp16 (fp16 I/O, fp32 accumulate) to match the 2-D dot()
+      // path (cublasSgemmEx) and avoid precision divergence (apache#18584).
+      // cublasHgemmStridedBatched uses fp16 accumulators which gives materially
+      // different answers from the non-batched path on CUDA 9+.
+      float alpha_f = float(alpha);  // NOLINT(*)
+      float beta_f  = float(beta);   // NOLINT(*)
+      cublasStatus_t err = cublasGemmStridedBatchedEx(
+        Stream<gpu>::GetBlasHandle(stream),
+        GetT(transa), GetT(transb), m, n, k, &alpha_f,
+        A, CUDA_R_16F, lda, static_cast<long long int>(m * k),
+        B, CUDA_R_16F, ldb, static_cast<long long int>(k * n),
+        &beta_f,
+        C, CUDA_R_16F, ldc, static_cast<long long int>(m * n),
+        batch_count,
+#if CUDA_VERSION >= 11000
+        CUBLAS_COMPUTE_32F,
+#else
+        CUDA_R_32F,
+#endif
+        CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+      CHECK_EQ(err, CUBLAS_STATUS_SUCCESS) << "Cublas: GemmStridedBatchedEx (fp16->fp32) fail";
       return;
     }
 #endif

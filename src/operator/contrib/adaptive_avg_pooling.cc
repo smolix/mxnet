@@ -173,29 +173,18 @@ void AdaptiveAvgPoolUpdateOutput(mshadow::Stream<cpu>* s,
 
 #if MXNET_USE_ONEDNN == 1
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_pooling.html
+//
+// NOTE (oneDNN v3 port): The DNNL adaptive-average-pool path miscomputes
+// the backward (grad-input vs grad-output buffer sizes mismatch, see
+// dnnl_pooling.cc::GetPoolingBwd where in_data == out_grad for adaptive
+// pooling). Until the DNNL backend is fixed, force fallback to the
+// reference CPU kernel which correctly normalizes by the per-output
+// kernel area (see SpatialAdaptiveAveragePooling_updateGradInput_frame
+// in this file). This restores forward + backward correctness for
+// output_size < input_size while leaving the DNNL implementation
+// untouched.
 bool SupportDNNLAveragePooling(const NDArray& input, const NDArray& output) {
-  for (int64_t idx = 2; idx < input.shape().ndim(); ++idx) {
-    const int s1 = input.shape()[idx];
-    const int s2 = output.shape()[idx];
-    if (s2 == 0) {
-      return false;
-    }
-    if (s1 % s2 != 0) {
-      return false;
-    }
-  }
-  const int IH         = input.shape()[2];
-  const int IW         = input.shape()[3];
-  const int OH         = output.shape()[2];
-  const int OW         = output.shape()[3];
-  const int strides_H  = ((IH << 1) / OH) - (IH / OH);
-  const int strides_W  = ((IW << 1) / OW) - (IW / OW);
-  const int kernel_H   = DIV_ROUND_UP((IH << 1) / OH, 1) - (IH / OH);
-  const int kernel_W   = DIV_ROUND_UP((IW << 1) / OW, 1) - (IW / OW);
-  const int pad_l_top  = (strides_H * (OH - 1) + kernel_H - IH) / 2;
-  const int pad_l_left = (strides_W * (OW - 1) + kernel_W - IW) / 2;
-
-  return SupportDNNL<3, 5, DNNLTypeMode::AllTypes>(input) && pad_l_top == 0 && pad_l_left == 0;
+  return false;
 }
 
 void AdaptiveAvgPoolOpBackwardExCPU(const nnvm::NodeAttrs& attrs,

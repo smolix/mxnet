@@ -43,6 +43,17 @@ static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
                                        const std::vector<NDArray>& in_data,
                                        const std::vector<OpReqType>& req,
                                        const std::vector<NDArray>& out_data) {
+  // The op declares FResourceRequest::kTempSpace; bind it so we can
+  // allocate the rescale destination and per-input scale buffers from
+  // TmpMemMgr. Without this Init, the bare `dnnl::memory(desc, engine)`
+  // ctor uses oneDNN's internal allocator, which we observed handing
+  // back overlapping storage for back-to-back small allocations in this
+  // op (symptom: int8 concat output with one input region zeroed —
+  // tests/python/dnnl/subgraphs/test_conv_subgraph.py::
+  // test_pos_single_concat_pos_neg[int8-data_shape1] failed with channels
+  // 3-6 = 0 because the relu_out reorder's destination was clobbered
+  // before the concat read it). Mirrors dnnl_quantized_batch_norm.cc.
+  TmpMemMgr::Get()->Init(ctx.requested[concat_enum::kTempSpace]);
   const ConcatParam& param_ = nnvm::get<ConcatParam>(attrs.parsed);
   CHECK_EQ(in_data.size(), static_cast<size_t>(param_.num_args * 3));
   CHECK_EQ(out_data.size(), 3U);
@@ -64,9 +75,13 @@ static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
   auto out_scale = GetScale(out_data[quantized_concat_enum::kOut], output_neg_min, output_pos_max);
   std::vector<dnnl::memory::desc> data_md;
   std::vector<const dnnl::memory*> data_mem;
-  // new_data_mem is for auto-free new created dnnl memory
-  std::vector<std::shared_ptr<dnnl::memory>> new_data_mem;
   const auto out_dtype = out_data[quantized_concat_enum::kOut].dtype();
+  // Hold per-input f32 scale buffers so their backing memory outlives
+  // DNNLStream::Submit(). Without this, the local `dnnl::memory` ctor
+  // path would tie scale storage to oneDNN's internal allocator (see
+  // note inside the loop below).
+  std::vector<std::shared_ptr<float>> scale_bufs;
+  scale_bufs.reserve(param_.num_args);
   for (int i = 0; i < param_.num_args; ++i) {
     auto i_scale = GetScale(in_data[i], data_min[i], data_max[i]);
     if (i_scale == out_scale) {
@@ -82,22 +97,30 @@ static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
         mem_desc = CloneMemDescWithDtype(mem_desc, get_dnnl_type(out_dtype));
       }
       auto cpu_engine = CpuEngine::Get()->get_engine();
-      const auto rescaled_mem = std::make_shared<dnnl::memory>(mem_desc, cpu_engine);
-      new_data_mem.push_back(rescaled_mem);
+      // Allocate rescale destination from TmpMemMgr (mirrors the working
+      // dnnl_quantized_batch_norm.cc pattern). Engine-internal allocations
+      // via `dnnl::memory(desc, engine)` gave overlapping storage across
+      // back-to-back concat-input reorders, corrupting the second input's
+      // data with zeros before the concat consumed it.
+      auto rescaled_mem = TmpMemMgr::Get()->Alloc(mem_desc);
       // v3: set_output_scales removed; use set_scales_mask + runtime arg.
       dnnl::primitive_attr reorder_attr;
       reorder_attr.set_scales_mask(DNNL_ARG_SRC, 0);
-      const auto reorder_pd = dnnl::reorder::primitive_desc(*mem, *rescaled_mem, reorder_attr);
+      const auto reorder_pd = dnnl::reorder::primitive_desc(
+          cpu_engine, mem->get_desc(), cpu_engine, mem_desc, reorder_attr);
+      // Scale memory: keep the f32 storage user-managed and held alive by
+      // `scale_bufs` until DNNLStream::Submit() runs.
+      auto scale_buf = std::make_shared<float>(out_scale / i_scale);
+      scale_bufs.push_back(scale_buf);
       dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
                                   dnnl::memory::format_tag::x);
-      auto scale_mem = dnnl::memory(scale_md, cpu_engine);
-      *reinterpret_cast<float*>(scale_mem.get_data_handle()) = out_scale / i_scale;
+      auto scale_mem = dnnl::memory(scale_md, cpu_engine, scale_buf.get());
       dnnl_args_map_t reorder_args;
       reorder_args[DNNL_ARG_SRC] = *mem;
       reorder_args[DNNL_ARG_DST] = *rescaled_mem;
       reorder_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = scale_mem;
       DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd), reorder_args);
-      data_mem.push_back(rescaled_mem.get());
+      data_mem.push_back(rescaled_mem);
       data_md.push_back(mem_desc);
     }
   }

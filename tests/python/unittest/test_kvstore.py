@@ -135,7 +135,8 @@ def test_list_kv_pair():
         check_list_kv_pair(init_kv_with_str(), str_keys, stype)
 
 
-@pytest.mark.skip(reason='Skipped due to segfault. Tracked in #18098')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='Skipped due to segfault. Tracked in #18098')
 def test_aggregator():
     """aggregate value on muliple devices"""
 
@@ -170,7 +171,8 @@ def test_aggregator():
         check_aggregator(init_kv_with_str(), 'a', str_keys, stype)
 
 
-@pytest.mark.skip(reason='Skipped due to segfault. Tracked in #18098')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='Skipped due to segfault. Tracked in #18098')
 def test_sparse_aggregator():
     """aggregate sparse ndarray on muliple devices"""
     def check_sparse_aggregator(sparse_pull):

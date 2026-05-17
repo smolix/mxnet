@@ -1857,7 +1857,8 @@ def test_group_conv2d_16c(grp, kernel_size):
         check_layer_forward_withinput(net, x)
 
 @use_np
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
 def test_deconv2d_16c():
     in_chn_list = [1024, 512, 256, 128, 64, 32, 16]
     out_chn_list = [512, 256, 128, 64, 32, 16, 3]

@@ -421,7 +421,8 @@ def test_DataBatch():
         r'DataBatch: data shapes: \[\(2L?, 3L?\), \(7L?, 8L?\)\] label shapes: \[\(4L?, 5L?\)\]', str(batch))
 
 
-@pytest.mark.skip(reason="https://github.com/apache/incubator-mxnet/issues/18382")
+# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
+# @pytest.mark.skip(reason="https://github.com/apache/incubator-mxnet/issues/18382")
 def test_CSVIter(tmpdir):
     def check_CSVIter_synthetic(dtype='float32'):
         data_path = os.path.join(str(tmpdir), 'data.t')

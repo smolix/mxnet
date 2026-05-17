@@ -19,6 +19,8 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cmath>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -263,6 +265,31 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
                                                 data_scale_,
                                                 weight_channelwise_scale);
       });
+      // Bias-overflow guard: GetQuantizeScale returns MaxValue<int32_t> when the
+      // tensor's real range is zero (degenerate calibration). Multiplied by
+      // data_scale to form the bias rescale in ConvertWeightBias2DNNL, this
+      // saturates the int32 bias and corrupts the output. Cap weight_scales_[c]
+      // so bias_real * (data_scale * weight_scale[c]) stays within int32/2.
+      // Mirrors dnnl_fc.cc:421-437; downstream requantize_scales is recomputed
+      // from the capped weight_scales_, so the math stays consistent.
+      if (has_bias && cached_bias_.dtype() == mshadow::kInt8) {
+        const float bias_abs_max = std::max(std::abs(cached_bias_min_),
+                                            std::abs(cached_bias_max_));
+        if (bias_abs_max > 0) {
+          const float bias_quant_scale =
+              GetQuantizeScale(mshadow::kInt8, cached_bias_min_, cached_bias_max_);
+          const float bias_int32_rescale_cap =
+              static_cast<float>(std::numeric_limits<int32_t>::max()) / 2.0f /
+              bias_abs_max / bias_quant_scale;
+          const float weight_scale_cap =
+              bias_int32_rescale_cap * bias_quant_scale / data_scale_;
+          for (size_t c = 0; c < weight_scales_.size(); ++c) {
+            if (weight_scales_[c] > weight_scale_cap) {
+              weight_scales_[c] = weight_scale_cap;
+            }
+          }
+        }
+      }
       // Collect scale.
       size_t channel     = cached_weight_.shape()[0];
       float sum_in_scale = 1.0;

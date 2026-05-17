@@ -336,6 +336,10 @@ class DNNLRnnForward {
   dnnl::memory* weights_iter_r_  = nullptr;
   dnnl::memory* weights_proj_r_  = nullptr;
 
+  // v3 quantized RNN: weight scales must outlive the cached reorder primitive
+  // (set_rnn_weights_qparams stores a pointer to the scale array).
+  std::vector<float> quantized_w_scales_;
+
   /*
    * net_args must contain some keys as below:
    *   DNNL_ARG_SRC

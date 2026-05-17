@@ -492,14 +492,20 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
       }
 
       if (support_channelwise_scale) {
+        // Per-OC: scale binds to WEIGHTS as v3 multiplier (s_w * weight = real).
+        // tmp_scale_/weight_scale[i] keeps the v2 multiplicative meaning.
         full_param_.output_scales.resize(num_channel);
 #pragma omp parallel for num_threads(nthreads)
         for (index_t i = 0; i < static_cast<index_t>(num_channel); ++i) {
           full_param_.output_scales[i] = tmp_scale_ / weight_scales_[i];
         }
       } else {
+        // Per-tensor: scale binds to DST as v3 divisor (dst = acc / s_dst).
+        // v2 stored out_scale/(data_scale*weight_scale) as a multiplier; v3
+        // needs its reciprocal here so the s32 accumulator is divided down.
         full_param_.output_scales.resize(1);
-        full_param_.output_scales[0] = tmp_scale_ / weight_scales_[0];
+        full_param_.output_scales[0] =
+            (weight_scales_[0] * data_scale_) / out_scale;
       }
       if (dmlc::GetEnv("MX_FC_DBG", 0)) {
         std::fprintf(stderr,

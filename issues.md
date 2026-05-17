@@ -1,6 +1,41 @@
 # MXNet Blackwell port — open issues
 
-Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `a912fcdab` (43 commits since start of port).
+Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `f8b0c7125` (49 commits since start of port).
+
+### Autonomous-session changes (after `f5934f094`)
+
+| Commit | Change | Headline |
+|---|---|---|
+| `cedeb2f9b` | re-enable 21 upstream-disabled tests | 22 unskips (incl. test_activation in `7e4231da5`) |
+| `8a47e5a9a` | issues.md + cublaslt_scope.md | ~1130 LOC adoption scope documented |
+| `7934d40d7` | `gluon.data.batchify` legacy NDArray handling | unblocks `test_gluon_data.py` (30/30) |
+| `783cfa133` | TF32 default ON for FP32 conv on cuDNN 9 | **2.87×** speedup on sm_120 (3×3 256→256) |
+| `a912fcdab` | bugreport_gluon_data.md | follow-up doc |
+| `2feaef7c1` | issues.md post-rebuild results | verify table |
+| `bd09b1a7b` | scope `reset_np()` to per-test fixture | clean test_image + test_gluon_data combined run |
+| `f103c5491` | cuDNN 9.14 → 9.22 (local wheel install) | depthwise 3×3 256→256: **0.16 → 1.14 TFLOPS (~7×)** |
+| `2b5b29085` | issues.md #1, #17 resolved | adaptive_pool 72/72, cuDNN bump |
+| `7e4231da5` | unskip + #2,#3,#6 resolved | softrelu 4/4 seeds, quantize_gluon, quantize_asym |
+| `ed26be03f` | issues.md #11 resolved | numpy test-source fixes confirmed |
+| `f8b0c7125` | wheel platform-tag fix | `cp311-cp311-linux_x86_64` (was `py3-none-any`) |
+
+Verification on post-cuDNN-9.22 build:
+
+| Surface | Pass | Fail | Skipped |
+|---|---|---|---|
+| `test_fc_subgraph.py` (full) | **387** | 0 | 16 |
+| `test_conv_subgraph.py` (full) | **426** | **2** | — |
+| `test_dnnl.py` (full) | **97** | 0 | — |
+| `test_quantization.py` (single file) | **25** | 0 | — |
+| Adaptive pool (`test_adaptive_pooling`) | **72** | 0 | 0 |
+| Gluon RNN unskipped batch | **108** | 0 | 0 |
+| Operator + sparse unskipped batch | **7** | 0 | 0 |
+| numpy_op unskipped batch | **6** | 0 | 0 |
+| Gluon data + image combined | **44** | 0 | 4 |
+| test_activation × 4 seeds | **4** | 0 | 0 |
+| **Total verified post-bump** | **1176** | **2** | **20** |
+
+The 2 remaining failures are both the same int8 quantized concat bug (item #4 below) — a real DNNL v3 reorder-semantics issue, not order-dependent.
 
 ## Status at this snapshot
 

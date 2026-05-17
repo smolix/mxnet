@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "operator/contrib/transformer-inl.h"
+#include "operator/nn/dnnl/dnnl_base-inl.h"
 #include "operator/quantization/quantization_utils.h"
 #include "operator/tensor/elemwise_unary_op.h"
 #include "operator/subgraph/common.h"
@@ -226,6 +227,56 @@ void SgDNNLSelfAttQKForward(const OpStatePtr& state_pointer,
                             const std::vector<OpReqType>& req,
                             const std::vector<NDArray>& outputs) {
   SgDNNLSelfAttQKOp& op = state_pointer.get_state<SgDNNLSelfAttQKOp>();
+  // AMP / oneDNN v3 fallback: on CPU ISAs without native bf16 (e.g. AVX2),
+  // oneDNN v3 has no bf16 matmul kernel, so the QK matmul primitive_desc
+  // creation fails inside Initialize().  Promote bf16 inputs/outputs to fp32
+  // for the duration of this call and reorder the fp32 result back into the
+  // caller's bf16 output.  The cached state on `op` is then keyed against
+  // f32 buffers so subsequent calls (also bf16-input on AVX2) reuse it.
+  if (!DNNLISASupportsLowpFloat(mshadow::kBfloat16)) {
+    bool any_bf16 = false;
+    for (const auto& nd : inputs) {
+      if (nd.dtype() == mshadow::kBfloat16) { any_bf16 = true; break; }
+    }
+    for (const auto& nd : outputs) {
+      if (nd.dtype() == mshadow::kBfloat16) { any_bf16 = true; break; }
+    }
+    if (any_bf16) {
+      std::vector<NDArray> f32_in;
+      f32_in.reserve(inputs.size());
+      for (const auto& nd : inputs) {
+        if (nd.dtype() == mshadow::kBfloat16) {
+          f32_in.emplace_back(nd.Reorder2DefaultFloatFormat());
+        } else {
+          f32_in.emplace_back(nd);
+        }
+      }
+      std::vector<NDArray> f32_out;
+      std::vector<bool> out_was_bf16;
+      f32_out.reserve(outputs.size());
+      out_was_bf16.reserve(outputs.size());
+      for (const auto& nd : outputs) {
+        if (nd.dtype() == mshadow::kBfloat16) {
+          f32_out.emplace_back(nd.shape(), nd.ctx(), /*delay_alloc=*/false,
+                               static_cast<int>(mshadow::kFloat32));
+          out_was_bf16.push_back(true);
+        } else {
+          f32_out.emplace_back(nd);
+          out_was_bf16.push_back(false);
+        }
+      }
+      std::vector<OpReqType> f32_req(req.size(), kWriteTo);
+      SgDNNLSelfAttQKForward<with_split>(state_pointer, ctx, f32_in, f32_req, f32_out);
+      DNNLStream::Get()->Submit();
+      for (size_t i = 0; i < outputs.size(); ++i) {
+        if (!out_was_bf16[i]) continue;
+        auto src_mem = f32_out[i].GetDNNLData();
+        auto dst_mem = outputs[i].GetDNNLData();
+        ReorderTo(src_mem, dst_mem);
+      }
+      return;
+    }
+  }
   bool already_prepared = false;
   if (!op.IsInitialized()) {
     op.Initialize<with_split>(ctx, inputs, req, outputs);
@@ -692,6 +743,52 @@ static void DNNLSelfAttValAttForward(const OpStatePtr& state_pointer,
                                      const std::vector<OpReqType>& req,
                                      const std::vector<NDArray>& outputs) {
   DNNLSelfAttValAttOp& op = state_pointer.get_state<DNNLSelfAttValAttOp>();
+  // AMP / oneDNN v3 fallback: matmul has no bf16 kernel on AVX2 either, so
+  // mirror the upcast that SgDNNLSelfAttQKForward applies for the QK matmul.
+  if (!DNNLISASupportsLowpFloat(mshadow::kBfloat16)) {
+    bool any_bf16 = false;
+    for (const auto& nd : inputs) {
+      if (nd.dtype() == mshadow::kBfloat16) { any_bf16 = true; break; }
+    }
+    for (const auto& nd : outputs) {
+      if (nd.dtype() == mshadow::kBfloat16) { any_bf16 = true; break; }
+    }
+    if (any_bf16) {
+      std::vector<NDArray> f32_in;
+      f32_in.reserve(inputs.size());
+      for (const auto& nd : inputs) {
+        if (nd.dtype() == mshadow::kBfloat16) {
+          f32_in.emplace_back(nd.Reorder2DefaultFloatFormat());
+        } else {
+          f32_in.emplace_back(nd);
+        }
+      }
+      std::vector<NDArray> f32_out;
+      std::vector<bool> out_was_bf16;
+      f32_out.reserve(outputs.size());
+      out_was_bf16.reserve(outputs.size());
+      for (const auto& nd : outputs) {
+        if (nd.dtype() == mshadow::kBfloat16) {
+          f32_out.emplace_back(nd.shape(), nd.ctx(), /*delay_alloc=*/false,
+                               static_cast<int>(mshadow::kFloat32));
+          out_was_bf16.push_back(true);
+        } else {
+          f32_out.emplace_back(nd);
+          out_was_bf16.push_back(false);
+        }
+      }
+      std::vector<OpReqType> f32_req(req.size(), kWriteTo);
+      DNNLSelfAttValAttForward(state_pointer, ctx, f32_in, f32_req, f32_out);
+      DNNLStream::Get()->Submit();
+      for (size_t i = 0; i < outputs.size(); ++i) {
+        if (!out_was_bf16[i]) continue;
+        auto src_mem = f32_out[i].GetDNNLData();
+        auto dst_mem = outputs[i].GetDNNLData();
+        ReorderTo(src_mem, dst_mem);
+      }
+      return;
+    }
+  }
   bool already_prepared   = false;
   if (!op.IsInitialized()) {
     op.Initialize(ctx, inputs, req, outputs);

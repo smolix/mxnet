@@ -258,6 +258,64 @@ void DNNLFCForwardImpl(const DNNLFCFullParam& full_param,
                        const std::vector<NDArray>& in_data,
                        const std::vector<OpReqType>& req,
                        const std::vector<NDArray>& out_data) {
+  // AMP / oneDNN v3 fallback: on CPU ISAs without native bf16 (e.g. AVX2),
+  // oneDNN v3 has no bf16 inner_product kernel at all, so primitive_desc
+  // creation aborts the test_amp_subgraph FC suite.  Detect bf16 inputs that
+  // the current ISA cannot handle, promote them to fp32, run the f32 FC, and
+  // reorder the fp32 output back into the caller's bf16 NDArray.  When the
+  // ISA does support bf16 (avx512_core_bf16 / amx / avx10) we fall through
+  // unchanged so the native kernel is used.
+  const int data_dtype = in_data[fullc::kData].dtype();
+  const int out_dtype  = out_data[fullc::kOut].dtype();
+  const bool need_upcast =
+      (data_dtype == mshadow::kBfloat16 || out_dtype == mshadow::kBfloat16) &&
+      !DNNLISASupportsLowpFloat(mshadow::kBfloat16);
+  if (need_upcast) {
+    std::vector<NDArray> f32_in;
+    f32_in.reserve(in_data.size());
+    for (const auto& nd : in_data) {
+      if (nd.dtype() == mshadow::kBfloat16) {
+        f32_in.emplace_back(nd.Reorder2DefaultFloatFormat());
+      } else {
+        f32_in.emplace_back(nd);
+      }
+    }
+    std::vector<NDArray> f32_out;
+    f32_out.reserve(out_data.size());
+    std::vector<bool> out_was_bf16;
+    out_was_bf16.reserve(out_data.size());
+    for (const auto& nd : out_data) {
+      if (nd.dtype() == mshadow::kBfloat16) {
+        // Pass the kFloat32 enum value directly. `emplace_back` perfect-
+        // forwards by reference; `mshadow::DataType<T>::kFlag` is a
+        // non-inline `static const int`, so the reference odr-uses it and
+        // would produce an undefined-symbol link error.
+        f32_out.emplace_back(nd.shape(), nd.ctx(), /*delay_alloc=*/false,
+                             static_cast<int>(mshadow::kFloat32));
+        out_was_bf16.push_back(true);
+      } else {
+        f32_out.emplace_back(nd);
+        out_was_bf16.push_back(false);
+      }
+    }
+    // Make sure the fp32 buffers participate in the same kWriteTo flow as
+    // the original outputs; we always materialise into the temp buffer and
+    // then reorder back, so kWriteTo is correct regardless of the caller's
+    // req[].
+    std::vector<OpReqType> f32_req(req.size(), kWriteTo);
+    DNNLFCForwardImpl(full_param, ctx, f32_in, f32_req, f32_out);
+    // Make sure the fp32 result is fully materialised before we reorder
+    // back — the recursive call above may have queued reorders.
+    DNNLStream::Get()->Submit();
+    for (size_t i = 0; i < out_data.size(); ++i) {
+      if (!out_was_bf16[i]) continue;
+      auto src_mem = f32_out[i].GetDNNLData();
+      auto dst_mem = out_data[i].GetDNNLData();
+      ReorderTo(src_mem, dst_mem);
+    }
+    return;
+  }
+
   NDArray data              = in_data[fullc::kData];
   dnnl::memory::desc out_md = GetMemDesc(out_data[fullc::kOut]);
   DNNLFCFlattenData(full_param.default_param, out_data[fullc::kOut], &data, &out_md);

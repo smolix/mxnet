@@ -6,6 +6,7 @@ Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `f8b0c7125` (49 commits 
 
 | Commit | Change | Headline |
 |---|---|---|
+| TBD | fix apache#18751: BatchNorm running_mean/var swap (DNNL CPU path) | Move running-stats update from backward to forward in `dnnl_batch_norm.cc`; both CPU+GPU now show mean≈1/var≈0 after forward on all-ones input. Regression test at `tests/python/gpu/test_batchnorm_running_stats.py` (6/6 PASS). Note: residual CPU/GPU running_var discrepancy ~4e-4 is pre-existing (DNNL biased-N vs cuDNN unbiased-N-1 variance estimator). |
 | TBD | fix apache#18584: batch_dot fp16 precision parity | `cublasHgemmStridedBatched` (fp16 accum) → `cublasGemmStridedBatchedEx(CUBLAS_COMPUTE_32F)` in mshadow; max rel-err 5.36→<0.005 |
 | `cedeb2f9b` | re-enable 21 upstream-disabled tests | 22 unskips (incl. test_activation in `7e4231da5`) |
 | `8a47e5a9a` | issues.md + cublaslt_scope.md | ~1130 LOC adoption scope documented |
@@ -103,7 +104,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 7. **bf16 path on this host** — Zen 2 EPYC 7B12 lacks AVX-512 BF16. oneDNN falls back to fp32 emulation. Not fixable in software. Test on Intel SPR / Zen 4 / Granite Rapids.
 
-8. **AMP (Automatic Mixed Precision) subgraph** — 6 `test_amp_subgraph.py` failures with `inner_product` primitive creation errors. AMP is the de-facto training-perf path on FP16 models; this needs to work.
+8. ~~**AMP (Automatic Mixed Precision) subgraph** — 6 `test_amp_subgraph.py` failures with `inner_product` primitive creation errors.~~ **RESOLVED 2026-05-17** via bf16→fp32 fallback in `dnnl_base-inl.h` + `dnnl_fully_connected.cc` + `dnnl_conv.cc` + `dnnl_transformer.cc`. `DNNLISASupportsLowpFloat()` detects AVX2 hosts at runtime and upcasts bf16 operands to fp32 for the DNNL primitive call, then reorders the fp32 result back to bf16. All 6 AMP subgraph tests now PASS (25s); FC subgraph 387/0/16 and test_dnnl.py 97/0 unchanged. See `amp_subgraph_fix.md` for full writeup.
 
 9. **AMP-RNN conversion** — `test_amp_conversion_rnn` fails with "Error during waitall()" tracked at upstream #18099. Untested whether our cuDNN-9 v8 RNN path interacts with AMP's autocast hooks at all.
 

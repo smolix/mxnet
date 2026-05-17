@@ -7,7 +7,7 @@ Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `f8b0c7125` (49 commits 
 | Commit | Change | Headline |
 |---|---|---|
 | TBD | fix apache#18751: BatchNorm running_mean/var swap (DNNL CPU path) | Move running-stats update from backward to forward in `dnnl_batch_norm.cc`; both CPU+GPU now show mean≈1/var≈0 after forward on all-ones input. Regression test at `tests/python/gpu/test_batchnorm_running_stats.py` (6/6 PASS). Note: residual CPU/GPU running_var discrepancy ~4e-4 is pre-existing (DNNL biased-N vs cuDNN unbiased-N-1 variance estimator). |
-| TBD | fix apache#18584: batch_dot fp16 precision parity | `cublasHgemmStridedBatched` (fp16 accum) → `cublasGemmStridedBatchedEx(CUBLAS_COMPUTE_32F)` in mshadow; max rel-err 5.36→<0.005 |
+| `08cb44d1d` | fix apache#18584: batch_dot fp16 precision parity | `cublasHgemmStridedBatched` (fp16 accum) → `cublasGemmStridedBatchedEx(CUBLAS_COMPUTE_32F)` in mshadow; max rel-err >500%→0.00e+00 (exact bit-match on (8,64,64,64)); 6/6 regression tests PASS |
 | `cedeb2f9b` | re-enable 21 upstream-disabled tests | 22 unskips (incl. test_activation in `7e4231da5`) |
 | `8a47e5a9a` | issues.md + cublaslt_scope.md | ~1130 LOC adoption scope documented |
 | `7934d40d7` | `gluon.data.batchify` legacy NDArray handling | unblocks `test_gluon_data.py` (30/30) |
@@ -96,7 +96,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 6. ~~**`test_activation` softrelu backward** (#13915).~~ **RESOLVED 2026-05-17**
 
-46. ~~**`batch_dot` fp16 precision divergence from `dot`** (apache#18584).~~ **RESOLVED** — mshadow `BLASEngine<gpu, half_t>::batched_gemm` was calling `cublasHgemmStridedBatched` (true fp16 accumulators) while the 2-D `dot` path calls `cublasSgemmEx` (fp32 accumulators, pseudo-fp16). On CUDA 13 / Blackwell the divergence is visible with max relative error >500% on random inputs. Fix: replaced `cublasHgemmStridedBatched` with `cublasGemmStridedBatchedEx(CUBLAS_COMPUTE_32F)` in `3rdparty/mshadow/mshadow/dot_engine-inl.h`. Regression test at `tests/python/gpu/test_batch_dot_fp16_parity.py`. Commit SHA: TBD — B2 SoftReLU/LogSigmoid α=±1 fix (`8f6cc19ad`) + cuDNN 9.22 build, verified 4/4 PASS across 4 different `MXNET_TEST_SEED` values (11, 17, 23, 31). The upstream "intermittent flake" no longer reproduces. Unskip committed.
+46. ~~**`batch_dot` fp16 precision divergence from `dot`** (apache#18584).~~ **RESOLVED** — mshadow `BLASEngine<gpu, half_t>::batched_gemm` was calling `cublasHgemmStridedBatched` (true fp16 accumulators) while the 2-D `dot` path calls `cublasSgemmEx` (fp32 accumulators, pseudo-fp16). On CUDA 13 / Blackwell the divergence is severe: max relative error >500% on random (8,64,64,64) inputs. Fix: replaced `cublasHgemmStridedBatched` with `cublasGemmStridedBatchedEx(CUBLAS_COMPUTE_32F)` in `3rdparty/mshadow/mshadow/dot_engine-inl.h`. After fix: max rel-err = 0.00e+00 (exact bit-match). Regression test at `tests/python/gpu/test_batch_dot_fp16_parity.py` (6/6 PASS). Smoke: `test_fc_subgraph.py` 387/0/16 unchanged. Commit: `08cb44d1d`.
 
 ---
 

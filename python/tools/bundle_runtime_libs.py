@@ -42,15 +42,17 @@ import sys
 # can't represent symlinks, so doing so would double our storage cost).
 # Mapping: source filename in SEARCH_DIRS -> SONAME we package as.
 BUNDLED = [
-    # cuDNN 9.x
-    ('libcudnn.so.9.14.0', 'libcudnn.so.9'),
-    ('libcudnn_adv.so.9.14.0', 'libcudnn_adv.so.9'),
-    ('libcudnn_cnn.so.9.14.0', 'libcudnn_cnn.so.9'),
-    ('libcudnn_engines_precompiled.so.9.14.0', 'libcudnn_engines_precompiled.so.9'),
-    ('libcudnn_engines_runtime_compiled.so.9.14.0', 'libcudnn_engines_runtime_compiled.so.9'),
-    ('libcudnn_graph.so.9.14.0', 'libcudnn_graph.so.9'),
-    ('libcudnn_heuristic.so.9.14.0', 'libcudnn_heuristic.so.9'),
-    ('libcudnn_ops.so.9.14.0', 'libcudnn_ops.so.9'),
+    # cuDNN 9.x (from local wheel cudnn_local/unpacked/.../lib — filenames are
+    # already the SONAME `.so.9`, so source == destination here).
+    ('libcudnn.so.9', 'libcudnn.so.9'),
+    ('libcudnn_adv.so.9', 'libcudnn_adv.so.9'),
+    ('libcudnn_cnn.so.9', 'libcudnn_cnn.so.9'),
+    ('libcudnn_engines_precompiled.so.9', 'libcudnn_engines_precompiled.so.9'),
+    ('libcudnn_engines_runtime_compiled.so.9', 'libcudnn_engines_runtime_compiled.so.9'),
+    ('libcudnn_engines_tensor_ir.so.9', 'libcudnn_engines_tensor_ir.so.9'),
+    ('libcudnn_graph.so.9', 'libcudnn_graph.so.9'),
+    ('libcudnn_heuristic.so.9', 'libcudnn_heuristic.so.9'),
+    ('libcudnn_ops.so.9', 'libcudnn_ops.so.9'),
     # NCCL 2.x
     ('libnccl.so.2.28.3', 'libnccl.so.2'),
     # CUDA 13 runtime + math libs
@@ -71,6 +73,8 @@ BUNDLED = [
 ]
 
 SEARCH_DIRS = [
+    # Prefer the local cuDNN wheel (9.22) over the system one (9.14).
+    '/workspace/mxnet/cudnn_local/unpacked/nvidia/cudnn/lib',
     '/usr/lib/x86_64-linux-gnu',
     '/usr/local/cuda/lib64',
     '/usr/local/cuda/targets/x86_64-linux/lib',

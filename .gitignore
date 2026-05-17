@@ -172,3 +172,9 @@ cmake_options.yml
 # header file generated at compile time
 include/onednn/oneapi/dnnl/dnnl_version.h
 include/onednn/oneapi/dnnl/dnnl_config.h
+
+# Locally-installed CUDA/cuDNN wheels (large; fetched via pip download)
+cudnn_local/
+
+# GPU memory profiling artifacts
+gpu_memory_profile-*.csv

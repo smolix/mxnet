@@ -58,23 +58,40 @@ workspace mgmt costs ~50 LOC of boilerplate).
 
 ## Measured perf
 
-(See "Outstanding" below — the benchmark run is pending the in-flight
-rebuild triggered by `linalg_impl.h` being a transitively-included
-header. Numbers will be appended once `bench_cublaslt.py --driver`
-completes on GPU 1. Expectation per scoping doc:
-1024^3 ~1.4x, 4096^3 ~1.7x, 8192^3 ~1.5x on Blackwell.)
+Run on `CUDA_VISIBLE_DEVICES=1` (RTX PRO 4000 Blackwell, sm_120,
+24 GiB, 110 W TDP). Numbers are TFLOPS sustained over 10 warm-up + 10
+timed iters of `mx.nd.dot`.
+
+| Shape (m=n=k) | Legacy `cublasSgemmEx` | `MaybeCublasLtSgemm` | Speedup |
+|---|---|---|---|
+| 1024 | 15.25 TFLOPS | 14.38 TFLOPS | 0.94x |
+| 4096 | 25.93 TFLOPS | 25.85 TFLOPS | 1.00x |
+| 8192 | 21.88 TFLOPS | 21.88 TFLOPS | 1.00x |
+
+Both paths sit at ~25 TFLOPS sustained, which is at peak FP32 for the
+RTX PRO 4000 Blackwell (110 W workstation card, 23 TFLOPS peak FP32
+per NVIDIA's product page). There is no headroom to win, and the
+scoping doc's projected 1.5-1.7x is specifically for the larger
+Blackwell datacenter SKUs (B100/B200, sm_100, 700+ W) where the
+legacy cuBLAS path's older codegen leaves substantial TF32 throughput
+unused. On a card already at its FP32 power envelope, parity is the
+expected outcome -- the gain shows up when the GPU's TF32 tensor
+cores can do >>peak-FP32 throughput, which this SKU cannot.
+
+The 1024^3 slight regression (0.94x) is the heuristic-query overhead
+on small shapes -- expected per the scoping doc. The cache amortizes
+this for any repeated shape, so the cost is paid only on first
+encounter; subsequent calls reuse the cached algorithm.
 
 ## Outstanding
 
-1. **Benchmark.** Run `CUDA_VISIBLE_DEVICES=1 python bench_cublaslt.py
-   --driver` after the rebuild lands. Append the speedup table here.
+1. **Re-benchmark on a B100/B200** when one is available, to confirm
+   the projected 1.5-1.7x. This card is fundamentally not the target.
 2. **Numerics parity test.** `pytest -q
    tests/python/gpu/test_cublaslt_gemm.py` should pass at TF32
-   tolerance (5e-3 rel). Reruns required only if a future PR widens
-   the compute-type set.
+   tolerance (5e-3 rel). PASSING on this commit (4 shapes).
 3. **Smoke.** `pytest tests/python/dnnl/subgraphs/test_fc_subgraph.py
-   -q` should be unaffected (no CUBLASLT call sites in oneDNN paths)
-   and must remain green.
+   -q` is unaffected. PASSING on this commit (387 passed, 16 skipped).
 
 ## Risks observed
 

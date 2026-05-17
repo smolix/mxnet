@@ -94,14 +94,22 @@ System requirements
 Installation
 ------------
 
-The release wheel is self-contained — cuDNN 9.22, NCCL 2.28, CUDA 13
-runtime libs are bundled under `mxnet/lib/` and `libmxnet.so` has
-RUNPATH set to `$ORIGIN/lib`, so a system-wide CUDA install is *not*
-required (the NVIDIA driver alone is sufficient).
-
 ```bash
-pip install mxnet-2.0.0+cu13.bw.20260517-cp311-cp311-linux_x86_64.whl
+pip install https://github.com/smolix/mxnet/releases/download/v2.0.0.cu13.bw.20260517-beta/mxnet-2.0.0+cu13.bw.20260517-cp311-cp311-linux_x86_64.whl
 ```
+
+The wheel itself is **454 MB**. `pip` will transitively pull
+`nvidia-cudnn-cu13` (~1 GB) and `nvidia-nccl-cu13` (~190 MB). The
+remaining CUDA 13 toolkit libs (`libcudart.so.13`, `libcublas.so.13`,
+`libcufft.so.12`, `libcusolver.so.12`, `libcurand.so.10`,
+`libnvrtc.so.13`) come from your system CUDA 13 install at
+`/usr/local/cuda/` — NVIDIA has not yet published `cu13` wheels for
+those on PyPI (the rest of the `nvidia-*-cu13` packages are placeholder
+stubs at version `0.0.1` as of 2026-05-17). `libmxnet.so`'s `RUNPATH`
+covers both locations.
+
+Requires Python 3.11, Linux x86_64, NVIDIA driver R570+, and the CUDA
+13 toolkit installed at `/usr/local/cuda/` (e.g. `apt install cuda-13`).
 
 To **build from source** see [`BUILDING.md`](BUILDING.md). The short version
 is: clone with submodules, install `libnccl-dev` *before* invoking `cmake`,

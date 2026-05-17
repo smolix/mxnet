@@ -100,6 +100,17 @@ solid; quantized backward and several auxiliary paths remain open (see
   longer reproduces; 4/4 PASS across 4 different `MXNET_TEST_SEED`).
 - `f8b0c7125` setup: tag wheel as binary distribution (was incorrectly
   `py3-none-any`; now `cp311-cp311-linux_x86_64`).
+- `83718e389` release: switch to PyTorch-style pip-deps wheel — no
+  longer bundles CUDA / cuDNN / NCCL libs under `mxnet/lib/`. Declares
+  `nvidia-cudnn-cu13>=9.22` and `nvidia-nccl-cu13>=2.28` as
+  `install_requires`; the rest of the CUDA 13 toolkit (cudart /
+  cublas / cufft / cusolver / curand / nvrtc) is resolved at runtime
+  via `libmxnet.so` `RUNPATH` against the system CUDA 13 install at
+  `/usr/local/cuda/`. **Wheel size: 2.22 GB → 454 MB (79% reduction)**,
+  now fits under the GitHub Releases per-asset limit.
+- Tagged and published as
+  [`v2.0.0.cu13.bw.20260517-beta`](https://github.com/smolix/mxnet/releases/tag/v2.0.0.cu13.bw.20260517-beta)
+  (prerelease) with the slim wheel as a release asset.
 
 ### Known issues
 

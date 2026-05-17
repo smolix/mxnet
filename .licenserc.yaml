@@ -83,6 +83,9 @@ header:
     - 'cublaslt_scope.md'
     - 'tf32_audit.md'
     - 'cudnn_bump.md'
+    - 'BUILDING.md'
+    - 'CHANGELOG.md'
+    - 'PERFORMANCE_NOTES.md'
     # Blackwell-port fork-local benchmark scripts (not shipped in the wheel)
     - 'bench_tf32_conv.py'
     - 'bench_cudnn_sweep.py'

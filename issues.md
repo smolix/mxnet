@@ -136,7 +136,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 15. ~~**Gluon pretrained model loading**~~ **RESOLVED 2026-05-18** — `test_gluon_model_zoo.py` runs 34/34 PASS (1 pre-existing skip for `test_parallel_download`, marked upstream #17782). Full run: all 34 model-architecture forward passes succeed; the sole pretrained-checkpoint download (`mobilenetv2_0.25` from Apache CDN) also succeeds. No symbol-serialisation errors, no URL failures, no MXNet 2.0 numpy-op renames needed. The original issue description was speculative — nothing was actually broken. `test_parallel_download` remains skipped (MXNet fork-safety issue, upstream-tracked, out of scope).
 
-16. **Custom C++ operators** — `test_custom_op_fork` audit was green but the broader custom-op infrastructure with CUDA 13 / Thrust 3 hasn't been exercised.
+16. ~~**Custom C++ operators**~~ **AUDITED 2026-05-18** — full surface validated on Blackwell sm_120 / CUDA 13. 9/9 tests pass: `example/extensions/lib_custom_op/test_{gemm,relu,transposecsr,transposerowsp}.py`, `tests/python/unittest/test_extensions.py::test_{custom_op,subgraph,external_op}`, `tests/python/gpu/test_extensions_gpu.py::test_{custom_op_gpu,external_op}`. No Thrust 3 / CUDA 13 specific regressions: the custom-op `lib_api.h` GPU path uses only raw `cudaStream_t` + `curand_kernel.h` (no Thrust), so it is unaffected by the CCCL 3 unification. One cosmetic teardown issue (`OSError: libdl.so` in `MXlib.__del__`) was caused by glibc 2.34+ absorbing libdl into libc; fixed in `python/mxnet/library.py` to try `libdl.so.2` then fall back to `libc.so.6`.
 
 ---
 

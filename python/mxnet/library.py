@@ -29,7 +29,17 @@ class MXlib:
     def __init__(self, handle):
         self.handle = handle
     def __del__(self):
-        libdl = ctypes.CDLL("libdl.so")
+        # glibc 2.34+ absorbed libdl into libc; bare "libdl.so" no longer
+        # resolves on Ubuntu 22+ etc., so MXlib.__del__ raised OSError during
+        # interpreter shutdown. Try the older soname, fall back to libc.so.6
+        # (still exports dlclose), and swallow if neither loads.
+        try:
+            libdl = ctypes.CDLL("libdl.so.2")
+        except OSError:
+            try:
+                libdl = ctypes.CDLL("libc.so.6")
+            except OSError:
+                return
         libdl.dlclose(self.handle)
 
 # set of libraries loaded

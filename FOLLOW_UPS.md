@@ -5,7 +5,7 @@ Each entry has a stable ID, last-updated date, status, and concrete next step.
 
 ---
 
-## FU-1 — DNNL v3 INT8 quantize subgraph regression family
+## FU-1 — oneDNN AVX2 int8 1x1 conv + eltwise_relu + ic<simd_w bug
 
 **Status**: OPEN. Affects three test files; all share the same suspected oneDNN v3 INT8 scale-convention root cause.
 

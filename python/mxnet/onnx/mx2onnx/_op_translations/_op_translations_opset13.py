@@ -194,6 +194,43 @@ def create_tensor(tensor_list, tensor_name, initializer, dtype='int64'):
     initializer.append(tensor)
 
 
+def make_reduce_node(op_name, inputs, output, axes_name, axes, keepdims, opset_version):
+    """Create a Reduce* ONNX node, handling the opset-18 API change.
+
+    In ONNX opset < 18 the ``axes`` parameter is an *attribute*.
+    Starting from opset 18 it became a second *input* tensor; the
+    caller must have already registered the axes initializer tensor
+    under ``axes_name``.
+
+    Parameters
+    ----------
+    op_name : str
+        ONNX Reduce op name, e.g. ``"ReduceMean"``.
+    inputs : list[str]
+        Primary input node names.
+    output : str
+        Output node name.
+    axes_name : str
+        Name of the pre-registered axes initializer (used only for opset >= 18).
+    axes : list[int] or None
+        Axis values (used only for opset < 18).
+    keepdims : int
+        keepdims attribute value.
+    opset_version : int
+        The target ONNX opset version.
+    """
+    from onnx.helper import make_node
+    if opset_version >= 18:
+        # axes is the second input; pass empty string "" to omit axes (reduce all)
+        axes_input = axes_name if axes is not None else ""
+        return make_node(op_name, inputs + [axes_input], [output], keepdims=keepdims)
+    else:
+        if axes is not None:
+            return make_node(op_name, inputs, [output], axes=axes, keepdims=keepdims)
+        else:
+            return make_node(op_name, inputs, [output], keepdims=keepdims)
+
+
 def create_helper_trans_node(node_name, input_node):
     """create extra transpose node for dot operator"""
     trans_node = onnx.helper.make_node(
@@ -355,6 +392,7 @@ def convert_layer_norm(node, **kwargs):
     input_dtypes = get_input_dtypes(node, kwargs)
 
     dtype = input_dtypes[0]
+    opset_version = kwargs.get('opset_version', 13)
 
     axes = int(attrs.get('axis', -1))
     eps = attrs.get('eps', 9.99999975e-06)
@@ -368,10 +406,12 @@ def convert_layer_norm(node, **kwargs):
     create_const_scalar_node(name+"_eps", np.float32(eps), kwargs)
 
     nodes = [
-        make_node("ReduceMean", [input_nodes[0]], [name+"_rm0_out"], axes=[axes]),
+        make_reduce_node("ReduceMean", [input_nodes[0]], name+"_rm0_out",
+                         name+"_axes", [axes], 1, opset_version),
         make_node("Sub", [input_nodes[0], name+"_rm0_out"], [name+"_sub0_out"]),
         make_node("Pow", [name+"_sub0_out", name+"_2_s"], [name+"_pow0_out"]),
-        make_node("ReduceMean", [name+"_pow0_out"], [name+"_rm1_out"], axes=[axes]),
+        make_reduce_node("ReduceMean", [name+"_pow0_out"], name+"_rm1_out",
+                         name+"_axes", [axes], 1, opset_version),
         make_node("Add", [name+"_rm1_out", name+"_eps"], [name+"_add0_out"]),
         make_node("Sqrt", [name+"_add0_out"], [name+"_sqrt0_out"]),
         make_node("Div", [name+"_sub0_out", name+"_sqrt0_out"], [name+"_div0_out"]),
@@ -1473,6 +1513,7 @@ def convert_max(node, **kwargs):
     """
     from onnx.helper import make_node
     name, input_nodes, attrs = get_inputs(node, kwargs)
+    opset_version = kwargs.get('opset_version', 13)
 
     mx_axis = str(attrs.get("axis", 'None'))
     axes = convert_string_to_list(mx_axis) if mx_axis != 'None' else None
@@ -1480,15 +1521,16 @@ def convert_max(node, **kwargs):
     keepdims = get_boolean_attribute_value(attrs, "keepdims")
 
     if axes is not None:
+        create_tensor(axes, name+'_axes', kwargs['initializer'])
         if keepdims:
-            node = make_node('ReduceMax', input_nodes, [name], axes=axes, keepdims=keepdims)
+            node = make_reduce_node('ReduceMax', input_nodes, name, name+'_axes', axes, keepdims, opset_version)
             return [node]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             create_tensor([0], name+'_0', kwargs['initializer'])
             create_tensor([len(axes)], name+'_axes_dim', kwargs['initializer'])
             nodes = [
-                make_node('ReduceMax', input_nodes, [name+'_rmax'], axes=axes, keepdims=keepdims),
+                make_reduce_node('ReduceMax', input_nodes, name+'_rmax', name+'_axes', axes, keepdims, opset_version),
                 make_node('Shape', [name+'_rmax'], [name+'_rmax_shape']),
                 make_node('Shape', [name+'_rmax_shape'], [name+'_rmax_dim']),
                 make_node('Shape', [input_nodes[0]], [name+'_in_shape']),
@@ -1504,12 +1546,12 @@ def convert_max(node, **kwargs):
             return nodes
     else:
         if keepdims:
-            node = make_node('ReduceMax', input_nodes, [name], keepdims=keepdims)
+            node = make_reduce_node('ReduceMax', input_nodes, name, name+'_axes', None, keepdims, opset_version)
             return [node]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
-                make_node('ReduceMax', input_nodes, [name+'_rmax'], keepdims=keepdims),
+                make_reduce_node('ReduceMax', input_nodes, name+'_rmax', name+'_axes', None, keepdims, opset_version),
                 make_node('Reshape', [name+'_rmax', name+'_1'], [name])
             ]
             return nodes
@@ -1522,6 +1564,7 @@ def convert_min(node, **kwargs):
     """
     from onnx.helper import make_node
     name, input_nodes, attrs = get_inputs(node, kwargs)
+    opset_version = kwargs.get('opset_version', 13)
 
     mx_axis = str(attrs.get("axis", 'None'))
     axes = convert_string_to_list(mx_axis) if mx_axis != 'None' else None
@@ -1529,15 +1572,16 @@ def convert_min(node, **kwargs):
     keepdims = get_boolean_attribute_value(attrs, "keepdims")
 
     if axes is not None:
+        create_tensor(axes, name+'_axes', kwargs['initializer'])
         if keepdims:
-            node = make_node('ReduceMin', input_nodes, [name], axes=axes, keepdims=keepdims)
+            node = make_reduce_node('ReduceMin', input_nodes, name, name+'_axes', axes, keepdims, opset_version)
             return [node]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             create_tensor([0], name+'_0', kwargs['initializer'])
             create_tensor([len(axes)], name+'_axes_dim', kwargs['initializer'])
             nodes = [
-                make_node('ReduceMin', input_nodes, [name+'_rmin'], axes=axes, keepdims=keepdims),
+                make_reduce_node('ReduceMin', input_nodes, name+'_rmin', name+'_axes', axes, keepdims, opset_version),
                 make_node('Shape', [name+'_rmin'], [name+'_rmin_shape']),
                 make_node('Shape', [name+'_rmin_shape'], [name+'_rmin_dim']),
                 make_node('Shape', [input_nodes[0]], [name+'_in_shape']),
@@ -1553,13 +1597,13 @@ def convert_min(node, **kwargs):
             return nodes
     else:
         if keepdims:
-            node = make_node('ReduceMin', input_nodes, [name], keepdims=keepdims)
+            node = make_reduce_node('ReduceMin', input_nodes, name, name+'_axes', None, keepdims, opset_version)
             return [node]
 
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
-                make_node('ReduceMin', input_nodes, [name+'_rmin'], keepdims=keepdims),
+                make_reduce_node('ReduceMin', input_nodes, name+'_rmin', name+'_axes', None, keepdims, opset_version),
                 make_node('Reshape', [name+'_rmin', name+'_1'], [name])
             ]
             return nodes
@@ -1572,6 +1616,7 @@ def convert_mean(node, **kwargs):
     """
     from onnx.helper import make_node
     name, input_nodes, attrs = get_inputs(node, kwargs)
+    opset_version = kwargs.get('opset_version', 13)
 
     mx_axis = str(attrs.get("axis", 'None'))
     axes = convert_string_to_list(mx_axis) if mx_axis != 'None' else None
@@ -1579,15 +1624,16 @@ def convert_mean(node, **kwargs):
     keepdims = get_boolean_attribute_value(attrs, "keepdims")
 
     if axes is not None:
+        create_tensor(axes, name+'_axes', kwargs['initializer'])
         if keepdims:
-            node = make_node('ReduceMean', input_nodes, [name], axes=axes, keepdims=keepdims)
+            node = make_reduce_node('ReduceMean', input_nodes, name, name+'_axes', axes, keepdims, opset_version)
             return [node]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             create_tensor([0], name+'_0', kwargs['initializer'])
             create_tensor([len(axes)], name+'_axes_dim', kwargs['initializer'])
             nodes = [
-                make_node('ReduceMean', input_nodes, [name+'_reduce'], axes=axes, keepdims=keepdims),
+                make_reduce_node('ReduceMean', input_nodes, name+'_reduce', name+'_axes', axes, keepdims, opset_version),
                 make_node('Shape', [name+'_reduce'], [name+'_reduce_shape']),
                 make_node('Shape', [name+'_reduce_shape'], [name+'_reduce_dim']),
                 make_node('Shape', [input_nodes[0]], [name+'_in_shape']),
@@ -1603,13 +1649,13 @@ def convert_mean(node, **kwargs):
             return nodes
     else:
         if keepdims:
-            node = make_node('ReduceMean', input_nodes, [name], keepdims=keepdims)
+            node = make_reduce_node('ReduceMean', input_nodes, name, name+'_axes', None, keepdims, opset_version)
             return [node]
 
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
-                make_node('ReduceMean', input_nodes, [name+'_reduce'], keepdims=keepdims),
+                make_reduce_node('ReduceMean', input_nodes, name+'_reduce', name+'_axes', None, keepdims, opset_version),
                 make_node('Reshape', [name+'_reduce', name+'_1'], [name])
             ]
             return nodes
@@ -1622,6 +1668,7 @@ def convert_prod(node, **kwargs):
     """
     from onnx.helper import make_node
     name, input_nodes, attrs = get_inputs(node, kwargs)
+    opset_version = kwargs.get('opset_version', 13)
 
     mx_axis = str(attrs.get("axis", 'None'))
     axes = convert_string_to_list(mx_axis) if mx_axis != 'None' else None
@@ -1629,15 +1676,16 @@ def convert_prod(node, **kwargs):
     keepdims = get_boolean_attribute_value(attrs, "keepdims")
 
     if axes is not None:
+        create_tensor(axes, name+'_axes', kwargs['initializer'])
         if keepdims:
-            node = make_node('ReduceProd', input_nodes, [name], axes=axes, keepdims=keepdims)
+            node = make_reduce_node('ReduceProd', input_nodes, name, name+'_axes', axes, keepdims, opset_version)
             return [node]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             create_tensor([0], name+'_0', kwargs['initializer'])
             create_tensor([len(axes)], name+'_axes_dim', kwargs['initializer'])
             nodes = [
-                make_node('ReduceProd', input_nodes, [name+'_reduce'], axes=axes, keepdims=keepdims),
+                make_reduce_node('ReduceProd', input_nodes, name+'_reduce', name+'_axes', axes, keepdims, opset_version),
                 make_node('Shape', [name+'_reduce'], [name+'_reduce_shape']),
                 make_node('Shape', [name+'_reduce_shape'], [name+'_reduce_dim']),
                 make_node('Shape', [input_nodes[0]], [name+'_in_shape']),
@@ -1653,13 +1701,13 @@ def convert_prod(node, **kwargs):
             return nodes
     else:
         if keepdims:
-            node = make_node('ReduceProd', input_nodes, [name], keepdims=keepdims)
+            node = make_reduce_node('ReduceProd', input_nodes, name, name+'_axes', None, keepdims, opset_version)
             return [node]
 
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
-                make_node('ReduceProd', input_nodes, [name+'_reduce'], keepdims=keepdims),
+                make_reduce_node('ReduceProd', input_nodes, name+'_reduce', name+'_axes', None, keepdims, opset_version),
                 make_node('Reshape', [name+'_reduce', name+'_1'], [name])
             ]
             return nodes
@@ -1719,6 +1767,7 @@ def convert_norm(node, **kwargs):
     """
     from onnx.helper import make_node
     name, input_nodes, attrs = get_inputs(node, kwargs)
+    opset_version = kwargs.get('opset_version', 13)
 
     mx_axis = attrs.get("axis", None)
     axes = convert_string_to_list(str(mx_axis)) if mx_axis else None
@@ -1729,15 +1778,16 @@ def convert_norm(node, **kwargs):
     onnx_op_name = "ReduceL1" if ord == 1 else "ReduceL2"
 
     if axes:
+        create_tensor(axes, name+'_axes', kwargs['initializer'])
         if keepdims:
-            reduce_node = make_node(onnx_op_name, input_nodes, [name], axes=axes, keepdims=keepdims)
+            reduce_node = make_reduce_node(onnx_op_name, input_nodes, name, name+'_axes', axes, keepdims, opset_version)
             return [reduce_node]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             create_tensor([0], name+'_0', kwargs['initializer'])
             create_tensor([len(axes)], name+'_axes_dim', kwargs['initializer'])
             nodes = [
-                make_node(onnx_op_name, input_nodes, [name+'_reduce'], axes=axes, keepdims=keepdims),
+                make_reduce_node(onnx_op_name, input_nodes, name+'_reduce', name+'_axes', axes, keepdims, opset_version),
                 make_node('Shape', [name+'_reduce'], [name+'_reduce_shape']),
                 make_node('Shape', [name+'_reduce_shape'], [name+'_reduce_dim']),
                 make_node('Shape', [input_nodes[0]], [name+'_in_shape']),
@@ -1754,12 +1804,12 @@ def convert_norm(node, **kwargs):
     else:
 
         if keepdims:
-            reduce_node = make_node(onnx_op_name, input_nodes, [name], keepdims=keepdims)
+            reduce_node = make_reduce_node(onnx_op_name, input_nodes, name, name+'_axes', None, keepdims, opset_version)
             return [reduce_node]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
-                make_node(onnx_op_name, input_nodes, [name+'_norm'], keepdims=keepdims),
+                make_reduce_node(onnx_op_name, input_nodes, name+'_norm', name+'_axes', None, keepdims, opset_version),
                 make_node('Reshape', [name+'_norm', name+'_1'], [name])
             ]
             return nodes
@@ -1867,6 +1917,7 @@ def convert_npi_mean(node, **kwargs):
     """
     from onnx.helper import make_node
     name, input_nodes, attrs = get_inputs(node, kwargs)
+    opset_version = kwargs.get('opset_version', 13)
 
     dtype = np.dtype('float32')
     dtype_t = onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[dtype]
@@ -1881,16 +1932,14 @@ def convert_npi_mean(node, **kwargs):
         if keepdims:
             nodes = [
                 make_node('Cast', input_nodes, [name+'_cast'], to=dtype_t),
-                make_node('ReduceMean', [name+'_cast'], [name], axes=axes,
-                          keepdims=keepdims),
+                make_reduce_node('ReduceMean', [name+'_cast'], name, name+'_axes', axes, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             create_tensor([0], name+'_0', kwargs['initializer'])
             nodes = [
                 make_node('Cast', input_nodes, [name+'_cast'], to=dtype_t),
-                make_node('ReduceMean', [name+'_cast'], [name+'_reduce'], axes=axes,
-                          keepdims=keepdims),
+                make_reduce_node('ReduceMean', [name+'_cast'], name+'_reduce', name+'_axes', axes, keepdims, opset_version),
                 make_node('Shape', [name+'_reduce'], [name+'_reduce_shape']),
                 make_node('Concat', [name+'_1', name+'_reduce_shape'], [name+'_concat'], axis=0),
                 make_node('Reshape', [name+'_reduce', name+'_concat'], [name+'_reshape']),
@@ -1900,13 +1949,13 @@ def convert_npi_mean(node, **kwargs):
         if keepdims:
             nodes = [
                 make_node('Cast', input_nodes, [name+'_cast'], to=dtype_t),
-                make_node('ReduceMean', [name+'_cast'], [name], keepdims=keepdims),
+                make_reduce_node('ReduceMean', [name+'_cast'], name, name+'_axes', None, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
                 make_node('Cast', input_nodes, [name+'_cast'], to=dtype_t),
-                make_node('ReduceMean', [name+'_cast'], [name], keepdims=keepdims),
+                make_reduce_node('ReduceMean', [name+'_cast'], name, name+'_axes', None, keepdims, opset_version),
             ]
     return nodes, (dtype,)
 
@@ -1918,6 +1967,7 @@ def convert_npi_prod(node, **kwargs):
     """
     from onnx.helper import make_node
     name, input_nodes, attrs = get_inputs(node, kwargs)
+    opset_version = kwargs.get('opset_version', 13)
 
     mx_axis = str(attrs.get("axis", 'None'))
     axes = convert_string_to_list(mx_axis) if mx_axis != 'None' else None
@@ -1928,15 +1978,13 @@ def convert_npi_prod(node, **kwargs):
         create_tensor(axes, name+'_axes', kwargs['initializer'])
         if keepdims:
             nodes = [
-                make_node('ReduceProd', [input_nodes[0]], [name], axes=axes,
-                          keepdims=keepdims),
+                make_reduce_node('ReduceProd', [input_nodes[0]], name, name+'_axes', axes, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             create_tensor([0], name+'_0', kwargs['initializer'])
             nodes = [
-                make_node('ReduceProd', [input_nodes[0]], [name+'_reduce'], axes=axes,
-                          keepdims=keepdims),
+                make_reduce_node('ReduceProd', [input_nodes[0]], name+'_reduce', name+'_axes', axes, keepdims, opset_version),
                 make_node('Shape', [name+'_reduce'], [name+'_reduce_shape']),
                 make_node('Concat', [name+'_1', name+'_reduce_shape'], [name+'_concat'], axis=0),
                 make_node('Reshape', [name+'_reduce', name+'_concat'], [name+'_reshape']),
@@ -1945,12 +1993,12 @@ def convert_npi_prod(node, **kwargs):
     else:
         if keepdims:
             nodes = [
-                make_node('ReduceProd', [input_nodes[0]], [name], keepdims=keepdims),
+                make_reduce_node('ReduceProd', [input_nodes[0]], name, name+'_axes', None, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
-                make_node('ReduceProd', [input_nodes[0]], [name], keepdims=keepdims),
+                make_reduce_node('ReduceProd', [input_nodes[0]], name, name+'_axes', None, keepdims, opset_version),
             ]
     return nodes
 
@@ -1962,6 +2010,7 @@ def convert_npi_min(node, **kwargs):
     """
     from onnx.helper import make_node
     name, input_nodes, attrs = get_inputs(node, kwargs)
+    opset_version = kwargs.get('opset_version', 13)
 
     mx_axis = str(attrs.get("axis", 'None'))
     axes = convert_string_to_list(mx_axis) if mx_axis != 'None' else None
@@ -1972,15 +2021,13 @@ def convert_npi_min(node, **kwargs):
         create_tensor(axes, name+'_axes', kwargs['initializer'])
         if keepdims:
             nodes = [
-                make_node('ReduceMin', [input_nodes[0]], [name], axes=axes,
-                          keepdims=keepdims),
+                make_reduce_node('ReduceMin', [input_nodes[0]], name, name+'_axes', axes, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             create_tensor([0], name+'_0', kwargs['initializer'])
             nodes = [
-                make_node('ReduceMin', [input_nodes[0]], [name+'_reduce'], axes=axes,
-                          keepdims=keepdims),
+                make_reduce_node('ReduceMin', [input_nodes[0]], name+'_reduce', name+'_axes', axes, keepdims, opset_version),
                 make_node('Shape', [name+'_reduce'], [name+'_reduce_shape']),
                 make_node('Concat', [name+'_1', name+'_reduce_shape'], [name+'_concat'], axis=0),
                 make_node('Reshape', [name+'_reduce', name+'_concat'], [name+'_reshape']),
@@ -1989,23 +2036,24 @@ def convert_npi_min(node, **kwargs):
     else:
         if keepdims:
             nodes = [
-                make_node('ReduceMin', [input_nodes[0]], [name], keepdims=keepdims),
+                make_reduce_node('ReduceMin', [input_nodes[0]], name, name+'_axes', None, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
-                make_node('ReduceMin', [input_nodes[0]], [name], keepdims=keepdims),
+                make_reduce_node('ReduceMin', [input_nodes[0]], name, name+'_axes', None, keepdims, opset_version),
             ]
     return nodes
 
 
 @mx_op.register("_npi_max", OPSET_VERSION)
 def convert_npi_max(node, **kwargs):
-    """Map MXNet's min operator attributes to onnx's ReduceMin operator
+    """Map MXNet's max operator attributes to onnx's ReduceMax operator
     and return the created node.
     """
     from onnx.helper import make_node
     name, input_nodes, attrs = get_inputs(node, kwargs)
+    opset_version = kwargs.get('opset_version', 13)
 
     mx_axis = str(attrs.get("axis", 'None'))
     axes = convert_string_to_list(mx_axis) if mx_axis != 'None' else None
@@ -2016,15 +2064,13 @@ def convert_npi_max(node, **kwargs):
         create_tensor(axes, name+'_axes', kwargs['initializer'])
         if keepdims:
             nodes = [
-                make_node('ReduceMax', [input_nodes[0]], [name], axes=axes,
-                          keepdims=keepdims),
+                make_reduce_node('ReduceMax', [input_nodes[0]], name, name+'_axes', axes, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             create_tensor([0], name+'_0', kwargs['initializer'])
             nodes = [
-                make_node('ReduceMax', [input_nodes[0]], [name+'_reduce'], axes=axes,
-                          keepdims=keepdims),
+                make_reduce_node('ReduceMax', [input_nodes[0]], name+'_reduce', name+'_axes', axes, keepdims, opset_version),
                 make_node('Shape', [name+'_reduce'], [name+'_reduce_shape']),
                 make_node('Concat', [name+'_1', name+'_reduce_shape'], [name+'_concat'], axis=0),
                 make_node('Reshape', [name+'_reduce', name+'_concat'], [name+'_reshape']),
@@ -2033,11 +2079,11 @@ def convert_npi_max(node, **kwargs):
     else:
         if keepdims:
             nodes = [
-                make_node('ReduceMax', [input_nodes[0]], [name], keepdims=keepdims),
+                make_reduce_node('ReduceMax', [input_nodes[0]], name, name+'_axes', None, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
-                make_node('ReduceMax', [input_nodes[0]], [name], keepdims=keepdims),
+                make_reduce_node('ReduceMax', [input_nodes[0]], name, name+'_axes', None, keepdims, opset_version),
             ]
     return nodes

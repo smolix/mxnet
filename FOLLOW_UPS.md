@@ -7,24 +7,28 @@ Each entry has a stable ID, last-updated date, status, and concrete next step.
 
 ## FU-1 — oneDNN AVX2 int8 1x1 conv + eltwise_relu + ic<simd_w bug
 
-**Status**: OPEN. Affects three test files; all share the same suspected oneDNN v3 INT8 scale-convention root cause.
+**Status**: OPEN, root cause localised (upstream oneDNN bug). Workaround documented.
 
-**Failures**:
+**Root cause** (found by DNNL_VERBOSE=2 trace + `MXNET_DISABLE_ONEDNN_FUSE_CONV_RELU=1` experiment on 2026-05-18): the channel-zero symptom is NOT in qconcat. It originates upstream in oneDNN's **`jit_uni_int8_1x1:avx2` quantized 1x1 conv** kernel when fused with `eltwise_relu` post-op AND `ic < simd_w` (AVX2 simd_w=8). The failing shape has `ic=3`; passing shapes have `ic=4` (mb=64) and `ic=16` (mb=1). The qconcat reorders faithfully copy already-wrong values.
+
+**Attempts in qconcat that did NOT fix it (all correct, just attacking the wrong primitive)**:
+1. `set_scales_mask(DNNL_ARG_SRC, 0)` with `out_scale/i_scale` (original)
+2. `set_scales_mask(DNNL_ARG_DST, 0)` with `i_scale/out_scale` (mirror of `dnnl_quantize_asym-inl.h`)
+3. u8→f32→s8 intermediate decomposition. Math validated; channels still zero.
+
+**Failures attributable to this root cause**:
 
 | Test | File | Symptom |
 |---|---|---|
-| `test_pos_single_concat_pos_neg[int8|auto-data_shape1]` | `tests/python/dnnl/subgraphs/test_conv_subgraph.py` | Max int8 error 5.0 vs atol=0.12. Channels 3-6 of output (the `relu(conv0(x))` half) zeroed. |
-| `test_self_attention[*]` (32/32) + `test_self_attention_negative` (segfault) + `test_batch_dot[*]` (16/16) | `tests/python/dnnl/subgraphs/test_matmul_subgraph.py` | Massive overflow: output ~2e+23 vs expected ~0.14. |
-| `test_quantize_gluon_with_forward` under `ENABLE_ONEDNN_QUANTIZATION_TEST=1` | `tests/python/dnnl/test_quantization_dnnl.py` | Was passing 2026-05-17. Now segfaults in `_build_cache → quantize_net → CachedOp`. |
+| `test_pos_single_concat_pos_neg[int8|auto-data_shape1]` | `tests/python/dnnl/subgraphs/test_conv_subgraph.py` | Max int8 error 5.0 vs atol=0.12. Channels 3-6 of output zeroed. |
+| `test_self_attention[*]` (32/32) + `test_self_attention_negative` (segfault) + `test_batch_dot[*]` (16/16) | `tests/python/dnnl/subgraphs/test_matmul_subgraph.py` | Massive overflow: output ~2e+23 vs expected ~0.14. Likely same kernel-tail bug applied to int8 matmul/batch-dot subgraphs. |
+| `test_quantize_gluon_with_forward` under `ENABLE_ONEDNN_QUANTIZATION_TEST=1` | `tests/python/dnnl/test_quantization_dnnl.py` | Was passing 2026-05-17. Now segfaults in `_build_cache → quantize_net → CachedOp`. Same family. |
 
-**Attempts that did NOT resolve #4 (concat)**:
-1. `set_scales_mask(DNNL_ARG_SRC, 0)` with `out_scale/i_scale` (original)
-2. `set_scales_mask(DNNL_ARG_DST, 0)` with `i_scale/out_scale` (mirror of `dnnl_quantize_asym-inl.h`)
-3. f32 intermediate (u8→f32 dequant + f32→s8 quant). Math correct; channels still zero.
+**Workaround**: `MXNET_DISABLE_ONEDNN_FUSE_CONV_RELU=1`. Passes 6/6 across all data_shapes + seeds.
 
-**Next step**: `DNNL_VERBOSE=2` trace + `DNNLConcatFwd::GetCached` cache-key inspection. If u8→s8 JIT-reorder mixed-dtype is the bug, may need a oneDNN-level workaround or upstream bisect (3.11.3 vs older).
+**Upstream code**: `3rdparty/onednn/src/cpu/x64/jit_uni_x8s8s32x_1x1_conv_kernel.cpp`. `jcp.ic = rnd_up(ic, simd_w)` pads to 8, but the tail-handling branch in `fma_block` mis-orders with s8s8 compensation (`vmm_shift`) when an eltwise_relu injector follows.
 
-**Code**: `src/operator/quantization/dnnl/dnnl_quantized_concat.cc:106-130`, plus matmul/batch-dot subgraph dispatchers (`src/operator/subgraph/dnnl/*matmul*.cc`, `dnnl_fully_connected.cc` quantized branch).
+**Proposed in-tree workaround patch**: gate `jit_uni_int8_1x1:avx2` at the subgraph-quantize level in `src/operator/subgraph/dnnl/dnnl_conv_property.h`, rejecting conv+relu fusion on AVX2 hosts when `ic < 8`. Full investigation: `.investigations/qconcat_fix_v2.patch`.
 
 **Repro**: `CUDA_VISIBLE_DEVICES= MXNET_TEST_SEED=11 pytest "tests/python/dnnl/subgraphs/test_conv_subgraph.py::test_pos_single_concat_pos_neg[int8-data_shape1]"`
 

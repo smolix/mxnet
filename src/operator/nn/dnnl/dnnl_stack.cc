@@ -33,7 +33,18 @@ namespace mxnet {
 namespace op {
 
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_reorder.html
+//
+// FU-11: oneDNN v3.11's concat primitive reports inconsistent input counts
+// (`bad number of inputs (expected N+1 got N)`) when dispatched with more
+// than 512 sources. Deterministic at the 513-input boundary; triggered by
+// `np.stack` from `gluon.data.DataLoader`'s `Stack` batchify whenever
+// batch_size > 512. Decline oneDNN dispatch for wide stacks; the generic
+// CPU path is correct (just less SIMD-vectorised), and for the int32-
+// indexing batchify hot path it is not the dominant cost.
+static constexpr size_t kDNNLStackMaxInputs = 256;
+
 bool SupportDNNLStack(const std::vector<NDArray>& inputs) {
+  if (inputs.size() > kDNNLStackMaxInputs) return false;
   return SupportDNNL<DNNLTypeMode::FloatTypes, DNNLTensorsDtypes::AllSame>(inputs);
 }
 

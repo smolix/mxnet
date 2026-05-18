@@ -249,7 +249,16 @@ inline static bool BackwardConcatStorageType(const nnvm::NodeAttrs& attrs,
 }
 #if MXNET_USE_ONEDNN == 1
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_concat.html
+//
+// FU-11: oneDNN v3.11's concat primitive fails ("bad number of inputs
+// (expected N+1 got N)") when dispatched with more than 512 sources.
+// Decline the oneDNN dispatch and fall back to the generic CPU path for
+// wide concats. See src/operator/nn/dnnl/dnnl_stack.cc for the full
+// investigation (same root cause).
+static constexpr size_t kDNNLConcatMaxInputs = 256;
+
 bool SupportDNNLConcat(const std::vector<NDArray>& arrs) {
+  if (arrs.size() > kDNNLConcatMaxInputs) return false;
   for (auto& arr : arrs) {
     if (arr.IsView() || !SupportDNNL<2, 12, AllTypes>(arr))
       return false;

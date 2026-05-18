@@ -170,7 +170,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 26. **Distributed training** — kvstore parameter server, NCCL collective, Horovod compatibility — none exercised beyond a 2-GPU smoke test.
 
-27. **`test_gluon_data*.py`** files segfault (`SIGSEGV rc=134`) — `test_gluon_data.py`, `test_contrib_gluon_data_vision.py`, `test_image.py` all had crashes in earlier sessions. Data pipeline (DataLoader, transforms, image augmentation) needs investigation.
+27. **`test_gluon_data*.py`** files segfault (`SIGSEGV rc=134`) — `test_gluon_data.py`, `test_contrib_gluon_data_vision.py`, `test_image.py` all had crashes in earlier sessions. Data pipeline (DataLoader, transforms, image augmentation) needs investigation. **RESOLVED 2026-05-18** (HEAD `c8ccd53e8`): all three files clean in isolation on current binary — `test_gluon_data.py` 30/0/0 in 51.7s, `test_contrib_gluon_data_vision.py` 3/0/0 in 9.8s, `test_image.py` 14/0/4 in 32.2s; combined (CUDA visible) 47/0/4 in 82.5s; `multi_worker` quartet stable over 3 reruns. The earlier-session segfaults were transient pollution from large single-process sweeps (cf. `.claude/worktrees/agent-a6161a6b131ea981f/PERFORMANCE_NOTES.md`, `.investigations/cpu_failures/investigation_notes.txt`) already addressed by `7934d40d7` (batchify legacy NDArray) and `bd09b1a7b` (per-test `reset_np()` scoping). Recommendation: drop the `--ignore` for these three files from the sweep config — Category (d) flake, not a real bug.
 
 28. **Mixed dtype matrices** — fp16/fp32 (AMP), int8/fp32 (quantize), int8/fp16 are separate paths; each needs its own pass.
 

@@ -42,6 +42,7 @@ typedef enum {
   large_alloc_size,
   round_linear_cutoff,
   pool_reserve,
+  per_bucket_limit,
 } env_var_type;
 
 const std::string env_var_name(const char* dev_type, env_var_type type);
@@ -111,6 +112,18 @@ class PooledStorageManager : public StorageManager, public BucketingStrategy, pu
     StoringMethod::InitContainer(this);
     contextHelper_->set_initilal_context(ctx);
 
+    // Per-bucket retention cap. 0 = unlimited (legacy behavior).
+    // See apache/mxnet#17335: dynamic-shape workloads (variable-length NLP,
+    // Bucket batchify, dynamic image) hit many distinct rounded sizes and
+    // the pool retains every freed chunk forever, eventually OOMing while
+    // device memory is mostly idle pool slots.
+    if (dev_type) {
+      const auto env_var = env_var_name(dev_type, per_bucket_limit);
+      per_bucket_limit_  = dmlc::GetEnv(env_var.c_str(), 4);
+    } else {
+      per_bucket_limit_ = 0;
+    }
+
     // percentage of reserved memory
     if (dev_type) {
       const auto env_var       = env_var_name(dev_type, pool_reserve);
@@ -130,8 +143,21 @@ class PooledStorageManager : public StorageManager, public BucketingStrategy, pu
   void Free(Storage::Handle handle) override {
     // Insert returned memory in cache
     std::lock_guard<std::mutex> lock(Storage::Get()->GetMutex(dev_type_));
-    StoringMethod::InsertInCache(
-        BucketingStrategy::get_bucket(handle.size), handle.dptr, handle.sync_obj);
+    const auto bucket_id = BucketingStrategy::get_bucket(handle.size);
+    if (per_bucket_limit_ > 0 &&
+        StoringMethod::BucketSize(bucket_id) >= per_bucket_limit_) {
+      // Bucket is at retention cap: return chunk directly to the device
+      // allocator instead of growing the pool unboundedly. Trades a
+      // cudaFree call for bounded steady-state pool size.
+      SET_DEVICE(device_store, contextHelper_, handle.ctx, true);
+      contextHelper_->Free(handle.dptr);
+      SET_GPU_PROFILER(profilerGPU, contextHelper_);
+      GPU_PROFILER_ON_FREE(profilerGPU, handle.dptr);
+      UNSET_DEVICE(device_store);
+      used_memory_ -= BucketingStrategy::RoundAllocSizeForBucket(bucket_id);
+      return;
+    }
+    StoringMethod::InsertInCache(bucket_id, handle.dptr, handle.sync_obj);
   }
 
   void DirectFree(Storage::Handle handle) override {
@@ -167,6 +193,8 @@ class PooledStorageManager : public StorageManager, public BucketingStrategy, pu
   size_t used_memory_ = 0;
   // minimum amount of memory, which will never be allocated
   size_t memory_allocation_limit_ = 0;
+  // max free chunks retained per bucket (0 = unlimited, legacy behavior)
+  size_t per_bucket_limit_ = 0;
   // Pointer to the Helper, supporting some context-specific operations in GPU/CPU/CPUPinned context
   std::unique_ptr<ContextHelper> contextHelper_;
 };
@@ -410,6 +438,11 @@ class UnorderedMapContainer {
     memory_pool_[key].emplace_back(dptr, sync_obj);
   }
 
+  inline size_t BucketSize(size_t key) const {
+    auto it = memory_pool_.find(key);
+    return it == memory_pool_.end() ? 0 : it->second.size();
+  }
+
   inline std::vector<std::pair<void*, Storage::SyncObj>>* GetMemStorage(size_t key) {
     auto&& reuse_it = memory_pool_.find(key);
     return reuse_it != memory_pool_.end() && reuse_it->second.size() ? &reuse_it->second : nullptr;
@@ -452,6 +485,10 @@ class VectorContainer {
 
   inline void InsertInCache(size_t idx, void* dptr, Storage::SyncObj sync_obj) {
     memory_pool_[idx].emplace_back(dptr, sync_obj);
+  }
+
+  inline size_t BucketSize(size_t idx) const {
+    return idx < memory_pool_.size() ? memory_pool_[idx].size() : 0;
   }
 
   std::vector<std::pair<void*, Storage::SyncObj>>* GetMemStorage(size_t idx) {

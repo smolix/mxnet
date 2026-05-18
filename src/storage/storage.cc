@@ -244,12 +244,13 @@ void StorageImpl::SharedIncrementRefCount(Storage::Handle handle) {
 }
 
 const std::string env_var_name(const char* dev_type, env_var_type type) {
-  static const std::array<std::string, 5> name = {
+  static const std::array<std::string, 6> name = {
       "MEM_POOL_TYPE",
       "POOL_PAGE_SIZE",
       "MEM_LARGE_ALLOC_ROUND_SIZE",
       "MEM_POOL_ROUND_LINEAR_CUTOFF",
       "MEM_POOL_RESERVE",
+      "MEM_POOL_PER_BUCKET_LIMIT",
   };
 
   return std::string("MXNET_") + dev_type + "_" + name[type];

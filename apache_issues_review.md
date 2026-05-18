@@ -43,10 +43,12 @@ on our code.
 - Regression test: `tests/python/dnnl/test_a1_5d_conv_reorder.py` (parametrized over `num_filter ∈ {199, 200, 208, 256, 512}` + correctness vs numpy). Not run yet; awaits rebuild after the current pytest sweeps finish.
 - Link: https://github.com/apache/mxnet/issues/21199
 
-### A2. #17335 — Excessive GPU memory usage with dynamic shape input (13 reactions — most-felt open bug)
-- Highest reactions among open bugs. With ThreadedEngine + dynamic shape Gluon DataLoader, memory pool grows unboundedly. Max batch 16 vs 256 for PyTorch on the same workload; NaiveEngine works fine, so it is a pool / cache leak in the threaded path.
-- Why this likely affects our fork. We have not touched the memory pool; same code path. `pooled_storage_manager.h` allocates indefinitely on novel shapes. RTX PRO 4000 has only 24 GB — this will bite anyone running variable-length NLP / dynamic-image pipelines.
-- Suggested fix. (a) Set `MXNET_GPU_MEM_POOL_TYPE=Round` as the default — already tracked as issues.md #22 — and document it; (b) instrument the pool to evict bucket entries older than N seconds; (c) cap per-bucket retention. Effort: M (need a benchmark harness to verify no regression on static shapes).
+### A2. #17335 — Excessive GPU memory usage with dynamic shape input — **PATCH READY (2026-05-18), awaits rebuild**
+- Bug confirmed in `src/storage/pooled_storage_manager.h`: `PooledStorageManager::Free()` appends to `memory_pool_[bucket_id]` with **no eviction path**. Buckets grow monotonically until total free GPU memory drops below ~5% reserve. Synthetic repro at `tests/python/gpu/test_pool_dynamic_shape.py` (8 buckets × 8 concurrent live buffers): pool plateaus at **766 MiB = 8× working set**. With 64 distinct buckets: 4278 MiB (matches upstream OOM-at-batch=16 signature).
+- Fix: per-bucket count cap (option (c) from the original suggested-fix list). New env var `MXNET_<DEV>_MEM_POOL_PER_BUCKET_LIMIT` (default 4). When `Free()` is called and `BucketSize(bucket_id) >= per_bucket_limit_`, the new chunk goes straight to `contextHelper_->Free` (mirroring `DirectFree` logic) instead of being retained. `BucketSize` getter added to both `UnorderedMapContainer` (Naive pool) and `VectorContainer` (Round pool). Setting K=0 restores legacy unbounded behavior.
+- Expected impact: 766 → ~440 MiB on the synthetic 8-bucket repro; proportional reduction (~K/concurrency) for the upstream-reporter dynamic-shape workload. Steady-shape jobs (resnet18 batch=32) are unaffected (BucketSize rarely > 4).
+- Risks: extra `cudaFree` calls on truly extreme dynamic workloads (negligible at K=4, tunable upward); profiler memory accounting unchanged (uses `DirectFree`'s existing pattern).
+- Patch: `.investigations/a2_pool_retention.patch` (106 lines; `git apply --check` clean). Repro test: `tests/python/gpu/test_pool_dynamic_shape.py` (asserts peak ≤ K·sum_bucket_mib + overhead). Awaits rebuild after current sweeps complete.
 - Link: https://github.com/apache/mxnet/issues/17335
 
 ### A3. #18751 — `gluon.nn.BatchNorm` swaps `running_mean` and `running_var` on GPU (5 reactions, 20 comments)

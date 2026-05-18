@@ -140,8 +140,8 @@ verification before being closed out.
 ### B1. #17231 — Quantization example (`imagenet_gen_qsym_mkldnn.py`) segfaults
 - Test plan. Run `python example/quantization/imagenet_gen_qsym_mkldnn.py --model=resnet50_v1 --calib-mode=entropy --num-calib-batches=10`. If it completes and produces a quantized symbol, this is closed by the oneDNN v3 fixes (`46ada1129`, `1df0ff579`, `740165f04`). Effort to verify: 1 hour.
 
-### B2. #20675 — MXNet 2.0 up to 10x slower than 1.x on Windows
-- Test plan. Not directly applicable (we're Linux), but the CMake `(NOT USE_ONEDNN) AND USE_INT64_TENSOR_SIZE` failure mode should be re-checked in our CMakeLists. Confirm whether disabling oneDNN now warns or errors; we want a warning. Effort: 30 min.
+### B2. #20675 — MXNet 2.0 up to 10x slower than 1.x on Windows — **VERIFIED N/A** (2026-05-18)
+- The Linux CMakeLists.txt configures cleanly with `USE_ONEDNN=OFF -DUSE_INT64_TENSOR_SIZE=ON -DUSE_CUDA=OFF`; no error, no warning needed. The Windows-only slowdown is hardware/OS-specific and is out of scope for this Blackwell Linux port.
 
 ### B3. #19994 / #18090 deadlock pair
 - Test plan. Run `tests/python/gpu/test_operator_gpu.py` overnight in a loop (>= 8 h). If it never hangs, our cuDNN-9 rewrite + the engine code path *may* have eliminated the deadlock. (Listed in A6/A7 too because a single passing run does not prove anything.)
@@ -152,8 +152,9 @@ verification before being closed out.
 ### B5. #18923 / #13138 / #15540 — ONNX import paths
 - Test plan. We already know ONNX module path was never updated for MXNet 2.0 (issues.md #14), so these import-from-ONNX bugs *will* still fail. They are reclassified here only because the fix is upstream (resolve our #14 first); if we fix #14, retest these as part of that.
 
-### B6. #16933 — `setup.py bdist_wheel` lays out files wrong
-- Test plan. Already addressed by our `f8b0c7125` (wheel platform-tag fix) and `83718e389` (pip-deps wheel). Sanity-check that `pip install` of our wheel actually places `libmxnet.so` under `site-packages/mxnet/`. Effort: 5 min.
+### B6. #16933 — `setup.py bdist_wheel` lays out files wrong — **VERIFIED FIXED** (2026-05-18)
+- `f8b0c7125` (wheel tag) + `83718e389` (pip-deps wheel) closed this.
+- Confirmed: `mxnet/libmxnet.so` is in the wheel, `Root-Is-Purelib: false`, tag = `cp311-cp311-linux_x86_64`.
 
 ### B7. #19159 — GPU memory grows forever in Flask debug mode (multi-thread)
 - Test plan. Same root cause as A2 (#17335) and A12 (#17495 thread-safety). Once those land, retest with the Flask repro.

@@ -159,8 +159,12 @@ verification before being closed out.
 ### B7. #19159 — GPU memory grows forever in Flask debug mode (multi-thread)
 - Test plan. Same root cause as A2 (#17335) and A12 (#17495 thread-safety). Once those land, retest with the Flask repro.
 
-### B8. #19218 — CPU inference very slow for some checkpoints (~110ms per conv)
-- Test plan. Build resnet50 checkpoints at iteration 3 and iteration 23, run CPU inference on each, profile. If our oneDNN v3 + per-OC scale path is now used, this should be uniform. Effort: 2 hours.
+### B8. #19218 — CPU inference very slow for some checkpoints — **CONFIRMED + DIAGNOSED 2026-05-18**, **WORSE THAN UPSTREAM**
+- Benchmarked on AMD EPYC 7B12 Zen 2 (AVX2-only): Conv2D 64ch (1,3,224,224) takes 49.8 ms with `OMP_NUM_THREADS=1` BUT **536 ms with default 64 threads** (10× slower). Conv2D 512ch: 282 → 539 ms. Dense 1000 (1,2048): 3.6 → 271 ms (75× slower). Numbers in `b8_cpu_inference_bench.md`, bench at `bench_cpu_inference_b8.py`.
+- Root causes: (1) **IC=3 + brg_conv_fwd:avx2 is pathological** — oneDNN v3 picks weight format `Acdb16a` which pads IC to blocks of 16. With IC=3, 81% of every AVX2 vector op is wasted on padding zeros. (2) **Negative thread scaling at bs=1** — the EPYC's 8 NUMA domains plus minimal per-thread work makes 64 threads catastrophically slower than 1. (3) **oneDNN v3 bump made it worse** — v3 now prefers `brg_conv` (throughput-tuned) where v2 used `jit:avx2`.
+- **Immediate workaround (no code change)**: Set `OMP_NUM_THREADS=1` for bs=1 inference. 10× speedup. Document in tuning guide.
+- **Proposed code fix**: In `src/operator/nn/dnnl/dnnl_convolution.cc`, gate `brg_conv` selection away from IC<16 + bs=1 + AVX2-only host. Allow the older `jit:avx2` path to win there.
+- Effort: M (1 day to ship the dispatcher gate + verify across a few EPYC/Zen / Xeon hosts). Not a Blackwell-port blocker (CPU inference is a side use case).
 
 ---
 

@@ -124,12 +124,18 @@ def test_b8_lowic_conv_correctness():
     take the normal brg path and the result is the same.
     """
     net = _build_conv(num_filter=4, kernel=(3, 3))
+
+    shape = (1, 3, 8, 8)
+    # Run one forward pass first to trigger shape inference so that
+    # w.shape resolves the deferred IC dimension (-1 → 3) before we
+    # try to build the ones array.
+    x_init = mx.np.zeros(shape, ctx=mx.cpu())
+    net(x_init).wait_to_read()
+
     # Manually set conv weights to a known value so the output is
     # deterministic regardless of init.
     w = net[0].weight
     w.set_data(mx.np.ones(w.shape, ctx=mx.cpu()) / 27.0)
-
-    shape = (1, 3, 8, 8)
     x_np = np.arange(np.prod(shape), dtype="float32").reshape(shape) / 192.0
     x = mx.np.array(x_np, ctx=mx.cpu())
     y = net(x).asnumpy()

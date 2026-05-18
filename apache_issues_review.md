@@ -146,8 +146,12 @@ verification before being closed out.
 ### B3. #19994 / #18090 deadlock pair
 - Test plan. Run `tests/python/gpu/test_operator_gpu.py` overnight in a loop (>= 8 h). If it never hangs, our cuDNN-9 rewrite + the engine code path *may* have eliminated the deadlock. (Listed in A6/A7 too because a single passing run does not prove anything.)
 
-### B4. #18121 — Sparse NDArray model load
-- Test plan. Load a known-good `__storage_type__=1` (RowSparse) symbol via `mx.model.load_checkpoint`. We did not exercise sparse parameter load in this port; CHANGELOG says sparse-conversion was touched in `7934d40d7`. Effort: 1 hour to construct a 1.4-era saved model and load it.
+### B4. #18121 — Sparse NDArray model load — **TESTED 2026-05-18 (11/11 pass)**
+- `tests/python/unittest/test_sparse_model_load.py` (11 tests, all pass). Split by API era:
+  - **Working (legacy)**: `mx.nd.save`/`mx.nd.load` round-trips `row_sparse` NDArrays preserving stype on both CPU and GPU. `tostype('row_sparse')` at the ndarray layer works.
+  - **Intentionally blocked (Gluon2.0 / np-semantics)**: `Embedding(sparse_grad=True)`, `Parameter(stype='row_sparse').initialize()`, `SymbolBlock` construction with row_sparse, and `mx.nd.save` for row_sparse in np mode all raise documented errors mentioning "not supported in NumPy interface and Gluon2.0". These are upstream design decisions, not Blackwell port bugs.
+- Verdict: no action needed for the Blackwell port. Workaround for users with 1.x sparse checkpoints: `mx.npx.reset_np()` before `mx.nd.load`. Re-enabling Gluon2.0 sparse support is a separate upstream-design discussion.
+- Link: https://github.com/apache/mxnet/issues/18121
 
 ### B5. #18923 / #13138 / #15540 — ONNX import paths
 - Test plan. We already know ONNX module path was never updated for MXNet 2.0 (issues.md #14), so these import-from-ONNX bugs *will* still fail. They are reclassified here only because the fix is upstream (resolve our #14 first); if we fix #14, retest these as part of that.

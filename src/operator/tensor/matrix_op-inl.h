@@ -167,7 +167,14 @@ inline mxnet::TShape InferReshapeShape(const mxnet::Tuple<IType>& shape,
       IType new_size = 1;
       for (IType x : tmp)
         new_size *= x;
-      tmp[inf_idx] = dshape.Size() / new_size;
+      // Guard against 0/0: if new_size is 0 (can happen when the infer_shape
+      // API passes 0 for an unknown dim and the kept dims produced a zero
+      // product), leave the inferred dim unknown (-1) rather than dividing.
+      if (new_size == 0) {
+        tmp[inf_idx] = -1;
+      } else {
+        tmp[inf_idx] = dshape.Size() / new_size;
+      }
     } else {
       tmp[inf_idx] = -1;
     }
@@ -240,12 +247,15 @@ inline bool ReshapeShape(const nnvm::NodeAttrs& attrs,
            ReverseReshapeInferShape(&(*in_attrs)[0], (*out_attrs)[0]);
   }
   ReverseReshapeInferShape(&dshape, oshape);
-#if 0
-  CHECK_EQ(oshape.Size(), dshape.Size())
-    << "Target shape size is different to source. "
-    << "Target: " << oshape
-    << "\nSource: " << dshape;
-#endif
+  // Guard: only validate sizes when both shapes are fully resolved (no unknown
+  // dims introduced by the '-1' placeholder or dynamic graph shapes).
+  if (shape_is_known(dshape) && shape_is_known(oshape)) {
+    CHECK_EQ(oshape.Size(), dshape.Size())
+        << "Reshape: target shape size " << oshape.Size()
+        << " does not match source size " << dshape.Size()
+        << ". Source shape: " << dshape
+        << ", target shape: " << oshape;
+  }
   SHAPE_ASSIGN_CHECK(*out_attrs, 0, oshape);
   return ReverseReshapeInferShape(&(*in_attrs)[0], (*out_attrs)[0]);
 }

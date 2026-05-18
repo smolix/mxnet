@@ -45,9 +45,8 @@ def _get_builtin_op(op_name):
                              .format(submodule_name[1:-1], root_module.__name__))
 
     op = getattr(op_module, op_name[(len(op_name_prefix)+len(submodule_name)):], None)
-    if op is None:
-        raise ValueError('Cannot find operator {} in module {}'
-                         .format(op_name[len(op_name_prefix):], root_module.__name__))
+    # Some ops documented in _numpy_op_doc (e.g. deprecated `sometrue`) may no
+    # longer exist in the numpy module. Skip them gracefully instead of crashing.
     return op
 
 

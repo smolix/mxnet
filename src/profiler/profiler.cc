@@ -97,14 +97,13 @@ Profiler::~Profiler() {
 }
 
 Profiler* Profiler::Get(std::shared_ptr<Profiler>* sp) {
-  static std::mutex mtx;
-  static std::shared_ptr<Profiler> prof = nullptr;
-  if (!prof) {
-    std::unique_lock<std::mutex> lk(mtx);
-    if (!prof) {
-      prof = std::make_shared<Profiler>();
-    }
-  }
+  // C++17 magic-static guarantees thread-safe one-time initialisation.
+  // The previous hand-rolled DCL had a data race: the outer `if (!prof)` read
+  // a std::shared_ptr without any synchronisation while another thread could be
+  // writing it inside the mutex (UB per C++ memory model). Replace with a
+  // function-local-static shared_ptr, which is initialised exactly once and
+  // safely under the compiler-generated initialisation lock.
+  static std::shared_ptr<Profiler> prof = std::make_shared<Profiler>();
   if (sp) {
     *sp = prof;
   }

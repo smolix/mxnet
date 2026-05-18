@@ -84,7 +84,7 @@ def with_array_ufunc_protocol(func):
 _NUMPY_ARRAY_FUNCTION_LIST = [
     'all',
     'any',
-    'sometrue',
+    # 'sometrue',  # deprecated numpy alias; not implemented in mxnet.numpy
     'argmin',
     'argmax',
     'around',
@@ -225,6 +225,10 @@ def _register_array_function():
     for op_name in _NUMPY_ARRAY_FUNCTION_LIST:
         strs = op_name.split('.')
         if len(strs) == 1:
+            if not hasattr(mx_np, op_name) or not hasattr(_np, op_name):
+                # Skip deprecated / removed ops (e.g. numpy removed 'sometrue'
+                # in 2.x). Silently continue so old op lists stay backward compat.
+                continue
             mx_np_op = getattr(mx_np, op_name)
             onp_op = getattr(_np, op_name)
             setattr(mx_np, op_name, _implements(onp_op)(mx_np_op))

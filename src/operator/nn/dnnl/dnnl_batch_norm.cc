@@ -196,9 +196,25 @@ void DNNLBNForward::Execute(const OpContext& ctx,
       DNNLStream::Get()->RegisterPrimArgs(GetFwd(), net_args);
       DNNLStream::Get()->Submit();
 
-      float* ovar = outVar.data().dptr<float>();
+      // Update running mean/variance here in the forward pass so that they
+      // are visible immediately after forward() — consistent with the cuDNN
+      // (GPU) path which updates them inside cudnnBatchNormalizationForwardTrainingEx.
+      // The backward pass previously did this update; now that it happens here
+      // the backward pass skips it (see DNNLBNBackward::Execute).
+      float* moving_mean_ptr = aux_states[batchnorm::kMovingMean].data().dptr<float>();
+      float* moving_var_ptr  = aux_states[batchnorm::kMovingVar].data().dptr<float>();
+      float* out_mean_ptr    = outMean.data().dptr<float>();
+      float* out_var_ptr     = outVar.data().dptr<float>();
+      float minus_mom        = 1.0f - param.momentum;
       for (index_t i = 0; i < channels_; i++) {
-        ovar[i] = VARIANCE_TO_INVSTD(ovar[i], param.eps);
+        moving_mean_ptr[i] = moving_mean_ptr[i] * param.momentum + out_mean_ptr[i] * minus_mom;
+        // outVar currently holds the raw variance (before inv-std conversion below)
+        moving_var_ptr[i] = moving_var_ptr[i] * param.momentum + out_var_ptr[i] * minus_mom;
+      }
+
+      // Convert saved variance to inv-std for use in the backward pass.
+      for (index_t i = 0; i < channels_; i++) {
+        out_var_ptr[i] = VARIANCE_TO_INVSTD(out_var_ptr[i], param.eps);
       }
     }
   } else {  // no input gamma and beta
@@ -355,19 +371,17 @@ void DNNLBNBackward::Execute(const BatchNormParam& param,
 
     // training but no input mean and variance
     if (ctx.is_train && !param.use_global_stats) {
-      float* moving_mean_ptr = moving_mean.data().dptr<float>();
-      float* moving_var_ptr  = moving_var.data().dptr<float>();
-      float* out_mean_ptr    = out_mean.data().dptr<float>();
-      float* out_var_ptr     = out_var.data().dptr<float>();
+      // Running mean/variance were already updated in the forward pass
+      // (DNNLBNForward::Execute training branch).  Here we only need to
+      // supply the saved batch mean and the reconstructed batch variance to
+      // the oneDNN backward primitive.
+      float* out_var_ptr = out_var.data().dptr<float>();
       dnnl::memory var_mem(pd.variance_desc(), CpuEngine::Get()->get_engine());
       float* tmp_var_ptr = reinterpret_cast<float*>(var_mem.get_data_handle());
-
-      float minus_mom = (1.0f - param.momentum);
+      index_t channels_  = data.shape()[1];
       for (index_t i = 0; i < channels_; i++) {
-        moving_mean_ptr[i] = moving_mean_ptr[i] * param.momentum + out_mean_ptr[i] * minus_mom;
-        float variance     = INVSTD_TO_VARIANCE(out_var_ptr[i], param.eps);
-        tmp_var_ptr[i]     = variance;
-        moving_var_ptr[i]  = moving_var_ptr[i] * param.momentum + variance * minus_mom;
+        // out_var holds inv-std; convert back to variance for oneDNN backward.
+        tmp_var_ptr[i] = INVSTD_TO_VARIANCE(out_var_ptr[i], param.eps);
       }
       net_args[DNNL_ARG_MEAN]     = *(out_mean.GetDNNLData());
       net_args[DNNL_ARG_VARIANCE] = var_mem;

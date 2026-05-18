@@ -326,6 +326,51 @@ static inline dnnl::memory::data_type get_dnnl_type_t() {
   return static_cast<dnnl::memory::data_type>(data_type_enum<T>::type);
 }
 
+// AMP fallback (oneDNN v3 / AVX2 port): return true if the running CPU ISA
+// has native kernels for the given low-precision float dtype.  On AVX2 hosts
+// oneDNN v3 has NO bf16 or fp16 inner_product / convolution implementations,
+// so AMP-converted FC / Conv subgraphs that drop down to bf16 weights+inputs
+// would otherwise fail with "could not create a primitive descriptor".  This
+// helper lets the FC / Conv forward paths detect that case and upcast the
+// affected NDArrays to f32 before handing them to oneDNN.
+//
+// Only bf16/fp16 need this check; fp32 and quantized integer ops are always
+// supported.  The set of bf16/fp16-capable ISAs is enumerated explicitly
+// because oneDNN's cpu_isa enum is not monotonic in capability — e.g.
+// avx2_vnni_2 (0x1f) has bf16 but compares numerically less than
+// avx512_core (0x27) which does not.
+static inline bool DNNLISASupportsLowpFloat(int dtype) {
+  if (dtype != mshadow::kBfloat16 && dtype != mshadow::kFloat16) {
+    return true;
+  }
+  const auto isa = dnnl::get_effective_cpu_isa();
+  if (dtype == mshadow::kBfloat16) {
+    switch (isa) {
+      case dnnl::cpu_isa::avx2_vnni_2:
+      case dnnl::cpu_isa::avx512_core_bf16:
+      case dnnl::cpu_isa::avx10_1_512:        // == avx512_core_fp16
+      case dnnl::cpu_isa::avx10_1_512_amx:    // == avx512_core_amx
+      case dnnl::cpu_isa::avx10_1_512_amx_fp16:  // == avx512_core_amx_fp16
+      case dnnl::cpu_isa::avx10_2_512:
+      case dnnl::cpu_isa::avx10_2_512_amx_2:
+        return true;
+      default:
+        return false;
+    }
+  }
+  // fp16: a stricter subset.
+  switch (isa) {
+    case dnnl::cpu_isa::avx2_vnni_2:
+    case dnnl::cpu_isa::avx10_1_512:        // == avx512_core_fp16
+    case dnnl::cpu_isa::avx10_1_512_amx_fp16:  // == avx512_core_amx_fp16
+    case dnnl::cpu_isa::avx10_2_512:
+    case dnnl::cpu_isa::avx10_2_512_amx_2:
+      return true;
+    default:
+      return false;
+  }
+}
+
 static inline int get_mxnet_type(dnnl::memory::data_type dnnl_dtype) {
   switch (dnnl_dtype) {
     case dnnl::memory::data_type::f32:

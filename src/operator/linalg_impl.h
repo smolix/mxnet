@@ -30,6 +30,9 @@
 #include <algorithm>
 
 #include "../common/cuda/utils.h"
+#if MXNET_USE_CUDA
+#include "../common/cuda/cublaslt_gemm.h"
+#endif
 #include "mxnet_op.h"
 
 // Convenience functions.
@@ -40,10 +43,56 @@ inline void linalg_check_batch_size(int A, int B, int C) {
 }
 
 #ifdef __CUDACC__
-#define EPHEMERAL_GPU_STORAGE_ALLOC(func, var, dtype, size)                          \
-  Storage::Handle var = Storage::Get()->Alloc(sizeof(dtype) * size, Context::GPU()); \
-  var.profiler_scope  = "<ephemeral>:";                                              \
-  var.name            = #func "_" #var;
+// RAII wrapper for a temporary GPU storage buffer.
+// Fix for apache/mxnet#19353: the old pattern allocated a storage handle,
+// enqueued GPU work that uses it, then called Storage::Get()->Free() from the
+// CPU side while kernels were still in flight on the CUDA stream.  The freed
+// block could be immediately reused by another op, causing data corruption /
+// NaN.  This wrapper ensures the stream is synchronized before the block is
+// returned to the pool, so the GPU is guaranteed to be done with it.
+struct LinalgEphemeralGPUStorage {
+  mxnet::Storage::Handle handle;
+  cudaStream_t           stream;
+
+  LinalgEphemeralGPUStorage(mxnet::Storage::Handle h, cudaStream_t st)
+      : handle(h), stream(st) {}
+
+  // No copies – owned resource.
+  LinalgEphemeralGPUStorage(const LinalgEphemeralGPUStorage&)            = delete;
+  LinalgEphemeralGPUStorage& operator=(const LinalgEphemeralGPUStorage&) = delete;
+
+  // Move is fine (transfer ownership).
+  LinalgEphemeralGPUStorage(LinalgEphemeralGPUStorage&& o) noexcept
+      : handle(o.handle), stream(o.stream) {
+    o.handle.dptr = nullptr;
+  }
+
+  ~LinalgEphemeralGPUStorage() {
+    if (handle.dptr != nullptr) {
+      // Synchronize the CUDA stream before returning the buffer so that all
+      // GPU kernels that were using it have completed.
+      cudaStreamSynchronize(stream);
+      mxnet::Storage::Get()->Free(handle);
+    }
+  }
+
+  void* dptr() const {
+    return handle.dptr;
+  }
+};
+
+// Allocate a temporary GPU storage buffer with RAII lifetime + stream sync on
+// destruction (fixes apache/mxnet#19353).
+// var.dptr() returns the raw device pointer; var.handle has full metadata.
+// NOTE: the old macro created a Storage::Handle named `var`; callers that used
+//       `var.dptr` now use `var.dptr()`.  Callers that passed `var` directly
+//       to Storage::Get()->Free() must be removed — the destructor does it.
+#define EPHEMERAL_GPU_STORAGE_ALLOC(func, var, dtype, size)                                        \
+  mxnet::Storage::Handle var##_handle =                                                            \
+      mxnet::Storage::Get()->Alloc(sizeof(dtype) * (size), mxnet::Context::GPU());                 \
+  var##_handle.profiler_scope = "<ephemeral>:";                                                    \
+  var##_handle.name           = #func "_" #var;                                                    \
+  LinalgEphemeralGPUStorage var(var##_handle, mshadow::Stream<mshadow::gpu>::GetStream(s));
 #endif
 
 //////////////////////////////// GEMM ////////////////////////////////////////////
@@ -296,30 +345,92 @@ inline void linalg_gemm<gpu, float>(const Tensor<gpu, 2, float>& A,
 #endif
   auto handle                  = Stream<gpu>::GetBlasHandle(s);
   cublasMath_t saved_math_mode = SetCublasMathMode(handle, VERSION_ADJUSTED_TF32_MATH);
-  CUBLAS_CALL(cublasSgemmEx(handle,
-                            (tB ? CUBLAS_OP_T : CUBLAS_OP_N),
-                            (tA ? CUBLAS_OP_T : CUBLAS_OP_N),
-                            C.size(1),
-                            C.size(0),
-                            (tB ? B.size(1) : B.size(0)),
-                            &alpha,
-                            B.dptr_,
-                            full_datatype,
-                            B.stride_,
-                            A.dptr_,
-                            full_datatype,
-                            A.stride_,
-                            &beta,
-                            C.dptr_,
-                            full_datatype,
-                            C.stride_));
+  const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const int gemm_m             = C.size(1);
+  const int gemm_n             = C.size(0);
+  const int gemm_k             = (tB ? B.size(1) : B.size(0));
+  bool used_lt                 = false;
+  if (mxnet::common::cuda::UseCuBlasLt()) {
+    cublasStatus_t lt_status =
+        mxnet::common::cuda::MaybeCublasLtSgemm(handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
+                                                &alpha, B.dptr_, B.stride_,
+                                                A.dptr_, A.stride_, &beta,
+                                                C.dptr_, C.stride_);
+    used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (!used_lt) {
+    CUBLAS_CALL(cublasSgemmEx(handle,
+                              op_a,
+                              op_b,
+                              gemm_m,
+                              gemm_n,
+                              gemm_k,
+                              &alpha,
+                              B.dptr_,
+                              full_datatype,
+                              B.stride_,
+                              A.dptr_,
+                              full_datatype,
+                              A.stride_,
+                              &beta,
+                              C.dptr_,
+                              full_datatype,
+                              C.stride_));
+  }
   CUBLAS_CALL(cublasSetMathMode(handle, saved_math_mode));
 }
 
 #else
 LINALG_GPU_GEMM(Sgemm, float)
 #endif
-LINALG_GPU_GEMM(Dgemm, double)
+
+// fp64 GEMM, optionally routed through cuBLASLt when MXNET_USE_CUBLASLT=1.
+template <>
+inline void linalg_gemm<gpu, double>(const Tensor<gpu, 2, double>& A,
+                                     const Tensor<gpu, 2, double>& B,
+                                     const Tensor<gpu, 2, double>& C,
+                                     double alpha,
+                                     double beta,
+                                     bool tA,
+                                     bool tB,
+                                     Stream<gpu>* s) {
+  using namespace mxnet;
+  using mshadow::gpu;
+  CHECK_NOTNULL(s);
+  check_gemm(A, B, C, alpha, beta, tA, tB);
+  auto handle                  = Stream<gpu>::GetBlasHandle(s);
+  const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const int gemm_m             = C.size(1);
+  const int gemm_n             = C.size(0);
+  const int gemm_k             = (tB ? B.size(1) : B.size(0));
+  bool used_lt                 = false;
+  if (mxnet::common::cuda::UseCuBlasLt()) {
+    cublasStatus_t lt_status =
+        mxnet::common::cuda::MaybeCublasLtDgemm(handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
+                                                &alpha, B.dptr_, B.stride_,
+                                                A.dptr_, A.stride_, &beta,
+                                                C.dptr_, C.stride_);
+    used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (!used_lt) {
+    CUBLAS_CALL(cublasDgemm(handle,
+                            op_a,
+                            op_b,
+                            gemm_m,
+                            gemm_n,
+                            gemm_k,
+                            &alpha,
+                            B.dptr_,
+                            B.stride_,
+                            A.dptr_,
+                            A.stride_,
+                            &beta,
+                            C.dptr_,
+                            C.stride_));
+  }
+}
 
 // Version where matrix rows are given by first axis.
 #define LINALG_GPU_GEMM_AXIS(fname, DType)                                                \
@@ -411,7 +522,27 @@ inline void linalg_gemm<gpu, mshadow::half::half_t>(const Tensor<gpu, 2, mshadow
     beta_ptr    = &pseudoFP16_beta;
     computeType = CublasType<PseudoFP16Type>::kCudaFlag;
   }
-  if (SupportsFloat16Compute(s->dev_id)) {
+  // cuBLASLt fast path. Uses pseudo-fp16 (fp16 I/O, fp32 compute, fp32
+  // alpha/beta), which matches what cublasGemmEx + CUBLAS_COMPUTE_32F does
+  // when MXNET_FC_TRUE_FP16=0. Any failure falls through to the legacy
+  // dispatch below.
+  bool used_lt_fp16 = false;
+  if (!use_true_fp16 && mxnet::common::cuda::UseCuBlasLt()) {
+    float alpha_f                = static_cast<float>(alpha);
+    float beta_f                 = static_cast<float>(beta);
+    const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+    const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+    cublasStatus_t lt_status     = mxnet::common::cuda::MaybeCublasLtHgemm(
+        blas_handle, op_a, op_b,
+        C.size(1), C.size(0), (tB ? B.size(1) : B.size(0)),
+        &alpha_f, B.dptr_, B.stride_,
+        A.dptr_, A.stride_, &beta_f,
+        C.dptr_, C.stride_);
+    used_lt_fp16 = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (used_lt_fp16) {
+    // skipped; lt path completed.
+  } else if (SupportsFloat16Compute(s->dev_id)) {
     CUBLAS_CALL(cublasGemmEx(blas_handle,
                              (tB ? CUBLAS_OP_T : CUBLAS_OP_N),
                              (tA ? CUBLAS_OP_T : CUBLAS_OP_N),
@@ -465,6 +596,66 @@ inline void linalg_gemm<gpu, mshadow::half::half_t>(const Tensor<gpu, 2, mshadow
 #else
   LOG(FATAL) << "FP16 gemm requires CUDA version >= 7.5!";
 #endif  // CUDA_VERSION >= 7050
+}
+
+// Specialization of linalg_gemm<gpu, DType> for DType=mshadow::bfloat::bf16_t.
+//
+// There is no legacy cublasBgemm/cublasBgemmEx-equivalent specialized API; bf16
+// is reached either via cuBLASLt (preferred) or via cublasGemmEx with CUDA_R_16BF
+// and CUBLAS_COMPUTE_32F. When MXNET_USE_CUBLASLT=1 we try the Lt path first;
+// on any failure we fall back to the legacy cublasGemmEx path.
+template <>
+inline void linalg_gemm<gpu, mshadow::bfloat::bf16_t>(
+    const Tensor<gpu, 2, mshadow::bfloat::bf16_t>& A,
+    const Tensor<gpu, 2, mshadow::bfloat::bf16_t>& B,
+    const Tensor<gpu, 2, mshadow::bfloat::bf16_t>& C,
+    mshadow::bfloat::bf16_t alpha,
+    mshadow::bfloat::bf16_t beta,
+    bool tA,
+    bool tB,
+    Stream<gpu>* s) {
+  using namespace mxnet;
+  using mshadow::gpu;
+  CHECK_NOTNULL(s);
+  check_gemm(A, B, C, alpha, beta, tA, tB);
+  auto blas_handle             = Stream<gpu>::GetBlasHandle(s);
+  const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const int gemm_m             = C.size(1);
+  const int gemm_n             = C.size(0);
+  const int gemm_k             = (tB ? B.size(1) : B.size(0));
+  float alpha_f                = static_cast<float>(alpha);
+  float beta_f                 = static_cast<float>(beta);
+  bool used_lt                 = false;
+  if (mxnet::common::cuda::UseCuBlasLt()) {
+    cublasStatus_t lt_status = mxnet::common::cuda::MaybeCublasLtBf16Gemm(
+        blas_handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
+        &alpha_f, B.dptr_, B.stride_,
+        A.dptr_, A.stride_, &beta_f,
+        C.dptr_, C.stride_);
+    used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (!used_lt) {
+    CUBLAS_CALL(cublasGemmEx(blas_handle,
+                             op_a,
+                             op_b,
+                             gemm_m,
+                             gemm_n,
+                             gemm_k,
+                             &alpha_f,
+                             B.dptr_,
+                             CUDA_R_16BF,
+                             B.stride_,
+                             A.dptr_,
+                             CUDA_R_16BF,
+                             A.stride_,
+                             &beta_f,
+                             C.dptr_,
+                             CUDA_R_16BF,
+                             C.stride_,
+                             CUBLAS_COMPUTE_32F,
+                             CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+  }
 }
 
 // As of cuda8, cublas has implemented a strided version of batch gemm.
@@ -1068,11 +1259,10 @@ LINALG_GPU_BUFFSIZE_POTRF(DnDpotrf_bufferSize, double)
                                   A.size(0),                                                 \
                                   A.dptr_,                                                   \
                                   A.stride_,                                                 \
-                                  static_cast<DType*>(buffer.dptr),                          \
+                                  static_cast<DType*>(buffer.dptr()),                        \
                                   buffsize,                                                  \
-                                  static_cast<int*>(info.dptr)));                            \
-    Storage::Get()->Free(buffer);                                                            \
-    Storage::Get()->Free(info);                                                              \
+                                  static_cast<int*>(info.dptr())));                          \
+    /* buffer and info freed (with stream sync) by RAII destructors */                       \
   }
 LINALG_GPU_POTRF(DnSpotrf, float)
 LINALG_GPU_POTRF(DnDpotrf, double)
@@ -1095,12 +1285,11 @@ LINALG_GPU_POTRF(DnDpotrf, double)
                                     A[i].size(0),                                              \
                                     A[i].dptr_,                                                \
                                     A[i].stride_,                                              \
-                                    static_cast<DType*>(buffer.dptr),                          \
+                                    static_cast<DType*>(buffer.dptr()),                        \
                                     buffsize,                                                  \
-                                    static_cast<int*>(info.dptr)));                            \
+                                    static_cast<int*>(info.dptr())));                          \
     }                                                                                          \
-    Storage::Get()->Free(buffer);                                                              \
-    Storage::Get()->Free(info);                                                                \
+    /* buffer and info freed (with stream sync) by RAII destructors */                         \
   }
 LINALG_GPU_BATCH_POTRF(DnSpotrf, float)
 LINALG_GPU_BATCH_POTRF(DnDpotrf, double)
@@ -1171,14 +1360,14 @@ __global__ void linalgInitIdentityGPU(DType* a, int stride, int lda, int N) {
     int ngrid = std::min(kMaxGridNum,                                                          \
                          static_cast<int>((A.MSize() + kBaseThreadNum - 1) / kBaseThreadNum)); \
     linalgInitIdentityGPU<<<ngrid, kBaseThreadNum, 0, mshadow::Stream<gpu>::GetStream(s)>>>(   \
-        static_cast<DType*>(buffer.dptr), A.MSize(), A.stride_, A.MSize());                    \
+        static_cast<DType*>(buffer.dptr()), A.MSize(), A.stride_, A.MSize());                  \
     MSHADOW_CUDA_POST_KERNEL_CHECK(linalgInitIdentityGPU);                                     \
-    Tensor<gpu, 2, DType> B((DType*)buffer.dptr, A.shape_, A.stride_, s);                      \
+    Tensor<gpu, 2, DType> B(static_cast<DType*>(buffer.dptr()), A.shape_, A.stride_, s);      \
     linalg_trsm(A, B, DType(1.0), false, lower, !lower, s);                                    \
     linalg_trsm(A, B, DType(1.0), false, lower, lower, s);                                     \
     Copy(A, B, s);                                                                             \
-    B.dptr_ = 0;                                                                               \
-    Storage::Get()->Free(buffer);                                                              \
+    B.dptr_ = nullptr;                                                                         \
+    /* buffer freed (with stream sync) by RAII destructor */                                   \
   }
 LINALG_GPU_POTRI(float)
 LINALG_GPU_POTRI(double)
@@ -1196,14 +1385,14 @@ LINALG_GPU_POTRI(double)
     int ngrid = std::min(kMaxGridNum,                                                          \
                          static_cast<int>((A.MSize() + kBaseThreadNum - 1) / kBaseThreadNum)); \
     linalgInitIdentityGPU<<<ngrid, kBaseThreadNum, 0, mshadow::Stream<gpu>::GetStream(s)>>>(   \
-        static_cast<DType*>(buffer.dptr), A.size(1) * A.stride_, A.stride_, A.MSize());        \
+        static_cast<DType*>(buffer.dptr()), A.size(1) * A.stride_, A.stride_, A.MSize());      \
     MSHADOW_CUDA_POST_KERNEL_CHECK(linalgInitIdentityGPU);                                     \
-    Tensor<gpu, 3, DType> B((DType*)buffer.dptr, A.shape_, A.stride_, s);                      \
+    Tensor<gpu, 3, DType> B(static_cast<DType*>(buffer.dptr()), A.shape_, A.stride_, s);      \
     linalg_batch_trsm(A, B, DType(1.0), false, lower, !lower, s);                              \
     linalg_batch_trsm(A, B, DType(1.0), false, lower, lower, s);                               \
     Copy(A, B, s);                                                                             \
-    B.dptr_ = 0;                                                                               \
-    Storage::Get()->Free(buffer);                                                              \
+    B.dptr_ = nullptr;                                                                         \
+    /* buffer freed (with stream sync) by RAII destructor */                                   \
   }
 LINALG_GPU_BATCH_POTRI(float)
 LINALG_GPU_BATCH_POTRI(double)
@@ -1414,8 +1603,8 @@ LINALG_CPU_GELQF_WORKSPACE_QUERY(d, double)
                                   work.dptr_,                                              \
                                   work.dptr_ + m,                                          \
                                   lwork,                                                   \
-                                  static_cast<int*>(info.dptr)));                          \
-    Storage::Get()->Free(info);                                                            \
+                                  static_cast<int*>(info.dptr())));                        \
+    /* info freed (with stream sync) by RAII destructor */                                 \
   }
 // Col-major QR-decomposition results in row-major LQ decomposition.
 LINALG_GPU_GELQF(DnSgeqrf, float)
@@ -1444,8 +1633,8 @@ LINALG_GPU_GELQF(DnDgeqrf, double)
                                   work.dptr_,                                              \
                                   work.dptr_ + m,                                          \
                                   lwork,                                                   \
-                                  static_cast<int*>(info.dptr)));                          \
-    Storage::Get()->Free(info);                                                            \
+                                  static_cast<int*>(info.dptr())));                        \
+    /* info freed (with stream sync) by RAII destructor */                                 \
   }
 
 #else
@@ -1483,9 +1672,9 @@ LINALG_GPU_ORGLQ(DnDorgqr, double)
                                                        m,                               \
                                                        A.dptr_,                         \
                                                        A.stride_,                       \
-                                                       static_cast<DType*>(tau.dptr),   \
+                                                       static_cast<DType*>(tau.dptr()), \
                                                        &work2));                        \
-    Storage::Get()->Free(tau);                                                          \
+    /* tau freed (with stream sync) by RAII destructor */                               \
     return std::max(work1, work2) + m;                                                  \
   }
 
@@ -1627,8 +1816,8 @@ LINALG_CPU_SYEVD_WORKSPACE_QUERY(dsyevd, double)
                                   L.dptr_,                                \
                                   work.dptr_,                             \
                                   work.size(0),                           \
-                                  static_cast<int*>(info.dptr)));         \
-    Storage::Get()->Free(info);                                           \
+                                  static_cast<int*>(info.dptr())));       \
+    /* info freed (with stream sync) by RAII destructor */                \
   }
 
 #define LINALG_GPU_SYEVD_WORKSPACE_QUERY(fname, DType)                                  \
@@ -1773,8 +1962,8 @@ LINALG_CPU_GESVD_WORKSPACE_QUERY(dgesvd, double)
                                   work.dptr_,                             \
                                   work.size(0),                           \
                                   V.dptr_,                                \
-                                  static_cast<int*>(info.dptr)));         \
-    Storage::Get()->Free(info);                                           \
+                                  static_cast<int*>(info.dptr())));       \
+    /* info freed (with stream sync) by RAII destructor */                \
   }
 
 #define LINALG_GPU_GESVD_WORKSPACE_QUERY(fname, DType)                                    \
@@ -1891,17 +2080,16 @@ struct set_matrix {
     CHECK_NOTNULL(s);                                                                     \
     EPHEMERAL_GPU_STORAGE_ALLOC(linalg_batch_getrf, info, int, A.size(0));                \
     EPHEMERAL_GPU_STORAGE_ALLOC(linalg_batch_getrf, A_ptr_buf, DType*, A.size(0));        \
-    DType** A_ptr = static_cast<DType**>(A_ptr_buf.dptr);                                 \
+    DType** A_ptr = static_cast<DType**>(A_ptr_buf.dptr());                               \
     Kernel<set_matrix, gpu>::Launch(s, A.size(0), A_ptr, A.dptr_, A.size(1) * A.size(2)); \
     CUBLAS_CALL(cublas##fname(Stream<gpu>::GetBlasHandle(s),                              \
                               A.size(1),                                                  \
                               A_ptr,                                                      \
                               A.size(2),                                                  \
                               pivot.dptr_,                                                \
-                              static_cast<int*>(info.dptr),                               \
+                              static_cast<int*>(info.dptr()),                             \
                               A.size(0)))                                                 \
-    Storage::Get()->Free(info);                                                           \
-    Storage::Get()->Free(A_ptr_buf);                                                      \
+    /* info and A_ptr_buf freed (with stream sync) by RAII destructors */                 \
   }
 
 #else
@@ -1986,9 +2174,9 @@ LINALG_CPU_GETRI_WORKSPACE_QUERY(dgetri, double)
     CHECK_NOTNULL(s);                                                                          \
     EPHEMERAL_GPU_STORAGE_ALLOC(linalg_batch_getri, info, int, A.size(0));                     \
     EPHEMERAL_GPU_STORAGE_ALLOC(linalg_batch_getri, A_ptr_buf, DType*, A.size(0));             \
-    DType** A_ptr = static_cast<DType**>(A_ptr_buf.dptr);                                      \
+    DType** A_ptr = static_cast<DType**>(A_ptr_buf.dptr());                                    \
     EPHEMERAL_GPU_STORAGE_ALLOC(linalg_batch_getri, LU_ptr_buf, DType*, A.size(0));            \
-    DType** LU_ptr = static_cast<DType**>(LU_ptr_buf.dptr);                                    \
+    DType** LU_ptr = static_cast<DType**>(LU_ptr_buf.dptr());                                  \
     Kernel<set_matrix, gpu>::Launch(s, A.size(0), A_ptr, A.dptr_, A.size(1) * A.size(2));      \
     Kernel<set_matrix, gpu>::Launch(s, LU.size(0), LU_ptr, LU.dptr_, LU.size(1) * LU.size(2)); \
     CUBLAS_CALL(cublas##fname(Stream<gpu>::GetBlasHandle(s),                                   \
@@ -1998,11 +2186,9 @@ LINALG_CPU_GETRI_WORKSPACE_QUERY(dgetri, double)
                               const_cast<const int*>(pivot.dptr_),                             \
                               A_ptr,                                                           \
                               A.size(2),                                                       \
-                              static_cast<int*>(info.dptr),                                    \
+                              static_cast<int*>(info.dptr()),                                  \
                               A.size(0)))                                                      \
-    Storage::Get()->Free(info);                                                                \
-    Storage::Get()->Free(A_ptr_buf);                                                           \
-    Storage::Get()->Free(LU_ptr_buf);                                                          \
+    /* info, A_ptr_buf, LU_ptr_buf freed (with stream sync) by RAII destructors */             \
   }
 
 #else

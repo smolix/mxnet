@@ -96,6 +96,14 @@ __global__ void AddTakeGradLargeBatchKernel(DType* dst,
         // Example:
         //   __all(no_edge) = 0 since no_edge = 0 for threadIdx.x = 0, hence we leave the loop
       } while (__all(no_edge));
+      // CUDA 13 / Blackwell: the post-loop read of sh_ballot[] below
+      // relies on the writes from the LAST loop iteration still being
+      // visible.  The __syncthreads() inside the loop body technically
+      // guarantees that, but the loop-exit edge sits between the sync
+      // and the read with no barrier, which the compiler is free to
+      // schedule across.  Add an explicit barrier so the post-loop read
+      // sees the last-iteration writes unconditionally.
+      __syncthreads();
       idx_end -= blockDim.x*blockDim.y;
       // Find the first edge
       // Example:
@@ -119,6 +127,19 @@ __global__ void AddTakeGradLargeBatchKernel(DType* dst,
       //  idx_end += 0*blockDim.x + _ffs(0b100) - 1 = 0 + 3 - 1 = 2
       //  sorted[idx_end] = 9
       idx_end += j*blockDim.x + __ffs(sh_ballot[j]) - 1;
+      // Zero the shared accumulator before the scatter-add phase.  The
+      // ballot aliasing leaves arbitrary bits in sh_grad_weight that
+      // are normally overwritten by the per-thread store below, but we
+      // no longer rely on that coverage: if a future change to blockDim
+      // or SZ leaves any slot unwritten, the cross-y reduce that
+      // follows would pick up stale ballot bits as a float, producing
+      // NaN.  This costs blockDim.x*SZ stores per block per row.
+      __syncthreads();
+      #pragma unroll
+      for (int ii = 0; ii < SZ; ii++) {
+        sh_grad_weight[threadIdx.x + ii*blockDim.x +
+                       threadIdx.y*blockDim.x*SZ] = (DType)0;
+      }
       __syncthreads();
     } else {
       idx_begin = idx_start[iidx];

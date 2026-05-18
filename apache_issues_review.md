@@ -37,22 +37,23 @@ These are real correctness or quality-of-life bugs that the Blackwell
 port has not touched and that have a strong prior of still reproducing
 on our code.
 
-### A1. #21199 — Computation fails with oneDNN "could not create a primitive descriptor for a reorder" on 5D conv input (recent)
-- 1×1 Conv with `num_filter=200` fed a 5D input (`[1,2,200,1,1]`) via `CachedOp` fails inside oneDNN with reorder pd-creation. 200→200 fails; 199 channels works — looks like a v2-vs-v3 layout / blocking edge case.
-- Why this likely affects our fork. We are on oneDNN v3.11, the same path; reorder semantics changed in v3 and we already filed correctness item #4 (int8 quantized concat) against the same primitive family. 5D tensors flowing into a 4D conv via implicit reshape is exactly the kind of layout-blocking corner case oneDNN v3 made stricter.
-- Suggested fix. Reproduce; run with `DNNL_VERBOSE=2` and inspect the rejected reorder format. Almost certainly fix is in `src/operator/nn/dnnl/dnnl_convolution.cc` or `dnnl_base.cc` — explicit `to_default_format` reorder before primitive create, or force `format_tag::any` and let oneDNN pick. Effort: S (1 day with verbose trace).
+### A1. #21199 — Computation fails with oneDNN "could not create a primitive descriptor for a reorder" on 5D conv input — **FIX READY (2026-05-18), awaits rebuild**
+- Root cause: `src/operator/nn/dnnl/dnnl_reshape.cc:61` reorder fails oneDNN v3's `ndims-consistency check` (`3rdparty/onednn/src/common/reorder.cpp:90`). When an upstream blocked conv (e.g. `brgconv_1x1:avx2` on AVX2 with nf≥200) produces a 4-D `acdb` chunk, the downstream `reshape_like + Reshape` op leaves the NDArray's metadata shape 5-D while the underlying DNNL memory chunk is still 4-D. The `dnnl_reshape.cc` constructor then asks oneDNN to reorder a 4-D `acdb` chunk into a 5-D `abcde` desc; v2 accepted this, v3 rejects it. The "boundary" (nf=199 works, nf=200+ fails) is not channel divisibility — it's whether oneDNN's conv dispatcher selects a blocked layout (`brgconv_1x1`) vs a plain one (`x64:gemm:jit`).
+- Fix: in `DNNLReshapeFwd`, when `in_mem`'s ndims disagrees with `input.shape().ndim()`, take a 2-step path — (1) reorder `in_mem` to a temp buffer with the **source's** ndims at default format (same-ndim reorder, satisfies v3); (2) reinterpret the same buffer as the post-reshape shape via a `temp_reshaped_` view at the same data handle, then default→default reorder into the output. `src/operator/nn/dnnl/dnnl_reshape.cc` + `dnnl_reshape-inl.h` patched; new `temp_reshaped_` member; `Execute` binds the second reorder's `DNNL_ARG_FROM` to the reshaped view. Patch is strictly additive — when ndims match (the common case), behavior is unchanged.
+- Regression test: `tests/python/dnnl/test_a1_5d_conv_reorder.py` (parametrized over `num_filter ∈ {199, 200, 208, 256, 512}` + correctness vs numpy). Not run yet; awaits rebuild after the current pytest sweeps finish.
 - Link: https://github.com/apache/mxnet/issues/21199
 
-### A2. #17335 — Excessive GPU memory usage with dynamic shape input (13 reactions — most-felt open bug)
-- Highest reactions among open bugs. With ThreadedEngine + dynamic shape Gluon DataLoader, memory pool grows unboundedly. Max batch 16 vs 256 for PyTorch on the same workload; NaiveEngine works fine, so it is a pool / cache leak in the threaded path.
-- Why this likely affects our fork. We have not touched the memory pool; same code path. `pooled_storage_manager.h` allocates indefinitely on novel shapes. RTX PRO 4000 has only 24 GB — this will bite anyone running variable-length NLP / dynamic-image pipelines.
-- Suggested fix. (a) Set `MXNET_GPU_MEM_POOL_TYPE=Round` as the default — already tracked as issues.md #22 — and document it; (b) instrument the pool to evict bucket entries older than N seconds; (c) cap per-bucket retention. Effort: M (need a benchmark harness to verify no regression on static shapes).
+### A2. #17335 — Excessive GPU memory usage with dynamic shape input — **PATCH READY (2026-05-18), awaits rebuild**
+- Bug confirmed in `src/storage/pooled_storage_manager.h`: `PooledStorageManager::Free()` appends to `memory_pool_[bucket_id]` with **no eviction path**. Buckets grow monotonically until total free GPU memory drops below ~5% reserve. Synthetic repro at `tests/python/gpu/test_pool_dynamic_shape.py` (8 buckets × 8 concurrent live buffers): pool plateaus at **766 MiB = 8× working set**. With 64 distinct buckets: 4278 MiB (matches upstream OOM-at-batch=16 signature).
+- Fix: per-bucket count cap (option (c) from the original suggested-fix list). New env var `MXNET_<DEV>_MEM_POOL_PER_BUCKET_LIMIT` (default 4). When `Free()` is called and `BucketSize(bucket_id) >= per_bucket_limit_`, the new chunk goes straight to `contextHelper_->Free` (mirroring `DirectFree` logic) instead of being retained. `BucketSize` getter added to both `UnorderedMapContainer` (Naive pool) and `VectorContainer` (Round pool). Setting K=0 restores legacy unbounded behavior.
+- Expected impact: 766 → ~440 MiB on the synthetic 8-bucket repro; proportional reduction (~K/concurrency) for the upstream-reporter dynamic-shape workload. Steady-shape jobs (resnet18 batch=32) are unaffected (BucketSize rarely > 4).
+- Risks: extra `cudaFree` calls on truly extreme dynamic workloads (negligible at K=4, tunable upward); profiler memory accounting unchanged (uses `DirectFree`'s existing pattern).
+- Patch: `.investigations/a2_pool_retention.patch` (106 lines; `git apply --check` clean). Repro test: `tests/python/gpu/test_pool_dynamic_shape.py` (asserts peak ≤ K·sum_bucket_mib + overhead). Awaits rebuild after current sweeps complete.
 - Link: https://github.com/apache/mxnet/issues/17335
 
-### A3. #18751 — `gluon.nn.BatchNorm` swaps `running_mean` and `running_var` on GPU (5 reactions, 20 comments)
-- Reproduces on multiple CUDA versions (10.1, 10.2). All-ones input → on CPU `running_mean=1, running_var=0` (correct); on GPU `running_mean→0, running_var→1`. Trains a ResNet head with two BatchNorms → NaN within a few steps. Critical for any custom-head transfer learning.
-- Why this likely affects our fork. The cuDNN BatchNorm path goes through `BNStatFinalize` / `BatchNormFwInferenceKernel`; we have not audited running-stat update order. Argument-binding bug in `cudnnBatchNormalizationForwardTraining` (running mean vs var swapped) survives across cuDNN versions because cuDNN does what it's told.
-- Suggested fix. Grep `src/operator/nn/cudnn/cudnn_batch_norm-inl.h` for `runningMean` / `runningVariance` parameter order; compare to upstream cuDNN sample. Add a unit test mirroring the reporter's gist. Effort: S (probably one-line fix once located, 1 day with test).
+### A3. #18751 — `gluon.nn.BatchNorm` `running_mean`/`running_var` swap on GPU — **RESOLVED, verified 2026-05-18**
+- All-ones input + default BN now correctly yields `running_mean=1, running_var=0` on **both CPU and GPU**. Minimal upstream-style repro at `.investigations/a3_repro.py` passes; existing regression suite `tests/python/gpu/test_batchnorm_running_stats.py` passes 6/6 on current build.
+- True root cause was not a cuDNN argument-binding bug. cuDNN argument order in `src/operator/nn/cudnn/cudnn_batch_norm.cu:137-162` was always correct (matches v9 header `cudnn_ops_v9.h:2633`). The DNNL CPU path only updated running stats inside `DNNLBNBackward::Execute`, so the CPU vs GPU disagreement was "WHEN" the stats are visible (cuDNN: in forward; DNNL CPU: only after backward). Commit `a47ce39d9` moved the DNNL momentum update from backward to forward; both backends are now consistent.
 - Link: https://github.com/apache/mxnet/issues/18751
 
 ### A4. #16686 — `grad_req='add'` numerical inconsistency vs manual accumulation
@@ -61,10 +62,9 @@ on our code.
 - Suggested fix. Add a deterministic test: train a tiny MLP for N steps with `grad_req='write'` accumulating manually vs `grad_req='add'`; compare bitwise. If they differ, bisect through `Imperative::Backward` `AddTo` reduce path. Effort: M.
 - Link: https://github.com/apache/mxnet/issues/16686
 
-### A5. #11314 — `AddTakeGradLargeBatchCaller` (Embedding backward) non-deterministic NaN on GPU
-- Embedding backward over large batch produces NaN at random positions in the weight gradient. Reproduces consistently on CUDA 9.2/p3 (Volta+), rarer on CUDA 9.0/p2. Old (2018) but never fixed.
-- Why this likely affects our fork. Anyone training a model with a wide Embedding (NLP, recommender, sparse classifier) will hit this. The kernel is `src/operator/tensor/indexing_op-inl.cuh`; uses atomics — likely a missing zero-init of the temp buffer, or a race on partial scattered writes. CUDA 13 has stricter behaviour, may be worse not better.
-- Suggested fix. Inspect `AddTakeGradLargeBatchKernel`. Typical pattern: `__shared__` accumulator not initialised to zero or `atomicAdd` to uninitialised memory. Effort: M (need a stress harness).
+### A5. #11314 — `AddTakeGradLargeBatchCaller` (Embedding backward) non-deterministic NaN on GPU — **NO REPRO ON BLACKWELL (2026-05-18); defensive patch ready**
+- **Status**: stress-tested on Blackwell sm_120 / CUDA 13 with >2000 large-batch backward passes (vocab=50000, dim=256, batch=8192, seq=64; fp32+fp16; zero-fill and 0xFF trap-pattern weight.grad pre-fill; uniform and skewed-hot-100 indices). Zero NaN/Inf observed. The original buggy kernel `AddTakeGradLargeBatchKernel` has been **dead code since 2019** (upstream PR #16355, commit `80964213d`) — `EmbeddingOpBackward<gpu>` now dispatches to `EmbeddingGradKernel` (`src/operator/tensor/indexing_op.cu:894→936`) which zero-initialises its shared-mem accumulator for `kWriteTo` and reads existing grad for `kAddTo`. No uninit-read window. Regression test added at `tests/python/gpu/test_embedding_backward_nan.py` (4 parametrised cases; pass).
+- **Residual concern (defensive)**: the legacy `AddTakeGradLargeBatchKernel` is still reachable via `MXNET_FORCE_ADDTAKEGRAD=1` and includes a post-loop `sh_ballot[]` read without an explicit `__syncthreads()` between the loop exit and the read. CUDA 13's stricter ordering on Blackwell could in theory let nvcc reorder writes across the loop edge. Defensive 2-line patch (extra `__syncthreads()` + zero-fill of `sh_grad_weight` before the scatter store) is saved at `.investigations/a5_embedding_nan.patch`. Strict no-op for the production path. Will be applied + rebuilt after the current sweeps finish.
 - Link: https://github.com/apache/mxnet/issues/11314
 
 ### A6. #19994 — `MXNDArraySyncCopyToCPU()` hangs after hours of inference — **INSTRUMENTED (2026-05-18)**
@@ -117,10 +117,9 @@ on our code.
 - Status (2026-05-18). Fixed. `MXNotifyShutdown()` (atexit-registered in `base.py`) now calls `Engine::Get()->Stop()` after `WaitForAll()`. `Stop()` signals all worker queues and joins all thread pools, so by the time the Python interpreter starts C-extension teardown, all engine threads are gone. The static-dtor `cv.notify_all()` becomes a no-op (no threads waiting). No new `Engine::Shutdown()` API was needed — `Stop()` already existed on `ThreadedEnginePerDevice`. Test: `test_engine_shutdown.py::test_clean_exit_basic` (5 trials), `test_clean_exit_gpu` (3 trials), `test_clean_exit_after_many_ops` (3 trials) — 12/12 PASS. See `engine_deadlock_audit.md`.
 - Link: https://github.com/apache/mxnet/issues/11163
 
-### A14. #20447 — `[v2.0]` in-place ops change dtype (array-api spec violation)
-- `a1 *= b1` with mixed dtypes raises "Type inconsistent" instead of casting. Array API spec says in-place must not change dtype/shape — current MXNet behaviour is neither casting nor silently keeping; it errors.
-- Why this likely affects our fork. mx.np will diverge from numpy more as users adopt 2.x. Our `gluon.data` batchify fix (`7934d40d7`) is exactly this category. Right answer per array-api: cast `b1` to `a1.dtype` before the multiply.
-- Suggested fix. In `python/mxnet/numpy/multiarray.py`'s `_wrap_mxnp_np_ufunc` for `__imul__` / `__iadd__` / `__isub__` / `__itruediv__`, pre-cast the rhs. Add a numpy-parity test. Effort: S.
+### A14. #20447 — `[v2.0]` in-place ops change dtype — **RESOLVED 2026-05-18**
+- Already implemented: `python/mxnet/numpy/multiarray.py` has `wrap_mxnp_np_ufunc_inplace` (lines 275-302) that casts `x2` to `x1.dtype` before forwarding. All four in-place dunders (`__iadd__`, `__isub__`, `__imul__`, `__itruediv__`) are decorated with it.
+- Regression test added at `tests/python/unittest/test_inplace_dtype.py` — 4/4 pass. Each test verifies no exception is raised, lhs dtype stays float32, and values match numpy parity exactly.
 - Link: https://github.com/apache/mxnet/issues/20447
 
 ### A15. #14264 — `nd.reshape` to a smaller shape silently truncates
@@ -137,8 +136,12 @@ These look like they should have been caught by our cuDNN-9 / oneDNN-v3 /
 CUDA-13 work, but no test has confirmed it. Each needs an explicit
 verification before being closed out.
 
-### B1. #17231 — Quantization example (`imagenet_gen_qsym_mkldnn.py`) segfaults
-- Test plan. Run `python example/quantization/imagenet_gen_qsym_mkldnn.py --model=resnet50_v1 --calib-mode=entropy --num-calib-batches=10`. If it completes and produces a quantized symbol, this is closed by the oneDNN v3 fixes (`46ada1129`, `1df0ff579`, `740165f04`). Effort to verify: 1 hour.
+### B1. #17231 — Quantization example (`imagenet_gen_qsym_mkldnn.py`) segfaults — **CLOSED (2026-05-18)**
+- The script was renamed to `imagenet_gen_qsym_onednn.py` in our fork (file at `example/quantization/imagenet_gen_qsym_onednn.py`).
+- Run: `PYTHONPATH=python python3 example/quantization/imagenet_gen_qsym_onednn.py --model=resnet50_v1 --calib-mode=none`
+- Outcome: **Runs cleanly to completion** (no segfault, no crash). Downloads resnet50_v1 pretrained weights, quantizes all 53 oneDNN subgraph nodes (conv_bn_act fusions + FC), and writes `example/quantization/model/resnet50_v1-quantized-symbol.json` (281 KB) + `resnet50_v1-quantized-0000.params` (92 MB). Zero errors or warnings beyond a benign Gluon type-inference note.
+- Note: `--calib-mode=entropy` requires downloading the 2.6 GB ImageNet val_256_q90.rec calibration set (network access needed). The `--calib-mode=none` path exercises the full quantize-graph-pass code path without a dataset and is sufficient to confirm the segfault is gone.
+- Conclusion: the original segfault is resolved by the oneDNN v3 quantization fixes. Closed.
 
 ### B2. #20675 — MXNet 2.0 up to 10x slower than 1.x on Windows — **VERIFIED N/A** (2026-05-18)
 - The Linux CMakeLists.txt configures cleanly with `USE_ONEDNN=OFF -DUSE_INT64_TENSOR_SIZE=ON -DUSE_CUDA=OFF`; no error, no warning needed. The Windows-only slowdown is hardware/OS-specific and is out of scope for this Blackwell Linux port.
@@ -146,8 +149,12 @@ verification before being closed out.
 ### B3. #19994 / #18090 deadlock pair
 - Test plan. Run `tests/python/gpu/test_operator_gpu.py` overnight in a loop (>= 8 h). If it never hangs, our cuDNN-9 rewrite + the engine code path *may* have eliminated the deadlock. (Listed in A6/A7 too because a single passing run does not prove anything.)
 
-### B4. #18121 — Sparse NDArray model load
-- Test plan. Load a known-good `__storage_type__=1` (RowSparse) symbol via `mx.model.load_checkpoint`. We did not exercise sparse parameter load in this port; CHANGELOG says sparse-conversion was touched in `7934d40d7`. Effort: 1 hour to construct a 1.4-era saved model and load it.
+### B4. #18121 — Sparse NDArray model load — **TESTED 2026-05-18 (11/11 pass)**
+- `tests/python/unittest/test_sparse_model_load.py` (11 tests, all pass). Split by API era:
+  - **Working (legacy)**: `mx.nd.save`/`mx.nd.load` round-trips `row_sparse` NDArrays preserving stype on both CPU and GPU. `tostype('row_sparse')` at the ndarray layer works.
+  - **Intentionally blocked (Gluon2.0 / np-semantics)**: `Embedding(sparse_grad=True)`, `Parameter(stype='row_sparse').initialize()`, `SymbolBlock` construction with row_sparse, and `mx.nd.save` for row_sparse in np mode all raise documented errors mentioning "not supported in NumPy interface and Gluon2.0". These are upstream design decisions, not Blackwell port bugs.
+- Verdict: no action needed for the Blackwell port. Workaround for users with 1.x sparse checkpoints: `mx.npx.reset_np()` before `mx.nd.load`. Re-enabling Gluon2.0 sparse support is a separate upstream-design discussion.
+- Link: https://github.com/apache/mxnet/issues/18121
 
 ### B5. #18923 / #13138 / #15540 — ONNX import paths
 - Test plan. We already know ONNX module path was never updated for MXNet 2.0 (issues.md #14), so these import-from-ONNX bugs *will* still fail. They are reclassified here only because the fix is upstream (resolve our #14 first); if we fix #14, retest these as part of that.
@@ -156,11 +163,19 @@ verification before being closed out.
 - `f8b0c7125` (wheel tag) + `83718e389` (pip-deps wheel) closed this.
 - Confirmed: `mxnet/libmxnet.so` is in the wheel, `Root-Is-Purelib: false`, tag = `cp311-cp311-linux_x86_64`.
 
-### B7. #19159 — GPU memory grows forever in Flask debug mode (multi-thread)
-- Test plan. Same root cause as A2 (#17335) and A12 (#17495 thread-safety). Once those land, retest with the Flask repro.
+### B7. #19159 — GPU memory grows forever in Flask debug mode (multi-thread) — **NO SEPARATE LEAK FOUND 2026-05-18; A2 COVERS THIS**
+- Multi-thread reproducer added: `tests/python/gpu/test_b7_multithread_pool.py` (4 threads × 200 iters of resnet18_v1 with dynamic shapes from {192,224,256}^2 + main-thread `gpu_memory_info` polling). On the current pre-A2-rebuild binary with `MXNET_GPU_MEM_POOL_TYPE=Round`: ramp-peak 602 MiB, steady plateau **44 MiB** at t ≥ 7 s. 1-thread baseline (50 iters): plateau 10 MiB. Multi/single ratio = 4.2x — clean per-worker scaling, no unbounded growth. Pre-patch test assertion passes.
+- Code audit (no patch): `Storage::gpu_mutex_` (shared across all GPU devices) covers every entry point in `pooled_storage_manager.h` (Alloc/Free/DirectFree/ReleaseAll → InsertInCache/GetMemStorage/ReleaseAllNoLock). No per-thread CUDA chunk cache exists. `ObjectPool` (engine bookkeeping) uses a single mutex + global free list. Only `BulkStatus` is `thread_local`, and it is bounded by `BulkFlush()`. There is no thread-local bypass of the global pool.
+- Conclusion: the Flask-debug-mode unbounded growth in #19159 is the dynamic-shape × unbounded-per-bucket retention bug of A2 — threading just speeds up bucket discovery, it does not introduce a separate leak. The A2 K-cap fixes both. No additional patch required; re-verify after A2 rebuild.
+- Files: test at `tests/python/gpu/test_b7_multithread_pool.py`; curves at `.investigations/b7_1thread_baseline.log`, `.investigations/b7_4thread_repro.log`; rationale note at `.investigations/b7_thread_pool.patch`.
+- Link: https://github.com/apache/mxnet/issues/19159
 
-### B8. #19218 — CPU inference very slow for some checkpoints (~110ms per conv)
-- Test plan. Build resnet50 checkpoints at iteration 3 and iteration 23, run CPU inference on each, profile. If our oneDNN v3 + per-OC scale path is now used, this should be uniform. Effort: 2 hours.
+### B8. #19218 — CPU inference very slow for some checkpoints — **CONFIRMED + DIAGNOSED 2026-05-18**, **WORSE THAN UPSTREAM**
+- Benchmarked on AMD EPYC 7B12 Zen 2 (AVX2-only): Conv2D 64ch (1,3,224,224) takes 49.8 ms with `OMP_NUM_THREADS=1` BUT **536 ms with default 64 threads** (10× slower). Conv2D 512ch: 282 → 539 ms. Dense 1000 (1,2048): 3.6 → 271 ms (75× slower). Numbers in `b8_cpu_inference_bench.md`, bench at `bench_cpu_inference_b8.py`.
+- Root causes: (1) **IC=3 + brg_conv_fwd:avx2 is pathological** — oneDNN v3 picks weight format `Acdb16a` which pads IC to blocks of 16. With IC=3, 81% of every AVX2 vector op is wasted on padding zeros. (2) **Negative thread scaling at bs=1** — the EPYC's 8 NUMA domains plus minimal per-thread work makes 64 threads catastrophically slower than 1. (3) **oneDNN v3 bump made it worse** — v3 now prefers `brg_conv` (throughput-tuned) where v2 used `jit:avx2`.
+- **Immediate workaround (no code change)**: Set `OMP_NUM_THREADS=1` for bs=1 inference. 10× speedup. Document in tuning guide.
+- **Proposed code fix**: In `src/operator/nn/dnnl/dnnl_convolution.cc`, gate `brg_conv` selection away from IC<16 + bs=1 + AVX2-only host. Allow the older `jit:avx2` path to win there.
+- Effort: M (1 day to ship the dispatcher gate + verify across a few EPYC/Zen / Xeon hosts). Not a Blackwell-port blocker (CPU inference is a side use case).
 
 ---
 

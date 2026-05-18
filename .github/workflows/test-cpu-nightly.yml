@@ -1,0 +1,126 @@
+name: test-cpu-nightly
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 07:00 UTC.
+    - cron: "0 7 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-cpu-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: CPU pytest sweep (operator, gluon, dnnl)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      CMAKE_BUILD_DIR: build
+      CMAKE_BUILD_TYPE: Release
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: "2G"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build + test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ninja-build \
+            cmake \
+            ccache \
+            g++ \
+            libopenblas-dev \
+            libopencv-dev \
+            libomp-dev \
+            python3 \
+            python3-pip \
+            python3-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-test-cpu-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ccache-test-cpu-${{ github.ref }}-
+            ccache-test-cpu-
+            ccache-build-cpu-
+
+      - name: Cache CMake build dir
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CMAKE_BUILD_DIR }}
+          key: cmake-test-cpu-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            cmake-test-cpu-${{ github.ref }}-
+            cmake-test-cpu-
+            cmake-build-cpu-
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B "$CMAKE_BUILD_DIR" -G Ninja \
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DUSE_CUDA=OFF \
+            -DUSE_CUDNN=OFF \
+            -DUSE_NCCL=OFF \
+            -DUSE_ONEDNN=ON \
+            -DUSE_OPENMP=ON \
+            -DUSE_OPENCV=ON \
+            -DUSE_BLAS=open \
+            -DUSE_DIST_KVSTORE=OFF \
+            -DBUILD_CPP_EXAMPLES=OFF
+
+      - name: Build (ninja mxnet)
+        timeout-minutes: 60
+        run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j"$(nproc)"
+
+      - name: Install python package + test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<2" requests scipy pytest pytest-timeout pytest-xdist pytest-rerunfailures
+          cd python && python -m pip install -e . && cd ..
+
+      - name: Run pytest sweep (30 min global timeout)
+        # Generous per-test (300s) and per-file (1800s) timeouts; flaky tests
+        # auto-retry twice before being marked failed.
+        timeout-minutes: 30
+        env:
+          MXNET_ENGINE_TYPE: NaiveEngine
+          OMP_NUM_THREADS: "2"
+        run: |
+          set -o pipefail
+          mkdir -p test-reports
+          pytest \
+            --timeout=300 \
+            --reruns=2 --reruns-delay=5 \
+            --junitxml=test-reports/cpu-sweep.xml \
+            -ra -v \
+            tests/python/unittest/test_operator.py \
+            tests/python/unittest/test_gluon.py \
+            tests/python/dnnl/ \
+            | tee test-reports/cpu-sweep.log
+
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report-cpu-${{ github.sha }}
+          path: |
+            test-reports/cpu-sweep.xml
+            test-reports/cpu-sweep.log
+          if-no-files-found: warn
+          retention-days: 30

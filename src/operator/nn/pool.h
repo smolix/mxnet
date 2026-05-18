@@ -60,6 +60,7 @@
 
 #include <mxnet/base.h>
 #include <mxnet/operator.h>
+#include <limits>
 #include <vector>
 #include <algorithm>
 #include "./pool_utils.h"
@@ -102,7 +103,7 @@ inline void pool_max_1d_ncw_cpu(const DType* in_data,
         int wstart    = pw * stride_w - pad_w;
         int wend      = std::min(wstart + kernel_w, width);
         wstart        = std::max(wstart, 0);
-        DType max_val = MinValue<DType>();
+        DType max_val = -std::numeric_limits<DType>::infinity();
         for (int w = wstart; w < wend; ++w) {
           if (in_data[w] > max_val) {
             max_val = in_data[w];
@@ -143,7 +144,7 @@ inline void pool_max_1d_nwc_cpu(const DType* in_data,
       int wstart = pw * stride_w - pad_w;
       int wend   = std::min(wstart + kernel_w, width);
       wstart     = std::max(wstart, 0);
-      std::fill(max_vals.begin(), max_vals.end(), MinValue<DType>());
+      std::fill(max_vals.begin(), max_vals.end(), -std::numeric_limits<DType>::infinity());
       for (int w = wstart; w < wend; ++w) {
         for (index_t c = 0; c < features; ++c) {
           if (in_data[w * features + c] > max_vals[c]) {
@@ -190,7 +191,7 @@ inline void pool_max_2d_nchw_cpu(const DType* in_data,
           hstart               = std::max(hstart, 0);
           wstart               = std::max(wstart, 0);
           const int pool_index = ph * pooled_width + pw;
-          DType max_val        = MinValue<DType>();
+          DType max_val        = -std::numeric_limits<DType>::infinity();
           for (int h = hstart; h < hend; ++h) {
             for (int w = wstart; w < wend; ++w) {
               const int in_index = h * width + w;
@@ -240,7 +241,7 @@ inline void pool_max_2d_nhwc_cpu(const DType* in_data,
         hstart               = std::max(hstart, 0);
         wstart               = std::max(wstart, 0);
         const int pool_index = ph * pooled_width + pw;
-        std::fill(max_vals.begin(), max_vals.end(), MinValue<DType>());
+        std::fill(max_vals.begin(), max_vals.end(), -std::numeric_limits<DType>::infinity());
         for (int h = hstart; h < hend; ++h) {
           for (int w = wstart; w < wend; ++w) {
             const int in_index = h * width + w;
@@ -295,7 +296,7 @@ inline void pool_max_3d_ncdhw_cpu(const DType* in_data,
             hstart               = std::max(hstart, 0);
             wstart               = std::max(wstart, 0);
             const int pool_index = (pd * pooled_height + ph) * pooled_width + pw;
-            DType max_val        = MinValue<DType>();
+            DType max_val        = -std::numeric_limits<DType>::infinity();
             for (int d = dstart; d < dend; ++d) {
               for (int h = hstart; h < hend; ++h) {
                 for (int w = wstart; w < wend; ++w) {
@@ -352,7 +353,7 @@ inline void pool_max_3d_ndhwc_cpu(const DType* in_data,
           hstart               = std::max(hstart, 0);
           wstart               = std::max(wstart, 0);
           const int pool_index = (pd * pooled_height + ph) * pooled_width + pw;
-          std::fill(max_vals.begin(), max_vals.end(), MinValue<DType>());
+          std::fill(max_vals.begin(), max_vals.end(), -std::numeric_limits<DType>::infinity());
           for (int d = dstart; d < dend; ++d) {
             for (int h = hstart; h < hend; ++h) {
               for (int w = wstart; w < wend; ++w) {

@@ -424,7 +424,13 @@ class CuDNNDeconvolutionOp {
       oshape  = ConvertLayout(oshape.get<5>(), param_.layout.value(), kNCDHW);
     }
     // Set "allow tensor core" flag in convolution descriptors, if available.
-    cudnnMathType_t math_type = cudnn_tensor_core_ ? CUDNN_TENSOR_OP_MATH : CUDNN_DEFAULT_MATH;
+    cudnnMathType_t math_type = cudnn_tensor_core_ ? CUDNN_TENSOR_OP_MATH
+                                                   : CUDNN_DEFAULT_MATH;
+#if CUDNN_VERSION >= 7200
+    if (GetEnvAllowTensorCore() && GetEnvAllowTensorCoreConversion() &&
+        (DataType<DType>::kFlag != kFloat16))
+      math_type = CUDNN_TENSOR_OP_MATH_ALLOW_CONVERSION;
+#endif
     CUDNN_CALL(cudnnSetConvolutionMathType(forward_conv_desc_, math_type));
     CUDNN_CALL(cudnnSetConvolutionMathType(back_conv_desc_, math_type));
     CUDNN_CALL(cudnnSetConvolutionMathType(back_conv_desc_w_, math_type));

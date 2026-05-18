@@ -64,16 +64,19 @@ def test_fp16_test_node_excluding():
     amp_common_tests.test_amp_node_excluding(AMP_DTYPE)
 
 
-@pytest.mark.skip(reason='Error during waitall(). Tracked in #18099')
+@mx.util.use_np
 @assert_raises_cudnn_not_satisfied(min_version='5.1.10')
-def test_amp_conversion_rnn(amp_tests):
+def test_amp_conversion_rnn():
+    # Upstream #18099 reported a waitall() failure here under MXNet 1.6.
+    # The cuDNN-9 v8 RNN port on this fork does not exhibit that failure.
     with mx.Device(mx.gpu(0)):
         model = nn.HybridSequential()
         model.add(rnn.LSTM(hidden_size=10, num_layers=2, bidirectional=True))
         model.add(nn.Dense(2))
-        model.initialize()
+        model.initialize(device=mx.gpu(0))
         model.hybridize()
-        out = model(mx.nd.ones((2, 3, 4)))
-        new_model = amp.convert_hybrid_block(model)
-        out2 = new_model(mx.nd.ones((2, 3, 4)))
+        data = mx.np.ones((2, 3, 4), ctx=mx.gpu(0))
+        out = model(data)
+        new_model = amp.convert_hybrid_block(model, data, target_dtype=AMP_DTYPE)
+        out2 = new_model(data)
         mx.test_utils.assert_almost_equal(out.asnumpy(), out2.asnumpy(), atol=1e-2, rtol=1e-2)

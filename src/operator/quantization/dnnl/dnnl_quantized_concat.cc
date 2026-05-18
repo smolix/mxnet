@@ -103,23 +103,86 @@ static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
       // back-to-back concat-input reorders, corrupting the second input's
       // data with zeros before the concat consumed it.
       auto rescaled_mem = TmpMemMgr::Get()->Alloc(mem_desc);
-      // v3: set_output_scales removed; use set_scales_mask + runtime arg.
-      dnnl::primitive_attr reorder_attr;
-      reorder_attr.set_scales_mask(DNNL_ARG_SRC, 0);
-      const auto reorder_pd = dnnl::reorder::primitive_desc(
-          cpu_engine, mem->get_desc(), cpu_engine, mem_desc, reorder_attr);
-      // Scale memory: keep the f32 storage user-managed and held alive by
-      // `scale_bufs` until DNNLStream::Submit() runs.
-      auto scale_buf = std::make_shared<float>(out_scale / i_scale);
-      scale_bufs.push_back(scale_buf);
-      dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
-                                  dnnl::memory::format_tag::x);
-      auto scale_mem = dnnl::memory(scale_md, cpu_engine, scale_buf.get());
-      dnnl_args_map_t reorder_args;
-      reorder_args[DNNL_ARG_SRC] = *mem;
-      reorder_args[DNNL_ARG_DST] = *rescaled_mem;
-      reorder_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = scale_mem;
-      DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd), reorder_args);
+      if (in_data[i].dtype() != out_dtype) {
+        // oneDNN v3 JIT reorder appears to skip the scaling stage for the
+        // mixed-dtype case (u8 -> s8 with attr-scales): the destination
+        // ends up with values consistent with an unscaled copy, leaving
+        // one input's channels effectively zeroed in the concat output.
+        // Both set_scales_mask(SRC,0) and set_scales_mask(DST,0) reproduce
+        // the same failure on data_shape=(4,3,24,24). The same-dtype
+        // s8->s8 sibling reorder works in the same loop with the same
+        // attr layout. Sidestep by routing through f32: a u8->f32
+        // dequantize then f32->s8 quantize. Both reorders use single-
+        // tensor (DST mask=0) scales, which are exercised correctly by
+        // other v3 paths in this codebase.
+        //
+        // v3 scale convention with only DST scale present:
+        //   dst = src / dst_scale
+        // Step 1 (u8 -> f32, dequantize): want dst_f32 = src_u8 / i_scale
+        //   => dst_scale = i_scale.
+        // Step 2 (f32 -> s8, quantize): want dst_s8 = src_f32 * out_scale
+        //   => dst_scale = 1 / out_scale.
+        // Composed:
+        //   dst_s8 = (src_u8 / i_scale) * out_scale
+        //          = src_u8 * (out_scale / i_scale)
+        // which matches the math of the original single-reorder path.
+        auto f32_desc =
+            CloneMemDescWithDtype(mem->get_desc(),
+                                  dnnl::memory::data_type::f32);
+        auto f32_mem = TmpMemMgr::Get()->Alloc(f32_desc);
+
+        // Step 1: u8 -> f32 (dequantize) with DST scale = i_scale.
+        dnnl::primitive_attr deq_attr;
+        deq_attr.set_scales_mask(DNNL_ARG_DST, 0);
+        const auto deq_pd = dnnl::reorder::primitive_desc(
+            cpu_engine, mem->get_desc(), cpu_engine, f32_desc, deq_attr);
+        auto deq_scale_buf = std::make_shared<float>(i_scale);
+        scale_bufs.push_back(deq_scale_buf);
+        dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                                    dnnl::memory::format_tag::x);
+        auto deq_scale_mem =
+            dnnl::memory(scale_md, cpu_engine, deq_scale_buf.get());
+        dnnl_args_map_t deq_args;
+        deq_args[DNNL_ARG_SRC] = *mem;
+        deq_args[DNNL_ARG_DST] = *f32_mem;
+        deq_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = deq_scale_mem;
+        DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(deq_pd), deq_args);
+
+        // Step 2: f32 -> s8 (quantize) with DST scale = 1 / out_scale.
+        dnnl::primitive_attr q_attr;
+        q_attr.set_scales_mask(DNNL_ARG_DST, 0);
+        const auto q_pd = dnnl::reorder::primitive_desc(
+            cpu_engine, f32_desc, cpu_engine, mem_desc, q_attr);
+        auto q_scale_buf = std::make_shared<float>(1.0f / out_scale);
+        scale_bufs.push_back(q_scale_buf);
+        auto q_scale_mem =
+            dnnl::memory(scale_md, cpu_engine, q_scale_buf.get());
+        dnnl_args_map_t q_args;
+        q_args[DNNL_ARG_SRC] = *f32_mem;
+        q_args[DNNL_ARG_DST] = *rescaled_mem;
+        q_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST] = q_scale_mem;
+        DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(q_pd), q_args);
+      } else {
+        // Same-dtype rescale (e.g. s8 -> s8). v3: set_output_scales removed;
+        // use set_scales_mask + runtime arg. Direct single reorder works
+        // for the same-dtype case.
+        dnnl::primitive_attr reorder_attr;
+        reorder_attr.set_scales_mask(DNNL_ARG_SRC, 0);
+        const auto reorder_pd = dnnl::reorder::primitive_desc(
+            cpu_engine, mem->get_desc(), cpu_engine, mem_desc, reorder_attr);
+        // Scale memory: keep the f32 storage user-managed and held alive by
+        // `scale_bufs` until DNNLStream::Submit() runs.
+        auto scale_buf = std::make_shared<float>(out_scale / i_scale);
+        scale_bufs.push_back(scale_buf);
+        dnnl::memory::desc scale_md({1}, dnnl::memory::data_type::f32,
+                                    dnnl::memory::format_tag::x);
+        auto scale_mem = dnnl::memory(scale_md, cpu_engine, scale_buf.get());
+        dnnl_args_map_t reorder_args;
+        reorder_args[DNNL_ARG_SRC] = *mem;
+        reorder_args[DNNL_ARG_DST] = *rescaled_mem;
+        reorder_args[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = scale_mem;
+        DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(reorder_pd), reorder_args);
+      }
       data_mem.push_back(rescaled_mem);
       data_md.push_back(mem_desc);
     }

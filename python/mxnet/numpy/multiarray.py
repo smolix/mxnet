@@ -2221,7 +2221,12 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
 
     def prod(self, axis=None, dtype=None, out=None, keepdims=False):  # pylint: disable=arguments-differ
         """Return the product of the array elements over the given axis."""
-        return _mx_np_op.prod(self, axis=axis, dtype=dtype, keepdims=keepdims, out=out)
+        # The underlying op was renamed `prod` → `product` at some point in the
+        # MXNet-numpy refactor; expose both spellings so the fluent ndarray
+        # method matches numpy's `.prod()` API. See d2l's naive-bayes notebook
+        # which calls `arr.prod(axis=1)` and hit AttributeError before this.
+        op = getattr(_mx_np_op, 'prod', None) or _mx_np_op.product
+        return op(self, axis=axis, dtype=dtype, keepdims=keepdims, out=out)
 
     def nanprod(self, *args, **kwargs):
         """Convenience fluent method for :py:func:`nanprod`.

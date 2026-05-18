@@ -73,17 +73,15 @@ Tracks `issues.md` apache section B8 / apache#19218.
 
 ## FU-4 — d2l Cat 1 fork-time oneDNN cache (apache fork-safe DataLoader)
 
-**Status**: PATCH APPLIED + REBUILT, **but verification shows the patch is insufficient**. Workaround `MXNET_ONEDNN_ENABLED=0` is the actual fix users should set.
+**Status**: PATH B LANDED IN WHEEL `.2` (PR #18) — engine reset + `dnnl_mem_` invalidation in the atfork child. Verified by fashion_mnist + `num_workers=4` and via the regression tests in PR #20 (`tests/python/gpu/test_fu4_fork_safe_dnnl.py`). BUT the post-`.2` d2l sweep (2026-05-18 21:28) shows **7 RNN/embedding notebooks still fail** with the same surface symptom — see FU-11. Re-investigation 2026-05-18 22:18 shows that cluster is **NOT a fork issue** (`num_workers=0` in the failing path), so FU-4 itself is considered resolved for its intended scope.
 
-**Description**: 10 d2l-neu notebooks fail with bare `MXNetError: could not execute a primitive` when `gluon.data.DataLoader(num_workers>0)`. Root caused: `pthread_atfork` handlers in `src/initialize.cc:191-215` Stop/Start the Engine + clamp OpenMP, but do NOT clear oneDNN process-global state.
+**Description (original)**: 10 d2l-neu notebooks failed with bare `MXNetError: could not execute a primitive` when `gluon.data.DataLoader(num_workers>0)`. Root caused: `pthread_atfork` handlers in `src/initialize.cc:191-215` Stop/Start the Engine + clamp OpenMP, but did NOT clear oneDNN process-global state.
 
-**Patch attempted**: `.investigations/d2l_cat1_atfork.patch` adds `g_dnnl_forked_child` atomic + `DNNLAfterForkChild()` that clears DNNL primitive cache and makes `DNNLEnvSet()` return false in the child. Built into commit `5d99841c4`.
+**Path A (Insufficient)**: `g_dnnl_forked_child` atomic + `DNNLEnvSet()` kill-switch (`.investigations/d2l_cat1_atfork.patch`, commit `5d99841c4`). Only checked at operator-level dispatchers; not at `NDArray::GetDNNLData()`. Superseded by Path B.
 
-**Why the patch is insufficient**: `DNNLEnvSet()` is only checked at operator-level dispatchers (concat.cc, fully_connected.cc, batch_norm.cc, etc.) — NOT at `NDArray::GetDNNLData()` / `GetDNNLDataReorder()` in `src/ndarray/ndarray.cc`. The failing d2l worker path goes through `_mx_np.stack → concat → MXNetStorageInferDNNL` which calls `GetDNNLData()` on inherited DNNL chunks. The kill-switch is ignored on that path.
+**Path B (Landed in PR #18)**: `DNNLAfterForkChild()` now (1) drops the oneDNN primitive cache, (2) re-placement-news the `CpuEngine` + `DNNLStream` singletons, (3) sets `g_dnnl_forked_child` so `NDArray::GetDNNLData()` drops a stale `ptr_->dnnl_mem_`. Touched: `src/initialize.cc`, `src/operator/nn/dnnl/dnnl_base-inl.h`, `src/operator/nn/dnnl/dnnl_base.cc`, `src/ndarray/ndarray.cc`. Regression tests in `tests/python/gpu/test_fu4_fork_safe_dnnl.py` (PR #20).
 
-**Effective workaround (recommended for users)**: `MXNET_ONEDNN_ENABLED=0` env var. Confirmed to make all 10 affected notebooks pass.
-
-**Proper fix (future work)**: Either (a) add the `!g_dnnl_forked_child` check at the start of `NDArray::GetDNNLData()` and `GetDNNLDataReorder()`; OR (b) destroy + recreate the `CpuEngine` singleton in the atfork child handler (heavier but more thorough — covers all DNNL entry points).
+**Effective workaround (still valid)**: `MXNET_ONEDNN_ENABLED=0` env var — makes the broader d2l symptom (including FU-11) go away by avoiding oneDNN entirely.
 
 **Repro**: `.investigations/d2l_cat1_repro.py`, also the upstream `rnn-scratch.ipynb` itself.
 
@@ -168,3 +166,126 @@ See `.investigations/d2l_findings_summary.md` for full triage.
 **Gap**: No self-hosted GPU runner. The GPU sweep (test_operator_gpu.py, test_gluon_gpu.py, etc.) is currently hand-run. Once a GPU runner is available, add a third workflow that runs the GPU subset on PRs touching `src/operator/nn/cudnn/*` or `src/common/cuda/*`.
 
 Tracks `issues.md` #32 (closed in PR #15) — this is the natural follow-up.
+
+---
+
+## FU-11 — d2l RNN/embedding cluster: `np.stack` op fails after Trainer setup (wheel `.2`)
+
+**Status**: OPEN, **NOT a fork issue** — re-investigation 2026-05-18 22:18 found `num_workers=0` in `d2l.DataModule.get_tensorloader` (the path used by `TimeMachine`). FU-4 Path B is unrelated to this cluster.
+
+**Source**: `/workspace/d2l-neu/mxnet-errors.md` (sweep against wheel `2.0.0+cu13.bw.20260518.2`, run 2026-05-18 21:28).
+
+**7 failing notebooks** (all under `_notebooks/mxnet/`):
+- `chapter_optimization/minibatch-sgd.ipynb` — multi-GPU `train_ch11`
+- `chapter_recommender-systems/seqrec.ipynb` — `train_ranking` w/ NeuMF-style CTR DataLoader
+- `chapter_recurrent-modern/deep-rnn.ipynb` — `Trainer(num_gpus=1).fit(GRU + 2-layer)`
+- `chapter_recurrent-modern/gru.ipynb` — `Trainer.fit(RNNLMScratch(gru,...))`
+- `chapter_recurrent-modern/lstm.ipynb` — same shape, LSTM
+- `chapter_recurrent-neural-networks/rnn-concise.ipynb` — `Trainer.fit(RNN)` with fused `rnn.RNN`
+- `chapter_recurrent-neural-networks/rnn-scratch.ipynb` — `Trainer.fit(RNNLMScratch w/ manual GRU)`
+
+**Symptom**: bare `MXNetError: could not execute a primitive` from `_LIB.MXNetFuncCall`.
+
+**Failure point (NaiveEngine localised, 2026-05-18 22:17)**:
+```
+fit_epoch → for batch in train_dataloader → DataLoader.__iter__ → same_process_iter
+  → self._batchify_fn(...)
+  → gluon.data.batchify.Stack.__call__ at batchify.py:95
+  → mxnet.numpy.stack at multiarray.py:7536
+  → _api_internal.stack(*arrays, axis, out)  ← FAILS HERE
+```
+
+**Key isolation results (this branch, wheel `.2`)**:
+- `data.train_dataloader()` then iterating 3 batches DIRECTLY (no model, no trainer) → **PASSES** with NaiveEngine.
+- Same DataLoader after constructing `RNNLMScratch(gru, ...)` + `d2l.Trainer(...)` + `trainer.fit(model, data)` → **FAILS** at first batch's `Stack` batchify (above).
+- `MXNET_ONEDNN_ENABLED=0` → notebook trains successfully (timed out at 60 s mid-training, not a crash). Definitive workaround.
+
+**Diagnosis (current best guess)**: model/optimizer initialization on GPU mutates some CPU oneDNN process-global state (primitive cache key counter? scratchpad? layout-engine singleton?) which then makes a subsequent CPU `np.stack` op (a tiny int32 stack of `(32,)` rows) fail. The stack op normally has nothing to do with the model, but it shares the CPU engine + DNNL primitive cache that the model's CPU-side init touched.
+
+**Suggested next diagnostic**:
+1. Bisect the trainer setup: which of `gru = GRU(...)`, `gru.initialize()`, `model = RNNLMScratch(...)`, `Trainer(...)`, `trainer.fit(...)`'s pre-loop setup actually moves the failure forward.
+2. With the failure repro from (1), strace/perf the C++ side around `_api_internal.stack` to see whether DNNL is consulted on a tiny `(32, 32) int32` stack (it shouldn't be, but `MXNetStorageInferDNNL` may be over-eager).
+3. Add a temporary `LOG(INFO)` at `MXNetStorageInferDNNL` and at the failing primitive's `execute` to capture which oneDNN primitive aborts.
+
+**Repro**: `.investigations/fu11_d2l_rnn_stack_repro.py` (control path); full failure path requires `jupyter nbconvert` on the notebook (see the file's docstring).
+
+**Workaround**: `MXNET_ONEDNN_ENABLED=0` (verified definitive).
+
+Tracks d2l-neu `mxnet-errors.md` §A.1 (post-`.2` re-run).
+
+---
+
+## FU-12 — `transformer.ipynb` DeadKernelError under concurrent GPU load
+
+**Status**: OPEN, root-cause unknown. Minimal repro from `mxnet-errors.md` does NOT reproduce in isolation — needs concurrent GPU pressure.
+
+**Source**: `/workspace/d2l-neu/mxnet-errors.md` §A.2.
+
+**Single failing notebook**: `_notebooks/mxnet/chapter_attention-mechanisms-and-transformers/transformer.ipynb`. Kernel dies stably at ~7 s × 5 retries. Sister notebooks in the same chapter PASS (multihead-attention, bahdanau-attention, attention-pooling, attention-scoring-functions, queries-keys-values, self-attention-and-positional-encoding).
+
+**The d2l report's "8-line minimal" repro PASSES** in isolation on this machine (both CPU and GPU contexts), confirmed 2026-05-18 22:12. So the bug is environmental: jupyter kernel context, GPU contention with other notebook workers (`GPU_SLOTS=2`), or specific cell-ordering state.
+
+**Hypothesis**: SIGKILL from OOM-killer or CUDA driver under contention. `nbconvert --execute` exit codes don't distinguish died-from-SIGKILL vs died-from-SIGABRT. Need to capture `dmesg` + GPU memory usage at death time.
+
+**Suggested next diagnostic**:
+- Re-run with `GPU_SLOTS=1` to isolate from contention.
+- Watch `dmesg` + `nvidia-smi -lms 200` during nbconvert.
+- Wrap kernel in `strace -e signal` or set `core` rlimit so we can postmortem the C++ stack.
+
+**Workaround**: run notebook in isolation (no concurrent sweep). Not a wheel API bug we can fix from C++ until we have a determinist repro.
+
+Tracks d2l-neu `mxnet-errors.md` §A.2.
+
+---
+
+## FU-13 — `np.nonzero` IndexError in `assign_anchor_to_bbox` context (ssd.ipynb)
+
+**Status**: OPEN, NOT reproducible standalone.
+
+**Source**: `/workspace/d2l-neu/mxnet-errors.md` §A.3.
+
+**Single failing notebook**: `_notebooks/mxnet/chapter_computer-vision/ssd.ipynb`. Surface error from training loop:
+```
+IndexError: Traceback (most recent call last):
+  File "/workspace/mxnet/src/operator/numpy/np_indexing_op.cu", line 370
+IndexError: index 3417 is out of bounds for axis 0 with size 1
+```
+
+**Site in book**: `d2l.assign_anchor_to_bbox` calls `np.nonzero(max_ious >= iou_threshold)[0]` — fails on first training batch.
+
+**Minimal repro from the d2l report does NOT reproduce** — `np.nonzero` on `(arange(10000) == 3417.0)` returns `array([3417])` correctly (verified 2026-05-18 22:12 on wheel `.2`). The standalone 1-D-bool-mask path works.
+
+**Hypothesis**: bug requires the specific dtype / shape / boolean-mask pattern produced upstream of `assign_anchor_to_bbox`. The index value (`1441 / 1860 / 3417`) changes run-to-run — it's data-dependent. May involve broadcasting of `max_ious >= iou_threshold` over a `(num_anchors, num_gt_boxes)` matrix where `num_gt_boxes == 1`.
+
+**Suggested next diagnostic**: capture the actual arg to `np.nonzero` inside `assign_anchor_to_bbox` (shape, dtype, sum) using a `try`/`except` wrapper, then write a standalone repro with that exact tensor.
+
+**Workaround**: none discovered. d2l book's `assign_anchor_to_bbox` is canonical; we should diagnose the wheel op rather than patch the book.
+
+Tracks d2l-neu `mxnet-errors.md` §A.3.
+
+---
+
+## FU-14 — `sentiment-analysis-rnn.ipynb` OOM during training
+
+**Status**: OPEN, low priority. May not be a leak — could be a real memory-budget issue.
+
+**Source**: `/workspace/d2l-neu/mxnet-errors.md` §A.4.
+
+**Single failing notebook**: `_notebooks/mxnet/chapter_natural-language-processing-applications/sentiment-analysis-rnn.ipynb`. Fails after ~125 s of training with:
+```
+File "/workspace/mxnet/src/storage/./pooled_storage_manager.h", line 240
+MXNetError: Memory allocation failed out of memory
+```
+
+**Model**: `nn.Embedding(vocab=49328, 100) + rnn.LSTM(100, num_layers=2, bidirectional=True) + nn.Dense(2)` on IMDB, `batch_size=64`. 24 GB GPU.
+
+**Hypothesis (per d2l report)**: activation-memory leak vs. real budget issue. Differentiate by running with `GPU_SLOTS=1` (no concurrent worker).
+
+**Suggested next diagnostic**:
+- Try `GPU_SLOTS=1` re-run; if it passes, this is contention, not a leak.
+- If it still OOMs, instrument `pooled_storage_manager.h:240` to log live/peak buffer footprint.
+- Try `MXNET_GPU_MEM_POOL_TYPE=Round` to see if pool fragmentation is at fault.
+
+**Workaround**: `GPU_SLOTS=1` likely sufficient.
+
+Tracks d2l-neu `mxnet-errors.md` §A.4.

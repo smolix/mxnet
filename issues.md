@@ -129,7 +129,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 14. **ONNX export/import** — `tests/python/onnx/test_models.py` and `test_operators.py` both error at collect time. Likely the ONNX path was never updated for MXNet 2.0 numpy ops; depends how important ONNX interop is.
 
-15. **Gluon pretrained model loading** — `test_gluon_model_zoo.py` partially fails (pretrained checkpoint download + symbol serialisation). If anyone uses the model zoo, this needs validation.
+15. ~~**Gluon pretrained model loading**~~ **RESOLVED 2026-05-18** — `test_gluon_model_zoo.py` runs 34/34 PASS (1 pre-existing skip for `test_parallel_download`, marked upstream #17782). Full run: all 34 model-architecture forward passes succeed; the sole pretrained-checkpoint download (`mobilenetv2_0.25` from Apache CDN) also succeeds. No symbol-serialisation errors, no URL failures, no MXNet 2.0 numpy-op renames needed. The original issue description was speculative — nothing was actually broken. `test_parallel_download` remains skipped (MXNet fork-safety issue, upstream-tracked, out of scope).
 
 16. **Custom C++ operators** — `test_custom_op_fork` audit was green but the broader custom-op infrastructure with CUDA 13 / Thrust 3 hasn't been exercised.
 

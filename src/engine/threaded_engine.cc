@@ -25,6 +25,7 @@
 #include <dmlc/logging.h>
 #include <cassert>
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <utility>
@@ -391,6 +392,14 @@ void ThreadedEngine::DeleteVariable(SyncFn delete_fn, Context exec_ctx, VarHandl
 }
 
 void ThreadedEngine::WaitForVar(VarHandle var) {
+  // A6/A7 diagnostic (apache/mxnet#19994, #18090): MXNET_ENGINE_DIAG=1 enables
+  // a 30-second no-progress watchdog.  On timeout it logs the pending count and
+  // var pointer so the caller can identify the stuck variable.  The wait
+  // continues after logging (it does not abort) to avoid masking transient
+  // slowdowns under heavy load.
+  static const bool engine_diag = dmlc::GetEnv("MXNET_ENGINE_DIAG", false);
+  static const int diag_timeout_s = dmlc::GetEnv("MXNET_ENGINE_DIAG_TIMEOUT_S", 30);
+
   BulkFlush();
   ThreadedVar* threaded_var = ThreadedVar::CastFromBase(var);
   if (threaded_var->ready_to_read()) {
@@ -427,16 +436,47 @@ void ThreadedEngine::WaitForVar(VarHandle var) {
       true);
   {
     std::unique_lock<std::mutex> lock{finished_m_};
-    finished_cv_.wait(lock, [this, &done]() { return done.load() || kill_.load(); });
+    if (engine_diag) {
+      // Watchdog loop: wake every diag_timeout_s seconds and log if still stuck.
+      while (!finished_cv_.wait_for(lock,
+                                    std::chrono::seconds(diag_timeout_s),
+                                    [this, &done]() { return done.load() || kill_.load(); })) {
+        LOG(WARNING) << "[MXNET_ENGINE_DIAG] WaitForVar timeout after " << diag_timeout_s
+                     << "s: var=" << threaded_var
+                     << " pending_ops=" << pending_.load()
+                     << " shutdown_phase=" << shutdown_phase_.load()
+                     << " kill=" << kill_.load()
+                     << ". Engine may be deadlocked. Set MXNET_ENGINE_TYPE=NaiveEngine "
+                        "to debug synchronously.";
+      }
+    } else {
+      finished_cv_.wait(lock, [this, &done]() { return done.load() || kill_.load(); });
+    }
   }
 
   ThrowException(threaded_var);
 }
 
 void ThreadedEngine::WaitForAll() {
+  // A6/A7: same watchdog as WaitForVar (apache/mxnet#19994, #18090).
+  static const bool engine_diag_all = dmlc::GetEnv("MXNET_ENGINE_DIAG", false);
+  static const int diag_timeout_s_all = dmlc::GetEnv("MXNET_ENGINE_DIAG_TIMEOUT_S", 30);
+
   BulkFlush();
   std::unique_lock<std::mutex> lock{finished_m_};
-  finished_cv_.wait(lock, [this]() { return pending_.load() == 0 || kill_.load(); });
+  if (engine_diag_all) {
+    while (!finished_cv_.wait_for(lock,
+                                  std::chrono::seconds(diag_timeout_s_all),
+                                  [this]() { return pending_.load() == 0 || kill_.load(); })) {
+      LOG(WARNING) << "[MXNET_ENGINE_DIAG] WaitForAll timeout after " << diag_timeout_s_all
+                   << "s: pending_ops=" << pending_.load()
+                   << " shutdown_phase=" << shutdown_phase_.load()
+                   << " kill=" << kill_.load()
+                   << ". Engine may be deadlocked.";
+    }
+  } else {
+    finished_cv_.wait(lock, [this]() { return pending_.load() == 0 || kill_.load(); });
+  }
   std::exception_ptr exception_to_rethrow = nullptr;
   if (!global_exception_refs_.empty()) {
     // iterate through all exception refs

@@ -55,6 +55,16 @@ def _assert_dc(setup, compute, mode='all', setup_is_deterministic=True, numpy=Tr
         If True, use mx.np. Otherwise mx.nd.
 
     """
+    # Save np-semantics state so we can restore it precisely. The previous
+    # implementation called `mx.npx.reset_np()` unconditionally in the
+    # `finally` block, which turned np-semantics OFF for the rest of the
+    # process even if it had already been ON when `_assert_dc` was called.
+    # When test_deferred_compute_gpu.py runs alphabetically before
+    # test_gluon_gpu.py in a pytest sweep, that residual reset caused
+    # ~165 cross-test failures with `_npi_amp_cast ... received a legacy
+    # ndarray` / `DCInfo::IsNone(*input)` errors.
+    prev_np_array = mx.util.is_np_array()
+    prev_np_shape = mx.util.is_np_shape()
     try:
         nd = mx.np if numpy else mx.nd
         if numpy:
@@ -99,8 +109,11 @@ def _assert_dc(setup, compute, mode='all', setup_is_deterministic=True, numpy=Tr
             ys_sym_np = [y.asnumpy() for y in ys_sym]
             _all_same(ys_np, ys_sym_np)
     finally:
-        if numpy:
-            mx.npx.reset_np()
+        # Restore the np-semantics state that was active on entry rather
+        # than unconditionally resetting it. set_np() / reset_np() are
+        # global toggles, not stacked, so a `reset_np()` in finally can
+        # leak across tests.
+        mx.npx.set_np(shape=prev_np_shape, array=prev_np_array)
 
 
 def _all_assert_dc(setup, compute, setup_is_deterministic=True, numpy=(False, True)):
@@ -562,9 +575,13 @@ def test_indexing_empty_shape():
 
     net = TestModel()
     net.hybridize()
+    # Save/restore np-semantics state — same rationale as `_assert_dc`
+    # above: an unconditional reset leaks across pytest test boundaries.
+    prev_np_array = mx.util.is_np_array()
+    prev_np_shape = mx.util.is_np_shape()
     try:
         mx.npx.set_np()
         net(mx.np.zeros((2, 2, 4, 0, 128)))
         net(mx.np.zeros((2, 2, 4, 2, 128)))  # test indexing after input shape change
     finally:
-        mx.npx.reset_np()
+        mx.npx.set_np(shape=prev_np_shape, array=prev_np_array)

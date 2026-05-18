@@ -21,8 +21,18 @@ from mxnet.gluon.data.dataloader import *
 from mxnet.contrib.io import *
 from mxnet.test_utils import *
 
-mx.npx.reset_np()
-
+# Note: the original `mx.npx.reset_np()` at module scope here is a global
+# toggle that leaks into any other test file collected in the same pytest
+# invocation. Replace with an autouse fixture so the np-semantics flip is
+# scoped per-test and cross-file sweeps stay clean.
+import pytest as _pytest_for_reset_np_fixture
+@_pytest_for_reset_np_fixture.fixture(autouse=True)
+def _legacy_nd_semantics():
+    _prev_arr = mx.util.is_np_array()
+    _prev_shp = mx.util.is_np_shape()
+    mx.npx.reset_np()
+    yield
+    mx.npx.set_np(shape=_prev_shp, array=_prev_arr)
 def test_contrib_DataLoaderIter():
     def test_mnist_batches(batch_size, expected, last_batch='discard'):
         dataset = MNIST(train=False)

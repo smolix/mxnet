@@ -25,6 +25,7 @@ Snapshot: 2026-05-17 on branch `onednn-v3-port` at HEAD `f8b0c7125` (49 commits 
 | `c2df8dd44` | fix apache#18865: per-CPU-dev_id random generators | `cpu_rand_` and `cpu_parallel_rand_` changed from `unique_ptr` (shared across ALL CPU dev_ids) to `common::LazyAllocArray<>` indexed by `ctx.dev_id`, mirroring the existing per-dev_id GPU design. Seeding `cpu(N)` no longer affects `cpu(M)` for M≠N. Six regression tests at `tests/python/unittest/test_random_seed_order.py` (6/6 PASS in 0.96s). |
 | TBD | A15 fix apache#14264: `nd.reshape` silently truncates | re-enable size-equality CHECK in `ReshapeShape` (guarded by `shape_is_known`) + 0/0 guard in `InferReshapeShape` -1 inference path (was process-killing SIGFPE on `infer_shape` with 0-dim holdouts). Side fixes: `numpy_op_signature.py` + `numpy_dispatch_protocol.py` `sometrue` removal (import-time crash after rebuild). See `a15_reshape_followup.md`. FC subgraph baseline 387/0/16 preserved. |
 | TBD | verify apache#16686: grad_req='add' numerical consistency (VERIFIED FIXED) | No C++ change needed. Regression test `tests/python/unittest/test_grad_req_add_consistency.py` (6/6 PASS) confirms: (a) switching to `grad_req='add'` correctly zeroes the buffer via `_init_grad()`; (b) Dense, Embedding, and Embed+Dense (BERT-like) accumulated gradients match manual accumulation bitwise (Dense) or within float32 scatter-add rounding ≤1.19e-07 (Embedding). The original divergence was likely a user-side bug (not calling `zero_grad()` before each accumulation window), not a framework bug. |
+| TBD | fix apache#11163 (A13) / partial-fix apache#18090 (A7) / instrument apache#19994 (A6): engine shutdown + deadlock diagnostic | `MXNotifyShutdown()` now calls `Engine::Get()->Stop()` after `WaitForAll()` — worker threads fully joined before interpreter teardown, so static-dtor `cv.notify_all()` is a no-op. `MXNET_ENGINE_DIAG=1` watchdog added to `WaitForVar`/`WaitForAll` (30 s default, `MXNET_ENGINE_DIAG_TIMEOUT_S` override). Tests: `tests/python/unittest/test_engine_shutdown.py` 12/12 PASS. See `engine_deadlock_audit.md`. |
 
 Verification on post-cuDNN-9.22 build:
 
@@ -123,13 +124,13 @@ This file lists everything still open at this snapshot. Items are grouped by sev
    - `test_np_empty_like` → 1 SKIP (separate bug about int8/uint8/bool not supported, documented inline at the skip)
    - `test_convolution_options` was never in this fork (no upstream test by that name; bug referenced has different path)
 
-12. **`test_gpu_memory_profiler_symbolic`** (#18564) — profiler probe for `tensordot:dot_backward` attr_name doesn't find a match. The dot kernel was renamed under oneDNN v3 dispatch. Either update the test or restore the tag name in the kernel.
+12. ~~**`test_gpu_memory_profiler_symbolic`** (#18564)~~ **RESOLVED 2026-05-18** via commit `ed6757e64`. Under oneDNN v3, the backward node of `mx.symbol.dot()` is allocated as `tensordot:node_0_backward` rather than the v2 name `tensordot:dot_backward`. Updated the expected `Attribute Name` in `tests/python/gpu/test_profiler_gpu.py` and removed `pytest.mark.skip` — test is now 1/1 PASS.
 
-13. **`test_convolution_multiple_streams`** — `rtol=0.01/atol=0.01` mismatch on cuDNN-9 conv across NaiveEngine / ThreadedEngine / ThreadedEnginePerDevice on Blackwell. Real numerics drift. Either loosen tolerance to 0.05/0.05, force deterministic algorithms (`MXNET_CUDNN_AUTOTUNE_DEFAULT=0`), or leave skipped.
+13. ~~**`test_convolution_multiple_streams`**~~ **DOCUMENTED 2026-05-18** via commit `ed6757e64`. Investigation shows the errors reach ~14% relative on Blackwell — genuine workspace/stream non-determinism between the cuDNN and non-cuDNN paths under different engine types, not a simple tolerance issue. Loosening to `atol=0.05` is insufficient; silencing would require `~0.20`, which defeats the workspace-corruption probe. Kept skipped; updated skip reason to explain the cuDNN-9/sm_120 root cause and reference upstream #18564.
 
 14. **ONNX export/import** — `tests/python/onnx/test_models.py` and `test_operators.py` both error at collect time. Likely the ONNX path was never updated for MXNet 2.0 numpy ops; depends how important ONNX interop is.
 
-15. **Gluon pretrained model loading** — `test_gluon_model_zoo.py` partially fails (pretrained checkpoint download + symbol serialisation). If anyone uses the model zoo, this needs validation.
+15. ~~**Gluon pretrained model loading**~~ **RESOLVED 2026-05-18** — `test_gluon_model_zoo.py` runs 34/34 PASS (1 pre-existing skip for `test_parallel_download`, marked upstream #17782). Full run: all 34 model-architecture forward passes succeed; the sole pretrained-checkpoint download (`mobilenetv2_0.25` from Apache CDN) also succeeds. No symbol-serialisation errors, no URL failures, no MXNet 2.0 numpy-op renames needed. The original issue description was speculative — nothing was actually broken. `test_parallel_download` remains skipped (MXNet fork-safety issue, upstream-tracked, out of scope).
 
 16. **Custom C++ operators** — `test_custom_op_fork` audit was green but the broader custom-op infrastructure with CUDA 13 / Thrust 3 hasn't been exercised.
 
@@ -147,7 +148,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 21. **Sparse ops post-CCCL-3** — Thrust 3 unification changed default execution policies. `dense_to_csr`, `csr_to_dense`, sparse `topk` performance is uncharacterized. Could be the same; could be 2× worse. Benchmark.
 
-22. **Storage manager defaults**. Test output shows "Pooled (Naive) StorageManager" on every test. The `MXNET_GPU_MEM_POOL_TYPE=Round` variant fragments less on 24GB cards. Worth profiling whether it's a free win.
+22. ~~**Storage manager defaults**~~ **BENCHMARKED 2026-05-18** via commit `561acebde`. `bench_gpu_storage_pool.py` runs ResNet-18 v2 forward+backward at batch sizes 1/8/32/128/256 on GPU 0 with both pool types. Results (`storage_pool_bench.md`): Round uses 1–6% **more** peak memory than Naive (avg +3.5%), with no OOM at any batch size on 24 GiB. The "fragments less" hypothesis is **not confirmed** for ResNet-18 on Blackwell. Both pool types comfortably fit batch=256 (Naive=13.2 GiB, Round=13.8 GiB). Recommendation: keep default (Naive); Round is not a free win for regular-allocation workloads. Users with highly irregular allocation patterns (e.g., NLP models, dynamic shapes) should benchmark on their own workload.
 
 23. **TF32 default selection**. cuDNN 9 changed when TF32 is enabled. Audit `cudnnSetTensorMathType` call sites; FP32 conv that opts in to TF32 gets ~2× free.
 

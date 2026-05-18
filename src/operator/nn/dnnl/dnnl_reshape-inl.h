@@ -38,6 +38,9 @@ class DNNLReshapeFwd {
  protected:
   std::shared_ptr<dnnl::memory> out_;
   std::shared_ptr<dnnl::memory> temp_;
+  // Apache#21199: secondary view of the temp buffer with input.shape()-dims
+  // when in_mem and input.shape() disagree on ndim.  See dnnl_reshape.cc.
+  std::shared_ptr<dnnl::memory> temp_reshaped_;
   std::vector<dnnl::primitive> prims_;
 
  public:

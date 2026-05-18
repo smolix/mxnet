@@ -116,7 +116,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 9. **AMP-RNN conversion** — `test_amp_conversion_rnn` fails with "Error during waitall()" tracked at upstream #18099. Untested whether our cuDNN-9 v8 RNN path interacts with AMP's autocast hooks at all.
 
-10. **NCCL multi-process not validated** — 1-process / 2-GPU `kv.create('nccl')` push/pull works. Standard distributed training topology (1 process per GPU with `dist.init_process_group`-style init) is untested. May need `MXNET_KVSTORE_USETREE` or related tunings to scale.
+10. ~~**NCCL multi-process not validated**~~ **RESOLVED 2026-05-18** — Single-process 2-GPU `kv.create('nccl')` confirmed working: float32/float16/uint8 push/pull, multi-dim shapes, multiple keys, 10/10 tests PASS. Bandwidth: 1 MiB ≈ 9 GB/s, 16 MiB ≈ 19 GB/s, 256 MiB ≈ 21 GB/s (push+pull round-trip, ~65% PCIe 4.0 x16). Per-process / 1-proc-per-GPU NCCL all-reduce is **by design NOT built into MXNet's kvstore layer** — `KVStoreNCCL` is single-process only (`ncclCommInitAll()` on one process's visible GPUs). Spawning N workers each calling `kv.create('nccl')` creates N independent size-1 communicators with no cross-process reduction (verified by test). DDP-style cross-process NCCL requires Horovod or BytePS (not in this wheel). Tests: `tests/python/gpu/test_nccl_singleproc.py` (10/10), `tests/python/gpu/test_nccl_multiproc.py` (3/3). See `nccl_status.md`.
 
 11. ~~**Test-source bugs blocking 80+ test invocations**~~ **RESOLVED 2026-05-17** via agent #46 (commit `fa51581cb` numpy test fixes) plus the 21-test unskip in `cedeb2f9b`. Re-verified on cuDNN-9.22 build:
    - `test_deformable_psroipooling` → 1 PASS

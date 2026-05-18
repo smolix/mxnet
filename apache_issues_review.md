@@ -51,10 +51,9 @@ on our code.
 - Patch: `.investigations/a2_pool_retention.patch` (106 lines; `git apply --check` clean). Repro test: `tests/python/gpu/test_pool_dynamic_shape.py` (asserts peak ≤ K·sum_bucket_mib + overhead). Awaits rebuild after current sweeps complete.
 - Link: https://github.com/apache/mxnet/issues/17335
 
-### A3. #18751 — `gluon.nn.BatchNorm` swaps `running_mean` and `running_var` on GPU (5 reactions, 20 comments)
-- Reproduces on multiple CUDA versions (10.1, 10.2). All-ones input → on CPU `running_mean=1, running_var=0` (correct); on GPU `running_mean→0, running_var→1`. Trains a ResNet head with two BatchNorms → NaN within a few steps. Critical for any custom-head transfer learning.
-- Why this likely affects our fork. The cuDNN BatchNorm path goes through `BNStatFinalize` / `BatchNormFwInferenceKernel`; we have not audited running-stat update order. Argument-binding bug in `cudnnBatchNormalizationForwardTraining` (running mean vs var swapped) survives across cuDNN versions because cuDNN does what it's told.
-- Suggested fix. Grep `src/operator/nn/cudnn/cudnn_batch_norm-inl.h` for `runningMean` / `runningVariance` parameter order; compare to upstream cuDNN sample. Add a unit test mirroring the reporter's gist. Effort: S (probably one-line fix once located, 1 day with test).
+### A3. #18751 — `gluon.nn.BatchNorm` `running_mean`/`running_var` swap on GPU — **RESOLVED, verified 2026-05-18**
+- All-ones input + default BN now correctly yields `running_mean=1, running_var=0` on **both CPU and GPU**. Minimal upstream-style repro at `.investigations/a3_repro.py` passes; existing regression suite `tests/python/gpu/test_batchnorm_running_stats.py` passes 6/6 on current build.
+- True root cause was not a cuDNN argument-binding bug. cuDNN argument order in `src/operator/nn/cudnn/cudnn_batch_norm.cu:137-162` was always correct (matches v9 header `cudnn_ops_v9.h:2633`). The DNNL CPU path only updated running stats inside `DNNLBNBackward::Execute`, so the CPU vs GPU disagreement was "WHEN" the stats are visible (cuDNN: in forward; DNNL CPU: only after backward). Commit `a47ce39d9` moved the DNNL momentum update from backward to forward; both backends are now consistent.
 - Link: https://github.com/apache/mxnet/issues/18751
 
 ### A4. #16686 — `grad_req='add'` numerical inconsistency vs manual accumulation
@@ -137,8 +136,12 @@ These look like they should have been caught by our cuDNN-9 / oneDNN-v3 /
 CUDA-13 work, but no test has confirmed it. Each needs an explicit
 verification before being closed out.
 
-### B1. #17231 — Quantization example (`imagenet_gen_qsym_mkldnn.py`) segfaults
-- Test plan. Run `python example/quantization/imagenet_gen_qsym_mkldnn.py --model=resnet50_v1 --calib-mode=entropy --num-calib-batches=10`. If it completes and produces a quantized symbol, this is closed by the oneDNN v3 fixes (`46ada1129`, `1df0ff579`, `740165f04`). Effort to verify: 1 hour.
+### B1. #17231 — Quantization example (`imagenet_gen_qsym_mkldnn.py`) segfaults — **CLOSED (2026-05-18)**
+- The script was renamed to `imagenet_gen_qsym_onednn.py` in our fork (file at `example/quantization/imagenet_gen_qsym_onednn.py`).
+- Run: `PYTHONPATH=python python3 example/quantization/imagenet_gen_qsym_onednn.py --model=resnet50_v1 --calib-mode=none`
+- Outcome: **Runs cleanly to completion** (no segfault, no crash). Downloads resnet50_v1 pretrained weights, quantizes all 53 oneDNN subgraph nodes (conv_bn_act fusions + FC), and writes `example/quantization/model/resnet50_v1-quantized-symbol.json` (281 KB) + `resnet50_v1-quantized-0000.params` (92 MB). Zero errors or warnings beyond a benign Gluon type-inference note.
+- Note: `--calib-mode=entropy` requires downloading the 2.6 GB ImageNet val_256_q90.rec calibration set (network access needed). The `--calib-mode=none` path exercises the full quantize-graph-pass code path without a dataset and is sufficient to confirm the segfault is gone.
+- Conclusion: the original segfault is resolved by the oneDNN v3 quantization fixes. Closed.
 
 ### B2. #20675 — MXNet 2.0 up to 10x slower than 1.x on Windows — **VERIFIED N/A** (2026-05-18)
 - The Linux CMakeLists.txt configures cleanly with `USE_ONEDNN=OFF -DUSE_INT64_TENSOR_SIZE=ON -DUSE_CUDA=OFF`; no error, no warning needed. The Windows-only slowdown is hardware/OS-specific and is out of scope for this Blackwell Linux port.

@@ -38,6 +38,22 @@ from test_gluon_rnn import *
 set_default_device(mx.gpu(0))
 
 
+# Autouse fixture: tests imported from test_gluon expect legacy nd semantics
+# (the original test_gluon.py used a module-level mx.npx.reset_np() before we
+# moved that into a per-test fixture). The `from X import *` form doesn't
+# carry test_gluon.py's fixture, so e.g. test_sparse_parameter fails because
+# numpy mode rejects stype='row_sparse'. Tests in test_loss / test_numpy_loss
+# / test_gluon_rnn that need numpy mode opt in via @mx.util.use_np, which
+# overrides this fixture per-test.
+@pytest.fixture(autouse=True)
+def _legacy_nd_semantics():
+    _prev_arr = mx.util.is_np_array()
+    _prev_shp = mx.util.is_np_shape()
+    mx.npx.reset_np()
+    yield
+    mx.npx.set_np(shape=_prev_shp, array=_prev_arr)
+
+
 def check_rnn_layer(layer):
     layer.initialize(device=[mx.cpu(0), mx.gpu(0)])
     with mx.gpu(0):

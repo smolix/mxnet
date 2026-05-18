@@ -29,7 +29,6 @@ sys.path.insert(0, os.path.join(curr_path, '../unittest'))
 # They will be detected by test framework, as long as the current file has a different filename
 from test_profiler import *
 
-@pytest.mark.skip(reason='https://github.com/apache/incubator-mxnet/issues/18564')
 def test_gpu_memory_profiler_symbolic():
     enable_profiler('test_profiler.json')
     profiler.set_state('run')
@@ -62,9 +61,11 @@ def test_gpu_memory_profiler_symbolic():
              'Requested Size' : str(4 * b.size)},
             {'Attribute Name' : 'tensordot:dot',
              'Requested Size' : str(4 * c.size)},
-            {'Attribute Name' : 'tensordot:dot_backward',
+            # Under oneDNN v3 dispatch the backward node is renamed to
+            # 'node_0_backward' (was 'dot_backward' in v2).
+            {'Attribute Name' : 'tensordot:node_0_backward',
              'Requested Size' : str(4 * a.size)},
-            {'Attribute Name' : 'tensordot:dot_backward',
+            {'Attribute Name' : 'tensordot:node_0_backward',
              'Requested Size' : str(4 * b.size)},
             {'Attribute Name' : 'init:_random_uniform',
              'Requested Size' : str(4 * a.size)},
@@ -80,8 +81,8 @@ def test_gpu_memory_profiler_symbolic():
     # symbol:arg_grad:unknown,8388608,0,8388608,0
     # symbol:arg_grad:unknown,33554432,0,33554432,0
     # tensordot:dot,16777216,0,16777216,0
-    # tensordot:dot_backward,8388608,0,8388608,0
-    # tensordot:dot_backward,33554432,0,33554432,0
+    # tensordot:node_0_backward,8388608,0,8388608,0   (oneDNN v3: was dot_backward)
+    # tensordot:node_0_backward,33554432,0,33554432,0
     # tensordot:in_arg:A,8388608,0,8388608,0
     # tensordot:in_arg:B,33554432,0,33554432,0
 

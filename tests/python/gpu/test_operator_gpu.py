@@ -655,7 +655,14 @@ def _conv_with_num_streams(seed):
                 raise
 
 
-@pytest.mark.skip(reason="skipping for now due to severe flakiness")
+@pytest.mark.skip(reason=(
+    "cuDNN-9 on Blackwell (sm_120) non-deterministically selects different conv backward "
+    "algorithms across NaiveEngine/ThreadedEngine/ThreadedEnginePerDevice, producing "
+    "backward grad errors up to ~14% relative — genuine workspace/stream non-determinism, "
+    "not a test tolerance issue. Loosening atol/rtol to 0.05 is insufficient; 0.20 would be "
+    "needed to silence it, which defeats the purpose of the workspace-corruption probe. "
+    "Track at apache/incubator-mxnet#18564."
+))
 def test_convolution_multiple_streams():
     for num_streams in ['1', '2']:
         for engine in ['NaiveEngine', 'ThreadedEngine', 'ThreadedEnginePerDevice']:

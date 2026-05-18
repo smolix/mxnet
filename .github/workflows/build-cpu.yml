@@ -17,7 +17,9 @@ jobs:
   build:
     name: CPU build (oneDNN, no CUDA)
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    # Job-level: 90 (cold build) + ~10 (setup, smoke-test, artefact upload).
+    # Step-level cap for the build itself is set to 90 separately.
+    timeout-minutes: 110
     env:
       CMAKE_BUILD_DIR: build
       CMAKE_BUILD_TYPE: Release
@@ -84,8 +86,14 @@ jobs:
             -DBUILD_CPP_EXAMPLES=OFF
 
       - name: Build (ninja mxnet)
-        timeout-minutes: 60
-        run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j"$(nproc)"
+        # 90-min timeout so cold-cache first builds on the standard
+        # ubuntu-22.04 runner (4 cores / 7 GB) fit; warm builds are
+        # under 10 min via ccache. Hard-cap parallelism to 2 — each
+        # mxnet cc1plus consumes ~1.5 GB RSS in the heavy-template
+        # files (operator_tune.cc etc.), and -j4 on 7 GB swaps into
+        # disk and slows down further.
+        timeout-minutes: 90
+        run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j 2
 
       - name: ccache stats
         if: always()

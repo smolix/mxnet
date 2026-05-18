@@ -118,10 +118,9 @@ on our code.
 - Status (2026-05-18). Fixed. `MXNotifyShutdown()` (atexit-registered in `base.py`) now calls `Engine::Get()->Stop()` after `WaitForAll()`. `Stop()` signals all worker queues and joins all thread pools, so by the time the Python interpreter starts C-extension teardown, all engine threads are gone. The static-dtor `cv.notify_all()` becomes a no-op (no threads waiting). No new `Engine::Shutdown()` API was needed — `Stop()` already existed on `ThreadedEnginePerDevice`. Test: `test_engine_shutdown.py::test_clean_exit_basic` (5 trials), `test_clean_exit_gpu` (3 trials), `test_clean_exit_after_many_ops` (3 trials) — 12/12 PASS. See `engine_deadlock_audit.md`.
 - Link: https://github.com/apache/mxnet/issues/11163
 
-### A14. #20447 — `[v2.0]` in-place ops change dtype (array-api spec violation)
-- `a1 *= b1` with mixed dtypes raises "Type inconsistent" instead of casting. Array API spec says in-place must not change dtype/shape — current MXNet behaviour is neither casting nor silently keeping; it errors.
-- Why this likely affects our fork. mx.np will diverge from numpy more as users adopt 2.x. Our `gluon.data` batchify fix (`7934d40d7`) is exactly this category. Right answer per array-api: cast `b1` to `a1.dtype` before the multiply.
-- Suggested fix. In `python/mxnet/numpy/multiarray.py`'s `_wrap_mxnp_np_ufunc` for `__imul__` / `__iadd__` / `__isub__` / `__itruediv__`, pre-cast the rhs. Add a numpy-parity test. Effort: S.
+### A14. #20447 — `[v2.0]` in-place ops change dtype — **RESOLVED 2026-05-18**
+- Already implemented: `python/mxnet/numpy/multiarray.py` has `wrap_mxnp_np_ufunc_inplace` (lines 275-302) that casts `x2` to `x1.dtype` before forwarding. All four in-place dunders (`__iadd__`, `__isub__`, `__imul__`, `__itruediv__`) are decorated with it.
+- Regression test added at `tests/python/unittest/test_inplace_dtype.py` — 4/4 pass. Each test verifies no exception is raised, lhs dtype stays float32, and values match numpy parity exactly.
 - Link: https://github.com/apache/mxnet/issues/20447
 
 ### A15. #14264 — `nd.reshape` to a smaller shape silently truncates

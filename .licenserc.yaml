@@ -107,6 +107,25 @@ header:
     - 'bench_cublaslt.py'
     - 'bench_cublaslt_dtypes.py'
     - 'repro_batch_dot_fp16.py'
+    - 'bench_cpu_inference_b8.py'
+    - 'bench_fp16_mxnet.py'
+    - 'bench_fp16_mxnet_vs_pytorch.py'
+    - 'bench_fp16_pytorch.py'
+    - 'bench_gpu_storage_pool.py'
+    - 'bench_sparse_thrust3.py'
+    # Blackwell-port fork-local notes and audit docs.
+    - 'b8_cpu_inference_bench.md'
+    - 'engine_deadlock_audit.md'
+    - 'fp16_perf_bench.md'
+    - 'sparse_thrust3_bench.md'
+    - 'storage_pool_bench.md'
+    - 'tf32_audit_2026-05-18.md'
+    # Investigations directory (patches, repros, notes — not shipped).
+    - '.investigations/**'
+    # Fork-local regression tests (GPU pool / dtype tests added during port).
+    - 'tests/python/gpu/test_b7_multithread_pool.py'
+    - 'tests/python/gpu/test_pool_dynamic_shape.py'
+    - 'tests/python/unittest/test_inplace_dtype.py'
     # local cuDNN install dir (downloaded wheel, not source)
     - 'cudnn_local'
     # build artifacts

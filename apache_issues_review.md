@@ -156,8 +156,12 @@ verification before being closed out.
 - `f8b0c7125` (wheel tag) + `83718e389` (pip-deps wheel) closed this.
 - Confirmed: `mxnet/libmxnet.so` is in the wheel, `Root-Is-Purelib: false`, tag = `cp311-cp311-linux_x86_64`.
 
-### B7. #19159 — GPU memory grows forever in Flask debug mode (multi-thread)
-- Test plan. Same root cause as A2 (#17335) and A12 (#17495 thread-safety). Once those land, retest with the Flask repro.
+### B7. #19159 — GPU memory grows forever in Flask debug mode (multi-thread) — **NO SEPARATE LEAK FOUND 2026-05-18; A2 COVERS THIS**
+- Multi-thread reproducer added: `tests/python/gpu/test_b7_multithread_pool.py` (4 threads × 200 iters of resnet18_v1 with dynamic shapes from {192,224,256}^2 + main-thread `gpu_memory_info` polling). On the current pre-A2-rebuild binary with `MXNET_GPU_MEM_POOL_TYPE=Round`: ramp-peak 602 MiB, steady plateau **44 MiB** at t ≥ 7 s. 1-thread baseline (50 iters): plateau 10 MiB. Multi/single ratio = 4.2x — clean per-worker scaling, no unbounded growth. Pre-patch test assertion passes.
+- Code audit (no patch): `Storage::gpu_mutex_` (shared across all GPU devices) covers every entry point in `pooled_storage_manager.h` (Alloc/Free/DirectFree/ReleaseAll → InsertInCache/GetMemStorage/ReleaseAllNoLock). No per-thread CUDA chunk cache exists. `ObjectPool` (engine bookkeeping) uses a single mutex + global free list. Only `BulkStatus` is `thread_local`, and it is bounded by `BulkFlush()`. There is no thread-local bypass of the global pool.
+- Conclusion: the Flask-debug-mode unbounded growth in #19159 is the dynamic-shape × unbounded-per-bucket retention bug of A2 — threading just speeds up bucket discovery, it does not introduce a separate leak. The A2 K-cap fixes both. No additional patch required; re-verify after A2 rebuild.
+- Files: test at `tests/python/gpu/test_b7_multithread_pool.py`; curves at `.investigations/b7_1thread_baseline.log`, `.investigations/b7_4thread_repro.log`; rationale note at `.investigations/b7_thread_pool.patch`.
+- Link: https://github.com/apache/mxnet/issues/19159
 
 ### B8. #19218 — CPU inference very slow for some checkpoints — **CONFIRMED + DIAGNOSED 2026-05-18**, **WORSE THAN UPSTREAM**
 - Benchmarked on AMD EPYC 7B12 Zen 2 (AVX2-only): Conv2D 64ch (1,3,224,224) takes 49.8 ms with `OMP_NUM_THREADS=1` BUT **536 ms with default 64 threads** (10× slower). Conv2D 512ch: 282 → 539 ms. Dense 1000 (1,2048): 3.6 → 271 ms (75× slower). Numbers in `b8_cpu_inference_bench.md`, bench at `bench_cpu_inference_b8.py`.

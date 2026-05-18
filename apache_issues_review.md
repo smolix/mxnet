@@ -67,16 +67,16 @@ on our code.
 - Suggested fix. Inspect `AddTakeGradLargeBatchKernel`. Typical pattern: `__shared__` accumulator not initialised to zero or `atomicAdd` to uninitialised memory. Effort: M (need a stress harness).
 - Link: https://github.com/apache/mxnet/issues/11314
 
-### A6. #19994 — `MXNDArraySyncCopyToCPU()` hangs after hours of inference
+### A6. #19994 — `MXNDArraySyncCopyToCPU()` hangs after hours of inference — **INSTRUMENTED (2026-05-18)**
 - `ThreadedEngine::WaitForVar` waits on a futex that never wakes. ARM (`aarch64-linux-gnu`) reproducer; after running for hours the engine deadlocks on var-dependency.
 - Why this likely affects our fork. The engine code is unchanged. Long-running inference is a real use case (serving). Deadlock under load is unacceptable for the "frozen production stacks" audience that the port targets. Related to issues.md #18090 (CI deadlock) — possibly the same root cause.
-- Suggested fix. Add a `WaitForVar` timeout-with-diagnostic mode; long-term, audit `ThreadedEngine::Push` for missing notify-on-dep-complete edges. Effort: L (engine work, hard to reproduce locally without a stress harness).
+- Status (2026-05-18). No local reproducer available. Added `MXNET_ENGINE_DIAG=1` watchdog to `WaitForVar` and `WaitForAll` (configurable timeout via `MXNET_ENGINE_DIAG_TIMEOUT_S`, default 30 s). On timeout, logs var pointer, `pending_ops`, `shutdown_phase`, `kill` flags, and a hint to use `MXNET_ENGINE_TYPE=NaiveEngine`. The actual missing-notify-edge bug requires a minimised ARM reproducer to fix. See `engine_deadlock_audit.md`.
 - Link: https://github.com/apache/mxnet/issues/19994
 
-### A7. #18090 — Deadlock with ThreadedEngine (CI flake — same family as A6)
+### A7. #18090 — Deadlock with ThreadedEngine (CI flake — same family as A6) — **PARTIALLY FIXED (2026-05-18)**
 - CI jobs hang for 3 hours after the last test completes; no shutdown path. Specifically `unix-gpu` Python 3: GPU test step. Almost certainly the engine teardown / static-dtor sequencing.
 - Why this likely affects our fork. Will bite us when we stand up CI on smolix/mxnet (issues.md #32). We already see fewer hangs because we removed `mx.test_utils.set_default_context` overuse, but the underlying engine teardown path is intact.
-- Suggested fix. Force a `ShutdownEngine()` API and have it called from `atexit` in Python. Possibly also implicates #11163 (Windows DLL unload deadlock) — same shape, different OS. Effort: M.
+- Status (2026-05-18). Root cause confirmed: `MXNotifyShutdown` (called from `atexit` in `base.py`) only called `NotifyShutdown()` + `WaitForAll()`, never `Stop()`. Worker threads stayed alive until the static-local `shared_ptr<Engine>` dtor fired during interpreter teardown, causing the `cv.notify_all()` in `~ThreadedEngine()` to race with partially-torn-down thread-locals. Fixed by adding `Engine::Get()->Stop()` to `MXNotifyShutdown()` in `src/c_api/c_api.cc`. Workers are now fully joined before interpreter teardown. Test: `tests/python/unittest/test_engine_shutdown.py` (12/12 PASS). See `engine_deadlock_audit.md`.
 - Link: https://github.com/apache/mxnet/issues/18090
 
 ### A8. #19353 — `linalg_impl.h` temp-buffer use without GPU synchronization  **FIXED**
@@ -111,10 +111,10 @@ on our code.
 - FC subgraph check: 387/0/16.
 - Link: https://github.com/apache/mxnet/issues/17495
 
-### A13. #11163 — Deadlock during DLL unload (Windows, but the pattern is real on Linux too)
+### A13. #11163 — Deadlock during DLL unload (Windows, but the pattern is real on Linux too) — **FIXED (2026-05-18)**
 - The Engine destructor calls `condition_variable::notify_all` from a static-local destructor under loader-lock. On Windows this deadlocks; on Linux it works mostly but can race with `dlclose` (e.g. unloading the C++ Python extension during interpreter shutdown).
 - Why this likely affects our fork. Python-level `import mxnet` followed by interpreter exit occasionally segfaults; we've seen this in `test_custom_op_fork` audits and in CI cleanup. Hard to confirm without a clean repro but the diagnosis is sound.
-- Suggested fix. Replace `static Engine` local with an explicit `Engine::Shutdown()` that the Python `atexit` calls; do nothing in the destructor. Effort: M.
+- Status (2026-05-18). Fixed. `MXNotifyShutdown()` (atexit-registered in `base.py`) now calls `Engine::Get()->Stop()` after `WaitForAll()`. `Stop()` signals all worker queues and joins all thread pools, so by the time the Python interpreter starts C-extension teardown, all engine threads are gone. The static-dtor `cv.notify_all()` becomes a no-op (no threads waiting). No new `Engine::Shutdown()` API was needed — `Stop()` already existed on `ThreadedEnginePerDevice`. Test: `test_engine_shutdown.py::test_clean_exit_basic` (5 trials), `test_clean_exit_gpu` (3 trials), `test_clean_exit_after_many_ops` (3 trials) — 12/12 PASS. See `engine_deadlock_audit.md`.
 - Link: https://github.com/apache/mxnet/issues/11163
 
 ### A14. #20447 — `[v2.0]` in-place ops change dtype (array-api spec violation)

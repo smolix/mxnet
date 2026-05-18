@@ -1915,6 +1915,12 @@ int MXNotifyShutdown() {
   mxnet::op::custom::CustomOperator::Get()->Stop();
   Engine::Get()->NotifyShutdown();
   Engine::Get()->WaitForAll();
+  // A13 fix (apache/mxnet#11163): explicitly stop engine worker threads before
+  // interpreter teardown so the static-dtor cv.notify_all() is a no-op.
+  // Without this, the dtor fires under Python's atexit / static-dtor order
+  // after some thread-locals have been freed, which can deadlock on Linux
+  // when libmxnet.so is unloaded (mirrors the Windows loader-lock deadlock).
+  Engine::Get()->Stop();
   API_END();
 }
 

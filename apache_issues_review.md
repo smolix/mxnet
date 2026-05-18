@@ -104,9 +104,11 @@ on our code.
 - Link: https://github.com/apache/mxnet/issues/18865
 
 ### A12. #17495 — Singleton thread-safety (Engine, Storage, Resource managers)
-- Author surveyed every static singleton in MXNet and lists ones that have unsynchronised init paths. Several are exercised on first cross-thread call. Related to #16431 (RFC for multithreaded inference).
-- Why this likely affects our fork. We did not audit singletons. Any user calling MXNet from threads without an initial single-threaded "warmup" call will hit racy initialization. With multi-GPU and per-thread `kvstore` workers, this is real.
-- Suggested fix. Walk the list in the issue; convert each to `std::call_once` or function-local-static (C++11 guarantees thread-safe init). Effort: S per singleton, M total.
+- **STATUS: FIXED (2026-05-18) — see `singleton_thread_safety.md`**
+- Full audit performed. All singletons in scope (Engine, Storage, ResourceManager, CpuEngine, OpenMP, TmpMemMgr, DNNLStream) already use C++17 magic-statics or `thread_local` and are safe.
+- One genuine class-(c) issue found and fixed: `Profiler::Get()` in `src/profiler/profiler.cc` used a hand-rolled double-checked lock on a non-atomic `std::shared_ptr` (data race; UB). Replaced with a single function-local-static `std::shared_ptr<Profiler>` — compiler-emitted initialisation guard guarantees thread-safe one-time construction.
+- New smoke test: `tests/python/unittest/test_threaded_init.py` — 8 simultaneous threads exercising singleton init. Passes 2/2.
+- FC subgraph check: 387/0/16.
 - Link: https://github.com/apache/mxnet/issues/17495
 
 ### A13. #11163 — Deadlock during DLL unload (Windows, but the pattern is real on Linux too)

@@ -26,18 +26,38 @@ documents — the backward/gradient behavior of the quantized subgraph ops:
   - Composite Conv → ReLU → Dense fusion
   - Calibration round-trip (quantize → save → re-quantize → compare)
 
+STATUS (2026-05-18, partial fix):
+
+  Step 1 DONE — STE for quantize_v2:
+    `quantize_v2` now has a Straight-Through Estimator (STE) backward registered:
+    it casts the upstream gradient (int8) back to float32 and passes it through
+    unchanged.  In isolation this works correctly.
+
+  Step 2 DONE — qat kwarg for quantize_net:
+    `quantize_net(..., qat=True)` keeps `grad_req='write'` on all parameters
+    (instead of forcing `grad_req='null'`), allowing gradient accumulation and
+    parameter updates during QAT training loops.
+
+  Step 3 BLOCKED — weight/data backward for _sg_onednn_fully_connected/_sg_onednn_conv:
+    These fused subgraph ops still have `FGradient = MakeZeroGradNodes`.  An
+    attempt to add a dot-product-based data backward caused segfaults in the
+    NNVM/CachedOp backward executor framework.  The root cause is that DNNL
+    subgraph ops interact with MXNet's static graph executor in a way that does
+    not support custom backward nodes referencing op inputs at this time.  The
+    STE in quantize_v2 is therefore functionally correct but its gradient is
+    blocked by the zero gradient from the FC/Conv subgraph ops upstream.
+
+  Net result: the four xfail tests below remain xfailed — input and weight
+  gradients are still identically zero through the full quantized graph.  The
+  STE will become effective once _sg_onednn_fully_connected/_sg_onednn_conv get
+  proper backward support.
+
 ROOT-CAUSE NOTE (discovered 2026-05-17):
   MXNet's quantize_net inserts a `quantize_v2` node immediately before each
-  quantized op.  That node converts float32 → int8; its registered backward
-  returns all-zeros.  As a result the gradient of the loss w.r.t. the network
-  input is **always zero** for any quantized graph built with quantize_net.
-  Weight parameters also receive zero gradients.  This makes fine-tuning
-  (QAT-style) impossible with the current implementation.
-
-  Tests that verify this zero-gradient behavior are marked xfail with the
-  condition that they PASS (i.e. grad_norm > 0).  If a future fix implements
-  the straight-through estimator (STE) for quantize_v2, those xfails will flip
-  to PASS and the xfail markers should be removed.
+  quantized op.  The quantized DNNL subgraph ops (_sg_onednn_fully_connected,
+  _sg_onednn_conv) have FGradient = MakeZeroGradNodes, which kills all gradient
+  flow.  The quantize_v2 STE (step 1) is now in place but its gradient is zero
+  because the upstream zero gradient is passed through.
 
 Usage:
   pytest tests/python/dnnl/subgraphs/test_quantized_backward.py -v --timeout=300

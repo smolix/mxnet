@@ -97,7 +97,11 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 4. **`test_pos_single_concat_pos_neg[int8/auto-data_shape1]`** — re-tested 2026-05-17 against HEAD `cedeb2f9b`: failure is **NOT** order-dependent. Test fails in isolation with `MXNET_TEST_SEED=11`. Failure mode: max int8 quantization error 5.0 on output (atol=0.12, so 40× exceeded) where most error locations have `a=0, b≈1.2` — entire output channels are being zeroed. data_shape1 is `(4, 3, 24, 24)`; channels 3-6 of output (the `relu(conv0(x))` half of the concat) are corrupted. Suspect: oneDNN v3 reorder uint8→int8 with `set_scales_mask(DNNL_ARG_SRC, 0)` in `src/operator/quantization/dnnl/dnnl_quantized_concat.cc:88-99` — scale math looks right (`out_scale / i_scale`) but observed behavior is zeros. Either reorder primitive caches a stale desc, the rescaled memory is being dropped before Submit(), or v3 reorder semantics for uint8→int8 differ from what the code assumes. Needs DNNL `dnnl_verbose=2` trace to pin down.
 
-5. **Backward through quantized ops** — untested. If anyone fine-tunes a quantized model this likely blows up. Forward inference is solid; backward through `_sg_onednn_fully_connected`, `_sg_onednn_conv` is unvalidated.
+5. **Backward through quantized ops** — **RESOLVED (partial) 2026-05-18**.
+   - **Step 1 DONE**: `quantize_v2` now has a Straight-Through Estimator (STE) backward — casts upstream gradient back to float32 and passes it through unchanged. Implemented in `src/operator/quantization/quantize_v2.cc`.
+   - **Step 2 DONE**: `quantize_net(..., qat=True)` keeps `grad_req='write'` on all parameters, enabling gradient accumulation and optimizer updates for QAT training loops. `python/mxnet/contrib/quantization.py`.
+   - **Step 3 BLOCKED**: `_sg_onednn_fully_connected` and `_sg_onednn_conv` still have `FGradient = MakeZeroGradNodes`. An attempt to add a dot-product-based data backward caused segfaults in the NNVM/CachedOp backward executor. These fused DNNL subgraph ops interact with the static graph executor in a way that does not support custom backward nodes referencing op inputs at this time.
+   - **Net result**: `.backward()` through a quantized graph does not crash; it returns all-zero gradients. The STE is in place and will become effective once `_sg_onednn_fully_connected`/`_sg_onednn_conv` get proper backward support. Tests: 13 PASS, 4 XFAIL (documented). See `quantized_backward_status.md`.
 
 6. ~~**`test_activation` softrelu backward** (#13915).~~ **RESOLVED 2026-05-17**
 

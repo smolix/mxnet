@@ -799,7 +799,8 @@ def calib_graph(qsym, arg_params, aux_params, collector,
 def quantize_net(network, quantized_dtype='auto', quantize_mode='full', quantize_granularity='tensor-wise',
                  exclude_layers=None, exclude_layers_match=None, exclude_operators=None,
                  calib_data=None, data_shapes=None, calib_mode='none',
-                 num_calib_batches=None, device=cpu(), LayerOutputCollector=None, logger=None):
+                 num_calib_batches=None, device=cpu(), LayerOutputCollector=None, logger=None,
+                 qat=False):
     """User-level API for Gluon users to generate a quantized SymbolBlock from a FP32 HybridBlock w/ or w/o calibration.
     The backend quantized operators are only enabled for Linux systems. Please do not run
     inference using the quantized models on Windows for now.
@@ -855,6 +856,15 @@ def quantize_net(network, quantized_dtype='auto', quantize_mode='full', quantize
         Passed object's include_layers attribute will be feed with names of layers which needs calibration
     logger : Object
         A logging object for printing information during the process of quantization.
+    qat : bool
+        If True, Quantization-Aware Training (QAT) mode is enabled.  In QAT mode the
+        returned SymbolBlock keeps ``grad_req`` on all parameters at their original
+        value (typically ``'write'``) so that gradient buffers are allocated and
+        parameter updates work normally.  When combined with the straight-through
+        estimator (STE) registered on ``quantize_v2``, gradients can flow through
+        the quantization boundary.
+        If False (default), ``grad_req='null'`` is set on all parameters of the
+        returned network as before, which is appropriate for inference-only use.
 
     Returns
     -------
@@ -956,8 +966,9 @@ def quantize_net(network, quantized_dtype='auto', quantize_mode='full', quantize
         if calib_mode in ['naive', 'entropy', 'custom']:
             inputs = _multilist_iterator(data_descs, lambda dd: mx.sym.var(dd.name))
             calib_net = SymbolBlock(symnet, inputs)
+            # calib_net is always inference-only; disable grads unconditionally
             for k, v in calib_net.collect_params().items():
-               v.grad_req = 'null'
+                v.grad_req = 'null'
 
             calib_net.load_dict(params, cast_dtype=True, dtype_source='saved')
             calib_net.hybridize(static_alloc=False, static_shape=False)
@@ -976,8 +987,12 @@ def quantize_net(network, quantized_dtype='auto', quantize_mode='full', quantize
         inputs = _multilist_iterator(data_descs, lambda dd: mx.sym.var(dd.name))
 
     net = SymbolBlock(qsym, inputs)
-    for k, v in net.collect_params().items():
-        v.grad_req = 'null'
+    if not qat:
+        # Inference-only: disable gradient buffers for all parameters.
+        # In QAT mode (qat=True) we leave grad_req at its default ('write')
+        # so that optimizers can update quantized parameters after backward.
+        for k, v in net.collect_params().items():
+            v.grad_req = 'null'
 
     all_params = {(f'arg:{k}'): v.as_in_context(cpu()) for k, v in qarg_params.items()}
     all_params.update({(f'aux:{k}'): v.as_in_context(cpu()) for k, v in aux_params.items()})

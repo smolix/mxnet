@@ -103,9 +103,35 @@ If min_calib_range isn't presented, the output type will be int8.
     .set_attr<mxnet::FInferShape>("FInferShape", QuantizeV2Shape)
     .set_attr<nnvm::FInferType>("FInferType", QuantizeV2Type)
     .set_attr<FInferStorageType>("FInferStorageType", QuantizeV2StorageType)
-    // TODO(Xinyu): a temp solution to enable GluonCV INT8 flow,
-    // will be reverted after the improvement of CachedOP is done.
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)
+    // Straight-Through Estimator (STE): pass upstream gradient for output[0]
+    // (the quantized tensor) directly back to the float32 input, unchanged.
+    // Gradients w.r.t. the scalar min/max range outputs (indices 1 and 2) are
+    // discarded — those outputs are not part of the differentiable path.
+    // This enables QAT (Quantization-Aware Training) while being a no-op
+    // for inference-only paths (ograds[0] is zero_like, so the STE output is
+    // also zero, matching the old MakeZeroGradNodes behaviour).
+    .set_attr<nnvm::FGradient>(
+        "FGradient",
+        [](const nnvm::ObjectPtr& n,
+           const std::vector<nnvm::NodeEntry>& ograds) -> std::vector<nnvm::NodeEntry> {
+          // ograds[0]: grad w.r.t. quantized output (int8/uint8 dtype)
+          // ograds[1]: grad w.r.t. min_range scalar  (ignored)
+          // ograds[2]: grad w.r.t. max_range scalar  (ignored)
+          //
+          // STE: d_input = cast(d_output, float32).
+          // The output of quantize_v2 is int8/uint8, so ograds[0] has that
+          // integer dtype.  The input is float32, so we must cast the gradient
+          // back to float32 before passing it through.  Using "cast" is safe
+          // because MXNet's cast backward passes the gradient straight through
+          // (cast is treated as an identity for differentiation purposes).
+          std::unordered_map<std::string, std::string> cast_dict = {{"dtype", "float32"}};
+          auto cast_node = MakeNode("cast",
+                                    n->attrs.name + "_ste_cast",
+                                    {ograds[0]},
+                                    &cast_dict,
+                                    &n);
+          return {nnvm::NodeEntry{cast_node, 0, 0}};
+        })
     .set_attr<FCreateOpState>("FCreateOpState", CreateQuantizeV2State)
 #if MXNET_USE_ONEDNN == 1
     .set_attr<bool>("TIsDNNL", true)

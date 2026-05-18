@@ -76,19 +76,36 @@ header:
     - 'include/nnvm' # symlinks to 3rdparty/tvm/nnvm/include/nnvm
     # test/build data
     - 'tests/python/dnnl/data/test_dnnl_test_dnnl_model_model1.json'
-    # Blackwell-port fork-local docs / scoping notes / bug reports
+    # Blackwell-port fork-local docs / scoping notes / bug reports.
+    # Pattern matches `*_status.md`, `*_fix.md`, `*_followup.md`,
+    # `*_investigation.md`, `*_review.md`, `*_audit.md`, `*_scope.md`,
+    # `*_bump.md`, `*_pr_*.md` — agent writeup naming we've used in
+    # this fork. Also the top-level READMEs we maintain ourselves.
     - 'issues.md'
     - 'bugreport.md'
     - 'bugreport_gluon_data.md'
     - 'cublaslt_scope.md'
+    - 'cublaslt_pr_a.md'
     - 'tf32_audit.md'
     - 'cudnn_bump.md'
+    - 'cudnn_autotune_v9.md'
+    - 'amp_subgraph_fix.md'
+    - 'a15_reshape_followup.md'
+    - 'apache_issues_review.md'
+    - 'int8_concat_investigation.md'
+    - 'nccl_status.md'
+    - 'quantized_backward_status.md'
+    - 'singleton_thread_safety.md'
     - 'BUILDING.md'
     - 'CHANGELOG.md'
     - 'PERFORMANCE_NOTES.md'
-    # Blackwell-port fork-local benchmark scripts (not shipped in the wheel)
+    # Blackwell-port fork-local benchmark / reproducer scripts
+    # (kept in tree for future re-running; not shipped in the wheel).
     - 'bench_tf32_conv.py'
     - 'bench_cudnn_sweep.py'
+    - 'bench_cublaslt.py'
+    - 'bench_cublaslt_dtypes.py'
+    - 'repro_batch_dot_fp16.py'
     # local cuDNN install dir (downloaded wheel, not source)
     - 'cudnn_local'
     # build artifacts

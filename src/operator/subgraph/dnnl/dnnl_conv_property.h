@@ -25,6 +25,8 @@
 #include <string>
 #include <vector>
 
+#include <dnnl.hpp>
+
 #include "operator/leaky_relu-inl.h"
 #include "operator/nn/activation-inl.h"
 #include "operator/nn/convolution-inl.h"
@@ -34,6 +36,29 @@
 
 namespace mxnet {
 namespace op {
+
+// FU-1 workaround: on AVX2-only hosts, oneDNN v3's jit_uni_int8_1x1:avx2
+// quantized 1x1 conv kernel produces a channel-zeroed output when fused
+// with eltwise_relu post-op AND input channels ic < simd_w (AVX2 simd_w
+// is 8). Detected via DNNL_VERBOSE=2 trace + bisect; passes once the
+// conv+relu fusion is suppressed (equivalent to setting
+// MXNET_DISABLE_ONEDNN_FUSE_CONV_RELU=1). This gate disables the fusion
+// only for the exact triggering shape so AVX-512 hosts and ic >= 8 paths
+// are unaffected.
+static inline bool DNNLConvFu1Avx2Int8ReluGateTriggers(uint32_t ic) {
+  if (ic == 0 || ic >= 8) return false;
+  static const bool host_has_avx512 = []() {
+    // Mirrors src/operator/nn/dnnl/dnnl_convolution.cc:158-163: this
+    // reflects oneDNN's actually dispatched ISA, honouring
+    // ONEDNN_MAX_CPU_ISA. On AMD EPYC Zen 2 / Zen 3 / Zen 4 this
+    // resolves to avx2 / avx2_vnni / avx2_vnni_2 respectively, all
+    // below avx512_core.
+    const auto isa = dnnl::get_effective_cpu_isa();
+    return isa >= dnnl::cpu_isa::avx512_core;
+  }();
+  return !host_has_avx512;
+}
+
 class SgDNNLConvSelector : public SubgraphSelector {
  public:
   /*! \brief pattern match status_ */
@@ -53,6 +78,10 @@ class SgDNNLConvSelector : public SubgraphSelector {
   bool quantize_;
   SelectStatusConv status_;
   std::vector<const nnvm::Node*> matched_list_;
+  // FU-1 gate state captured at conv Select() time: true iff this conv
+  // is quantized, on an AVX2-only host, with input channels < 8. When
+  // set, SelectOutput refuses to fuse Activation/kReLU.
+  bool fu1_avx2_int8_relu_block_ = false;
 
  public:
   SgDNNLConvSelector(int dis_all, int dis_conv_bn, int dis_conv_act, int dis_conv_sum, int quantize)
@@ -69,6 +98,25 @@ class SgDNNLConvSelector : public SubgraphSelector {
         status_ = disable_all_ ? kSuccess : kStart;
         matched_list_.clear();
         matched_list_.push_back(&n);
+        // Capture IC for FU-1 gate. Convolution input order is
+        // {data, weight, bias}: shape[0] is the data shape. MXNet's
+        // Convolution layout is NCW/NCHW/NCDHW by default; the NHWC
+        // case is explicit, in which case channels are at the trailing
+        // dim. node_attr may be null when invoked from Reset().
+        fu1_avx2_int8_relu_block_ = false;
+        if (quantize_ && !disable_conv_act_ && node_attr && !node_attr->ishape.empty()) {
+          const auto& dshape = node_attr->ishape[0];
+          const int ndim     = dshape.ndim();
+          if (ndim >= 3) {
+            uint32_t ic = 0;
+            if (param.layout.has_value() && param.layout.value() == mshadow::kNHWC) {
+              ic = static_cast<uint32_t>(dshape[ndim - 1]);
+            } else {
+              ic = static_cast<uint32_t>(dshape[1]);
+            }
+            fu1_avx2_int8_relu_block_ = DNNLConvFu1Avx2Int8ReluGateTriggers(ic);
+          }
+        }
         return true;
       }
     }
@@ -114,8 +162,15 @@ class SgDNNLConvSelector : public SubgraphSelector {
       default:
         if ((!disable_conv_act_) && node_name == "Activation") {
           const ActivationParam& param = nnvm::get<ActivationParam>(new_node.attrs.parsed);
-          if ((quantize_ && SupportDNNLQuantizedAct(param)) ||
-              (!quantize_ && SupportDNNLAct(param))) {
+          // FU-1 gate: block conv+relu fusion when on AVX2-only host with
+          // quantized 1x1-like (ic < 8) shape. The buggy kernel is the
+          // jit_uni_int8_1x1:avx2 path with eltwise_relu post-op; other
+          // post-ops (sigmoid, clip-as-relu6, LeakyReLU) use different
+          // jit kernels and are unaffected.
+          const bool fu1_block = fu1_avx2_int8_relu_block_ &&
+                                 param.act_type == activation::kReLU;
+          if (!fu1_block && ((quantize_ && SupportDNNLQuantizedAct(param)) ||
+              (!quantize_ && SupportDNNLAct(param)))) {
             matched_list_.push_back(&new_node);
             // not support conv+relu+sum yet.
             status_ = kSuccess;
@@ -169,6 +224,10 @@ class SgDNNLConvSelector : public SubgraphSelector {
     auto new_selector = SgDNNLConvSelector(
         disable_all_, disable_conv_bn_, disable_conv_act_, disable_conv_sum_, quantize_);
     new_selector.Select(*matched_list_[0], nullptr);
+    // Reset() invokes Select with nullptr NodeAttr, which loses the FU-1
+    // shape-based gate state we captured at the original Select() call.
+    // Preserve it so we keep blocking conv+relu fusion on the restart.
+    new_selector.fu1_avx2_int8_relu_block_ = fu1_avx2_int8_relu_block_;
     *this = new_selector;
   }
 };

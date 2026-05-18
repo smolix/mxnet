@@ -124,9 +124,9 @@ This file lists everything still open at this snapshot. Items are grouped by sev
    - `test_np_empty_like` → 1 SKIP (separate bug about int8/uint8/bool not supported, documented inline at the skip)
    - `test_convolution_options` was never in this fork (no upstream test by that name; bug referenced has different path)
 
-12. **`test_gpu_memory_profiler_symbolic`** (#18564) — profiler probe for `tensordot:dot_backward` attr_name doesn't find a match. The dot kernel was renamed under oneDNN v3 dispatch. Either update the test or restore the tag name in the kernel.
+12. ~~**`test_gpu_memory_profiler_symbolic`** (#18564)~~ **RESOLVED 2026-05-18** via commit `ed6757e64`. Under oneDNN v3, the backward node of `mx.symbol.dot()` is allocated as `tensordot:node_0_backward` rather than the v2 name `tensordot:dot_backward`. Updated the expected `Attribute Name` in `tests/python/gpu/test_profiler_gpu.py` and removed `pytest.mark.skip` — test is now 1/1 PASS.
 
-13. **`test_convolution_multiple_streams`** — `rtol=0.01/atol=0.01` mismatch on cuDNN-9 conv across NaiveEngine / ThreadedEngine / ThreadedEnginePerDevice on Blackwell. Real numerics drift. Either loosen tolerance to 0.05/0.05, force deterministic algorithms (`MXNET_CUDNN_AUTOTUNE_DEFAULT=0`), or leave skipped.
+13. ~~**`test_convolution_multiple_streams`**~~ **DOCUMENTED 2026-05-18** via commit `ed6757e64`. Investigation shows the errors reach ~14% relative on Blackwell — genuine workspace/stream non-determinism between the cuDNN and non-cuDNN paths under different engine types, not a simple tolerance issue. Loosening to `atol=0.05` is insufficient; silencing would require `~0.20`, which defeats the workspace-corruption probe. Kept skipped; updated skip reason to explain the cuDNN-9/sm_120 root cause and reference upstream #18564.
 
 14. **ONNX export/import** — `tests/python/onnx/test_models.py` and `test_operators.py` both error at collect time. Likely the ONNX path was never updated for MXNet 2.0 numpy ops; depends how important ONNX interop is.
 
@@ -148,7 +148,7 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 21. **Sparse ops post-CCCL-3** — Thrust 3 unification changed default execution policies. `dense_to_csr`, `csr_to_dense`, sparse `topk` performance is uncharacterized. Could be the same; could be 2× worse. Benchmark.
 
-22. **Storage manager defaults**. Test output shows "Pooled (Naive) StorageManager" on every test. The `MXNET_GPU_MEM_POOL_TYPE=Round` variant fragments less on 24GB cards. Worth profiling whether it's a free win.
+22. ~~**Storage manager defaults**~~ **BENCHMARKED 2026-05-18** via commit `561acebde`. `bench_gpu_storage_pool.py` runs ResNet-18 v2 forward+backward at batch sizes 1/8/32/128/256 on GPU 0 with both pool types. Results (`storage_pool_bench.md`): Round uses 1–6% **more** peak memory than Naive (avg +3.5%), with no OOM at any batch size on 24 GiB. The "fragments less" hypothesis is **not confirmed** for ResNet-18 on Blackwell. Both pool types comfortably fit batch=256 (Naive=13.2 GiB, Round=13.8 GiB). Recommendation: keep default (Naive); Round is not a free win for regular-allocation workloads. Users with highly irregular allocation patterns (e.g., NLP models, dynamic shapes) should benchmark on their own workload.
 
 23. **TF32 default selection**. cuDNN 9 changed when TF32 is enabled. Audit `cudnnSetTensorMathType` call sites; FP32 conv that opts in to TF32 gets ~2× free.
 

@@ -57,6 +57,9 @@ void win_err(char** err) {
 #include <mxnet/engine.h>
 
 #include "./engine/openmp.h"
+#if MXNET_USE_ONEDNN == 1
+#include "./operator/nn/dnnl/dnnl_base-inl.h"
+#endif
 #include "./operator/custom/custom-inl.h"
 #if MXNET_USE_OPENCV
 #include <opencv2/opencv.hpp>
@@ -211,6 +214,11 @@ void LibraryInitializer::atfork_child() {
   engine::OpenMP::Get()->set_thread_max(1);
   engine::OpenMP::Get()->set_enabled(false);
   Engine::Get()->Start();
+#if MXNET_USE_ONEDNN == 1
+  // Drop the inherited oneDNN engine/primitive-cache state. DataLoader
+  // workers fall back to non-DNNL paths for collation kernels.
+  DNNLAfterForkChild();
+#endif
   CustomOperator::Get()->Start();
 }
 

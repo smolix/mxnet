@@ -29,8 +29,10 @@
 
 #if MXNET_USE_ONEDNN == 1
 #include <algorithm>
+#include <atomic>
 #include <iterator>
 #include <memory>
+#include <new>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -86,6 +88,17 @@ class CpuEngine {
 
   dnnl::engine& get_engine() {
     return _cpu_engine;
+  }
+
+  // FU-4: After fork() in a DataLoader worker, the inherited dnnl::engine
+  // and its associated thread-pool/primitive-cache are not safe to use.
+  // Rebuild the engine in place. We deliberately do NOT run the destructor
+  // of the inherited engine (which would call dnnl_engine_destroy and may
+  // touch threads that died at fork-time); the small leak is acceptable
+  // for the lifetime of a short-lived worker process.
+  static void ResetAfterFork() {
+    CpuEngine* inst = Get();
+    new (inst) CpuEngine();  // re-placement-new; old _cpu_engine handle leaks
   }
 
  protected:
@@ -209,9 +222,22 @@ static inline bool SupportDNNLQuantize(const int out_type) {
   return out_type == mshadow::kUint8 || out_type == mshadow::kInt8;
 }
 
+// Set by the pthread_atfork child handler (see src/initialize.cc). The
+// parent's static dnnl::engine + primitive cache are not safe to reuse in
+// the forked child; rather than try to rebuild them, the child falls back
+// to non-oneDNN code paths. DataLoader workers only collate batches
+// (stack/array/copy), so the cost is negligible.
+extern std::atomic<bool> g_dnnl_forked_child;
+
+// Called from atfork_child in initialize.cc. Drops oneDNN's process-wide
+// primitive LRU and trips the kill-switch read by DNNLEnvSet().
+void DNNLAfterForkChild();
+
 static inline bool DNNLEnvSet() {
   static bool is_dnnl_enabled = dmlc::GetEnv("MXNET_ONEDNN_ENABLED", true);
-  return is_dnnl_enabled;
+  // Use the parent-time env decision unless we are in a forked child, in
+  // which case we must not call into oneDNN with the inherited engine.
+  return is_dnnl_enabled && !g_dnnl_forked_child.load(std::memory_order_relaxed);
 }
 
 static inline int GetDNNLCacheSize() {
@@ -566,6 +592,14 @@ class DNNLStream {
   static DNNLStream* Get();
 
   DNNLStream() : s(CpuEngine::Get()->get_engine()) {}
+
+  // FU-4: re-construct in place after fork, dropping the inherited
+  // dnnl::stream and any queued primitives/memory holders (all of which
+  // reference the parent's now-dead engine state). The current dnnl::stream
+  // is leaked on purpose; see CpuEngine::ResetAfterFork.
+  void ResetAfterFork() {
+    new (this) DNNLStream();
+  }
 
   void RegisterPrimArgs(const dnnl::primitive& prim, const dnnl_args_map_t& args) {
     net_prim_args.emplace_back(prim, args);

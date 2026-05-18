@@ -704,7 +704,68 @@ LINALG_XPU_BATCH_GEMM_AXIS(gpu, double)
     CUBLAS_CALL(cublasSetMathMode(handle, saved_math_mode));                              \
   }
 
-LINALG_GPU_BATCH_GEMM(DgemmStridedBatched, double)
+// fp64 strided-batched GEMM with optional cuBLASLt fast path (PR-C).
+template <>
+inline void linalg_batch_gemm<gpu, double>(const Tensor<gpu, 3, double>& A,
+                                           const Tensor<gpu, 3, double>& B,
+                                           const Tensor<gpu, 3, double>& C,
+                                           double alpha,
+                                           double beta,
+                                           bool tA,
+                                           bool tB,
+                                           Stream<gpu>* s) {
+  using namespace mxnet;
+  using mshadow::gpu;
+  CHECK_NOTNULL(s);
+  linalg_check_batch_size(A.size(0), B.size(0), C.size(0));
+  check_gemm(A[0], B[0], C[0], alpha, beta, tA, tB);
+  using namespace mshadow::cuda_impl;
+  auto handle                  = Stream<gpu>::GetBlasHandle(s);
+  cublasMath_t saved_math_mode = SetCublasMathMode(handle, VERSION_ADJUSTED_TF32_MATH);
+  const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const int gemm_m             = C.size(2);
+  const int gemm_n             = C.size(1);
+  const int gemm_k             = (tB ? B.size(2) : B.size(1));
+  const int64_t stride_b       = static_cast<int64_t>(B.size(1)) * B.stride_;
+  const int64_t stride_a       = static_cast<int64_t>(A.size(1)) * A.stride_;
+  const int64_t stride_c       = static_cast<int64_t>(C.size(1)) * C.stride_;
+  const int batch              = A.size(0);
+
+  bool used_lt = false;
+  if (mxnet::common::cuda::UseCuBlasLt()) {
+    cublasStatus_t lt_status = mxnet::common::cuda::MaybeCublasLtDgemmStrided(
+        handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
+        &alpha,
+        B.dptr_, B.stride_, stride_b,
+        A.dptr_, A.stride_, stride_a,
+        &beta,
+        C.dptr_, C.stride_, stride_c,
+        batch);
+    used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (!used_lt) {
+    CUBLAS_CALL(cublasDgemmStridedBatched(handle,
+                                          op_a,
+                                          op_b,
+                                          gemm_m,
+                                          gemm_n,
+                                          gemm_k,
+                                          &alpha,
+                                          B.dptr_,
+                                          B.stride_,
+                                          stride_b,
+                                          A.dptr_,
+                                          A.stride_,
+                                          stride_a,
+                                          &beta,
+                                          C.dptr_,
+                                          C.stride_,
+                                          stride_c,
+                                          batch));
+  }
+  CUBLAS_CALL(cublasSetMathMode(handle, saved_math_mode));
+}
 
 #if CUDA_VERSION < 9010
 LINALG_GPU_BATCH_GEMM(SgemmStridedBatched, float)
@@ -734,29 +795,54 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
   // capabilities equal or greater than 5.0. Fall back to
   // cublasSgemmStridedBatched, which doesn't support implicit conversion
   // to half-precision to use TensorCores
-  auto cc_major = (s->prop).major;
-  if ((cc_major >= 5) && use_tensor_ops) {
+  auto cc_major                = (s->prop).major;
+  const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const int gemm_m             = C.size(2);
+  const int gemm_n             = C.size(1);
+  const int gemm_k             = (tB ? B.size(2) : B.size(1));
+  const int64_t stride_b       = static_cast<int64_t>(B.size(1)) * B.stride_;
+  const int64_t stride_a       = static_cast<int64_t>(A.size(1)) * A.stride_;
+  const int64_t stride_c       = static_cast<int64_t>(C.size(1)) * C.stride_;
+  const int batch              = A.size(0);
+
+  // PR-C: stride-aware cuBLASLt fast path. Falls through on any failure.
+  bool used_lt = false;
+  if (mxnet::common::cuda::UseCuBlasLt()) {
+    cublasStatus_t lt_status = mxnet::common::cuda::MaybeCublasLtSgemmStrided(
+        blas_handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
+        &alpha,
+        B.dptr_, B.stride_, stride_b,
+        A.dptr_, A.stride_, stride_a,
+        &beta,
+        C.dptr_, C.stride_, stride_c,
+        batch);
+    used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (used_lt) {
+    // skipped; lt path completed.
+  } else if ((cc_major >= 5) && use_tensor_ops) {
     CUBLAS_CALL(cublasGemmStridedBatchedEx(blas_handle,
-                                           (tB ? CUBLAS_OP_T : CUBLAS_OP_N),
-                                           (tA ? CUBLAS_OP_T : CUBLAS_OP_N),
-                                           C.size(2),
-                                           C.size(1),
-                                           (tB ? B.size(2) : B.size(1)),
+                                           op_a,
+                                           op_b,
+                                           gemm_m,
+                                           gemm_n,
+                                           gemm_k,
                                            &alpha,
                                            B.dptr_,
                                            CUDA_R_32F,
                                            B.stride_,
-                                           B.size(1) * B.stride_,
+                                           stride_b,
                                            A.dptr_,
                                            CUDA_R_32F,
                                            A.stride_,
-                                           A.size(1) * A.stride_,
+                                           stride_a,
                                            &beta,
                                            C.dptr_,
                                            CUDA_R_32F,
                                            C.stride_,
-                                           C.size(1) * C.stride_,
-                                           A.size(0),
+                                           stride_c,
+                                           batch,
 #if CUDA_VERSION >= 11000
                                            CUBLAS_COMPUTE_32F,
 #else
@@ -765,23 +851,23 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
                                            CUBLAS_GEMM_DEFAULT_TENSOR_OP));
   } else {
     CUBLAS_CALL(cublasSgemmStridedBatched(blas_handle,
-                                          (tB ? CUBLAS_OP_T : CUBLAS_OP_N),
-                                          (tA ? CUBLAS_OP_T : CUBLAS_OP_N),
-                                          C.size(2),
-                                          C.size(1),
-                                          (tB ? B.size(2) : B.size(1)),
+                                          op_a,
+                                          op_b,
+                                          gemm_m,
+                                          gemm_n,
+                                          gemm_k,
                                           &alpha,
                                           B.dptr_,
                                           B.stride_,
-                                          B.size(1) * B.stride_,
+                                          stride_b,
                                           A.dptr_,
                                           A.stride_,
-                                          A.size(1) * A.stride_,
+                                          stride_a,
                                           &beta,
                                           C.dptr_,
                                           C.stride_,
-                                          C.size(1) * C.stride_,
-                                          A.size(0)));
+                                          stride_c,
+                                          batch));
   }
   SetCublasMathMode(blas_handle, previous_math_mode);
 }

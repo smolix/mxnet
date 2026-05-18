@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Compilation cache
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: ~/.ccache
           # We include the commit sha in the cache key, as new cache entries are

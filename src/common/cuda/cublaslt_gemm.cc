@@ -19,7 +19,8 @@
 
 /*!
  * \file cublaslt_gemm.cc
- * \brief cuBLASLt-backed GEMM wrappers (PR-A: fp32; PR-B: fp16/bf16/fp64).
+ * \brief cuBLASLt-backed GEMM wrappers
+ *        (PR-A: fp32; PR-B: fp16/bf16/fp64; PR-C: stride-aware variants).
  *        See cublaslt_gemm.h.
  */
 
@@ -49,18 +50,28 @@ constexpr size_t kHeuristicCacheCap   = 256;
 // + compute type fold into a single uint32 to avoid bloating the key. Scale
 // type is implied by compute type (fp32 for {fp16,bf16,fp32} compute, fp64
 // for fp64 compute), so we don't track it separately.
+//
+// PR-C adds (batch, stride_a, stride_b, stride_c). For the non-strided
+// (batch==1, strides==0) wrappers these are constant, so the PR-A/B keys
+// remain effectively the same shape.
 struct GemmKey {
   int                m, n, k;
   int                lda, ldb, ldc;
   cublasOperation_t  opA, opB;
   int                alpha_is_one;
   int                beta_class;  // 0: =0, 1: =1, 2: other.
-  uint32_t           dtype_tag;   // packed (io_dtype<<8 | compute_type)
+  uint32_t           dtype_tag;   // packed (io_dtype<<16 | compute_type)
+  int                batch;       // PR-C
+  int64_t            stride_a;    // PR-C
+  int64_t            stride_b;    // PR-C
+  int64_t            stride_c;    // PR-C
   bool operator==(const GemmKey& o) const {
     return m == o.m && n == o.n && k == o.k && lda == o.lda && ldb == o.ldb &&
            ldc == o.ldc && opA == o.opA && opB == o.opB &&
            alpha_is_one == o.alpha_is_one && beta_class == o.beta_class &&
-           dtype_tag == o.dtype_tag;
+           dtype_tag == o.dtype_tag && batch == o.batch &&
+           stride_a == o.stride_a && stride_b == o.stride_b &&
+           stride_c == o.stride_c;
   }
 };
 
@@ -80,6 +91,10 @@ struct GemmKeyHash {
     mix(static_cast<size_t>(k.alpha_is_one));
     mix(static_cast<size_t>(k.beta_class));
     mix(static_cast<size_t>(k.dtype_tag));
+    mix(static_cast<size_t>(k.batch));
+    mix(static_cast<size_t>(k.stride_a));
+    mix(static_cast<size_t>(k.stride_b));
+    mix(static_cast<size_t>(k.stride_c));
     return h;
   }
 };
@@ -209,6 +224,11 @@ inline uint32_t MakeDtypeTag(cudaDataType_t io, cublasComputeType_t compute) {
 // Core dispatcher. All dtype-specific wrappers funnel here. alpha/beta are
 // expected to be host pointers of the scale-type size (fp32 for {fp16, bf16,
 // fp32-compute} or fp64 for fp64-compute).
+//
+// PR-C: when batch > 1, sets CUBLASLT_MATRIX_LAYOUT_BATCH_COUNT and
+// CUBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET on each layout. The per-operand
+// stride is the element offset between consecutive matrices in the batch.
+// When batch == 1 the strides are ignored.
 cublasStatus_t MaybeCublasLtGemmImpl(cublasHandle_t legacy_handle,
                                      cublasOperation_t opA,
                                      cublasOperation_t opB,
@@ -222,7 +242,11 @@ cublasStatus_t MaybeCublasLtGemmImpl(cublasHandle_t legacy_handle,
                                      cudaDataType_t scale_dtype,
                                      cublasComputeType_t compute_type,
                                      int alpha_is_one,
-                                     int beta_class) {
+                                     int beta_class,
+                                     int batch,
+                                     int64_t stride_a,
+                                     int64_t stride_b,
+                                     int64_t stride_c) {
   int dev_id = -1;
   if (cudaGetDevice(&dev_id) != cudaSuccess || dev_id < 0) {
     return CUBLAS_STATUS_NOT_INITIALIZED;
@@ -235,7 +259,8 @@ cublasStatus_t MaybeCublasLtGemmImpl(cublasHandle_t legacy_handle,
 
   GemmKey key{m, n, k, lda, ldb, ldc, opA, opB,
               alpha_is_one, beta_class,
-              MakeDtypeTag(io_dtype, compute_type)};
+              MakeDtypeTag(io_dtype, compute_type),
+              batch, stride_a, stride_b, stride_c};
 
   // Build descriptors. These are cheap (stack-resident opaques) but the algo
   // selection underneath is what we cache.
@@ -274,6 +299,24 @@ cublasStatus_t MaybeCublasLtGemmImpl(cublasHandle_t legacy_handle,
   if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
   s = cublasLtMatrixLayoutCreate(&c_lay, io_dtype, m, n, ldc);
   if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
+
+  // PR-C: optional batch/stride attributes.
+  if (batch > 1) {
+    auto set_batch = [&](cublasLtMatrixLayout_t lay, int64_t stride) {
+      cublasStatus_t st = cublasLtMatrixLayoutSetAttribute(
+          lay, CUBLASLT_MATRIX_LAYOUT_BATCH_COUNT, &batch, sizeof(batch));
+      if (st != CUBLAS_STATUS_SUCCESS) return st;
+      return cublasLtMatrixLayoutSetAttribute(
+          lay, CUBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET,
+          &stride, sizeof(stride));
+    };
+    s = set_batch(a_lay, stride_a);
+    if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
+    s = set_batch(b_lay, stride_b);
+    if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
+    s = set_batch(c_lay, stride_c);
+    if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
+  }
 
   // Heuristic / algo selection.
   cublasLtMatmulAlgo_t algo;
@@ -345,7 +388,8 @@ cublasStatus_t MaybeCublasLtSgemm(cublasHandle_t legacy_handle,
                                alpha, A, lda, B, ldb, beta, C, ldc,
                                CUDA_R_32F, CUDA_R_32F,
                                CUBLAS_COMPUTE_32F_FAST_TF32,
-                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta));
+                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta),
+                               /*batch=*/1, 0, 0, 0);
 }
 
 cublasStatus_t MaybeCublasLtHgemm(cublasHandle_t legacy_handle,
@@ -370,7 +414,8 @@ cublasStatus_t MaybeCublasLtHgemm(cublasHandle_t legacy_handle,
                                alpha, A, lda, B, ldb, beta, C, ldc,
                                CUDA_R_16F, CUDA_R_32F,
                                CUBLAS_COMPUTE_32F,
-                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta));
+                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta),
+                               /*batch=*/1, 0, 0, 0);
 }
 
 cublasStatus_t MaybeCublasLtBf16Gemm(cublasHandle_t legacy_handle,
@@ -393,7 +438,8 @@ cublasStatus_t MaybeCublasLtBf16Gemm(cublasHandle_t legacy_handle,
                                alpha, A, lda, B, ldb, beta, C, ldc,
                                CUDA_R_16BF, CUDA_R_32F,
                                CUBLAS_COMPUTE_32F,
-                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta));
+                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta),
+                               /*batch=*/1, 0, 0, 0);
 }
 
 cublasStatus_t MaybeCublasLtDgemm(cublasHandle_t legacy_handle,
@@ -415,7 +461,86 @@ cublasStatus_t MaybeCublasLtDgemm(cublasHandle_t legacy_handle,
                                alpha, A, lda, B, ldb, beta, C, ldc,
                                CUDA_R_64F, CUDA_R_64F,
                                CUBLAS_COMPUTE_64F,
-                               (*alpha == 1.0) ? 1 : 0, BetaClassF64(*beta));
+                               (*alpha == 1.0) ? 1 : 0, BetaClassF64(*beta),
+                               /*batch=*/1, 0, 0, 0);
+}
+
+/* ---------------------------- PR-C: strided ----------------------------- */
+
+cublasStatus_t MaybeCublasLtSgemmStrided(cublasHandle_t legacy_handle,
+                                         cublasOperation_t opA,
+                                         cublasOperation_t opB,
+                                         int m, int n, int k,
+                                         const float* alpha,
+                                         const float* A, int lda, int64_t stride_a,
+                                         const float* B, int ldb, int64_t stride_b,
+                                         const float* beta,
+                                         float* C, int ldc, int64_t stride_c,
+                                         int batch) {
+  if (batch <= 0) return CUBLAS_STATUS_INVALID_VALUE;
+  return MaybeCublasLtGemmImpl(legacy_handle, opA, opB, m, n, k,
+                               alpha, A, lda, B, ldb, beta, C, ldc,
+                               CUDA_R_32F, CUDA_R_32F,
+                               CUBLAS_COMPUTE_32F_FAST_TF32,
+                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta),
+                               batch, stride_a, stride_b, stride_c);
+}
+
+cublasStatus_t MaybeCublasLtHgemmStrided(cublasHandle_t legacy_handle,
+                                         cublasOperation_t opA,
+                                         cublasOperation_t opB,
+                                         int m, int n, int k,
+                                         const float* alpha,
+                                         const void* A, int lda, int64_t stride_a,
+                                         const void* B, int ldb, int64_t stride_b,
+                                         const float* beta,
+                                         void* C, int ldc, int64_t stride_c,
+                                         int batch) {
+  if (batch <= 0) return CUBLAS_STATUS_INVALID_VALUE;
+  return MaybeCublasLtGemmImpl(legacy_handle, opA, opB, m, n, k,
+                               alpha, A, lda, B, ldb, beta, C, ldc,
+                               CUDA_R_16F, CUDA_R_32F,
+                               CUBLAS_COMPUTE_32F,
+                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta),
+                               batch, stride_a, stride_b, stride_c);
+}
+
+cublasStatus_t MaybeCublasLtBf16GemmStrided(cublasHandle_t legacy_handle,
+                                            cublasOperation_t opA,
+                                            cublasOperation_t opB,
+                                            int m, int n, int k,
+                                            const float* alpha,
+                                            const void* A, int lda, int64_t stride_a,
+                                            const void* B, int ldb, int64_t stride_b,
+                                            const float* beta,
+                                            void* C, int ldc, int64_t stride_c,
+                                            int batch) {
+  if (batch <= 0) return CUBLAS_STATUS_INVALID_VALUE;
+  return MaybeCublasLtGemmImpl(legacy_handle, opA, opB, m, n, k,
+                               alpha, A, lda, B, ldb, beta, C, ldc,
+                               CUDA_R_16BF, CUDA_R_32F,
+                               CUBLAS_COMPUTE_32F,
+                               (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta),
+                               batch, stride_a, stride_b, stride_c);
+}
+
+cublasStatus_t MaybeCublasLtDgemmStrided(cublasHandle_t legacy_handle,
+                                         cublasOperation_t opA,
+                                         cublasOperation_t opB,
+                                         int m, int n, int k,
+                                         const double* alpha,
+                                         const double* A, int lda, int64_t stride_a,
+                                         const double* B, int ldb, int64_t stride_b,
+                                         const double* beta,
+                                         double* C, int ldc, int64_t stride_c,
+                                         int batch) {
+  if (batch <= 0) return CUBLAS_STATUS_INVALID_VALUE;
+  return MaybeCublasLtGemmImpl(legacy_handle, opA, opB, m, n, k,
+                               alpha, A, lda, B, ldb, beta, C, ldc,
+                               CUDA_R_64F, CUDA_R_64F,
+                               CUBLAS_COMPUTE_64F,
+                               (*alpha == 1.0) ? 1 : 0, BetaClassF64(*beta),
+                               batch, stride_a, stride_b, stride_c);
 }
 
 }  // namespace cuda

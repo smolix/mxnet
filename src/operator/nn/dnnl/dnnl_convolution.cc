@@ -144,7 +144,38 @@ std::shared_ptr<dnnl::convolution_forward::primitive_desc> GetConvFwdImpl(
   }
 
   auto engine = CpuEngine::Get()->get_engine();
-  auto GetConvFwdPd = [&param, &data, &weights, &output](
+
+  // FU-3 / apache#19218: oneDNN v3's brg_conv:avx2 path pads IC to a
+  // multiple of simd_w (=8 on AVX2). For low-IC inputs (e.g. RGB IC=3) this
+  // wastes ~63-81% of every AVX2 vector op on padding zeros, and the
+  // thread-scaling on bs=1 collapses on many-NUMA hosts (8x EPYC Zen 2: 64
+  // threads is ~10x slower than 1 thread). On AVX-512 hosts the heuristic
+  // is fine -- brg_conv is the intended fast path. So we only skip brg when
+  // the host has no AVX-512 *and* the shape is in the pathological region
+  // (small IC + small batch). We do this by walking next_impl() and picking
+  // the first non-brg impl. If none exists we fall through to the original
+  // selection.
+  static const bool host_has_avx512 = []() {
+    // dnnl::get_effective_cpu_isa() reflects oneDNN's actual dispatch ISA,
+    // which honours ONEDNN_MAX_CPU_ISA. On AMD EPYC Zen 2 this is avx2.
+    // The ISA enum is a bitmask: AVX-512 variants share bit 0x20 of the
+    // underlying integer; AVX-class ISAs (sse41/avx/avx2/avx2_vnni*) don't.
+    const auto isa = static_cast<unsigned>(dnnl::get_effective_cpu_isa());
+    constexpr unsigned avx512_core_bits =
+        static_cast<unsigned>(dnnl::cpu_isa::avx512_core);
+    return (isa & avx512_core_bits) == avx512_core_bits;
+  }();
+  // bs and IC come from the *logical* (NCHW/NCDHW/NCW) data shape. data_md
+  // dim[0] is N, dim[1] is C, regardless of the eventual blocked layout.
+  const auto src_dims         = data_md.get_dims();
+  const dnnl_dim_t batch_size = src_dims.empty() ? 1 : src_dims[0];
+  const dnnl_dim_t ic         = src_dims.size() < 2 ? 0 : src_dims[1];
+  // simd_w on AVX2 is 8 f32 lanes; brg_conv pads IC up to this and beyond.
+  const bool avoid_brg_heuristic =
+      !host_has_avx512 && batch_size <= 1 && ic > 0 && ic < 8 &&
+      !param.dnnl_param.quantized;
+
+  auto GetConvFwdPd = [&param, &data, &weights, &output, avoid_brg_heuristic](
                           std::shared_ptr<dnnl::convolution_forward::primitive_desc> conv_pd) {
     try {
       while (conv_pd->dst_desc().get_size() != GetArraySize(output) ||
@@ -152,6 +183,34 @@ std::shared_ptr<dnnl::convolution_forward::primitive_desc> GetConvFwdImpl(
              (!param.dnnl_param.quantized &&
               conv_pd->weights_desc().get_size() != GetArraySize(weights))) {
         CHECK(conv_pd->next_impl()) << "No convolution implementation for this request.";
+      }
+      // FU-3: now that we have a *memory-compatible* impl, optionally skip
+      // brg_conv:avx2 in favor of the next non-brg impl. We save the
+      // current pd as a fallback in case every remaining impl is brg.
+      if (avoid_brg_heuristic) {
+        const char* info = conv_pd->impl_info_str();
+        if (info && std::strstr(info, "brg") != nullptr) {
+          auto saved = conv_pd;
+          // Advance through brg candidates until we find a non-brg one that
+          // is also memory-compatible. Reuse the same memory-size guards.
+          while (true) {
+            if (!conv_pd->next_impl()) {
+              // No non-brg impl exists: restore the original brg pd.
+              conv_pd = saved;
+              break;
+            }
+            const bool sizes_ok =
+                conv_pd->dst_desc().get_size() == GetArraySize(output) &&
+                conv_pd->src_desc().get_size() == GetArraySize(data) &&
+                (param.dnnl_param.quantized ||
+                 conv_pd->weights_desc().get_size() == GetArraySize(weights));
+            if (!sizes_ok) continue;
+            const char* info2 = conv_pd->impl_info_str();
+            if (!info2 || std::strstr(info2, "brg") == nullptr) {
+              break;  // accept this non-brg, size-compatible impl
+            }
+          }
+        }
       }
       return conv_pd;
     } catch (dnnl::error& e) {

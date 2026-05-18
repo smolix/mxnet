@@ -1,13 +1,19 @@
 name: test-cpu
 
+# Triggered after build-cpu completes (on the same branch/SHA) so the
+# libmxnet-cpu artifact is guaranteed to exist before we try to download it.
+# workflow_run gives us both the completed status guard and the run_id of
+# the producer workflow — needed for cross-workflow artifact download.
 on:
-  push:
+  workflow_run:
+    workflows: ["build-cpu"]
+    types: [completed]
     branches: [master, onednn-v3-port]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read   # needed to download artifacts from a different workflow run
 
 concurrency:
   group: test-cpu-${{ github.ref }}
@@ -16,6 +22,12 @@ concurrency:
 jobs:
   test:
     name: CPU pytest (oneDNN subset, <20 min)
+    # Only run when the triggering build-cpu run succeeded.
+    # For workflow_dispatch there is no github.event.workflow_run, so we
+    # use a conditional that passes through on manual triggers.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-22.04
     # Artifact download + pip install + test run.  All chosen tests are
     # CPU-only and have a 180 s per-test timeout; the full suite finishes
@@ -29,6 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # For workflow_run events the SHA we want to test is the one that
+          # triggered the upstream build, not the merge commit.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           submodules: false   # Tests only; no need to pull 3rd-party source
 
       - uses: actions/setup-python@v5
@@ -49,13 +64,18 @@ jobs:
             pip-test-cpu-
 
       # ------------------------------------------------------------------ #
-      # Download the libmxnet.so produced by build-cpu.yml on the same SHA #
+      # Download the libmxnet.so produced by build-cpu.yml on the same SHA.#
+      # For workflow_run events we must reference the producer run's ID;   #
+      # for workflow_dispatch we fall back to same-run (build won't have   #
+      # run so the tester must supply the artifact manually or skip).       #
       # ------------------------------------------------------------------ #
       - name: Download libmxnet.so artifact
         uses: actions/download-artifact@v4
         with:
-          name: libmxnet-cpu-${{ github.sha }}
+          name: libmxnet-cpu-${{ github.event.workflow_run.head_sha || github.sha }}
           path: ${{ github.workspace }}/lib
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Locate libmxnet.so
         id: locate
@@ -123,7 +143,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: pytest-report-${{ github.sha }}
+          name: pytest-report-${{ github.event.workflow_run.head_sha || github.sha }}
           path: |
             .pytest_cache/
           if-no-files-found: ignore

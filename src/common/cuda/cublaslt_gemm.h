@@ -25,6 +25,13 @@
  * PR-B: fp16 (pseudo-fp16: CUDA_R_16F I/O + CUBLAS_COMPUTE_32F + fp32 scale),
  *       bf16 (CUDA_R_16BF I/O + CUBLAS_COMPUTE_32F + fp32 scale),
  *       fp64 (CUDA_R_64F I/O + CUBLAS_COMPUTE_64F + fp64 scale).
+ * PR-C: stride-aware "*Strided" variants for non-contiguous leading
+ *       dimensions and strided-batched GEMMs (`batch >= 1` with explicit
+ *       per-operand batch strides). These replace cublasGemmStridedBatchedEx
+ *       / cublasSgemmStridedBatched / cublasDgemmStridedBatched on the
+ *       Lt-enabled path. The batch dimensions and three strides are folded
+ *       into the heuristic cache key so each (shape, batch, stride) tuple
+ *       gets its own cached algorithm.
  *
  * The MXNET_USE_CUBLASLT environment variable (default off) selects the
  * cuBLASLt heuristic path. On any error or zero-heuristic result the wrapper
@@ -38,6 +45,8 @@
 
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
+
+#include <cstdint>
 
 namespace mxnet {
 namespace common {
@@ -139,6 +148,102 @@ cublasStatus_t MaybeCublasLtDgemm(cublasHandle_t legacy_handle,
                                   const double* beta,
                                   double* C,
                                   int ldc);
+
+/* ---------------------------- PR-C: strided ----------------------------- */
+/*!
+ * \brief Stride-aware single-precision GEMM via cuBLASLt.
+ *
+ * Mirrors MaybeCublasLtSgemm but adds an explicit batch dimension and three
+ * 64-bit per-operand batch strides. With `batch == 1` and `stride_* == 0` this
+ * is numerically identical to the non-batched wrapper. The strided variants
+ * are intended to replace cublasGemmStridedBatchedEx / cublasSgemmStridedBatched
+ * call sites (see src/operator/linalg_impl.h `linalg_batch_gemm<gpu, float>`
+ * and `linalg_gemm_axis<gpu, float>`).
+ *
+ * The heuristic cache key includes (batch, stride_a, stride_b, stride_c) so
+ * that distinct strided shapes do not share an algorithm. On any failure
+ * (heuristic returns nothing, allocator fails, descriptor build fails) the
+ * wrapper returns a non-success cublasStatus_t and the caller MUST fall back
+ * to the legacy strided-batched API.
+ */
+cublasStatus_t MaybeCublasLtSgemmStrided(cublasHandle_t legacy_handle,
+                                         cublasOperation_t opA,
+                                         cublasOperation_t opB,
+                                         int m,
+                                         int n,
+                                         int k,
+                                         const float* alpha,
+                                         const float* A,
+                                         int lda,
+                                         int64_t stride_a,
+                                         const float* B,
+                                         int ldb,
+                                         int64_t stride_b,
+                                         const float* beta,
+                                         float* C,
+                                         int ldc,
+                                         int64_t stride_c,
+                                         int batch);
+
+/*! \brief Stride-aware pseudo-fp16 GEMM (fp16 I/O, fp32 compute). */
+cublasStatus_t MaybeCublasLtHgemmStrided(cublasHandle_t legacy_handle,
+                                         cublasOperation_t opA,
+                                         cublasOperation_t opB,
+                                         int m,
+                                         int n,
+                                         int k,
+                                         const float* alpha,
+                                         const void* A,
+                                         int lda,
+                                         int64_t stride_a,
+                                         const void* B,
+                                         int ldb,
+                                         int64_t stride_b,
+                                         const float* beta,
+                                         void* C,
+                                         int ldc,
+                                         int64_t stride_c,
+                                         int batch);
+
+/*! \brief Stride-aware bfloat16 GEMM (bf16 I/O, fp32 compute). */
+cublasStatus_t MaybeCublasLtBf16GemmStrided(cublasHandle_t legacy_handle,
+                                            cublasOperation_t opA,
+                                            cublasOperation_t opB,
+                                            int m,
+                                            int n,
+                                            int k,
+                                            const float* alpha,
+                                            const void* A,
+                                            int lda,
+                                            int64_t stride_a,
+                                            const void* B,
+                                            int ldb,
+                                            int64_t stride_b,
+                                            const float* beta,
+                                            void* C,
+                                            int ldc,
+                                            int64_t stride_c,
+                                            int batch);
+
+/*! \brief Stride-aware double-precision GEMM. */
+cublasStatus_t MaybeCublasLtDgemmStrided(cublasHandle_t legacy_handle,
+                                         cublasOperation_t opA,
+                                         cublasOperation_t opB,
+                                         int m,
+                                         int n,
+                                         int k,
+                                         const double* alpha,
+                                         const double* A,
+                                         int lda,
+                                         int64_t stride_a,
+                                         const double* B,
+                                         int ldb,
+                                         int64_t stride_b,
+                                         const double* beta,
+                                         double* C,
+                                         int ldc,
+                                         int64_t stride_c,
+                                         int batch);
 
 }  // namespace cuda
 }  // namespace common

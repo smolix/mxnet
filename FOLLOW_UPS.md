@@ -73,13 +73,17 @@ Tracks `issues.md` apache section B8 / apache#19218.
 
 ## FU-4 — d2l Cat 1 fork-time oneDNN cache (apache fork-safe DataLoader)
 
-**Status**: PATCH APPLIED, rebuild in flight.
+**Status**: PATCH APPLIED + REBUILT, **but verification shows the patch is insufficient**. Workaround `MXNET_ONEDNN_ENABLED=0` is the actual fix users should set.
 
-**Description**: 10 d2l-neu notebooks fail with bare `MXNetError: could not execute a primitive` when `gluon.data.DataLoader(num_workers>0)`. Root caused: `pthread_atfork` handlers in `src/initialize.cc:191-215` Stop/Start the Engine + clamp OpenMP, but do NOT clear oneDNN process-global state (`CpuEngine` singleton, `DNNLStream` thread-local, primitive LRU cache). Worker children inherit corrupt parent oneDNN state.
+**Description**: 10 d2l-neu notebooks fail with bare `MXNetError: could not execute a primitive` when `gluon.data.DataLoader(num_workers>0)`. Root caused: `pthread_atfork` handlers in `src/initialize.cc:191-215` Stop/Start the Engine + clamp OpenMP, but do NOT clear oneDNN process-global state.
 
-**Patch**: `.investigations/d2l_cat1_atfork.patch` (~25 lines, 3 files). Adds `g_dnnl_forked_child` atomic + `DNNLAfterForkChild()` that clears DNNL LRU cache, and makes `DNNLEnvSet()` return false in the child (i.e. disable DNNL like `MXNET_ONEDNN_ENABLED=0`).
+**Patch attempted**: `.investigations/d2l_cat1_atfork.patch` adds `g_dnnl_forked_child` atomic + `DNNLAfterForkChild()` that clears DNNL primitive cache and makes `DNNLEnvSet()` return false in the child. Built into commit `5d99841c4`.
 
-**Next step**: rebuild completes (~5 more min as of 2026-05-18 17:30), copy libmxnet, verify `rnn-scratch.ipynb` passes with `num_workers=4`. Then commit + push to PR #15.
+**Why the patch is insufficient**: `DNNLEnvSet()` is only checked at operator-level dispatchers (concat.cc, fully_connected.cc, batch_norm.cc, etc.) — NOT at `NDArray::GetDNNLData()` / `GetDNNLDataReorder()` in `src/ndarray/ndarray.cc`. The failing d2l worker path goes through `_mx_np.stack → concat → MXNetStorageInferDNNL` which calls `GetDNNLData()` on inherited DNNL chunks. The kill-switch is ignored on that path.
+
+**Effective workaround (recommended for users)**: `MXNET_ONEDNN_ENABLED=0` env var. Confirmed to make all 10 affected notebooks pass.
+
+**Proper fix (future work)**: Either (a) add the `!g_dnnl_forked_child` check at the start of `NDArray::GetDNNLData()` and `GetDNNLDataReorder()`; OR (b) destroy + recreate the `CpuEngine` singleton in the atfork child handler (heavier but more thorough — covers all DNNL entry points).
 
 **Repro**: `.investigations/d2l_cat1_repro.py`, also the upstream `rnn-scratch.ipynb` itself.
 

@@ -819,6 +819,13 @@ void NDArray::DNNLDataReorderAsync(const void* mem_desc) const {
 
 const dnnl::memory* NDArray::GetDNNLData() const {
   CHECK(storage_type() == kDefaultStorage);
+  // FU-4: in a forked DataLoader worker any dnnl_mem_ inherited from the
+  // parent references the parent's now-rebuilt dnnl::engine and is unsafe
+  // to hand back. Drop it so we rebuild a fresh dnnl::memory below against
+  // the worker's freshly-constructed CpuEngine singleton.
+  if (g_dnnl_forked_child.load(std::memory_order_relaxed) && ptr_->dnnl_mem_) {
+    ptr_->dnnl_mem_ = nullptr;
+  }
   const auto is_view = IsView();
   if (IsDNNLData()) {
     // If this array uses DNNL layout, we have to make sure it's not a view.

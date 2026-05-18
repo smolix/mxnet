@@ -27,6 +27,38 @@
 
 namespace mxnet {
 
+std::atomic<bool> g_dnnl_forked_child{false};
+
+void DNNLAfterForkChild() {
+  // FU-4: After fork() in a DataLoader worker the inherited oneDNN state
+  // is corrupt --- threads of the parent's engine are gone, primitives
+  // and dnnl::memory handles reference dead state, and primitive caches
+  // (both oneDNN's internal LRU and our operator-level thread_local maps)
+  // still point at it. We do three things, in order:
+  //
+  // 1. Drop the oneDNN library-side primitive cache so no stale entries
+  //    survive across the fork.
+  dnnl::set_primitive_cache_capacity(0);
+
+  // 2. Rebuild the CpuEngine singleton and the (first-thread) DNNLStream
+  //    in place. We re-placement-new rather than calling the destructor,
+  //    because dnnl_engine_destroy / dnnl_stream_destroy on the inherited
+  //    handle can touch threads that died at fork-time. Small leak on
+  //    purpose --- workers are short-lived.
+  CpuEngine::ResetAfterFork();
+  DNNLStream::Get()->ResetAfterFork();
+
+  // 3. Flip the kill-switch read by DNNLEnvSet() so operator dispatch
+  //    falls back to non-DNNL kernels in this process. This is what
+  //    keeps the per-op thread_local primitive caches (scattered across
+  //    dnnl_concat.cc / dnnl_softmax.cc / dnnl_fully_connected.cc / ...)
+  //    from being consulted with stale primitive_descs that were built
+  //    against the parent's engine. NDArray::GetDNNLData() also checks
+  //    this flag to invalidate stale dnnl_mem_ inherited from the parent
+  //    and rebuild against the fresh engine.
+  g_dnnl_forked_child.store(true, std::memory_order_release);
+}
+
 DNNLStream* DNNLStream::Get() {
 #if DMLC_CXX11_THREAD_LOCAL
   static thread_local DNNLStream stream;

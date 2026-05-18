@@ -89,6 +89,10 @@ This file lists everything still open at this snapshot. Items are grouped by sev
 
 ## CORRECTNESS gaps (block "the port is done")
 
+49. **`test_self_attention[split=True-*]` int8 quantization** — discovered 2026-05-18 in CPU/DNNL sweep against HEAD `7db415f72`. All 12 `tests/python/dnnl/subgraphs/test_matmul_subgraph.py::test_self_attention[True-{4,8}-{256,768}-{124,384}-{1,32}]` parametrizations fail (split=True path); split=False not yet observed (sweep crashed before reaching it). One parametrization `[True-8-256-384-32]` segfaults pytest entirely (RC=139). Test does `MultiHeadAttention` forward → `quantize_net(..., quantized_dtype='auto', calib_mode='naive')` → numerical-equivalence check. Same primitive family as item #4 (DNNL v3 int8 quantization). Need DNNL_VERBOSE=2 trace of the failing parametrization plus a memcheck pass to localize the segfault. Likely common root cause with #4.
+
+
+
 1. ~~**`adaptive_avg_pool` backward correctness** (task #33).~~ **RESOLVED 2026-05-17** via commit `1d2198862` (force CPU-reference fallback in `SupportDNNLAveragePooling`) — the CPU kernel correctly normalises by pool-window overlap, so 36→0 failures. Re-verified post-cuDNN-9.22 rebuild: `test_adaptive_pooling` is 72/72 PASS across all shape×stype combos. A latent DNNL backward bug remains in `dnnl_pooling.cc::GetPoolingBwd` (in_data aliased to out_grad for adaptive) but is unreachable while SupportDNNL returns false; a partial attempt to re-enable DNNL adaptive pooling failed smoke and was reverted.
 
 2. ~~**`test_quantize_gluon_with_forward`** (gluon `quantize_net` of resnet18).~~ **RESOLVED 2026-05-17** — confirmed PASSING on post-cuDNN-9.22 rebuild (`HEAD=f103c5491`). The combination of the FC saturation fix + B2 NaN guard (`f5934f094`) + TF32 selection on cuDNN 9 (`783cfa133`) closed this together. 1/1 PASS in 0.25s.

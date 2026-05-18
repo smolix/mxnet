@@ -107,15 +107,17 @@ Tracks `issues.md` #19.
 
 ---
 
-## FU-6 — QAT backward through fused subgraph ops (`_sg_onednn_*`)
+## FU-6 — QAT backward through fused subgraph ops (`_sg_onednn_*`) [SCOPED+SCAFFOLDED]
 
-**Status**: BLOCKED at architecture level.
+**Status**: Scoped + scaffolded (104 LOC). Op body implementation deferred.
 
-**Description**: QAT STE (commit `df8f0378d`) gives quantize_v2 a working straight-through gradient. But the fused subgraph ops `_sg_onednn_fully_connected` and `_sg_onednn_conv` still have `FGradient = MakeZeroGradNodes`. An attempt to add a dot-product-based data backward caused segfaults in the NNVM/CachedOp backward executor — these fused ops interact with the static graph executor in a way that does not support custom backward nodes referencing op inputs.
+**Architecture investigation 2026-05-18** (`.investigations/fu6_qat_backward_scope.md`): Approach (a) is sound — new `_backward_sg_onednn_fc` / `_backward_sg_onednn_conv` ops marked `TIsBackward + TIsLayerOpBackward`, gated by `MXNET_QAT_SUBGRAPH_BACKWARD=1` while landing. The prior "segfault" was from feeding int8/quantized inputs into FP32-only generic ops via symbolic graph rewrite, NOT a CachedOp/NNVM limitation. State sharing via `cached_op.cc:628` (the `TIsLayerOpBackward` path) is the right mechanism.
+
+**Scaffolding partial** (`.investigations/fu6_partial_scaffolding.patch`, 104 lines): headers + dispatcher hook on the forward ops. Still to write: `src/operator/subgraph/dnnl/dnnl_qat_backward.cc` (~600-700 LOC) containing the `SgDNNLFCFGradient`/`SgDNNLConvFGradient` lambdas, op registrations, and `FStatefulComputeEx<cpu>` wrappers around oneDNN `inner_product_backward_data/weights` and `convolution_backward_*`.
 
 **Net result today**: `.backward()` through a quantized graph does NOT crash; it returns all-zero gradients. The STE is in place and will become effective once `_sg_onednn_*` get proper backward support. Tests: 13 PASS, 4 XFAIL.
 
-**Effort**: L (architectural — needs CachedOp / subgraph executor extension).
+**Effort to complete**: M (~1 focused day on the op bodies).
 
 Tracks `issues.md` #5 Step 3.
 

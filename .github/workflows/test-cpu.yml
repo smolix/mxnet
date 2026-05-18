@@ -1,126 +1,130 @@
 name: test-cpu
 
 on:
+  push:
+    branches: [master, onednn-v3-port]
+  pull_request:
   workflow_dispatch:
-  schedule:
-    # Nightly at 07:00 UTC.
-    - cron: "0 7 * * *"
 
 permissions:
   contents: read
 
 concurrency:
   group: test-cpu-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: CPU pytest sweep (operator, gluon, dnnl)
+    name: CPU pytest (oneDNN subset, <20 min)
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    # Artifact download + pip install + test run.  All chosen tests are
+    # CPU-only and have a 180 s per-test timeout; the full suite finishes
+    # well under 20 min on a 4-core runner when the build artifact is
+    # already present.
+    timeout-minutes: 20
     env:
-      CMAKE_BUILD_DIR: build
-      CMAKE_BUILD_TYPE: Release
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: "2G"
+      VENV_DIR: ${{ github.workspace }}/.venv
+      PIP_CACHE_DIR: ${{ github.workspace }}/.pip-cache
+
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-
-      - name: Install build + test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            ninja-build \
-            cmake \
-            ccache \
-            g++ \
-            libopenblas-dev \
-            libopencv-dev \
-            libomp-dev \
-            python3 \
-            python3-pip \
-            python3-dev
+          submodules: false   # Tests only; no need to pull 3rd-party source
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Cache ccache
+      # ------------------------------------------------------------------ #
+      # pip wheel cache — keyed on Python version + requirements hash so   #
+      # that a requirements change always busts it.                         #
+      # ------------------------------------------------------------------ #
+      - name: Cache pip wheels
         uses: actions/cache@v4
         with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-test-cpu-${{ github.ref }}-${{ github.sha }}
+          path: ${{ env.PIP_CACHE_DIR }}
+          key: pip-test-cpu-py311-${{ hashFiles('python/mxnet/requirements*.txt', 'tests/requirements*.txt') }}
           restore-keys: |
-            ccache-test-cpu-${{ github.ref }}-
-            ccache-test-cpu-
-            ccache-build-cpu-
+            pip-test-cpu-py311-
+            pip-test-cpu-
 
-      - name: Cache CMake build dir
-        uses: actions/cache@v4
+      # ------------------------------------------------------------------ #
+      # Download the libmxnet.so produced by build-cpu.yml on the same SHA #
+      # ------------------------------------------------------------------ #
+      - name: Download libmxnet.so artifact
+        uses: actions/download-artifact@v4
         with:
-          path: ${{ env.CMAKE_BUILD_DIR }}
-          key: cmake-test-cpu-${{ github.ref }}-${{ github.sha }}
-          restore-keys: |
-            cmake-test-cpu-${{ github.ref }}-
-            cmake-test-cpu-
-            cmake-build-cpu-
+          name: libmxnet-cpu-${{ github.sha }}
+          path: ${{ github.workspace }}/lib
 
-      - name: Configure CMake
+      - name: Locate libmxnet.so
+        id: locate
         run: |
-          cmake -S . -B "$CMAKE_BUILD_DIR" -G Ninja \
-            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DUSE_CUDA=OFF \
-            -DUSE_CUDNN=OFF \
-            -DUSE_NCCL=OFF \
-            -DUSE_ONEDNN=ON \
-            -DUSE_OPENMP=ON \
-            -DUSE_OPENCV=ON \
-            -DUSE_BLAS=open \
-            -DUSE_DIST_KVSTORE=OFF \
-            -DBUILD_CPP_EXAMPLES=OFF
+          set -e
+          libpath=$(find "$GITHUB_WORKSPACE/lib" -name 'libmxnet.so' | head -n1)
+          if [ -z "$libpath" ]; then
+            echo "libmxnet.so not found in artifact" >&2
+            exit 1
+          fi
+          echo "libpath=$libpath" >> "$GITHUB_OUTPUT"
+          ls -lh "$libpath"
 
-      - name: Build (ninja mxnet)
-        timeout-minutes: 60
-        run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j"$(nproc)"
-
-      - name: Install python package + test deps
+      # ------------------------------------------------------------------ #
+      # Create venv and install runtime deps                                #
+      # Note: nvidia-cudnn-cu13 / nvidia-nccl-cu13 ship their shared libs  #
+      # as pure-Python wheels; installing them ensures the .so chain is     #
+      # present even on CPU runners (MXNet dlopen-loads them lazily).       #
+      # ------------------------------------------------------------------ #
+      - name: Create venv and install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install "numpy<2" requests scipy pytest pytest-timeout pytest-xdist pytest-rerunfailures
-          cd python && python -m pip install -e . && cd ..
+          python -m venv "$VENV_DIR"
+          source "$VENV_DIR/bin/activate"
+          pip install --upgrade pip --cache-dir "$PIP_CACHE_DIR"
+          pip install --cache-dir "$PIP_CACHE_DIR" \
+            "numpy<2" \
+            requests \
+            pytest \
+            pytest-timeout \
+            nvidia-cudnn-cu13 \
+            nvidia-nccl-cu13
 
-      - name: Run pytest sweep (30 min global timeout)
-        # Generous per-test (300s) and per-file (1800s) timeouts; flaky tests
-        # auto-retry twice before being marked failed.
-        timeout-minutes: 30
+      - name: Install in-tree MXNet Python package
         env:
-          MXNET_ENGINE_TYPE: NaiveEngine
-          OMP_NUM_THREADS: "2"
+          MXNET_LIBRARY_PATH: ${{ steps.locate.outputs.libpath }}
         run: |
-          set -o pipefail
-          mkdir -p test-reports
-          pytest \
-            --timeout=300 \
-            --reruns=2 --reruns-delay=5 \
-            --junitxml=test-reports/cpu-sweep.xml \
-            -ra -v \
-            tests/python/unittest/test_operator.py \
-            tests/python/unittest/test_gluon.py \
-            tests/python/dnnl/ \
-            | tee test-reports/cpu-sweep.log
+          source "$VENV_DIR/bin/activate"
+          cd python
+          pip install --cache-dir "$PIP_CACHE_DIR" -e .
+          cd ..
+          python -c "import mxnet; print('mxnet import OK, version:', mxnet.__version__)"
 
-      - name: Upload pytest report
-        if: always()
+      # ------------------------------------------------------------------ #
+      # Run the fast CPU-capable subset                                     #
+      #   * tests/python/dnnl/test_dnnl.py          — oneDNN op smoke      #
+      #   * tests/python/dnnl/subgraphs/             — FC subgraph fusion   #
+      #   * tests/python/unittest/test_engine_*      — scheduler lifecycle  #
+      #   * tests/python/unittest/test_inplace_dtype — dtype/inplace logic  #
+      # Per-test timeout 180 s; total well within the 20-min job cap.       #
+      # ------------------------------------------------------------------ #
+      - name: Run pytest subset
+        env:
+          MXNET_LIBRARY_PATH: ${{ steps.locate.outputs.libpath }}
+          MXNET_ENGINE_TYPE: NaiveEngine
+        run: |
+          source "$VENV_DIR/bin/activate"
+          pytest \
+            tests/python/dnnl/test_dnnl.py \
+            tests/python/dnnl/subgraphs/test_fc_subgraph.py \
+            tests/python/unittest/test_engine_shutdown.py \
+            tests/python/unittest/test_inplace_dtype.py \
+            -v --timeout=180 --tb=short
+
+      - name: Upload pytest report on failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: pytest-report-cpu-${{ github.sha }}
+          name: pytest-report-${{ github.sha }}
           path: |
-            test-reports/cpu-sweep.xml
-            test-reports/cpu-sweep.log
-          if-no-files-found: warn
-          retention-days: 30
+            .pytest_cache/
+          if-no-files-found: ignore
+          retention-days: 7

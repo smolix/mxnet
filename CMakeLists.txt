@@ -17,6 +17,24 @@
 
 cmake_minimum_required(VERSION 3.13)
 
+# CMake 4 no longer accepts subprojects that request very old policy
+# compatibility. Several vendored dependencies still declare older minima, so
+# keep their policy floor explicit while preserving MXNet's existing CMake
+# minimum for downstream builders.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE STRING
+    "Minimum CMake policy version used by vendored dependencies")
+
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW CACHE STRING
+    "Let option() honor normal variables in vendored dependencies")
+set(CMAKE_POLICY_DEFAULT_CMP0148 NEW CACHE STRING
+    "Use MXNet's compatibility module for legacy FindPythonInterp calls")
+
+if(POLICY CMP0144)
+  cmake_policy(SET CMP0144 NEW)
+  set(CMAKE_POLICY_DEFAULT_CMP0144 NEW CACHE STRING
+      "Use upper-case <PACKAGENAME>_ROOT variables in vendored dependencies")
+endif()
+
 # arm64 macOS is available from macOS 11 onward. Detect the host arch before
 # project() initializes compiler flags; CMAKE_HOST_SYSTEM_PROCESSOR is not
 # reliably populated yet on all CMake versions.
@@ -182,6 +200,10 @@ endif()
 message(STATUS "CMake version '${CMAKE_VERSION}' using generator '${CMAKE_GENERATOR}'")
 if(USE_CUDA)
   cmake_minimum_required(VERSION 3.13.2)  # CUDA 10 (Turing) detection available starting 3.13.2
+  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES OFF CACHE STRING
+        "MXNet sets CUDA -gencode flags from MXNET_CUDA_ARCH")
+  endif()
   include(CheckLanguage)
   check_language(CUDA)
   if(NOT CMAKE_CUDA_COMPILER AND UNIX AND EXISTS "/usr/local/cuda/bin/nvcc")
@@ -228,7 +250,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Distribution")
   set(Protobuf_USE_STATIC_LIBS ON)
 endif()
 
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/upstream;${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules;${CMAKE_MODULE_PATH}")
+set(MXNET_UPSTREAM_CMAKE_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake/upstream")
+set(MXNET_CMAKE_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules")
+set(CMAKE_MODULE_PATH "${MXNET_UPSTREAM_CMAKE_MODULE_DIR};${MXNET_CMAKE_MODULE_DIR};${CMAKE_MODULE_PATH}")
 
 SET(EXTRA_OPERATORS "" CACHE PATH "EXTRA OPERATORS PATH")
 
@@ -468,10 +492,28 @@ endif()
 
 # ---[ OpenCV
 if(USE_OPENCV)
-  find_package(OpenCV COMPONENTS core highgui imgproc imgcodecs)
+  set(OPENCV_ROOT "" CACHE PATH "OpenCV install path. Supports autodetection.")
+  if(OPENCV_ROOT)
+    find_package(OpenCV
+                 CONFIG
+                 COMPONENTS core imgproc imgcodecs
+                 PATHS "${OPENCV_ROOT}" "${OPENCV_ROOT}/lib/cmake/opencv4"
+                 NO_DEFAULT_PATH)
+  else()
+    find_package(OpenCV COMPONENTS core imgproc imgcodecs)
+  endif()
   if(NOT OpenCV_FOUND) # if not OpenCV 3.x, then imgcodecs are not found
-    message(STATUS "OpenCV imgcodecs missing")
-    find_package(OpenCV REQUIRED COMPONENTS core highgui imgproc)
+    message(STATUS "OpenCV imgcodecs missing; trying OpenCV 2.x highgui codec layout")
+    if(OPENCV_ROOT)
+      find_package(OpenCV
+                   REQUIRED
+                   CONFIG
+                   COMPONENTS core highgui imgproc
+                   PATHS "${OPENCV_ROOT}" "${OPENCV_ROOT}/lib/cmake/opencv4"
+                   NO_DEFAULT_PATH)
+    else()
+      find_package(OpenCV REQUIRED COMPONENTS core highgui imgproc)
+    endif()
   endif()
   include_directories(SYSTEM ${OpenCV_INCLUDE_DIRS})
   list(APPEND mxnet_LINKER_LIBS ${OpenCV_LIBS})
@@ -539,10 +581,11 @@ if(USE_JEMALLOC)
 endif()
 
 include(CTest)
-set(GTEST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/googletest/googletest")
-set(GTEST_INCLUDE_DIR ${GTEST_ROOT}/include)
+set(GTEST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/googletest")
+set(GTEST_INCLUDE_DIR "${GTEST_ROOT}/googletest/include")
 set(GTEST_MAIN_LIBRARY gtest_main)
 set(GTEST_LIBRARY gtest)
+set(BUILD_GMOCK OFF)
 
 add_subdirectory(${GTEST_ROOT})
 set_target_properties(gtest PROPERTIES CXX_CLANG_TIDY "")  # don't lint 3rdparty dependency
@@ -669,8 +712,16 @@ if(USE_CUDA)
 
   string(REPLACE ";" " " CUDA_ARCH_FLAGS_SPACES "${CUDA_ARCH_FLAGS}")
 
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.17)
+    set(MXNET_CMAKE_MODULE_PATH_WITH_UPSTREAM "${CMAKE_MODULE_PATH}")
+    list(REMOVE_ITEM CMAKE_MODULE_PATH "${MXNET_UPSTREAM_CMAKE_MODULE_DIR}")
+  endif()
   find_package(CUDAToolkit REQUIRED cublas cufft cusolver curand nvrtc
     OPTIONAL_COMPONENTS nvToolsExt)
+  if(DEFINED MXNET_CMAKE_MODULE_PATH_WITH_UPSTREAM)
+    set(CMAKE_MODULE_PATH "${MXNET_CMAKE_MODULE_PATH_WITH_UPSTREAM}")
+    unset(MXNET_CMAKE_MODULE_PATH_WITH_UPSTREAM)
+  endif()
 
   list(APPEND mxnet_LINKER_LIBS CUDA::cudart CUDA::cublas CUDA::cufft CUDA::cusolver CUDA::curand
                                 CUDA::nvrtc)

@@ -183,7 +183,7 @@ def test_symbol_magic_abs():
             method = data.abs(name='abs0')
             magic = abs(data)
             regular = mx.symbol.abs(data, name='abs0')
-            ctx = {'ctx': mx.context.current_context(), 'data': rand_shape_nd(dim)}
+            ctx = {'ctx': mx.current_device(), 'data': rand_shape_nd(dim)}
             mx.test_utils.check_consistency(
                 [method, magic], ctx_list=[ctx, ctx])
             mx.test_utils.check_consistency(
@@ -206,7 +206,7 @@ def test_symbol_fluent():
             data = mx.symbol.Variable('data')
             regular = getattr(mx.symbol, func)(data, name=func+'0', **kwargs)
             fluent = getattr(data, func)(**kwargs)
-            check_symbol_consistency(regular, fluent, {'ctx': mx.context.current_context(),
+            check_symbol_consistency(regular, fluent, {'ctx': mx.current_device(),
                                                        'data': shape},
                                      skip_grad=func not in has_grad,
                                      equal_nan=equal_nan)

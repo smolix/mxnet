@@ -504,6 +504,7 @@ class _MultiWorkerIter(object):
             raise
         except Exception:
             self._worker_pool.terminate()
+            self._worker_pool.join()
             raise
 
     def next(self):
@@ -664,11 +665,13 @@ class DataLoader(object):
                 else:
                     # set ignore keyboard interupt signal before forking processes
                     original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
-                    self._worker_pool = multiprocessing.Pool(
-                        self._num_workers, initializer=_worker_initializer,
-                        initargs=[self._dataset, is_np_shape(), is_np_array()])
-                    # resume keyboard interupt signal in main process
-                    signal.signal(signal.SIGINT, original_sigint_handler)
+                    try:
+                        self._worker_pool = multiprocessing.Pool(
+                            self._num_workers, initializer=_worker_initializer,
+                            initargs=[self._dataset, is_np_shape(), is_np_array()])
+                    finally:
+                        # resume keyboard interupt signal in main process
+                        signal.signal(signal.SIGINT, original_sigint_handler)
 
     def __iter__(self):
         if self._mx_iter is not None:
@@ -694,12 +697,17 @@ class DataLoader(object):
     def __len__(self):
         return len(self._batch_sampler)
 
+    def _shutdown_worker_pool(self):
+        worker_pool = self._worker_pool
+        self._worker_pool = None
+        if worker_pool:
+            worker_pool.terminate()
+            worker_pool.join()
+
     def __del__(self):
-        if self._worker_pool:
-            # manually terminate due to a bug that pool is not automatically terminated
-            # https://bugs.python.org/issue34172
-            assert isinstance(self._worker_pool, multiprocessing.pool.Pool)
-            self._worker_pool.terminate()
+        # manually terminate due to a bug that pool is not automatically terminated
+        # https://bugs.python.org/issue34172
+        self._shutdown_worker_pool()
 
 def _check_mx_loader_capability(dataset, batch_sampler, batchify_fn):
     from ._internal import MXDataset, MXSampler

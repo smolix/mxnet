@@ -143,7 +143,7 @@ def test_aggregator():
     def check_aggregator(kv, key, key_list, stype):
         # devices
         num_devs = 4
-        devs = [mx.Context('cpu', i) for i in range(num_devs)]
+        devs = [mx.Device('cpu', i) for i in range(num_devs)]
 
         # single
         vals = [mx.nd.ones(shape, d).tostype(stype) for d in devs]
@@ -181,7 +181,7 @@ def test_sparse_aggregator():
 
         # devices
         num_devs = 4
-        devs = [mx.Context('cpu', i) for i in range(num_devs)]
+        devs = [mx.Device('cpu', i) for i in range(num_devs)]
 
         # single
         vals = [rand_ndarray(shape, stype).copyto(devs[i]) for i in range(num_devs)]
@@ -239,7 +239,7 @@ def test_updater(dev='cpu'):
     def check_updater(kv, key, key_list, stype):
         # devices
         num_devs = 4
-        devs = [mx.Context(dev, i) for i in range(num_devs)]
+        devs = [mx.Device(dev, i) for i in range(num_devs)]
 
         # single
         vals = [mx.nd.ones(shape, d).tostype(stype) for d in devs]
@@ -338,4 +338,3 @@ def test_invalid_pull():
         # kvstore should be restricted to only accept either int or str keys
         check_invalid_key_types_single(kvs[i], single_keys[1 - i])
         check_invalid_key_types_list(kvs[i], list_keys[1 - i])
-

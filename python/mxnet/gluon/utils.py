@@ -106,11 +106,13 @@ def split_and_load(data, ctx_list, batch_axis=0, even_split=True):
     array_fn = _mx_np.array if is_np_array() else ndarray.array
     if not isinstance(data, ndarray.NDArray):
         data = array_fn(data, ctx=ctx_list[0])
+    def move_to_device(arr, ctx):
+        return arr.to_device(ctx) if isinstance(arr, _mx_np.ndarray) else arr.as_in_context(ctx)
     if len(ctx_list) == 1:
-        return [data.as_in_context(ctx_list[0])]
+        return [move_to_device(data, ctx_list[0])]
 
     slices = split_data(data, len(ctx_list), batch_axis, even_split)
-    return [i.as_in_context(ctx) for i, ctx in zip(slices, ctx_list)]
+    return [move_to_device(i, ctx) for i, ctx in zip(slices, ctx_list)]
 
 
 def clip_global_norm(arrays, max_norm, check_isfinite=True):

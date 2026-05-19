@@ -450,7 +450,7 @@ def test_dc_hybridblock():
 
         def forward(self, x):
             assert x.shape[1] == 10  # due to in_units=10 above
-            return self.dense(x) + self.weight.data(x.context)
+            return self.dense(x) + self.weight.data(x.device)
 
     if mx.device.current_device() == mx.cpu(0):  # CPU tests
         devices = [mx.cpu(0), mx.cpu(1)]
@@ -472,7 +472,7 @@ def test_dc_hybridblock_wrapped():
 
         def forward(self, x):
             assert x.shape[1] == 10  # due to in_units=10 above
-            return self.dense(x) + self.weight.data(x.context)
+            return self.dense(x) + self.weight.data(x.device)
 
     net = MyBlock()
     net.initialize()
@@ -487,7 +487,7 @@ def test_dc_hybridblock_deferred_init_no_infer_shape_error():
             self.weight = mx.gluon.Parameter('weight', allow_deferred_init=True)
 
         def forward(self, x):
-            return self.dense(x) + self.weight.data(x.context)
+            return self.dense(x) + self.weight.data(x.device)
 
     net = MyBlock()
     net.initialize()

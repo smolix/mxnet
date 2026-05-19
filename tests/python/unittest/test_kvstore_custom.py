@@ -77,7 +77,7 @@ def test_pushpull_single_kv_pair():
         kv.broadcast(key, mx.nd.zeros(shape), out=mx.nd.empty(shape))
         # devices
         num_devs = 4
-        devs = [mx.Context('cpu', i) for i in range(num_devs)]
+        devs = [mx.Device('cpu', i) for i in range(num_devs)]
 
         # single
         vals = [mx.nd.ones(shape, d) for d in devs]
@@ -122,7 +122,7 @@ def test_pushpull_list_kv_pair():
         kv.broadcast(key, mx.nd.zeros(shape), out=mx.nd.empty(shape))
         # devices
         num_devs = 4
-        devs = [mx.Context('cpu', i) for i in range(num_devs)]
+        devs = [mx.Device('cpu', i) for i in range(num_devs)]
 
         # single
         vals = [mx.nd.ones(shape, d) for d in devs]
@@ -182,4 +182,3 @@ def test_set_optimizer():
 
     kv = mx.kv.create('teststore')
     check_unsupported_methods(kv)
-

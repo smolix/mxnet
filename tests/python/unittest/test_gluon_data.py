@@ -354,7 +354,8 @@ def test_multi_worker_dataloader_release_pool():
 
     for _ in range(repeat):
         A = np.random.rand(999, 2000)
-        D = mx.gluon.data.DataLoader(A, batch_size=8, num_workers=num_workers)
+        D = mx.gluon.data.DataLoader(A, batch_size=8, num_workers=num_workers,
+                                     prefetch=0)
         the_iter = iter(D)
         next(the_iter)
         del the_iter

@@ -615,7 +615,7 @@ def test_sync_batchnorm():
             raise RuntimeError('BN not found')
 
         def _syncParameters(bn1, bn2, device):
-            device = input.context
+            device = input.device
             bn2.gamma.set_data(bn1.gamma.data(device))
             bn2.beta.set_data(bn1.beta.data(device))
             bn2.running_mean.set_data(bn1.running_mean.data(device))
@@ -625,7 +625,7 @@ def test_sync_batchnorm():
         input2 = input.copy()
 
         if cuda:
-            input1 = input.as_in_context(mx.gpu(0))
+            input1 = input.to_device(mx.gpu(0))
             device_list = [mx.gpu(i) for i in range(num_devices)]
         else:
             device_list = [mx.cpu(0) for _ in range(num_devices)]
@@ -654,7 +654,7 @@ def test_sync_batchnorm():
             mx.autograd.backward(loss1)
             mx.autograd.backward(loss2)
 
-        output2 = mx.np.concatenate([output.as_in_context(input.context)
+        output2 = mx.np.concatenate([output.to_device(input.device)
                                     for output in output2], axis=1)
         # check bn1
 
@@ -662,8 +662,8 @@ def test_sync_batchnorm():
         epsilon = 1e-5
         axis = 1
         data = input1
-        running_mean = mx.np.zeros(nch, device=data.context)
-        running_var = mx.np.ones(nch, device=data.context)
+        running_mean = mx.np.zeros(nch, device=data.device)
+        running_var = mx.np.ones(nch, device=data.device)
 
         axes = list(range(data.ndim))
         del axes[axis]
@@ -703,7 +703,7 @@ def test_sync_batchnorm():
                             _find_bn(bn2).running_var.data(device_list[0]).asnumpy(),
                             atol=atol, rtol=rtol)
         input2grad = mx.np.concatenate(
-            [output.grad.as_in_context(input.device) for output in inputs2], axis=0)
+            [output.grad.to_device(input.device) for output in inputs2], axis=0)
         assert_almost_equal(input1.grad.asnumpy(),
                             input2grad.asnumpy(), atol=atol, rtol=rtol)
 
@@ -1375,7 +1375,7 @@ def test_save_load(tmpdir):
     net.initialize(mx.init.Uniform(), device=mx.cpu())
     net.hybridize()
     x = onp.random.rand(32, 10, 10)
-    x = mx.np.array(x).as_in_context(mx.cpu())
+    x = mx.np.array(x).to_device(mx.cpu())
     net(x)
     # _, param_path = tempfile.mkstemp(suffix='.params', dir=str(tmpdir))
     param_path = os.path.join(str(tmpdir), 'test_save_load_network.params')

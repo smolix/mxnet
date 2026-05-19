@@ -16,8 +16,8 @@ fatbin support is tracked in [`issues.md`](issues.md) item 31.
   exercise the real bf16 path.
 - NVIDIA RTX PRO 4000 / RTX 50-series (compute capability 12.0).
 - NVIDIA driver R570 or newer.
-- macOS arm64 is covered only by the CPU-only smoke path. It is not a
-  CUDA/oneDNN release-wheel target.
+- macOS arm64 is covered by the CPU-only smoke path with oneDNN enabled. It is
+  not a CUDA release-wheel target.
 
 A full clean build takes roughly **35-50 minutes** on 64 threads. The
 CUDA compile phase dominates; expect `nvcc` to be the long pole.
@@ -108,7 +108,7 @@ cmake -S . -B build-macos-arm64 -G Ninja \
   -DUSE_CUDA=OFF \
   -DUSE_CUDNN=OFF \
   -DUSE_NCCL=OFF \
-  -DUSE_ONEDNN=OFF \
+  -DUSE_ONEDNN=ON \
   -DUSE_OPENMP=OFF \
   -DUSE_OPENCV=OFF \
   -DUSE_BLAS=apple \
@@ -145,7 +145,7 @@ UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
   -DUSE_CUDA=OFF \
   -DUSE_CUDNN=OFF \
   -DUSE_NCCL=OFF \
-  -DUSE_ONEDNN=OFF \
+  -DUSE_ONEDNN=ON \
   -DUSE_OPENMP=OFF \
   -DUSE_OPENCV=ON \
   -DOPENCV_ROOT="$(pwd)/.deps/opencv-4.9.0-macos-arm64" \

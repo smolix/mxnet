@@ -103,9 +103,9 @@ brew install llvm
 
 For Apple Silicon (`arm64`) CPU-only builds, CUDA, cuDNN, NCCL, x86 SIMD, and
 F16C are not expected to be enabled. The baseline native build uses Apple's
-Accelerate framework for BLAS/LAPACK and keeps OpenMP and oneDNN disabled unless
-you are explicitly validating those optional paths. OpenCV is optional for the
-Python import and unit-test smoke path below.
+Accelerate framework for BLAS/LAPACK and keeps OpenMP disabled. oneDNN is
+enabled for the native arm64 CPU path, while OpenCV is optional for the Python
+import and unit-test smoke path below.
 
 ### Windows
 You can use Chocolatey software management solution to install some dependencies
@@ -226,7 +226,7 @@ cmake -S . -B build-macos-arm64 -G Ninja \
   -DUSE_CUDA=OFF \
   -DUSE_CUDNN=OFF \
   -DUSE_NCCL=OFF \
-  -DUSE_ONEDNN=OFF \
+  -DUSE_ONEDNN=ON \
   -DUSE_OPENMP=OFF \
   -DUSE_OPENCV=OFF \
   -DUSE_BLAS=apple \

@@ -10989,9 +10989,9 @@ def test_np_broadcast_ops_on_misaligned_input(dtype, lead_dim, both_ways):
         big_shape = [1, shape[1], lead_dim]
     else:
         big_shape = shape
-    size = onp.product(shape)
-    small_size = onp.product(small_shape)
-    big_size = onp.product(big_shape)
+    size = onp.prod(shape)
+    small_size = onp.prod(small_shape)
+    big_size = onp.prod(big_shape)
     a = np.arange(5000)
     b = np.arange(5000)
     e = np.arange(5000)
@@ -11016,9 +11016,9 @@ def test_np_broadcast_ops_on_misaligned_input_oneside(dtype, lead_dim, both_ways
         big_shape = [1, shape[1], lead_dim]
     else:
         big_shape = shape
-    size = onp.product(shape)
-    small_size = onp.product(small_shape)
-    big_size = onp.product(big_shape)
+    size = onp.prod(shape)
+    small_size = onp.prod(small_shape)
+    big_size = onp.prod(big_shape)
     a = np.arange(5000)
     b = np.arange(5000)
     e = np.arange(5000)

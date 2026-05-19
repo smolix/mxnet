@@ -98,7 +98,35 @@ std::shared_ptr<dnnl::convolution_forward::primitive_desc> GetConvFwdImpl(
   }
   dnnl::primitive_attr attr;
   dnnl::post_ops ops;
-  if (param.dnnl_param.with_act) {
+  // FU-1 refinement: oneDNN v3's jit_uni_int8_1x1:avx2 quantized 1x1 conv
+  // kernel produces a channel-zeroed output when fused with eltwise_relu
+  // post-op AND input channels ic < simd_w (AVX2 simd_w is 8). The
+  // property-level gate (dnnl_conv_property.h) catches this at fusion
+  // time but only when shape info is available; for the canonical
+  // quantize_net() path PrepareNodeAttr returns nullptr (no inferred
+  // "shape" attr on the bare-symbol optimize_for call) and the gate is
+  // a no-op. Detecting the combo here, with full data_md/out_md, lets
+  // us skip the eltwise_relu post-op when the destination type already
+  // provides relu semantics via dtype saturation: u8 dst saturates to
+  // [0, 255], so the relu is redundant and dropping it avoids the
+  // buggy kernel path. The matching scale folding (output_scale into
+  // requantize_scales) is handled in dnnl_conv.cc; here we just
+  // suppress the post-op append.
+  static const bool fu1_host_has_avx512 = []() {
+    const auto isa = static_cast<unsigned>(dnnl::get_effective_cpu_isa());
+    constexpr unsigned avx512_core_bits =
+        static_cast<unsigned>(dnnl::cpu_isa::avx512_core);
+    return (isa & avx512_core_bits) == avx512_core_bits;
+  }();
+  const auto fu1_ic =
+      data_md.get_dims().size() < 2 ? 0 : data_md.get_dims()[1];
+  const bool fu1_skip_relu_post_op =
+      !fu1_host_has_avx512 && param.dnnl_param.quantized &&
+      param.dnnl_param.with_act &&
+      param.act_param.alg == dnnl::algorithm::eltwise_relu &&
+      fu1_ic > 0 && fu1_ic < 8 &&
+      out_md.get_data_type() == dnnl::memory::data_type::u8;
+  if (param.dnnl_param.with_act && !fu1_skip_relu_post_op) {
     // v3: post_ops::append_eltwise(algo, alpha, beta); scale parameter
     //     dropped. The per-post-op scale is folded into the global output
     //     scales when needed.

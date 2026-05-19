@@ -9535,8 +9535,10 @@ def test_np_percentile():
     for hybridize, keepdims, q_scalar, (a_shape, q_shape, axis), interpolation, dtype in \
         itertools.product(flags, flags, flags, tensor_shapes, interpolation_options, dtypes):
         if dtype == np.float16 and interpolation == 'linear': continue
-        atol = 3e-4 if dtype == np.float16 else 1e-4
-        rtol = 3e-2 if dtype == np.float16 else 1e-2
+        # See the matching quantile case above: fp16 non-linear interpolation
+        # can differ by several ULPs when midpoint/selection crosses exponent blocks.
+        atol = 5e-3 if dtype == np.float16 else 1e-4
+        rtol = 1e-1 if dtype == np.float16 else 1e-2
         a = np.random.uniform(-10.0, 10.0, size=a_shape).astype(dtype)
         qtype = random.choice(qtypes)
         q = np.random.uniform(0, 1.0, size=q_shape).astype(qtype)

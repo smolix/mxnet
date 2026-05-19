@@ -973,9 +973,7 @@ static void timingTest(const std::string& label,
 #endif                        // MXNET_USE_CUDNN == 1 && CUDNN_MAJOR >= 5
 
 /*! \brief Stress-test random batch size/channels/dimension(s) */
-TEST(BATCH_NORM, DISABLED_TestStochasticTiming_2D) {
-  // Test is disabled due to suspected flakiness
-  // https://github.com/apache/mxnet/issues/14411
+TEST(BATCH_NORM, TestStochasticTiming_2D) {
   MSHADOW_REAL_TYPE_SWITCH_EX(mshadow::kFloat32, DType, AccReal, {
     timingTest<BatchNormCoreOpProp, BNOperatorExecutor<DType, AccReal>>(
         "RANDOM: BatchNormCoreOpProp<cpu>", false, true, blank_kwargs_nocudnn, GPU_TEST_DIMENSIONS);

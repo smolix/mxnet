@@ -125,6 +125,57 @@ uv pip install --python .venv/bin/python "numpy<2" requests pytest pytest-timeou
 MXNET_SETUP_ENABLE_CUDA_DEPS=0 uv pip install --python .venv/bin/python -e ./python
 ```
 
+### Optional OpenCV via UV
+
+The arm64 macOS smoke recipe keeps OpenCV off by default, but the image and
+vision tests can be enabled without Homebrew, MacPorts, or system OpenCV by
+building a repo-local OpenCV through UV. The same helper also supports Linux
+and installs under a platform/architecture-specific `.deps/` prefix.
+
+```bash
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    python tools/dependencies/build_opencv.py
+
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    cmake -S . -B build-macos-arm64-opencv -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DUSE_CUDA=OFF \
+  -DUSE_CUDNN=OFF \
+  -DUSE_NCCL=OFF \
+  -DUSE_ONEDNN=OFF \
+  -DUSE_OPENMP=OFF \
+  -DUSE_OPENCV=ON \
+  -DOPENCV_ROOT="$(pwd)/.deps/opencv-4.9.0-macos-arm64" \
+  -DOpenCV_DIR="$(pwd)/.deps/opencv-4.9.0-macos-arm64/lib/cmake/opencv4" \
+  -DUSE_BLAS=apple \
+  -DUSE_LAPACK=ON \
+  -DUSE_DIST_KVSTORE=OFF \
+  -DUSE_SSE=OFF \
+  -DUSE_F16C=OFF \
+  -DBUILD_CPP_EXAMPLES=OFF \
+  -DPython3_EXECUTABLE="$(pwd)/.venv/bin/python"
+
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    cmake --build build-macos-arm64-opencv --target mxnet im2rec -- -j 3
+export MXNET_LIBRARY_PATH="$(pwd)/build-macos-arm64-opencv/libmxnet.dylib"
+```
+
+The helper builds OpenCV 4.9.0 under `.deps/` with bundled image codec
+dependencies. On macOS it uses Apple SDK zlib to avoid SDK conflicts; on Linux
+it builds zlib with OpenCV. It ignores `/opt/local` and `/usr/local` during
+OpenCV configuration so MacPorts, Homebrew, and ad hoc local installs do not
+bleed into the dependency tree. MXNet CMake is pointed at the resulting prefix
+via `OPENCV_ROOT`.
+
+If the checkout path contains shell-special characters such as spaces or
+parentheses, the helper re-enters through a stable `/private/tmp/mxnet-opencv-*`
+symlink before invoking OpenCV's CMake build. The installed files still live
+under the checkout's `.deps/` directory.
+
 Run the smoke subset tracked in test metadata:
 
 ```bash

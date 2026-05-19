@@ -516,9 +516,16 @@ if(USE_OPENCV)
     endif()
   endif()
   include_directories(SYSTEM ${OpenCV_INCLUDE_DIRS})
-  list(APPEND mxnet_LINKER_LIBS ${OpenCV_LIBS})
+  set(MXNET_OPENCV_LINK_LIBS ${OpenCV_LIBS})
+  if(OpenCV_VERSION_MAJOR GREATER 2 AND TARGET opencv_imgcodecs)
+    set(MXNET_OPENCV_LINK_LIBS opencv_imgcodecs)
+  elseif(TARGET opencv_highgui)
+    set(MXNET_OPENCV_LINK_LIBS opencv_highgui)
+  endif()
+  list(APPEND mxnet_LINKER_LIBS ${MXNET_OPENCV_LINK_LIBS})
   message(STATUS "OpenCV ${OpenCV_VERSION} found (${OpenCV_CONFIG_PATH})")
   message(STATUS " OpenCV_LIBS=${OpenCV_LIBS}")
+  message(STATUS " MXNet OpenCV link libs=${MXNET_OPENCV_LINK_LIBS}")
   add_definitions(-DMXNET_USE_OPENCV=1)
 else(USE_OPENCV)
   message(STATUS "OpenCV Disabled")
@@ -1044,12 +1051,7 @@ target_link_libraries(mxnet PUBLIC dmlc)
 
 if(USE_OPENCV AND OpenCV_VERSION_MAJOR GREATER 2)
   add_executable(im2rec "tools/im2rec.cc")
-  target_link_libraries(im2rec
-    ${mxnet_LINKER_LIBS}
-    ${OpenCV_LIBS}
-    mxnet
-    dmlc
-    )
+  target_link_libraries(im2rec PRIVATE mxnet)
 else()
     message(WARNING "OpenCV_VERSION_MAJOR: ${OpenCV_VERSION_MAJOR}, version 3 with imgcodecs \
     is required for im2rec, im2rec will not be available")

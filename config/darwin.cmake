@@ -56,7 +56,7 @@ if(MXNET_DARWIN_PROCESSOR MATCHES "^(arm64|aarch64)$")
 else()
   set(USE_OPENCV ON CACHE BOOL "Build with OpenCV support")
 endif()
-set(OPENCV_ROOT "" CACHE BOOL "OpenCV install path. Supports autodetection.")
+set(OPENCV_ROOT "" CACHE PATH "OpenCV install path. Supports autodetection.")
 
 set(USE_OPENMP OFF CACHE BOOL "Build with Openmp support")
 

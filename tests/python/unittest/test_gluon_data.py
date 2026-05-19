@@ -517,6 +517,7 @@ def test_dataloader_scope():
 
     assert item is not None
 
+@pytest.mark.remote_required
 def test_mx_datasets_handle():
     # _DownloadedDataset
     mnist = mx.gluon.data.vision.MNIST(train=False).__mx_handle__()
@@ -540,7 +541,7 @@ def test_mx_datasets_handle():
 def test_mx_data_loader():
     from mxnet.gluon.data.dataloader import DataLoader
 
-    dataset = mx.gluon.data.vision.MNIST(train=False)
+    dataset = mx.gluon.data.ArrayDataset(mx.nd.ones((64, 28, 28, 1)), mx.nd.arange(64))
     dl = DataLoader(num_workers=0, dataset=dataset, batch_size=32)
     for _ in dl:
         pass
@@ -549,7 +550,9 @@ def test_mx_data_loader():
 def test_mx_data_loader_nopython():
     from mxnet.gluon.data.dataloader import DataLoader
     from mxnet.gluon.data.vision.transforms import ToTensor
-    dataset = mx.gluon.data.vision.MNIST(train=False)
+    data = mx.np.ones((64, 28, 28, 1), dtype='uint8')
+    label = mx.np.arange(64)
+    dataset = mx.gluon.data.ArrayDataset(data, label)
     dl1 = DataLoader(dataset=dataset.transform_first(ToTensor()), batch_size=32, try_nopython=True, shuffle=False)
     dl2 = DataLoader(dataset=dataset.transform_first(ToTensor()), batch_size=32, try_nopython=False, shuffle=False)
     assert len(dl1) == len(dl2)

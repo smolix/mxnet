@@ -28,8 +28,13 @@ from mxnet.gluon import nn
 from mxnet import nd, npx
 import pytest
 import tempfile
+from common import legacy_np_semantics
 
-mx.npx.reset_np()
+
+@pytest.fixture(autouse=True)
+def legacy_np_semantics_scope():
+    with legacy_np_semantics():
+        yield
 
 def network_structure_1():
     data1 = mx.sym.var('data1', shape=(2, 3, 10, 10))

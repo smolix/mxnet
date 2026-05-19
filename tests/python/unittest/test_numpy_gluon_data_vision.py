@@ -271,6 +271,7 @@ def test_hybrid_transformer():
 
 @xfail_when_nonstandard_decimal_separator
 @use_np
+@requires_opencv
 def test_rotate():
     transformer = transforms.Rotate(10.)
     assertRaises(TypeError, transformer, mx.np.ones((3, 30, 60), dtype='uint8'))

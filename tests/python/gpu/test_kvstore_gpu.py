@@ -101,7 +101,7 @@ def test_rsp_push_pull():
     key  = 'MXNET_KVSTORE_USETREE'
     for val in envs:
         with environment(key, val):
-            if val is '1':
+            if val == '1':
                 sparse_pull = False
             else:
                 sparse_pull = True
@@ -133,4 +133,3 @@ def test_rsp_push_pull_large_rowid():
     kv.push('a', val)
     kv.row_sparse_pull('a', out=out, row_ids=mx.nd.arange(0, num_rows, dtype='int64'))
     assert(out.indices.shape[0] == num_rows)
-

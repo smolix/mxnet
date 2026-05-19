@@ -235,10 +235,12 @@ def test_transformer():
     transform(mx.np.ones((245, 480, 3), dtype='uint8')).wait_to_read()
 
 @use_np
+@requires_opencv
 def test_random_crop():
     x = mx.np.ones((245, 480, 3), dtype='uint8')
     y = mx.npx.image.random_crop(x, width=100, height=100)
     assert y.shape == (100, 100, 3)
+    y.wait_to_read()
 
 @use_np
 @requires_opencv
@@ -307,6 +309,7 @@ def test_rotate():
 
 
 @use_np
+@requires_opencv
 def test_random_rotation():
     # test exceptions for probability input outside of [0,1]
     assertRaises(ValueError, transforms.RandomRotation, [-10, 10.], rotate_with_proba=1.1)
@@ -347,6 +350,7 @@ def test_random_transforms():
 
 @xfail_when_nonstandard_decimal_separator
 @use_np
+@requires_opencv
 @pytest.mark.flaky
 def test_random_gray():
     from mxnet.gluon.data.vision import transforms

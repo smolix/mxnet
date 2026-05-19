@@ -40,8 +40,11 @@ except ImportError:
 from . import sampler as _sampler
 from . import batchify as _batchify
 from ... import ndarray as nd, context
+from ...device import Device
 from ...util import is_np_shape, is_np_array, set_np
 from ... import numpy as _mx_np  # pylint: disable=reimported
+
+_CPU_SHARED = Device('cpu_shared', 0)
 
 if sys.platform == 'darwin' or sys.platform == 'win32':
     def rebuild_ndarray(*args):
@@ -62,7 +65,7 @@ else:
     def reduce_ndarray(data):
         """Reduce ndarray to shared memory handle"""
         # keep a local ref before duplicating fd
-        data = data.as_in_context(context.Context('cpu_shared', 0))
+        data = data.as_in_context(_CPU_SHARED)
         pid, fd, shape, dtype = data._to_shared_mem()
         fd = multiprocessing.reduction.DupFd(fd)
         return rebuild_ndarray, (pid, fd, shape, dtype)
@@ -88,7 +91,7 @@ else:
     def reduce_np_ndarray(data):
         """Reduce ndarray to shared memory handle"""
         # keep a local ref before duplicating fd
-        data = data.as_in_context(context.Context('cpu_shared', 0))
+        data = data.to_device(_CPU_SHARED)
         pid, fd, shape, dtype = data._to_shared_mem()
         fd = multiprocessing.reduction.DupFd(fd)
         return rebuild_np_ndarray, (pid, fd, shape, dtype)
@@ -159,7 +162,7 @@ def default_mp_batchify_fn(data):
     if isinstance(data[0], nd.NDArray):
         empty_fn = _mx_np.empty if is_np_array() else nd.empty
         out = empty_fn((len(data),) + data[0].shape, dtype=data[0].dtype,
-                       ctx=context.Context('cpu_shared', 0))
+                       ctx=_CPU_SHARED)
         if is_np_array():
             return _mx_np.stack(data, out=out)
         else:
@@ -171,7 +174,7 @@ def default_mp_batchify_fn(data):
         data = np.asarray(data)
         array_fn = _mx_np.array if is_np_array() else nd.array
         return array_fn(data, dtype=data.dtype,
-                        ctx=context.Context('cpu_shared', 0))
+                        ctx=_CPU_SHARED)
 
 
 def _as_in_context(data, ctx):

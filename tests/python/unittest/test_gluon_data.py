@@ -319,14 +319,15 @@ def _batchify(data):
         labels = np.asarray(labels, dtype=np.float32)
     inputs = inputs.transpose((1, 0, 2))
     labels = labels.transpose((1, 0))
+    shared_device = mx.Device('cpu_shared', 0)
 
-    return (nd.array(inputs, dtype=inputs.dtype, ctx=context.Context('cpu_shared', 0)),
-            nd.array(x_lens, ctx=context.Context('cpu_shared', 0))) \
+    return (nd.array(inputs, dtype=inputs.dtype, ctx=shared_device),
+            nd.array(x_lens, ctx=shared_device)) \
         if labels is None else (
-        nd.array(inputs, dtype=inputs.dtype, ctx=context.Context('cpu_shared', 0)),
-        nd.array(x_lens, ctx=context.Context('cpu_shared', 0)),
-        nd.array(labels, dtype=labels.dtype, ctx=context.Context('cpu_shared', 0)),
-        nd.array(y_lens, ctx=context.Context('cpu_shared', 0)))
+        nd.array(inputs, dtype=inputs.dtype, ctx=shared_device),
+        nd.array(x_lens, ctx=shared_device),
+        nd.array(labels, dtype=labels.dtype, ctx=shared_device),
+        nd.array(y_lens, ctx=shared_device))
 
 def test_multi_worker_forked_data_loader():
     data = _Dummy(False)

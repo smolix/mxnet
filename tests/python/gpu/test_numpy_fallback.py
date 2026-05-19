@@ -67,7 +67,7 @@ def test_np_fallback_decorator():
         return ret_type(ret_lst)
 
     def get_indices(axis_size):
-        if axis_size is 0:
+        if axis_size == 0:
             axis_size = random.randint(3, 6)
         samples = random.randint(1, axis_size - 1)
         indices = sorted(random.sample([i for i in range(1, axis_size)], samples))

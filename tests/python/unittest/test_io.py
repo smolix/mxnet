@@ -435,9 +435,9 @@ def test_CSVIter(tmpdir):
         data_path = os.path.join(str(tmpdir), 'data.t')
         label_path = os.path.join(str(tmpdir), 'label.t')
         entry_str = '1'
-        if dtype is 'int32':
+        if dtype == 'int32':
             entry_str = '200000001'
-        if dtype is 'int64':
+        if dtype == 'int64':
             entry_str = '2147483648'
         with open(data_path, 'w') as fout:
             for _ in range(1000):

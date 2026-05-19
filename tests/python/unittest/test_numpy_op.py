@@ -3253,7 +3253,7 @@ def test_np_binary_funcs():
         for func, func_data in funcs.items():
             dtypes = None
             assert (len(func_data) == 4 or len(func_data) == 5)
-            if len(func_data) is 4:
+            if len(func_data) == 4:
                 low, high, lgrads, rgrads = func_data
             else:
                 low, high, lgrads, rgrads, dtypes = func_data
@@ -3931,7 +3931,7 @@ def test_np_split():
                               axis=self._axis)
 
     def get_indices(axis_size):
-        if axis_size is 0:
+        if axis_size == 0:
             axis_size = random.randint(3, 6)
         samples = random.randint(1, axis_size - 1)
         indices = sorted(random.sample([i for i in range(1, axis_size)], samples))
@@ -3943,7 +3943,7 @@ def test_np_split():
     for hybridize in [True, False]:
         for axis in range(-len(shape)+1, len(shape)):
             indices = get_indices(shape[axis])
-            sections = 7 if shape[axis] is 0 else shape[axis]
+            sections = 7 if shape[axis] == 0 else shape[axis]
             for indices_or_sections in [indices, sections]:
                 # test gluon
                 test_split = TestSplit(axis=axis, indices_or_sections=indices_or_sections)
@@ -3983,7 +3983,7 @@ def test_np_array_split():
                               axis=self._axis)
 
     def get_indices(axis_size):
-        if axis_size is 0:
+        if axis_size == 0:
             axis_size = random.randint(3, 6)
         samples = random.randint(1, axis_size - 1)
         indices = sorted(random.sample([i for i in range(0, axis_size + 1)], samples))
@@ -4003,7 +4003,7 @@ def test_np_array_split():
         for axis in range(len(shape)):
             x = np.random.uniform(-5.0, 5.0, size=shape).astype(dtype)
             indices = get_indices(shape[axis])
-            sections = 7 if x.shape[axis] is 0 else random.randint(1,x.shape[axis])
+            sections = 7 if x.shape[axis] == 0 else random.randint(1,x.shape[axis])
             for indices_or_sections in [indices, sections]:
                 # test gluon
                 test_array_split = TestArray_split(axis=axis, indices_or_sections=indices_or_sections)
@@ -4037,7 +4037,7 @@ def test_np_vsplit():
             return np.vsplit(a, indices_or_sections=self._indices_or_sections)
 
     def get_indices(axis_size):
-        if axis_size is 0:
+        if axis_size == 0:
             axis_size = random.randint(3, 6)
         samples = random.randint(1, axis_size - 1)
         indices = sorted(random.sample([i for i in range(1, axis_size)], samples))
@@ -4054,7 +4054,7 @@ def test_np_vsplit():
         for shape in shapes:
             axis_size = shape[0]
             indices = get_indices(axis_size)
-            sections = 7 if axis_size is 0 else axis_size
+            sections = 7 if axis_size == 0 else axis_size
             for indices_or_sections in [indices, sections]:
                 # test gluon
                 test_vsplit = TestVsplit(indices_or_sections=indices_or_sections)

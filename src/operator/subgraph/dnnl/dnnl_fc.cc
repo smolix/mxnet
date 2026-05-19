@@ -375,6 +375,9 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
                                      const NDArray& output,
                                      const std::vector<float>& min_max_vec) {
   const auto nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+#if MXNET_USE_OPENMP != 1
+  (void)nthreads;
+#endif
   const FCInputIndex idx(full_param_);
   bool support_channelwise_scale = false;
   auto dnnl_param                = full_param_.dnnl_param;

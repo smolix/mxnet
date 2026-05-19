@@ -550,14 +550,14 @@ class CSRNDArray(BaseSparseNDArray):
             raise TypeError('copyto does not support type ' + str(type(other)))
 
     def asscipy(self):
-        """Returns a ``scipy.sparse.csr.csr_matrix`` object with value copied from this array
+        """Returns a ``scipy.sparse.csr_matrix`` object with value copied from this array
 
         Examples
         --------
         >>> x = mx.nd.sparse.zeros('csr', (2,3))
         >>> y = x.asscipy()
         >>> type(y)
-        <type 'scipy.sparse.csr.csr_matrix'>
+        <type 'scipy.sparse.csr_matrix'>
         >>> y
         <2x3 sparse matrix of type '<type 'numpy.float32'>'
         with 0 stored elements in Compressed Sparse Row format>
@@ -820,11 +820,11 @@ def _prepare_src_array(source_array, dtype):
 
 def _prepare_default_dtype(src_array, dtype):
     """Prepare the value of dtype if `dtype` is None. If `src_array` is an NDArray, numpy.ndarray
-    or scipy.sparse.csr.csr_matrix, return src_array.dtype. float32 is returned otherwise."""
+    or scipy.sparse.csr_matrix, return src_array.dtype. float32 is returned otherwise."""
     if dtype is None:
         if isinstance(src_array, (NDArray, np.ndarray)):
             dtype = src_array.dtype
-        elif spsp and isinstance(src_array, spsp.csr.csr_matrix):
+        elif spsp and isinstance(src_array, spsp.csr_matrix):
             dtype = src_array.dtype
         else:
             dtype = mx_real_t
@@ -852,7 +852,7 @@ def csr_matrix(arg1, shape=None, ctx=None, dtype=None):
 
     - csr_matrix(S)
         to construct a CSRNDArray with a sparse 2D array ``S``
-            -  **S** (*CSRNDArray or scipy.sparse.csr.csr_matrix*) - A sparse matrix.
+            -  **S** (*CSRNDArray or scipy.sparse.csr_matrix*) - A sparse matrix.
             - **ctx** (*Context, optional*) - Device context \
             (default is the current default context).
             - **dtype** (*str or numpy.dtype, optional*) - The data type of the output array. \
@@ -972,7 +972,7 @@ def csr_matrix(arg1, shape=None, ctx=None, dtype=None):
             raise ValueError("Unexpected length of input tuple: " + str(arg_len))
     else:
         # construct a csr matrix from a sparse / dense one
-        if isinstance(arg1, CSRNDArray) or (spsp and isinstance(arg1, spsp.csr.csr_matrix)):
+        if isinstance(arg1, CSRNDArray) or (spsp and isinstance(arg1, spsp.csr_matrix)):
             # construct a csr matrix from scipy or CSRNDArray
             _check_shape(arg1.shape, shape)
             return array(arg1, ctx=ctx, dtype=dtype)
@@ -1597,14 +1597,14 @@ def array(source_array, ctx=None, dtype=None):
 
     Parameters
     ----------
-    source_array : RowSparseNDArray, CSRNDArray or scipy.sparse.csr.csr_matrix
+    source_array : RowSparseNDArray, CSRNDArray or scipy.sparse.csr_matrix
         The source sparse array
     ctx : Context, optional
         The default context is ``source_array.context`` if ``source_array`` is an NDArray. \
         The current default context otherwise.
     dtype : str or numpy.dtype, optional
         The data type of the output array. The default dtype is ``source_array.dtype``
-        if `source_array` is an `NDArray`, `numpy.ndarray` or `scipy.sparse.csr.csr_matrix`, \
+        if `source_array` is an `NDArray`, `numpy.ndarray` or `scipy.sparse.csr_matrix`, \
         `float32` otherwise.
 
     Returns
@@ -1638,7 +1638,7 @@ def array(source_array, ctx=None, dtype=None):
             arr = empty(source_array.stype, source_array.shape, dtype=dtype, ctx=ctx)
             arr[:] = source_array
         return arr
-    elif spsp and isinstance(source_array, spsp.csr.csr_matrix):
+    elif spsp and isinstance(source_array, spsp.csr_matrix):
         # TODO(haibin) implement `_sync_copy_from` with scipy csr object to reduce a copy
         # preprocess scipy csr to canonical form
         csr = source_array.sorted_indices()

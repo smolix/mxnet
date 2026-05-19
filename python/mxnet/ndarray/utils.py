@@ -138,7 +138,7 @@ def array(source_array, ctx=None, dtype=None):
     >>> mx.nd.array(mx.nd.zeros((3, 2), stype='row_sparse'))
     <RowSparseNDArray 3x2 @cpu(0)>
     """
-    if spsp is not None and isinstance(source_array, spsp.csr.csr_matrix):
+    if spsp is not None and isinstance(source_array, spsp.csr_matrix):
         return _sparse_array(source_array, ctx=ctx, dtype=dtype)
     elif isinstance(source_array, NDArray) and source_array.stype != 'default':
         return _sparse_array(source_array, ctx=ctx, dtype=dtype)

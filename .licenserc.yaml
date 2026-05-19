@@ -100,6 +100,7 @@ header:
     - 'CHANGELOG.md'
     - 'PERFORMANCE_NOTES.md'
     - 'FOLLOW_UPS.md'
+    - 'handover.md'
     # Blackwell-port fork-local benchmark / reproducer scripts
     # (kept in tree for future re-running; not shipped in the wheel).
     - 'bench_tf32_conv.py'

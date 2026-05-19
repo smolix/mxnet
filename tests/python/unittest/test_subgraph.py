@@ -23,12 +23,14 @@ import copy
 from mxnet.test_utils import *
 import pytest
 from mxnet.gluon.model_zoo.vision import get_model
+from common import legacy_np_semantics
 
 def make_subgraph(subg, *args):
     js = subg.tojson()
     return subg
 
 @pytest.mark.serial
+@legacy_np_semantics()
 def test_make_subgraph():
     def make_subgraph1(stype):
         a = mx.symbol.Variable(name='a', stype=stype)

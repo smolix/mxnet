@@ -27,7 +27,7 @@ import mxnet as mx
 from mxnet import profiler
 from mxnet.gluon import nn
 from mxnet.test_utils import is_cd_run
-from common import run_in_spawned_process
+from common import legacy_np_semantics, run_in_spawned_process
 import pytest
 
 
@@ -308,6 +308,7 @@ def test_aggregate_duplication():
     profiler.set_state('stop')
 
 
+@legacy_np_semantics()
 def test_custom_operator_profiling(seed=None, file_name=None):
     class Sigmoid(mx.operator.CustomOp):
         def forward(self, is_train, req, in_data, out_data, aux):

@@ -22,7 +22,7 @@ import mxnet as mx
 from mxnet.test_utils import verify_generator, gen_buckets_probs_with_ppf, assert_almost_equal
 import numpy as np
 import random as rnd
-from common import retry, random_seed
+from common import legacy_np_semantics, retry, random_seed
 import scipy.stats as ss
 import unittest
 import pytest
@@ -403,6 +403,7 @@ def test_dirichlet():
                 check_numeric_gradient(test_pdf, [samples, alpha], numeric_eps=eps, atol=backw_atol, rtol=backw_rtol, dtype=dtype)
 
 @pytest.mark.serial
+@legacy_np_semantics()
 def test_random():
     for dtype in [np.float16, np.float32, np.float64]:
         check_with_device(mx.context.current_context(), dtype)

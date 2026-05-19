@@ -437,6 +437,7 @@ def test_ndarray_load_fortran_order(tmp_path):
     assert np.sum(np_mx_arr != arr) == 0
 
 
+@legacy_np_semantics()
 def test_ndarray_legacy_load():
     data = []
     for _ in range(6):
@@ -2045,6 +2046,7 @@ def test_large_int_rounding():
     assert np.all((a == large_integer).asnumpy())
 
 
+@legacy_np_semantics()
 def test_load_saved_gpu_array_when_no_gpus_are_present():
     # State obtained with mx.nd.arange(1, ctx=mx.gpu()).__getstate__()
     # State needs to be exported manually, as running above command will only

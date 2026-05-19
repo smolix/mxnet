@@ -113,11 +113,23 @@ class BNOperatorExecutor : public test::op::CoreOpExecutor<DType, AccReal> {
  public:
   using Super::ctx;
 
+  static mxnet::ShapeVector ShapesFor(const mxnet::TShape& inputShape,
+                                      const test::op::kwargs_t& kwargs) {
+    mxnet::op::BatchNormParam param;
+    param.Init(kwargs, dmlc::parameter::kAllowUnknown);
+    const int channelAxis =
+        param.axis < 0 ? static_cast<int>(inputShape.ndim()) + param.axis : param.axis;
+    CHECK_GE(channelAxis, 0);
+    CHECK_LT(channelAxis, inputShape.ndim());
+    const mxnet::TShape channelShape({inputShape[channelAxis]});
+    return {inputShape, channelShape, channelShape, channelShape, channelShape};
+  }
+
   BNOperatorExecutor(const bool isGPU,
                      const mxnet::TShape& inputShape,
                      const test::op::kwargs_t& kwargs,
                      const bool hasWeightAndBias = false)
-      : test::op::CoreOpExecutor<DType, AccReal>(isGPU, {inputShape}),
+      : test::op::CoreOpExecutor<DType, AccReal>(isGPU, ShapesFor(inputShape, kwargs)),
         hasWeightAndBias_(hasWeightAndBias) {
     param_.Init(kwargs);
   }

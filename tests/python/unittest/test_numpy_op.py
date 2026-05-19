@@ -9488,12 +9488,12 @@ def test_np_quantile():
         if hybridize:
             test_quantile.hybridize()
         mx_out = test_quantile(a) if (q_scalar and q_shape == ()) else test_quantile(a, q)
-        np_out = onp.quantile(a.asnumpy(), np_q, axis=axis, interpolation=interpolation, keepdims=keepdims)
+        np_out = onp.quantile(a.asnumpy(), np_q, axis=axis, method=interpolation, keepdims=keepdims)
         assert mx_out.shape == np_out.shape
         assert_almost_equal(mx_out.asnumpy(), np_out, atol=atol, rtol=rtol)
 
         mx_out = np.quantile(a, q, axis=axis, interpolation=interpolation, keepdims=keepdims)
-        np_out = onp.quantile(a.asnumpy(), np_q, axis=axis, interpolation=interpolation, keepdims=keepdims)
+        np_out = onp.quantile(a.asnumpy(), np_q, axis=axis, method=interpolation, keepdims=keepdims)
         assert_almost_equal(mx_out.asnumpy(), np_out, atol=atol, rtol=rtol)
 
 
@@ -9550,12 +9550,12 @@ def test_np_percentile():
         if hybridize:
             test_percentile.hybridize()
         mx_out = test_percentile(a) if (q_scalar and q_shape == ()) else test_percentile(a, q)
-        np_out = onp.percentile(a.asnumpy(), np_q, axis=axis, interpolation=interpolation, keepdims=keepdims)
+        np_out = onp.percentile(a.asnumpy(), np_q, axis=axis, method=interpolation, keepdims=keepdims)
         assert mx_out.shape == np_out.shape
         assert_almost_equal(mx_out.asnumpy(), np_out, atol=atol, rtol=rtol)
 
         mx_out = np.percentile(a, q, axis=axis, interpolation=interpolation, keepdims=keepdims)
-        np_out = onp.percentile(a.asnumpy(), np_q, axis=axis, interpolation=interpolation, keepdims=keepdims)
+        np_out = onp.percentile(a.asnumpy(), np_q, axis=axis, method=interpolation, keepdims=keepdims)
         assert_almost_equal(mx_out.asnumpy(), np_out, atol=atol, rtol=rtol)
 
 

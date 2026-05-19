@@ -30,6 +30,7 @@ from mxnet.test_utils import *
 from mxnet.operator import *
 from mxnet.base import py_str, MXNetError, _as_list
 from common import assert_raises_cudnn_not_satisfied, assert_raises_cuda_not_satisfied, assertRaises
+from common import legacy_np_semantics
 from common import xfail_when_nonstandard_decimal_separator, with_environment
 import pytest
 import os
@@ -8773,34 +8774,35 @@ def test_concat_with_zero_size_tensor():
 
 
 def test_np_shape_decorator():
-    @mx.use_np_shape
-    def check_scalar_one():
-        """Generate scalar one tensor"""
-        return mx.nd.ones(shape=())
-    assert check_scalar_one.__name__ == "check_scalar_one"
-    assert check_scalar_one.__doc__ == "Generate scalar one tensor"
-    assert check_scalar_one().shape == ()
-    for active in [True, False]:
-        with mx.np_shape(active=active):
-            assert check_scalar_one.__name__ == "check_scalar_one"
-            assert check_scalar_one.__doc__ == "Generate scalar one tensor"
-            assert check_scalar_one().shape == ()
+    with legacy_np_semantics():
+        @mx.use_np_shape
+        def check_scalar_one():
+            """Generate scalar one tensor"""
+            return mx.nd.ones(shape=())
+        assert check_scalar_one.__name__ == "check_scalar_one"
+        assert check_scalar_one.__doc__ == "Generate scalar one tensor"
+        assert check_scalar_one().shape == ()
+        for active in [True, False]:
+            with mx.np_shape(active=active):
+                assert check_scalar_one.__name__ == "check_scalar_one"
+                assert check_scalar_one.__doc__ == "Generate scalar one tensor"
+                assert check_scalar_one().shape == ()
 
-    @mx.use_np_shape
-    def check_concat(shape1, shape2, axis):
-        data1 = mx.nd.ones(shape1)
-        data2 = mx.nd.ones(shape2)
-        ret = mx.nd.Concat(data1, data2, dim=axis)
-        expected_ret = np.concatenate((data1.asnumpy(), data2.asnumpy()), axis=axis)
-        assert ret.shape == expected_ret.shape
+        @mx.use_np_shape
+        def check_concat(shape1, shape2, axis):
+            data1 = mx.nd.ones(shape1)
+            data2 = mx.nd.ones(shape2)
+            ret = mx.nd.Concat(data1, data2, dim=axis)
+            expected_ret = np.concatenate((data1.asnumpy(), data2.asnumpy()), axis=axis)
+            assert ret.shape == expected_ret.shape
 
-    check_concat((0, 3, 4), (5, 3, 4), 0)
-    check_concat((8, 0, 5), (8, 7, 5), 1)
-    check_concat((8, 0, 0), (8, 0, 0), 2)
-    for _ in [True, False]:
         check_concat((0, 3, 4), (5, 3, 4), 0)
         check_concat((8, 0, 5), (8, 7, 5), 1)
         check_concat((8, 0, 0), (8, 0, 0), 2)
+        for _ in [True, False]:
+            check_concat((0, 3, 4), (5, 3, 4), 0)
+            check_concat((8, 0, 5), (8, 7, 5), 1)
+            check_concat((8, 0, 0), (8, 0, 0), 2)
 
 
 def test_add_n():

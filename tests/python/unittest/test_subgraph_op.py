@@ -449,7 +449,7 @@ def test_subgraph_backend_gluon(sym, subgraph_backend, op_names, tmp_path):
     # compare outputs
     assert len(outputs1) == len(outputs2)
     for i in range(len(outputs1)):
-        assert_almost_equal((outputs1[i] - outputs2[i]).abs().sum().asnumpy(), onp.zeros(shape=(1,)))
+        assert_almost_equal(mx.np.abs(outputs1[i] - outputs2[i]).sum().asnumpy(), onp.zeros(shape=(1,)))
 
 # Test Gluon HybridBlocks for graph partitioning a network created by HybridSequential.
 @mx.util.use_np

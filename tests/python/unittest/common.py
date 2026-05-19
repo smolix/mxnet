@@ -54,6 +54,19 @@ requires_opencv = pytest.mark.skipif(
 )
 
 
+@contextmanager
+def legacy_np_semantics():
+    """Temporarily disable NumPy semantics for legacy-shape tests."""
+    prev_np_shape = mx.util.is_np_shape()
+    prev_np_array = mx.util.is_np_array()
+    prev_np_dtype = mx.util.is_np_default_dtype()
+    mx.npx.reset_np()
+    try:
+        yield
+    finally:
+        mx.npx.set_np(shape=prev_np_shape, array=prev_np_array, dtype=prev_np_dtype)
+
+
 def _png_chunk(chunk_type, data):
     payload = chunk_type + data
     return (struct.pack(">I", len(data)) + payload +

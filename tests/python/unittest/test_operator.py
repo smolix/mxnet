@@ -24,7 +24,7 @@ import copy
 import math
 import random
 import itertools
-from distutils.version import LooseVersion
+from packaging.version import Version
 from numpy.testing import assert_allclose, assert_array_equal
 from mxnet.test_utils import *
 from mxnet.operator import *
@@ -3501,7 +3501,7 @@ def check_layer_normalization(in_shape, axis, eps, dtype=np.float32,
 def test_norm():
     try:
         import scipy
-        assert LooseVersion(scipy.__version__) >= LooseVersion('0.1')
+        assert Version(scipy.__version__) >= Version('0.1')
         from scipy.linalg import norm as sp_norm
     except (AssertionError, ImportError):
         print("Could not import scipy.linalg.norm or scipy is too old. "

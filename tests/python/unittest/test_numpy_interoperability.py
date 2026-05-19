@@ -18,13 +18,13 @@
 # pylint: skip-file
 from __future__ import absolute_import
 from __future__ import division
-from distutils.version import StrictVersion
 import sys
 import platform
 import itertools
 import numpy as _np
 import unittest
 import pytest
+from packaging.version import Version
 from mxnet import np, util
 from mxnet.test_utils import assert_almost_equal
 from mxnet.test_utils import use_np
@@ -3352,7 +3352,7 @@ def check_interoperability(op_list):
                     '__version__', 'dtype', '_NoValue']:  # skip list
             continue
         if name in ['full_like', 'zeros_like', 'ones_like'] and \
-                StrictVersion(platform.python_version()) < StrictVersion('3.0.0'):
+                Version(platform.python_version()) < Version('3.0.0'):
             continue
         default_tols = (1e-3, 1e-4)
         tols = {'linalg.tensorinv': (1e-2, 5e-3),

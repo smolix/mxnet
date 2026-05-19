@@ -17,12 +17,12 @@
 
 # pylint: skip-file
 from __future__ import absolute_import
-from distutils.version import StrictVersion
 import sys
 import pytest
 import itertools
 import numpy as _np
 import platform
+from packaging.version import Version
 import mxnet as mx
 import scipy.stats as ss
 import scipy.special as scipy_special
@@ -107,4 +107,3 @@ def test_np_fallback_decorator():
 
     # does not support functions with no return values
     assertRaises(ValueError, empty_ret_func)
-

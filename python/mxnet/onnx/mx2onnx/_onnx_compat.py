@@ -34,7 +34,14 @@ import onnx as _onnx
 
 def _build_mapping_module():
     """Construct an ``onnx.mapping``-compatible module from new helper APIs."""
-    helper = _onnx.helper
+    helper = getattr(_onnx, 'helper', None)
+    if helper is None:
+        # When tests/python is on sys.path, tests/python/onnx can be imported as
+        # a namespace package named "onnx".  That is not the optional ONNX
+        # dependency the exporter needs, so treat it as unavailable.
+        sys.modules.pop('onnx', None)
+        raise ImportError('onnx.helper is unavailable')
+
     mod = types.ModuleType('onnx.mapping')
 
     np_to_tensor = {}

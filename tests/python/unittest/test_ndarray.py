@@ -17,7 +17,7 @@
 
 import mxnet as mx
 import numpy as np
-from distutils.version import LooseVersion
+from packaging.version import Version
 from itertools import permutations, combinations_with_replacement
 import os
 import pickle as pkl
@@ -1750,7 +1750,7 @@ def test_ndarray_astype():
 def test_norm(ctx=default_device()):
     try:
         import scipy
-        assert LooseVersion(scipy.__version__) >= LooseVersion('0.1')
+        assert Version(scipy.__version__) >= Version('0.1')
         from scipy.linalg import norm as sp_norm
     except (AssertionError, ImportError):
         print("Could not import scipy.linalg.norm or scipy is too old. "

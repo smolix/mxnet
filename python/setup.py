@@ -30,6 +30,7 @@ BASE_INSTALL_REQUIRES = [
     'numpy>=1.17,<2',
     'requests>=2.20.0,<3',
     'graphviz<0.9.0,>=0.8.1',
+    'packaging>=20.0',
     'contextvars;python_version<"3.7"',
 ]
 

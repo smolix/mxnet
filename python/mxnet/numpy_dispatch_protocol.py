@@ -19,6 +19,7 @@
 
 import functools
 import numpy as _np
+from packaging.version import Version
 from . import numpy as mx_np  # pylint: disable=reimported
 from .numpy.multiarray import _NUMPY_ARRAY_FUNCTION_DICT, _NUMPY_ARRAY_UFUNC_DICT
 
@@ -44,9 +45,8 @@ def _implements(numpy_function):
 def with_array_function_protocol(func):
     """A decorator for functions that expect array function protocol.
     The decorated function only runs when NumPy version >= 1.17."""
-    from distutils.version import LooseVersion
-    cur_np_ver = LooseVersion(_np.__version__)
-    np_1_17_ver = LooseVersion('1.17')
+    cur_np_ver = Version(_np.__version__)
+    np_1_17_ver = Version('1.17')
 
     @functools.wraps(func)
     def _run_with_array_func_proto(*args, **kwargs):
@@ -64,9 +64,8 @@ def with_array_function_protocol(func):
 def with_array_ufunc_protocol(func):
     """A decorator for functions that expect array ufunc protocol.
     The decorated function only runs when NumPy version >= 1.15."""
-    from distutils.version import LooseVersion
-    cur_np_ver = LooseVersion(_np.__version__)
-    np_1_15_ver = LooseVersion('1.15')
+    cur_np_ver = Version(_np.__version__)
+    np_1_15_ver = Version('1.15')
 
     @functools.wraps(func)
     def _run_with_array_ufunc_proto(*args, **kwargs):

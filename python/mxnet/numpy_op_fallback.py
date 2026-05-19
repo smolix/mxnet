@@ -17,10 +17,10 @@
 
 """Fallback-to-NumPy operator implementation."""
 
-from distutils.version import StrictVersion
 import functools
 import ast
 import numpy as np
+from packaging.version import Version
 from . import operator
 from . import numpy as _mx_np  # pylint: disable=reimported
 from .util import np_array, use_np
@@ -62,7 +62,7 @@ class EmptyLike(operator.CustomOp):
 
     def forward(self, is_train, req, in_data, out_data, aux):
         np_version = np.version.version
-        if StrictVersion(np_version) >= StrictVersion('1.6.0'):
+        if Version(np_version) >= Version('1.6.0'):
             out = np.empty_like(in_data[0].asnumpy(), dtype=self._dtype, order=self._order,
                                 subok=self._subok)
         else:

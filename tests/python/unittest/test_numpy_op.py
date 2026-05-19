@@ -17,7 +17,6 @@
 
 # pylint: skip-file
 from __future__ import absolute_import
-from distutils.version import StrictVersion
 import sys
 import copy
 import itertools
@@ -30,7 +29,7 @@ import scipy.special as scipy_special
 import pytest
 import mxnet.ndarray.numpy._internal as _npi
 from functools import reduce
-from packaging.version import parse
+from packaging.version import Version, parse
 from mxnet import np, npx
 from mxnet.gluon import HybridBlock
 from mxnet.base import MXNetError
@@ -7880,7 +7879,7 @@ def test_np_full_like():
         def forward(self, x, *args, **kwargs):
             return np.full_like(x, self._fill_value, dtype=self._dtype, device=self._device)
 
-    if StrictVersion(platform.python_version()) < StrictVersion('3.0.0'):
+    if Version(platform.python_version()) < Version('3.0.0'):
         return
 
     dtypes = ['float64', 'float32', 'float16', 'int64', 'int32', 'int8', 'bool']
@@ -10575,7 +10574,7 @@ def test_np_empty_like():
         def forward(self, x, *args, **kwargs):
             return np.empty_like(x, dtype=self._dtype, order=self._order, subok=self._subok)
 
-    if StrictVersion(platform.python_version()) < StrictVersion('3.0.0'):
+    if Version(platform.python_version()) < Version('3.0.0'):
         return
 
     dtypes = [None, 'float16', 'float32', np.int8, np.uint8, np.int32, np.int64,
@@ -10606,7 +10605,7 @@ def test_np_empty_like():
     for dtype, shape, hybridize, order, subok in itertools.product(dtypes, shapes, flags, orders, subok_list):
         prototype = np.random.uniform(low=0, high=100, size=shape, dtype='float64').astype(dtype)
         test = TestEmptyLike(dtype, order, subok)
-        if StrictVersion(_np_version) >= StrictVersion('1.6.0'):
+        if Version(_np_version) >= Version('1.6.0'):
             expected_ret = onp.empty_like(prototype, dtype=dtype, order=order, subok=subok)
         else:
             expected_ret = onp.empty_like(prototype)
@@ -11810,4 +11809,3 @@ def test_np_standard_binary_funcs(func, func2, promoted, dtypes, ref_grad_a, ref
                     assert mx_out.dtype == np.bool_
                 assert_almost_equal(mx_out.asnumpy(), np_out.astype(mx_out.dtype), rtol=rtol, atol=atol,
                                     use_broadcast=False, equal_nan=True)
-

@@ -89,9 +89,11 @@ struct BooleanMaskBackwardCPUWriteKernel {
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
     if (prev != curr) {
-      std::memcpy(igrad + i * col_size, ograd + prev * col_size, col_size * sizeof(DType));
+      std::memcpy(static_cast<void*>(igrad + i * col_size),
+                  ograd + prev * col_size,
+                  col_size * sizeof(DType));
     } else {
-      std::memset(igrad + i * col_size, 0, col_size * sizeof(DType));
+      std::memset(static_cast<void*>(igrad + i * col_size), 0, col_size * sizeof(DType));
     }
 #pragma GCC diagnostic pop
   }

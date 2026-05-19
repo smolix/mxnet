@@ -60,7 +60,9 @@ struct BooleanMaskForwardCPUKernel {
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
     if (prev != curr) {
-      std::memcpy(out + prev * col_size, data + i * col_size, col_size * sizeof(DType));
+      std::memcpy(static_cast<void*>(out + prev * col_size),
+                  data + i * col_size,
+                  col_size * sizeof(DType));
     }
 #pragma GCC diagnostic pop
   }

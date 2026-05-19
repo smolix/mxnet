@@ -80,7 +80,7 @@ void copyArr(DType* dest, DType* src, size_t count, mshadow::Stream<cpu>* s) {
 #if __GNUC__ >= 8
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
-  memcpy(dest, src, count);
+  memcpy(static_cast<void*>(dest), src, count);
 #pragma GCC diagnostic pop
 }
 

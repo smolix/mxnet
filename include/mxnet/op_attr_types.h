@@ -179,7 +179,7 @@ class OpStatePtr {
   /* \brief checks whether the managed object is managed only by the current
             OpStatePtr instance */
   bool unique() const {
-    return ptr_.unique();
+    return ptr_.use_count() == 1;
   }
   /* \brief Whether state is empty */
   explicit operator bool() const {

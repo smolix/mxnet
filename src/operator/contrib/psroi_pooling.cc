@@ -33,6 +33,7 @@ inline void PSROIPoolForwardCPU(const int count,
                                 const int group_size,
                                 DType* top_data) {
   const int omp_threads = mxnet::engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  (void)omp_threads;
 #pragma omp parallel for num_threads(omp_threads)
   for (int index = 0; index < count; index++) {
     // The output is in order (n, ctop, ph, pw)

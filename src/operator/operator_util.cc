@@ -487,7 +487,7 @@ void SimpleOpRegEntryImpl::RegisterSourceImperative() {
     OpReqType req      = kWriteTo;
 
     Engine::Get()->PushSync(
-        [ret, fun, dev_mask, req, env](RunContext ctx) {
+        [ret, fun, req, env](RunContext ctx) {
           TBlob tmp = ret.data();
           (*fun)(env, &tmp, req, ctx);
         },
@@ -664,7 +664,7 @@ void SimpleOpRegEntryImpl::RegisterUnaryImperative() {
     }
 
     Engine::Get()->PushSync(
-        [src, ret, fun, dev_mask, req, env](RunContext ctx) {
+        [src, ret, fun, req, env](RunContext ctx) {
           TBlob tmp = ret.data();
           (*fun)(src.data(), env, &tmp, req, ctx);
         },
@@ -941,7 +941,7 @@ void SimpleOpRegEntryImpl::RegisterBinaryImperative() {
     }
 
     Engine::Get()->PushSync(
-        [lhs, rhs, ret, fun, dev_mask, req, env](RunContext ctx) {
+        [lhs, rhs, ret, fun, req, env](RunContext ctx) {
           TBlob tmp = ret.data();
           (*fun)(lhs.data(), rhs.data(), env, &tmp, req, ctx);
         },

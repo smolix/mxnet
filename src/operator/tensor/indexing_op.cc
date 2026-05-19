@@ -55,7 +55,7 @@ struct TakeZeroAxisCPU {
 #if __GNUC__ >= 8
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
-    std::memcpy(out_data + i * M, in_data + j * M, M * sizeof(DType));
+    std::memcpy(static_cast<void*>(out_data + i * M), in_data + j * M, M * sizeof(DType));
 #pragma GCC diagnostic pop
   }
 };
@@ -99,7 +99,9 @@ struct TakeNonzeroAxisCPU {
 #if __GNUC__ >= 8
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
-      std::memcpy(out_data + out_offset, in_data + in_offset, axis_dim_stride * sizeof(DType));
+      std::memcpy(static_cast<void*>(out_data + out_offset),
+                  in_data + in_offset,
+                  axis_dim_stride * sizeof(DType));
 #pragma GCC diagnostic pop
     }
   }

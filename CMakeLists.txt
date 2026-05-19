@@ -652,6 +652,9 @@ FILE(GLOB_RECURSE NNVMSOURCE
   3rdparty/tvm/nnvm/include/*.h)
 add_library(nnvm OBJECT ${NNVMSOURCE})
 set_target_properties(nnvm PROPERTIES CXX_CLANG_TIDY "")  # don't lint 3rdparty dependency
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(nnvm PRIVATE -Wno-deprecated-declarations -Wno-unused-value)
+endif()
 list(APPEND SOURCE $<TARGET_OBJECTS:nnvm>)
 
 add_library(miniz STATIC "3rdparty/miniz/miniz.c")
@@ -930,6 +933,9 @@ elseif(MSVC)
   endif()
 endif()
 target_compile_definitions(mxnet PUBLIC DMLC_LOG_FATAL_THROW=$<BOOL:${LOG_FATAL_THROW}>)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(mxnet PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>")
+endif()
 
 # extension libraries (custom operators, custom subgraphs) are built by default
 add_library(customop_lib SHARED ${CMAKE_CURRENT_SOURCE_DIR}/example/extensions/lib_custom_op/gemm_lib.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/lib_api.cc)
@@ -1052,6 +1058,9 @@ target_link_libraries(mxnet PUBLIC dmlc)
 if(USE_OPENCV AND OpenCV_VERSION_MAJOR GREATER 2)
   add_executable(im2rec "tools/im2rec.cc")
   target_link_libraries(im2rec PRIVATE mxnet)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(im2rec PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>")
+  endif()
 else()
     message(WARNING "OpenCV_VERSION_MAJOR: ${OpenCV_VERSION_MAJOR}, version 3 with imgcodecs \
     is required for im2rec, im2rec will not be available")

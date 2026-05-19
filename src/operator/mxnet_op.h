@@ -667,7 +667,9 @@ struct AccType<mshadow::half::half_t> {
 template <int ndim>
 MSHADOW_XINLINE index_t ravel(const Shape<ndim>& coord, const Shape<ndim>& shape) {
   index_t ret = 0;
+#ifdef __CUDACC__
 #pragma unroll
+#endif
   for (int i = 0; i < ndim; ++i) {
     ret = ret * shape[i] + (shape[i] > coord[i]) * coord[i];
   }
@@ -678,7 +680,9 @@ MSHADOW_XINLINE index_t ravel(const Shape<ndim>& coord, const Shape<ndim>& shape
 template <int ndim>
 MSHADOW_XINLINE Shape<ndim> unravel(const index_t idx, const Shape<ndim>& shape) {
   Shape<ndim> ret;
+#ifdef __CUDACC__
 #pragma unroll
+#endif
   for (index_t i = ndim - 1, j = idx; i >= 0; --i) {
     auto tmp = j / shape[i];
     ret[i]   = j - tmp * shape[i];
@@ -691,7 +695,9 @@ MSHADOW_XINLINE Shape<ndim> unravel(const index_t idx, const Shape<ndim>& shape)
 template <int ndim>
 MSHADOW_XINLINE index_t dot(const Shape<ndim>& coord, const Shape<ndim>& stride) {
   index_t ret = 0;
+#ifdef __CUDACC__
 #pragma unroll
+#endif
   for (int i = 0; i < ndim; ++i) {
     ret += coord[i] * stride[i];
   }
@@ -704,7 +710,9 @@ MSHADOW_XINLINE index_t unravel_dot(const index_t idx,
                                     const Shape<ndim>& shape,
                                     const Shape<ndim>& stride) {
   index_t ret = 0;
+#ifdef __CUDACC__
 #pragma unroll
+#endif
   for (index_t i = ndim - 1, j = idx; i >= 0; --i) {
     auto tmp = j / shape[i];
     ret += (j - tmp * shape[i]) * stride[i];
@@ -718,7 +726,9 @@ template <int ndim>
 MSHADOW_XINLINE Shape<ndim> calc_stride(const Shape<ndim>& shape) {
   Shape<ndim> stride;
   index_t cumprod = 1;
+#ifdef __CUDACC__
 #pragma unroll
+#endif
   for (int i = ndim - 1; i >= 0; --i) {
     stride[i] = (shape[i] > 1) ? cumprod : 0;
     cumprod *= shape[i];
@@ -730,7 +740,9 @@ MSHADOW_XINLINE Shape<ndim> calc_stride(const Shape<ndim>& shape) {
 template <int ndim>
 MSHADOW_XINLINE bool inc(Shape<ndim>* coord, const Shape<ndim>& shape) {
   ++(*coord)[ndim - 1];
+#ifdef __CUDACC__
 #pragma unroll
+#endif
   for (int i = ndim - 1; i > 0 && (*coord)[i] >= shape[i]; --i) {
     (*coord)[i] -= shape[i];
     ++(*coord)[i - 1];
@@ -746,7 +758,9 @@ MSHADOW_XINLINE void inc(Shape<ndim>* coord,
                          const Shape<ndim>& stride) {
   ++(*coord)[ndim - 1];
   *idx += stride[ndim - 1];
+#ifdef __CUDACC__
 #pragma unroll
+#endif
   for (int i = ndim - 1; i > 0 && (*coord)[i] >= shape[i]; --i) {
     (*coord)[i] -= shape[i];
     ++(*coord)[i - 1];
@@ -765,7 +779,9 @@ MSHADOW_XINLINE void inc(Shape<ndim>* coord,
   ++(*coord)[ndim - 1];
   *idx1 += stride1[ndim - 1];
   *idx2 += stride2[ndim - 1];
+#ifdef __CUDACC__
 #pragma unroll
+#endif
   for (int i = ndim - 1; i > 0 && (*coord)[i] >= shape[i]; --i) {
     (*coord)[i] -= shape[i];
     ++(*coord)[i - 1];

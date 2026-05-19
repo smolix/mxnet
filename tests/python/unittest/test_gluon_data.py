@@ -30,6 +30,7 @@ from mxnet import context
 from mxnet.gluon.data.dataset import Dataset
 from mxnet.gluon.data.dataset import ArrayDataset
 import pytest
+from common import has_opencv, make_test_images
 
 def test_array_dataset():
     X = np.random.uniform(size=(10, 20))
@@ -48,11 +49,12 @@ def test_array_dataset():
 
 @pytest.fixture(scope="session")
 def prepare_record(tmpdir_factory):
+    if not has_opencv():
+        pytest.skip("MXNet built without OpenCV support")
     test_images = tmpdir_factory.mktemp("test_images")
-    test_images_tar = test_images.join("test_images.tar.gz")
-    gluon.utils.download("https://repo.mxnet.io/gluon/dataset/test/test_images-9cebe48a.tar.gz", str(test_images_tar))
-    tarfile.open(test_images_tar).extractall(str(test_images))
-    imgs = os.listdir(str(test_images.join("test_images")))
+    image_root = str(test_images.join("test_images"))
+    make_test_images(image_root)
+    imgs = os.listdir(image_root)
     record = mx.recordio.MXIndexedRecordIO(str(test_images.join("test.idx")), str(test_images.join("test.rec")), 'w')
     for i, img in enumerate(imgs):
         with open(str(test_images.join("test_images").join(img)), 'rb') as f:
@@ -132,6 +134,7 @@ def test_sampler():
     rand_batch_keep = gluon.data.BatchSampler(rand_sampler, 3, 'keep')
     assert sorted(sum(list(rand_batch_keep), [])) == list(range(10))
 
+@pytest.mark.remote_required
 def test_datasets(tmpdir):
     p = tmpdir.mkdir("test_datasets")
     assert len(gluon.data.vision.MNIST(root=str(p.join('mnist')))) == 60000
@@ -144,6 +147,7 @@ def test_datasets(tmpdir):
     assert len(gluon.data.vision.CIFAR100(root=str(p.join('cifar100')), fine_label=True)) == 50000
     assert len(gluon.data.vision.CIFAR100(root=str(p.join('cifar100')), train=False)) == 10000
 
+@pytest.mark.remote_required
 def test_datasets_handles(tmpdir):
     p = tmpdir.mkdir("test_datasets_handles")
     assert len(gluon.data.vision.MNIST(root=str(p.join('mnist'))).__mx_handle__()) == 60000

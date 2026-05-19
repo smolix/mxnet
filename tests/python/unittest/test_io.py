@@ -31,11 +31,16 @@ except ImportError:
     h5py = None
 import sys
 from common import assertRaises
+from common import has_opencv, make_mnist_ubyte
 import pytest
 from itertools import zip_longest
 
 @pytest.fixture(scope="session")
-def cifar10(tmpdir_factory):
+def cifar10(tmpdir_factory, request):
+    if not has_opencv():
+        pytest.skip("MXNet built without OpenCV support")
+    if not request.config.getoption("--run-remote"):
+        pytest.skip("CIFAR10 ImageRecordIter fixture requires live network; pass --run-remote to run")
     path = str(tmpdir_factory.mktemp('cifar'))
     get_cifar10(path)
     return path
@@ -44,7 +49,7 @@ def cifar10(tmpdir_factory):
 def test_MNISTIter(tmpdir):
     # prepare data
     path = str(tmpdir)
-    get_mnist_ubyte(path)
+    make_mnist_ubyte(path)
 
     batch_size = 100
     train_dataiter = mx.io.MNISTIter(

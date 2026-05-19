@@ -18,6 +18,7 @@
 import mxnet as mx
 import numpy as np
 from mxnet.test_utils import *
+from common import make_test_images, requires_opencv
 import sys
 import shutil
 import tempfile
@@ -25,16 +26,8 @@ import unittest
 import pytest
 
 def _get_data(url, dirname):
-    import os, tarfile
-    download(url, dirname=dirname, overwrite=False)
-    fname = os.path.join(dirname, url.split('/')[-1])
-    tar = tarfile.open(fname)
-    source_images = [os.path.join(dirname, x.name) for x in tar.getmembers() if x.isfile()]
-    if len(source_images) < 1 or not os.path.isfile(source_images[0]):
-        # skip extracting if exists
-        tar.extractall(path=dirname)
-    tar.close()
-    return source_images
+    del url
+    return make_test_images(dirname)
 
 def _generate_objects():
     num = np.random.randint(1, 10)
@@ -50,6 +43,7 @@ def _generate_objects():
     return [2, 5] + label
 
 
+@requires_opencv
 class TestImage(unittest.TestCase):
     IMAGES_URL = "https://repo.mxnet.io/gluon/dataset/test/test_images-9cebe48a.tar.gz"
 

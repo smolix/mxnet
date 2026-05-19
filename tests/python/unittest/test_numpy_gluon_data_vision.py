@@ -28,6 +28,7 @@ from mxnet.base import MXNetError
 from mxnet.gluon.data.vision import transforms
 from mxnet import image
 import pytest
+from common import requires_opencv
 
 @use_np
 def test_to_tensor():
@@ -93,6 +94,7 @@ def test_normalize():
 
 
 @use_np
+@requires_opencv
 def test_resize():
     def _test_resize_with_diff_type(dtype):
         # test normal case
@@ -130,6 +132,7 @@ def test_resize():
 
 
 @use_np
+@requires_opencv
 def test_crop_resize():
     def _test_crop_resize_with_diff_type(dtype):
         # test normal case
@@ -208,6 +211,7 @@ def test_flip_top_bottom():
 
 
 @use_np
+@requires_opencv
 def test_transformer():
     from mxnet.gluon.data.vision import transforms
 
@@ -237,12 +241,14 @@ def test_random_crop():
     assert y.shape == (100, 100, 3)
 
 @use_np
+@requires_opencv
 def test_random_resize_crop():
     x = mx.np.ones((245, 480, 3), dtype='uint8')
     y = mx.npx.image.random_resized_crop(x, width=100, height=100)
     assert y.shape == (100, 100, 3)
 
 @use_np
+@requires_opencv
 def test_hybrid_transformer():
     from mxnet.gluon.data.vision import transforms
 

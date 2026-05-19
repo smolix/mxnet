@@ -26,7 +26,7 @@ from common import xfail_when_nonstandard_decimal_separator
 import mxnet
 from mxnet import nd, autograd, gluon
 from mxnet.test_utils import (
-    assert_almost_equal, random_arrays, random_uniform_arrays, rand_shape_nd, same)
+    assert_almost_equal, random_arrays, random_uniform_arrays, rand_shape_nd)
 
 
 def test_sin():
@@ -627,14 +627,10 @@ def test_dense_backward_flatten():
         assert w_grad_grad.shape == w.shape
         assert x_grad.shape == x.shape
         assert x_grad_grad.shape == x.shape
-        w_grad_check = same(flatten2d_right(w_grad), flatten2d_right(w_grad_e))
-        w_grad_grad_check = same(flatten2d_right(w_grad_grad), flatten2d_right(w_grad_grad_e))
-        x_grad_check = same(flatten2d_right(x_grad), flatten2d_right(x_grad_e))
-        x_grad_grad_check = same(flatten2d_right(x_grad_grad), flatten2d_right(x_grad_grad_e))
-        assert x_grad_check
-        assert w_grad_check
-        assert x_grad_grad_check
-        assert w_grad_grad_check
+        assert_almost_equal(flatten2d_right(x_grad), flatten2d_right(x_grad_e))
+        assert_almost_equal(flatten2d_right(w_grad), flatten2d_right(w_grad_e))
+        assert_almost_equal(flatten2d_right(x_grad_grad), flatten2d_right(x_grad_grad_e))
+        assert_almost_equal(flatten2d_right(w_grad_grad), flatten2d_right(w_grad_grad_e))
 
 def test_dense_backward_no_flatten():
     print("2nd order gradient for Fully Connected, flatten=False")
@@ -670,12 +666,7 @@ def test_dense_backward_no_flatten():
         w_grad_grad_e = nd.dot(o_y, o_x_grad, transpose_a=True)
         x_grad_e = nd.dot(o_y, w)
         x_grad_grad_e = nd.dot(o_y, o_w_grad)
-        w_grad_check = same(flatten2d_left(w_grad), flatten2d_left(w_grad_e))
-        w_grad_grad_check = same(flatten2d_left(w_grad_grad), flatten2d_left(w_grad_grad_e))
-        x_grad_check = same(flatten2d_left(x_grad), flatten2d_left(x_grad_e))
-        x_grad_grad_check = same(flatten2d_left(x_grad_grad), flatten2d_left(x_grad_grad_e))
-        assert x_grad_check
-        assert w_grad_check
-        assert x_grad_grad_check
-        assert w_grad_grad_check
-
+        assert_almost_equal(flatten2d_left(x_grad), flatten2d_left(x_grad_e))
+        assert_almost_equal(flatten2d_left(w_grad), flatten2d_left(w_grad_e))
+        assert_almost_equal(flatten2d_left(x_grad_grad), flatten2d_left(x_grad_grad_e))
+        assert_almost_equal(flatten2d_left(w_grad_grad), flatten2d_left(w_grad_grad_e))

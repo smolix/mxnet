@@ -274,7 +274,7 @@ void MixedAllRealBinaryBroadcastCompute(const std::string& op_name,
     switch (lhs.type_flag_) {
       case mshadow::kFloat32: {
         if (rhs.type_flag_ == mshadow::kFloat16) {
-          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx(
+          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx<>(
               s,
               new_oshape.Size(),
               req,
@@ -285,7 +285,7 @@ void MixedAllRealBinaryBroadcastCompute(const std::string& op_name,
               lhs.dptr<float>(),
               out.dptr<float>());
         } else if (rhs.type_flag_ == mshadow::kBfloat16) {
-          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx(
+          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx<>(
               s,
               new_oshape.Size(),
               req,
@@ -302,7 +302,7 @@ void MixedAllRealBinaryBroadcastCompute(const std::string& op_name,
       }
       case mshadow::kFloat64: {
         if (rhs.type_flag_ == mshadow::kFloat16) {
-          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx(
+          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx<>(
               s,
               new_oshape.Size(),
               req,
@@ -313,7 +313,7 @@ void MixedAllRealBinaryBroadcastCompute(const std::string& op_name,
               lhs.dptr<double>(),
               out.dptr<double>());
         } else if (rhs.type_flag_ == mshadow::kBfloat16) {
-          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx(
+          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx<>(
               s,
               new_oshape.Size(),
               req,
@@ -324,7 +324,7 @@ void MixedAllRealBinaryBroadcastCompute(const std::string& op_name,
               lhs.dptr<double>(),
               out.dptr<double>());
         } else if (rhs.type_flag_ == mshadow::kFloat32) {
-          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx(
+          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx<>(
               s,
               new_oshape.Size(),
               req,
@@ -388,7 +388,7 @@ void MixedBinaryBroadcastCompute(const nnvm::NodeAttrs& attrs,
           MSHADOW_REAL_TYPE_SWITCH(out.type_flag_, LType, {
             MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(rhs.type_flag_, RType, {
               mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, ROP>,
-                               xpu>::template LaunchEx(s,
+                               xpu>::template LaunchEx<>(s,
                                                        new_oshape.Size(),
                                                        req[0],
                                                        rstride,
@@ -403,7 +403,7 @@ void MixedBinaryBroadcastCompute(const nnvm::NodeAttrs& attrs,
           MSHADOW_REAL_TYPE_SWITCH(out.type_flag_, RType, {
             MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(lhs.type_flag_, LType, {
               mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, LOP>,
-                               xpu>::template LaunchEx(s,
+                               xpu>::template LaunchEx<>(s,
                                                        new_oshape.Size(),
                                                        req[0],
                                                        lstride,

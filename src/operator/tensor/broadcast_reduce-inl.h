@@ -415,7 +415,7 @@ void BinaryBroadcastComputeImpl(Stream<cpu>* s,
   mshadow::Shape<ndim> oshape  = out.shape_.get<ndim>();
   mshadow::Shape<ndim> lstride = mxnet_op::calc_stride(lhs.shape_.get<ndim>());
   mshadow::Shape<ndim> rstride = mxnet_op::calc_stride(rhs.shape_.get<ndim>());
-  mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<ndim, OP>, cpu>::template LaunchEx(
+  mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<ndim, OP>, cpu>::template LaunchEx<>(
       s,
       out.shape_.Size(),
       req,

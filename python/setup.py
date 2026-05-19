@@ -19,8 +19,37 @@
 """Setup mxnet package."""
 from __future__ import absolute_import
 import os
+import platform
 import sys
 from setuptools import find_packages # This must precede distutils
+
+BASE_INSTALL_REQUIRES = [
+    # numpy 2.x removed np.PZERO / np.NZERO; mxnet/numpy/utils.py
+    # still uses them and would need a port (issues.md item #44).
+    # Cap at <2 for now.
+    'numpy>=1.17,<2',
+    'requests>=2.20.0,<3',
+    'graphviz<0.9.0,>=0.8.1',
+    'packaging>=20.0',
+    'contextvars;python_version<"3.7"',
+]
+
+# CUDA / cuDNN / NCCL runtime libraries are NOT bundled in Linux CUDA wheels.
+# libmxnet.so is patched with RUNPATH=$ORIGIN/lib:$ORIGIN/../nvidia/<pkg>/lib:/usr/local/cuda/lib64
+# so the loader finds:
+#   - cuDNN / NCCL via the pip-installed nvidia-*-cu13 wheels under
+#     site-packages/nvidia/<pkg>/lib/  (PyTorch/JAX install layout)
+#   - libcudart / libcublas / libcufft / libcusolver / libcurand /
+#     libnvrtc out of the system CUDA 13 toolkit at /usr/local/cuda/
+#
+# As of 2026-05-17 NVIDIA has published only `nvidia-cudnn-cu13`
+# (9.22) and `nvidia-nccl-cu13` (2.30) on PyPI for CUDA 13; the other
+# nvidia-*-cu13 packages are placeholder stubs (0.0.1). When they
+# ship real, append them here.
+CUDA_RUNTIME_INSTALL_REQUIRES = [
+    'nvidia-cudnn-cu13>=9.22,<10',
+    'nvidia-nccl-cu13>=2.28,<3',
+]
 
 # need to use distutils.core for correct placement of cython dll
 kwargs = {}
@@ -30,37 +59,14 @@ if "--inplace" in sys.argv:
 else:
     from setuptools import setup, Distribution
     from setuptools.extension import Extension
-    # CUDA / cuDNN / NCCL runtime libraries are NOT bundled in this wheel.
-    # libmxnet.so is patched with RUNPATH=$ORIGIN/lib:$ORIGIN/../nvidia/<pkg>/lib:/usr/local/cuda/lib64
-    # so the loader finds:
-    #   - cuDNN / NCCL via the pip-installed nvidia-*-cu13 wheels under
-    #     site-packages/nvidia/<pkg>/lib/  (PyTorch/JAX install layout)
-    #   - libcudart / libcublas / libcufft / libcusolver / libcurand /
-    #     libnvrtc out of the system CUDA 13 toolkit at /usr/local/cuda/
-    #
-    # As of 2026-05-17 NVIDIA has published only `nvidia-cudnn-cu13`
-    # (9.22) and `nvidia-nccl-cu13` (2.30) on PyPI for CUDA 13; the other
-    # nvidia-*-cu13 packages are placeholder stubs (0.0.1). When they
-    # ship real, append them to install_requires below.
     kwargs = {
-        'install_requires': [
-            # numpy 2.x removed np.PZERO / np.NZERO; mxnet/numpy/utils.py
-            # still uses them and would need a port (issues.md item #44).
-            # Cap at <2 for now.
-            'numpy>=1.17,<2',
-            'requests>=2.20.0,<3',
-            'graphviz<0.9.0,>=0.8.1',
-            'contextvars;python_version<"3.7"',
-            # NVIDIA runtime libraries available on PyPI for CUDA 13.
-            'nvidia-cudnn-cu13>=9.22,<10',
-            'nvidia-nccl-cu13>=2.28,<3',
-        ],
+        'install_requires': list(BASE_INSTALL_REQUIRES),
         'zip_safe': False,
     }
 
-    # The wheel ships libmxnet.so (an ELF .so under mxnet/), so it must be
+    # The wheel ships a native libmxnet shared library under mxnet/, so it must be
     # tagged as a binary, platform-specific distribution (Root-Is-Purelib=
-    # false, tag=cp3X-cp3X-linux_x86_64), not as a pure-python wheel.
+    # false), not as a pure-python wheel.
     # Force that by declaring a distclass whose has_ext_modules() returns
     # True even when ext_modules is empty.
     class _BinaryDistribution(Distribution):
@@ -84,6 +90,65 @@ LIB_PATH = libinfo['find_lib_path']()
 __version__ = libinfo['__version__']
 
 sys.path.insert(0, CURRENT_DIR)
+
+
+def _env_flag(name):
+    """Parse an optional boolean environment flag."""
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    return value.strip().lower() not in ('0', 'false', 'off', 'no')
+
+
+def _cuda_enabled_from_cmake_cache():
+    """Read USE_CUDA from a nearby CMakeCache.txt when building from a tree."""
+    cache_paths = set()
+    for lib_path in LIB_PATH:
+        cache_paths.add(os.path.join(os.path.dirname(lib_path), 'CMakeCache.txt'))
+    cache_paths.add(os.path.abspath(os.path.join(CURRENT_DIR, '..', 'build', 'CMakeCache.txt')))
+
+    for cache_path in cache_paths:
+        if not os.path.exists(cache_path):
+            continue
+        with open(cache_path) as cache_file:
+            for line in cache_file:
+                if line.startswith('USE_CUDA:'):
+                    _, value = line.strip().split('=', 1)
+                    return value.upper() in ('1', 'ON', 'TRUE', 'YES')
+    return None
+
+
+def _cuda_enabled_from_runtime():
+    """Ask libmxnet for CUDA support when its dependencies are loadable."""
+    try:
+        from mxnet.runtime import Features
+        return Features().is_enabled('CUDA')
+    except Exception: # pylint: disable=broad-except
+        return None
+
+
+def _include_cuda_runtime_deps():
+    """Return whether this wheel should depend on external NVIDIA CUDA libs."""
+    override = _env_flag('MXNET_SETUP_ENABLE_CUDA_DEPS')
+    if override is not None:
+        return override
+    if platform.system() != 'Linux':
+        return False
+
+    detected = _cuda_enabled_from_cmake_cache()
+    if detected is not None:
+        return detected
+    detected = _cuda_enabled_from_runtime()
+    if detected is not None:
+        return detected
+
+    # Keep the prior Linux packaging behavior if a CUDA build cannot be probed
+    # because dependent shared libraries are unavailable during setup.
+    return True
+
+
+if 'install_requires' in kwargs and _include_cuda_runtime_deps():
+    kwargs['install_requires'].extend(CUDA_RUNTIME_INSTALL_REQUIRES)
 
 # NVIDIA runtime libs are NOT bundled — see install_requires above.
 # libmxnet.so's RUNPATH points at site-packages/nvidia/<pkg>/lib/ for them.
@@ -119,6 +184,17 @@ def config_cython():
         if os.name == 'nt':
             library_dirs = ['mxnet', '../build/Release', '../build']
             libraries = ['libmxnet']
+        elif platform.system() == 'Darwin':
+            library_dirs = [os.path.dirname(p) for p in LIB_PATH]
+            libraries = ['mxnet']
+            # Default paths to libmxnet.dylib relative to the generated Cython extension.
+            # These precede DYLD_LIBRARY_PATH.
+            extra_link_args = [
+                "-Wl,-rpath,@loader_path/..",
+                "-Wl,-rpath,@loader_path/../..",
+                "-Wl,-rpath,@loader_path/../../../lib",
+                "-Wl,-rpath,@loader_path/../../../build",
+            ]
         else:
             library_dirs = [os.path.dirname(p) for p in LIB_PATH]
             libraries = ['mxnet']
@@ -164,11 +240,11 @@ setup(name='mxnet',
       version=__version__,
       description=open(os.path.join(CURRENT_DIR, 'README.md')).read(),
       packages=find_packages(),
-      # Bundle libmxnet.so plus any discovered runtime libs (CUDA/cuDNN/NCCL)
+      # Bundle libmxnet.{so,dylib} plus any discovered runtime libs (CUDA/cuDNN/NCCL)
       # inside the package so libinfo.find_lib_path() can find them under
       # mxnet/ at install time. data_files goes to <sysprefix>/mxnet/ which
       # find_lib_path() doesn't search.
-      package_data={'mxnet': ['libmxnet.so'] + bundled_libs},
+      package_data={'mxnet': ['libmxnet.so', 'libmxnet.dylib'] + bundled_libs},
       include_package_data=True,
       url='https://github.com/apache/mxnet',
       ext_modules=config_cython(),

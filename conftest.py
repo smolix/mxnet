@@ -30,12 +30,30 @@ import random
 import pytest
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-remote",
+        action="store_true",
+        default=False,
+        help="run tests marked remote_required that need live network access",
+    )
+
+
 def pytest_configure(config):
     # Load the user's locale settings to verify that MXNet works correctly when the C locale is set
     # to anything other than the default value. Please see #16134 for an example of a bug caused by
     # incorrect handling of C locales.
     import locale
     locale.setlocale(locale.LC_ALL, "")
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--run-remote"):
+        return
+    skip_remote = pytest.mark.skip(reason="requires live network access; pass --run-remote to run")
+    for item in items:
+        if "remote_required" in item.keywords:
+            item.add_marker(skip_remote)
 
 
 def pytest_sessionfinish(session, exitstatus):

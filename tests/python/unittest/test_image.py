@@ -20,7 +20,7 @@ import mxnet as mx
 import numpy as np
 import scipy.ndimage
 from mxnet.test_utils import *
-from common import xfail_when_nonstandard_decimal_separator
+from common import xfail_when_nonstandard_decimal_separator, make_test_images, requires_opencv
 import shutil
 import tempfile
 import unittest
@@ -40,16 +40,8 @@ def _legacy_nd_semantics():
     mx.npx.set_np()
 
 def _get_data(url, dirname):
-    import os, tarfile
-    download(url, dirname=dirname, overwrite=False)
-    fname = os.path.join(dirname, url.split('/')[-1])
-    tar = tarfile.open(fname)
-    source_images = [os.path.join(dirname, x.name) for x in tar.getmembers() if x.isfile()]
-    if len(source_images) < 1 or not os.path.isfile(source_images[0]):
-        # skip extracting if exists
-        tar.extractall(path=dirname)
-    tar.close()
-    return source_images
+    del url
+    return make_test_images(dirname)
 
 def _generate_objects():
     num = np.random.randint(1, 10)
@@ -138,6 +130,7 @@ class TestImage(unittest.TestCase):
         with pytest.raises(mx.base.MXNetError):
             x = mx.img.image.imread("/139810923jadjsajlskd.___adskj/blah.jpg")
 
+    @requires_opencv
     def test_imread_vs_imdecode(self):
         for img in self.IMAGES:
             with open(img, 'rb') as fp:
@@ -146,6 +139,7 @@ class TestImage(unittest.TestCase):
                 image_read = mx.img.image.imread(img)
                 same(image.asnumpy(), image_read.asnumpy())
 
+    @requires_opencv
     def test_imdecode(self):
         try:
             import cv2
@@ -158,6 +152,7 @@ class TestImage(unittest.TestCase):
             cv_image = cv2.imread(img)
             assert_almost_equal(image.asnumpy(), cv_image)
 
+    @requires_opencv
     def test_imdecode_bytearray(self):
         try:
             import cv2
@@ -183,6 +178,7 @@ class TestImage(unittest.TestCase):
         assert mx.image.scale_down((360, 1000), (480, 500)) == (360, 375)
         assert mx.image.scale_down((300, 400), (0, 0)) == (0, 0)
 
+    @requires_opencv
     def test_resize_short(self):
         try:
             import cv2
@@ -204,6 +200,7 @@ class TestImage(unittest.TestCase):
                     mx_resized = mx.image.resize_short(mx_img, new_size, interp)
                     assert_almost_equal(mx_resized.asnumpy()[:, :, (2, 1, 0)], cv_resized, atol=3)
 
+    @requires_opencv
     def test_imresize(self):
         try:
             import cv2
@@ -233,6 +230,7 @@ class TestImage(unittest.TestCase):
                 mx.nd.array(mean), mx.nd.array(std))
             assert_almost_equal(mx_result.asnumpy(), (src - mean) / std, atol=1e-3)
 
+    @requires_opencv
     def test_imageiter(self):
         print(self.IMAGES)
         im_list = [[np.random.randint(0, 5), x] for x in self.IMAGES]
@@ -262,6 +260,7 @@ class TestImage(unittest.TestCase):
                 ]
                 _test_imageiter_last_batch(imageiter_list, (2, 3, 224, 224))
 
+    @requires_opencv
     def test_copyMakeBorder(self):
         try:
             import cv2
@@ -286,6 +285,7 @@ class TestImage(unittest.TestCase):
                 mx.image.copyMakeBorder(mx_img, top, bot, left, right, type=type_val, values=val, out=out_img)
                 assert_almost_equal(out_img.asnumpy(), cv_border)
 
+    @requires_opencv
     def test_augmenters(self):
         # ColorNormalizeAug
         mean = np.random.rand(3) * 255
@@ -308,6 +308,7 @@ class TestImage(unittest.TestCase):
         for _ in test_iter:
             pass
 
+    @requires_opencv
     def test_image_detiter(self):
         im_list = [_generate_objects() + [x] for x in self.IMAGES]
         det_iter = mx.image.ImageDetIter(2, (3, 300, 300), imglist=im_list, path_root=self.IMAGES_DIR)
@@ -347,6 +348,7 @@ class TestImage(unittest.TestCase):
         ]
         _test_imageiter_last_batch(imageiter_list, (2, 3, 400, 400))
 
+    @requires_opencv
     def test_det_augmenters(self):
         # only test if all augmenters will work
         # TODO(Joshua Zhang): verify the augmenter outputs
@@ -360,6 +362,7 @@ class TestImage(unittest.TestCase):
         for _ in det_iter:
             pass
 
+    @requires_opencv
     def test_random_size_crop(self):
         # test aspect ratio within bounds
         width = np.random.randint(100, 500)
@@ -455,4 +458,3 @@ class TestImage(unittest.TestCase):
         out_batch_image = mx.image.random_rotate(src_batch_image,
                                                  angle_limits)
         self.assertEqual(out_batch_image.shape, (3, 3, 30, 60))
-

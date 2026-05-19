@@ -208,7 +208,7 @@ void TrueDivideBroadcastCompute(const nnvm::NodeAttrs& attrs,
         if (common::is_float(lhs.type_flag_)) {
           // If both inputs are the same float types, output is the same float type
           MSHADOW_REAL_TYPE_SWITCH(lhs.type_flag_, DType, {
-            Kernel<binary_broadcast_kernel<NDim, mshadow_op::true_divide>, xpu>::template LaunchEx(
+            Kernel<binary_broadcast_kernel<NDim, mshadow_op::true_divide>, xpu>::template LaunchEx<>(
                 s,
                 new_oshape.Size(),
                 req[0],
@@ -225,7 +225,7 @@ void TrueDivideBroadcastCompute(const nnvm::NodeAttrs& attrs,
               << type_string(lhs.type_flag_);
           MXNET_INT_TYPE_SWITCH(lhs.type_flag_, DType, {
             // If both inputs are the same integer types, output is float type
-            Kernel<binary_broadcast_kernel<NDim, mshadow_op::true_divide>, xpu>::template LaunchEx(
+            Kernel<binary_broadcast_kernel<NDim, mshadow_op::true_divide>, xpu>::template LaunchEx<>(
                 s,
                 new_oshape.Size(),
                 req[0],
@@ -250,7 +250,7 @@ void TrueDivideBroadcastCompute(const nnvm::NodeAttrs& attrs,
             CastCompute<xpu>(attrs, ctx, {rhs}, {kWriteTo}, {temp_tblob});
             MSHADOW_REAL_TYPE_SWITCH(out.type_flag_, DType, {
               Kernel<binary_broadcast_kernel<NDim, mshadow_op::true_divide>,
-                     xpu>::template LaunchEx(s,
+                     xpu>::template LaunchEx<>(s,
                                              new_oshape.Size(),
                                              req[0],
                                              lstride,
@@ -269,7 +269,7 @@ void TrueDivideBroadcastCompute(const nnvm::NodeAttrs& attrs,
             CastCompute<xpu>(attrs, ctx, {lhs}, {kWriteTo}, {temp_tblob});
             MSHADOW_REAL_TYPE_SWITCH(out.type_flag_, DType, {
               Kernel<binary_broadcast_kernel<NDim, mshadow_op::true_divide>,
-                     xpu>::template LaunchEx(s,
+                     xpu>::template LaunchEx<>(s,
                                              new_oshape.Size(),
                                              req[0],
                                              lstride,
@@ -289,7 +289,7 @@ void TrueDivideBroadcastCompute(const nnvm::NodeAttrs& attrs,
             MSHADOW_REAL_TYPE_SWITCH(lhs.type_flag_, LType, {
               MXNET_INT_TYPE_SWITCH(rhs.type_flag_, RType, {
                 Kernel<binary_broadcast_kernel<NDim, mshadow_op::rtrue_divide>,
-                       xpu>::template LaunchEx(s,
+                       xpu>::template LaunchEx<>(s,
                                                new_oshape.Size(),
                                                req[0],
                                                rstride,
@@ -307,7 +307,7 @@ void TrueDivideBroadcastCompute(const nnvm::NodeAttrs& attrs,
             MXNET_INT_TYPE_SWITCH(lhs.type_flag_, LType, {
               MSHADOW_REAL_TYPE_SWITCH(rhs.type_flag_, RType, {
                 Kernel<binary_broadcast_kernel<NDim, mshadow_op::true_divide>,
-                       xpu>::template LaunchEx(s,
+                       xpu>::template LaunchEx<>(s,
                                                new_oshape.Size(),
                                                req[0],
                                                lstride,

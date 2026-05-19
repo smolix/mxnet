@@ -77,6 +77,12 @@ In the `environment.yml` file:
 In the `environment.yml` file:
 * Change `mxnet-cu92` to `mxnet`. (There is no CUDA package for mac anyway.)
 
+On Apple Silicon, build or install a native CPU-only MXNet first. The expected
+source configuration is `USE_CUDA=OFF`, `USE_CUDNN=OFF`, `USE_NCCL=OFF`,
+`USE_BLAS=apple`, `USE_OPENMP=OFF`, `USE_ONEDNN=OFF`, `USE_SSE=OFF`, and
+`USE_F16C=OFF`. Use `make EVAL=0` for documentation builds unless you are
+running tutorial evaluation on a separate supported GPU environment.
+
 ### Windows Setup
 If you have a GPU and have installed CUDA 9.2 you can leave the MXNet dependency alone.
 Otherwise, in the `environment.yml` file:

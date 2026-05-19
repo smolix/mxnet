@@ -1,0 +1,164 @@
+name: macos-arm64-cpu
+
+on:
+  push:
+    branches: [master, onednn-v3-port]
+    paths:
+      - ".github/workflows/macos-arm64-cpu.yml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "config/**"
+      - "include/**"
+      - "python/**"
+      - "src/**"
+      - "tests/python/apple_silicon_cpu_smoke"
+      - "tests/python/unittest/**"
+  pull_request:
+    paths:
+      - ".github/workflows/macos-arm64-cpu.yml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "config/**"
+      - "include/**"
+      - "python/**"
+      - "src/**"
+      - "tests/python/apple_silicon_cpu_smoke"
+      - "tests/python/unittest/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-arm64-cpu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: macOS arm64 CPU smoke
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      CMAKE_BUILD_DIR: build-macos-arm64
+      CMAKE_BUILD_TYPE: Release
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: "2G"
+      VENV_DIR: ${{ github.workspace }}/.venv
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Verify native arm64 runner
+        run: |
+          set -e
+          arch="$(uname -m)"
+          if [ "$arch" != "arm64" ]; then
+            echo "Expected an arm64 macOS runner, got $arch" >&2
+            exit 1
+          fi
+          sw_vers
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Install build dependencies
+        run: |
+          brew install cmake ninja ccache
+          ccache -M "$CCACHE_MAXSIZE"
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-arm64-cpu-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ccache-macos-arm64-cpu-${{ github.ref }}-
+            ccache-macos-arm64-cpu-
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UV_CACHE_DIR }}
+          key: uv-macos-arm64-cpu-py311-${{ hashFiles('python/setup.py', 'tests/python/apple_silicon_cpu_smoke') }}
+          restore-keys: |
+            uv-macos-arm64-cpu-py311-
+            uv-macos-arm64-cpu-
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B "$CMAKE_BUILD_DIR" -G Ninja \
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DUSE_CUDA=OFF \
+            -DUSE_CUDNN=OFF \
+            -DUSE_NCCL=OFF \
+            -DUSE_ONEDNN=OFF \
+            -DUSE_OPENMP=OFF \
+            -DUSE_OPENCV=OFF \
+            -DUSE_BLAS=apple \
+            -DUSE_LAPACK=ON \
+            -DUSE_DIST_KVSTORE=OFF \
+            -DUSE_SSE=OFF \
+            -DUSE_F16C=OFF \
+            -DBUILD_CPP_EXAMPLES=OFF
+
+      - name: Build libmxnet
+        timeout-minutes: 90
+        run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j 3
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s || true
+
+      - name: Locate libmxnet.dylib
+        id: locate
+        run: |
+          set -e
+          libpath=$(find "$CMAKE_BUILD_DIR" -maxdepth 3 -name 'libmxnet.dylib' | head -n1)
+          if [ -z "$libpath" ]; then
+            echo "libmxnet.dylib not produced" >&2
+            exit 1
+          fi
+          echo "libpath=$GITHUB_WORKSPACE/$libpath" >> "$GITHUB_OUTPUT"
+          ls -lh "$libpath"
+
+      - name: Install Python package and test dependencies
+        env:
+          MXNET_LIBRARY_PATH: ${{ steps.locate.outputs.libpath }}
+          MXNET_SETUP_ENABLE_CUDA_DEPS: "0"
+        run: |
+          uv venv "$VENV_DIR" --python 3.11
+          uv pip install --python "$VENV_DIR/bin/python" "numpy<2" requests pytest pytest-timeout
+          cd python
+          uv pip install --python "$VENV_DIR/bin/python" -e .
+
+      - name: Import smoke
+        env:
+          MXNET_LIBRARY_PATH: ${{ steps.locate.outputs.libpath }}
+        run: |
+          "$VENV_DIR/bin/python" -c "import platform, mxnet as mx; from mxnet import np, npx; npx.set_np(); x = np.arange(3); print(platform.machine(), mx.__version__, (x + 1).asnumpy())"
+
+      - name: Run Apple Silicon CPU pytest subset
+        env:
+          MXNET_LIBRARY_PATH: ${{ steps.locate.outputs.libpath }}
+        run: |
+          grep -Ev '^\s*(#|$)' tests/python/apple_silicon_cpu_smoke \
+            | xargs "$VENV_DIR/bin/python" -m pytest -v --timeout=180 --tb=short
+
+      - name: Upload pytest cache on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-cache-macos-arm64-${{ github.sha }}
+          path: .pytest_cache/
+          if-no-files-found: ignore
+          retention-days: 7

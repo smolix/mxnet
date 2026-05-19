@@ -91,7 +91,7 @@ xcode-select --install
 /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
 
 # Install dependencies
-brew install cmake ninja ccache opencv
+brew install cmake ninja ccache uv opencv
 ```
 
 Note: the compiler provided by Apple on macOS does not support OpenMP. To use
@@ -100,6 +100,12 @@ OpenMP on macOS you need to install for example the Clang compiler via `brew`:
 ```bash
 brew install llvm
 ```
+
+For Apple Silicon (`arm64`) CPU-only builds, CUDA, cuDNN, NCCL, x86 SIMD, and
+F16C are not expected to be enabled. The baseline native build uses Apple's
+Accelerate framework for BLAS/LAPACK and keeps OpenMP and oneDNN disabled unless
+you are explicitly validating those optional paths. OpenCV is optional for the
+Python import and unit-test smoke path below.
 
 ### Windows
 You can use Chocolatey software management solution to install some dependencies
@@ -208,6 +214,47 @@ the Python package manager `pip` with `python3 -m pip install --user --upgrade
 Please see the [`cmake configuration
 files`](https://github.com/apache/mxnet/tree/v1.x/config) files for
 instructions on how to configure and build MXNet with cmake.
+
+### macOS Apple Silicon CPU-only smoke build
+
+On an Apple Silicon host, the expected CPU-only smoke configuration is:
+
+```bash
+cmake -S . -B build-macos-arm64 -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DUSE_CUDA=OFF \
+  -DUSE_CUDNN=OFF \
+  -DUSE_NCCL=OFF \
+  -DUSE_ONEDNN=OFF \
+  -DUSE_OPENMP=OFF \
+  -DUSE_OPENCV=OFF \
+  -DUSE_BLAS=apple \
+  -DUSE_LAPACK=ON \
+  -DUSE_DIST_KVSTORE=OFF \
+  -DUSE_SSE=OFF \
+  -DUSE_F16C=OFF \
+  -DBUILD_CPP_EXAMPLES=OFF
+
+cmake --build build-macos-arm64 --target mxnet -- -j 3
+export MXNET_LIBRARY_PATH="$(pwd)/build-macos-arm64/libmxnet.dylib"
+uv venv .venv --python 3.11
+uv pip install --python .venv/bin/python "numpy<2" requests pytest pytest-timeout
+MXNET_SETUP_ENABLE_CUDA_DEPS=0 uv pip install --python .venv/bin/python -e ./python
+```
+
+After installing the Python binding, run the focused Apple Silicon CPU smoke
+subset:
+
+```bash
+grep -Ev '^\s*(#|$)' tests/python/apple_silicon_cpu_smoke \
+  | xargs .venv/bin/python -m pytest -v --timeout=180 --tb=short
+```
+
+This subset is intentionally smaller than the Linux CPU and CUDA suites. It
+covers native import/linking, backend environment handling, engine lifecycle,
+NumPy default dtype and in-place dtype behavior, and small Gluon/autograd smoke
+tests without requiring GPU hardware or network downloads.
 
 Up to the MXNet 1.6 release, please follow the instructions in the
 [`make/config.mk`](https://github.com/apache/mxnet/blob/v1.x/make/config.mk)

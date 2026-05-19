@@ -31,6 +31,33 @@ base_path = os.path.join(os.path.dirname(__file__), "../../..")
 def check_platform(supported_platforms=['x86_64', 'AMD64']):
     return platform.machine() not in supported_platforms
 
+def test_library_load_accepts_dylib_extension(tmp_path, monkeypatch):
+    lib_path = tmp_path / 'libcustomop_lib.dylib'
+    lib_path.write_bytes(b'')
+    calls = {}
+
+    class FakeLib:
+        def MXLoadLib(self, path, verbose, lib_ptr):
+            calls['path'] = path.value.decode('utf-8')
+            calls['verbose'] = verbose.value
+            lib_ptr._obj.value = 1
+            return 0
+
+    class FakeMXlib:
+        def __init__(self, handle):
+            self.handle = handle
+
+    monkeypatch.setattr(mx.library, '_LIB', FakeLib())
+    monkeypatch.setattr(mx.library, 'check_call', lambda ret: None)
+    monkeypatch.setattr(mx.library, '_init_op_module', lambda *args: None)
+    monkeypatch.setattr(mx.library, 'MXlib', FakeMXlib)
+    monkeypatch.setattr(mx.library, 'loaded_libs', [])
+
+    mx.library.load(str(lib_path), verbose=False)
+
+    assert calls == {'path': str(lib_path), 'verbose': 0}
+    assert len(mx.library.loaded_libs) == 1
+
 @pytest.mark.skipif(check_platform(), reason="not all machine types supported")
 @pytest.mark.skipif(is_cd_run(), reason="continuous delivery run - ignoring test")
 def test_custom_op():

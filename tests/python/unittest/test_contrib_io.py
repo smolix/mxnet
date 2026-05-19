@@ -34,8 +34,12 @@ def _legacy_nd_semantics():
     yield
     mx.npx.set_np(shape=_prev_shp, array=_prev_arr)
 def test_contrib_DataLoaderIter():
+    num_examples = 10000
+
     def test_mnist_batches(batch_size, expected, last_batch='discard'):
-        dataset = MNIST(train=False)
+        dataset = mx.gluon.data.ArrayDataset(
+            nd.zeros((num_examples, 28, 28, 1)),
+            nd.arange(num_examples))
         dataloader = DataLoader(dataset, batch_size, last_batch=last_batch)
         test_iter = DataLoaderIter(dataloader)
         batch = next(test_iter)
@@ -47,7 +51,6 @@ def test_contrib_DataLoaderIter():
             count += 1
         assert count == expected, "expected {} batches, given {}".format(expected, count)
 
-    num_examples = 10000
     test_mnist_batches(50, num_examples // 50, 'discard')
     test_mnist_batches(31, num_examples // 31, 'discard')
     test_mnist_batches(31, num_examples // 31, 'rollover')

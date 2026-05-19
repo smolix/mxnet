@@ -239,7 +239,7 @@ void BinaryBroadcastIntCompute(const nnvm::NodeAttrs& attrs,
         mshadow::Shape<NDim> oshape  = new_oshape.get<NDim>();
         mshadow::Shape<NDim> lstride = mxnet_op::calc_stride(new_lshape.get<NDim>());
         mshadow::Shape<NDim> rstride = mxnet_op::calc_stride(new_rshape.get<NDim>());
-        mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx(
+        mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx<>(
             s,
             new_oshape.Size(),
             req[0],
@@ -276,7 +276,7 @@ void BinaryBroadcastIntComputeWithBool(const nnvm::NodeAttrs& attrs,
         mshadow::Shape<NDim> oshape  = new_oshape.get<NDim>();
         mshadow::Shape<NDim> lstride = mxnet_op::calc_stride(new_lshape.get<NDim>());
         mshadow::Shape<NDim> rstride = mxnet_op::calc_stride(new_rshape.get<NDim>());
-        mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx(
+        mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx<>(
             s,
             new_oshape.Size(),
             req[0],
@@ -381,7 +381,7 @@ void BinaryBroadcastComputeWithBool(const nnvm::NodeAttrs& attrs,
         mshadow::Shape<NDim> oshape  = new_oshape.get<NDim>();
         mshadow::Shape<NDim> lstride = mxnet_op::calc_stride(new_lshape.get<NDim>());
         mshadow::Shape<NDim> rstride = mxnet_op::calc_stride(new_rshape.get<NDim>());
-        mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx(
+        mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx<>(
             s,
             new_oshape.Size(),
             req[0],
@@ -422,7 +422,7 @@ void BinaryBroadcastComputeLogic(const nnvm::NodeAttrs& attrs,
           mshadow::Shape<NDim> oshape  = new_oshape.get<NDim>();
           mshadow::Shape<NDim> lstride = mxnet_op::calc_stride(new_lshape.get<NDim>());
           mshadow::Shape<NDim> rstride = mxnet_op::calc_stride(new_rshape.get<NDim>());
-          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx(
+          mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx<>(
               s,
               new_oshape.Size(),
               req[0],
@@ -550,7 +550,7 @@ void BinaryBroadcastCsrDnsDnsImpl(const OpContext& ctx,
       Shape<NDim> lstride = calc_stride(new_csrshape.get<NDim>());
       Shape<NDim> rstride = calc_stride(new_dnsshape.get<NDim>());
       if (reverse && std::is_same<OP, mshadow_op::minus>::value) {
-        Kernel<binary_broadcast_kernel<NDim, mshadow_op::plus>, xpu>::template LaunchEx(
+        Kernel<binary_broadcast_kernel<NDim, mshadow_op::plus>, xpu>::template LaunchEx<>(
             s,
             new_oshape.Size(),
             req,
@@ -561,7 +561,7 @@ void BinaryBroadcastCsrDnsDnsImpl(const OpContext& ctx,
             dns_data.dptr<DType>(),
             out_data.dptr<DType>());
       } else {
-        Kernel<binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx(s,
+        Kernel<binary_broadcast_kernel<NDim, OP>, xpu>::template LaunchEx<>(s,
                                                                           new_oshape.Size(),
                                                                           req,
                                                                           lstride,

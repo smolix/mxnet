@@ -23,7 +23,7 @@ import re
 import json
 import mxnet as mx
 import numpy as np
-from common import assertRaises, models, TemporaryDirectory
+from common import assertRaises, legacy_np_semantics, models, TemporaryDirectory
 from mxnet.base import NotImplementedForSymbol
 from mxnet.test_utils import discard_stderr, rand_shape_nd, use_np, environment
 from mxnet.util import np_shape
@@ -114,47 +114,48 @@ def test_symbol_saveload():
     os.remove(fname)
 
 def test_symbol_infer_shape():
-    num_hidden = 128
-    num_dim    = 64
-    num_sample = 10
+    with legacy_np_semantics():
+        num_hidden = 128
+        num_dim    = 64
+        num_sample = 10
 
-    data = mx.symbol.Variable('data')
-    prev = mx.symbol.Variable('prevstate')
-    x2h  = mx.symbol.FullyConnected(data=data, name='x2h', num_hidden=num_hidden)
-    h2h  = mx.symbol.FullyConnected(data=prev, name='h2h', num_hidden=num_hidden)
+        data = mx.symbol.Variable('data')
+        prev = mx.symbol.Variable('prevstate')
+        x2h  = mx.symbol.FullyConnected(data=data, name='x2h', num_hidden=num_hidden)
+        h2h  = mx.symbol.FullyConnected(data=prev, name='h2h', num_hidden=num_hidden)
 
-    out  = mx.symbol.Activation(data=mx.sym.elemwise_add(x2h, h2h), name='out', act_type='relu')
+        out  = mx.symbol.Activation(data=mx.sym.elemwise_add(x2h, h2h), name='out', act_type='relu')
 
-    # shape inference will fail because information is not available for h2h
-    ret  = out.infer_shape(data=(num_sample, num_dim))
-    assert ret == (None, None, None)
+        # shape inference will fail because information is not available for h2h
+        ret  = out.infer_shape(data=(num_sample, num_dim))
+        assert ret == (None, None, None)
 
-    arg, out_shapes, aux_shapes = out.infer_shape_partial(data=(num_sample, num_dim))
-    arg_shapes = dict(zip(out.list_arguments(), arg))
-    assert arg_shapes['data'] == (num_sample, num_dim)
-    assert arg_shapes['x2h_weight'] == (num_hidden, num_dim)
-    assert arg_shapes['h2h_weight'] == ()
+        arg, out_shapes, aux_shapes = out.infer_shape_partial(data=(num_sample, num_dim))
+        arg_shapes = dict(zip(out.list_arguments(), arg))
+        assert arg_shapes['data'] == (num_sample, num_dim)
+        assert arg_shapes['x2h_weight'] == (num_hidden, num_dim)
+        assert arg_shapes['h2h_weight'] == ()
 
-    # now we can do full shape inference
-    state_shape = out_shapes[0]
-    arg, out_shapes, aux_shapes = out.infer_shape(data=(num_sample, num_dim), prevstate=state_shape)
-    arg_shapes = dict(zip(out.list_arguments(), arg))
-    assert arg_shapes['data'] == (num_sample, num_dim)
-    assert arg_shapes['x2h_weight'] == (num_hidden, num_dim)
-    assert arg_shapes['h2h_weight'] == (num_hidden, num_hidden)
+        # now we can do full shape inference
+        state_shape = out_shapes[0]
+        arg, out_shapes, aux_shapes = out.infer_shape(data=(num_sample, num_dim), prevstate=state_shape)
+        arg_shapes = dict(zip(out.list_arguments(), arg))
+        assert arg_shapes['data'] == (num_sample, num_dim)
+        assert arg_shapes['x2h_weight'] == (num_hidden, num_dim)
+        assert arg_shapes['h2h_weight'] == (num_hidden, num_hidden)
 
-    # Partial shape inference with some unknown dimensions
-    data_shape = (1, 0, 0, 0)
-    data = mx.sym.Variable('data', shape=data_shape)
-    weight = mx.sym.Variable('weight')
-    cdata = mx.sym.cast(data, dtype='float16')
-    cweight = mx.sym.cast(weight, dtype='float16')
-    test = mx.sym.Convolution(data=cdata, weight=cweight, pad=(3, 3), num_filter=64, stride=(2, 2), no_bias=True, kernel=(7, 7))
+        # Partial shape inference with some unknown dimensions
+        data_shape = (1, 0, 0, 0)
+        data = mx.sym.Variable('data', shape=data_shape)
+        weight = mx.sym.Variable('weight')
+        cdata = mx.sym.cast(data, dtype='float16')
+        cweight = mx.sym.cast(weight, dtype='float16')
+        test = mx.sym.Convolution(data=cdata, weight=cweight, pad=(3, 3), num_filter=64, stride=(2, 2), no_bias=True, kernel=(7, 7))
 
-    arg, _, _ = test.infer_shape_partial()
-    arg_shapes = dict(zip(test.list_arguments(), arg))
-    assert arg_shapes['data'] == data_shape
-    assert arg_shapes['weight'] == (64, 0, 7, 7)
+        arg, _, _ = test.infer_shape_partial()
+        arg_shapes = dict(zip(test.list_arguments(), arg))
+        assert arg_shapes['data'] == data_shape
+        assert arg_shapes['weight'] == (64, 0, 7, 7)
 
 
 def test_symbol_infer_shape_var():
@@ -411,43 +412,44 @@ def test_eliminate_common_expr():
                         mx.sym.Dropout(a), expected_savings=0, check_data=False, a=arr1)
 
 def test_load_save_symbol():
-    batch_size = 10
-    num_hdidden = 128
-    num_features = 784
+    with legacy_np_semantics():
+        batch_size = 10
+        num_hdidden = 128
+        num_features = 784
 
-    def get_net():
-        data = mx.sym.var('data')
-        weight = mx.sym.var('weight', shape=(num_hdidden, 0))
-        return mx.sym.FullyConnected(data, weight, num_hidden=num_hdidden)
+        def get_net():
+            data = mx.sym.var('data')
+            weight = mx.sym.var('weight', shape=(num_hdidden, 0))
+            return mx.sym.FullyConnected(data, weight, num_hidden=num_hdidden)
 
-    for flag1 in [False, True]:
-        with np_shape(flag1):
-            net_json_str = get_net().tojson()
-            net_data = json.loads(net_json_str)
-            assert "attrs" in net_data
-            if flag1:
-                assert "is_np_shape" in net_data["attrs"]
-            else:
-                assert "is_np_shape" not in net_data["attrs"]
+        for flag1 in [False, True]:
+            with np_shape(flag1):
+                net_json_str = get_net().tojson()
+                net_data = json.loads(net_json_str)
+                assert "attrs" in net_data
+                if flag1:
+                    assert "is_np_shape" in net_data["attrs"]
+                else:
+                    assert "is_np_shape" not in net_data["attrs"]
 
-        with TemporaryDirectory() as work_dir:
-            fname = os.path.join(work_dir, 'test_sym.json')
-            with open(fname, 'w') as fp:
-                json.dump(net_data, fp)
+            with TemporaryDirectory() as work_dir:
+                fname = os.path.join(work_dir, 'test_sym.json')
+                with open(fname, 'w') as fp:
+                    json.dump(net_data, fp)
 
-            # test loading 1.5.0 symbol file since 1.6.0
-            # w/ or w/o np_shape semantics
-            for flag2 in [False, True]:
-                if flag1:  # Do not need to test this case since 0 indicates zero-size dim
-                    continue
-                with np_shape(flag2):
-                    net = mx.sym.load(fname)
-                    arg_shapes, out_shapes, aux_shapes = net.infer_shape(data=(batch_size, num_features))
-                    assert arg_shapes[0] == (batch_size, num_features)  # data
-                    assert arg_shapes[1] == (num_hdidden, num_features)  # weight
-                    assert arg_shapes[2] == (num_hdidden,)  # bias
-                    assert out_shapes[0] == (batch_size, num_hdidden)  # output
-                    assert len(aux_shapes) == 0
+                # test loading 1.5.0 symbol file since 1.6.0
+                # w/ or w/o np_shape semantics
+                for flag2 in [False, True]:
+                    if flag1:  # Do not need to test this case since 0 indicates zero-size dim
+                        continue
+                    with np_shape(flag2):
+                        net = mx.sym.load(fname)
+                        arg_shapes, out_shapes, aux_shapes = net.infer_shape(data=(batch_size, num_features))
+                        assert arg_shapes[0] == (batch_size, num_features)  # data
+                        assert arg_shapes[1] == (num_hdidden, num_features)  # weight
+                        assert arg_shapes[2] == (num_hdidden,)  # bias
+                        assert out_shapes[0] == (batch_size, num_hdidden)  # output
+                        assert len(aux_shapes) == 0
 
 def test_infershape_happens_for_all_ops_in_graph():
     v = mx.sym.Variable('V')

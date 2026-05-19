@@ -34,6 +34,9 @@ It is recommended that you read the MXNet developer wiki's info on [building the
 
 The default configuration requires a GPU and CUDA 9.2 and expects Ubuntu.
 However, you may setup the website on macOS or Windows with or without a GPU.
+On Apple Silicon, the supported local documentation workflow is CPU-only:
+install or build a native `arm64` MXNet with CUDA, cuDNN, NCCL, oneDNN, OpenMP,
+SSE, and F16C disabled, then build docs with `make EVAL=0`.
 
 ### Prerequisites
 

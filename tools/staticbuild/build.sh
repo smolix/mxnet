@@ -25,6 +25,7 @@ export CURDIR=$PWD
 export DEPS_PATH=$PWD/staticdeps
 export VARIANT=$(echo $1 | tr '[:upper:]' '[:lower:]')
 export PLATFORM=$(uname | tr '[:upper:]' '[:lower:]')
+export STATICBUILD_ARCH=$(uname -m | tr '[:upper:]' '[:lower:]')
 export BLAS=$(echo $2 | tr '[:upper:]' '[:lower:]')
 
 if [[ $VARIANT == darwin* ]]; then
@@ -32,7 +33,11 @@ if [[ $VARIANT == darwin* ]]; then
 fi
 
 if [[ ! $BLAS ]]; then
-    export BLAS="open"
+    if [[ $PLATFORM == 'darwin' ]]; then
+        export BLAS="apple"
+    else
+        export BLAS="open"
+    fi
 fi
 
 NUM_PROC=1
@@ -53,10 +58,19 @@ else
 fi
 export MAKE="make $ADD_MAKE_FLAG"
 
-export CC="gcc"
-export CXX="g++"
-export CFLAGS="${CFLAGS:+${CFLAGS}} -fPIC -mno-avx"
-export CXXFLAGS="${CXXFLAGS:+${CXXFLAGS}} -fPIC -mno-avx"
+if [[ $PLATFORM == 'darwin' ]]; then
+    export CC="${CC:-clang}"
+    export CXX="${CXX:-clang++}"
+else
+    export CC="${CC:-gcc}"
+    export CXX="${CXX:-g++}"
+fi
+STATICBUILD_CFLAGS="-fPIC"
+if [[ $STATICBUILD_ARCH == 'x86_64' ]] || [[ $STATICBUILD_ARCH == 'amd64' ]]; then
+    STATICBUILD_CFLAGS="${STATICBUILD_CFLAGS} -mno-avx"
+fi
+export CFLAGS="${CFLAGS:+${CFLAGS} }${STATICBUILD_CFLAGS}"
+export CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }${STATICBUILD_CFLAGS}"
 export FC="gfortran"
 export PKG_CONFIG_PATH=$DEPS_PATH/lib/pkgconfig:$DEPS_PATH/lib64/pkgconfig:$DEPS_PATH/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
 export CPATH=$DEPS_PATH/include:$CPATH

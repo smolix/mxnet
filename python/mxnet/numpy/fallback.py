@@ -121,12 +121,19 @@ fallback_mod = sys.modules[__name__]
 # fetch the attribute and call its repr — anything that raises is dropped.
 import warnings as _w
 
+_RETIRED = {'mirr', 'npv', 'pmt', 'ppmt', 'pv', 'rate', 'fv', 'ipmt', 'nper',
+            'alltrue', 'sometrue', 'msort', 'product', 'cumproduct', 'round_'}
+
 def _available(name):
     if name in {'__version__', '_NoValue'}:
         return True
-    if not hasattr(onp, name):
+    if name in _RETIRED:
         return False
-    obj = getattr(onp, name)
+    with _w.catch_warnings():
+        _w.simplefilter("ignore", DeprecationWarning)
+        if not hasattr(onp, name):
+            return False
+        obj = getattr(onp, name)
     if not callable(obj):
         return True
     # NEP-32-expired stubs raise RuntimeError on call rather than at attribute
@@ -143,8 +150,6 @@ def _available(name):
 
 fallbacks = [name for name in fallbacks if _available(name)]
 # Explicitly drop names known to be RuntimeError-on-call shims in modern NumPy
-_RETIRED = {'mirr', 'npv', 'pmt', 'ppmt', 'pv', 'rate', 'fv', 'ipmt', 'nper',
-            'alltrue', 'sometrue', 'msort', 'product', 'cumproduct', 'round_'}
 fallbacks = [name for name in fallbacks if name not in _RETIRED]
 
 def get_func(obj, doc):

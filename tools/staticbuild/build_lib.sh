@@ -18,27 +18,44 @@
 # under the License.
 
 set -eo pipefail
+STATICBUILD_ARCH=$(echo "${STATICBUILD_ARCH:-$(uname -m)}" | tr '[:upper:]' '[:lower:]')
 
 # This script builds the libraries of mxnet.
-if [[ ! $BLAS ]] || [[ $BLAS == 'open' ]]; then
+if [[ $PLATFORM == 'darwin' ]] && [[ $STATICBUILD_ARCH == 'arm64' ]] \
+   && ([[ ! $BLAS ]] || [[ $BLAS == 'open' ]] || [[ $BLAS == 'apple' ]]); then
+    cmake_config=${CURDIR}/config/distribution/${PLATFORM}_arm64.cmake
+elif [[ ! $BLAS ]] || [[ $BLAS == 'open' ]] || ([[ $PLATFORM == 'darwin' ]] && [[ $BLAS == 'apple' ]]); then
     cmake_config=${CURDIR}/config/distribution/${PLATFORM}_${VARIANT}.cmake
 else
     cmake_config=${CURDIR}/config/distribution/${PLATFORM}_${VARIANT}_${BLAS}.cmake
 fi
 if [[ ! -f $cmake_config ]]; then
-    >&2 echo "Couldn't find cmake config $make_config for the current settings."
+    >&2 echo "Couldn't find cmake config $cmake_config for the current settings."
     exit 1
 fi
 
-git submodule update --init --recursive || true
+git submodule update --init --recursive
 
 # Build libmxnet.so
 rm -rf build; mkdir build; cd build
-cmake -GNinja -C $cmake_config \
-      -DCMAKE_PREFIX_PATH=${DEPS_PATH} \
-      -DCMAKE_FIND_ROOT_PATH=${DEPS_PATH} \
-      -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-      ..
+cmake_args=(
+      -GNinja
+      -C "$cmake_config"
+      -DCMAKE_PREFIX_PATH="${DEPS_PATH}"
+      -DCMAKE_FIND_ROOT_PATH="${DEPS_PATH}"
+)
+if [[ $PLATFORM == 'darwin' ]]; then
+    darwin_deployment_target=${CMAKE_OSX_DEPLOYMENT_TARGET:-10.13}
+    if [[ $STATICBUILD_ARCH == 'arm64' ]]; then
+        darwin_deployment_target=${CMAKE_OSX_DEPLOYMENT_TARGET:-11.0}
+        if [[ $darwin_deployment_target == 10.* ]]; then
+            darwin_deployment_target=11.0
+        fi
+        cmake_args+=(-DCMAKE_OSX_ARCHITECTURES="${CMAKE_OSX_ARCHITECTURES:-arm64}")
+    fi
+    cmake_args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="${darwin_deployment_target}")
+fi
+cmake "${cmake_args[@]}" ..
 ninja
 cd -
 

@@ -113,11 +113,23 @@ class BNOperatorExecutor : public test::op::CoreOpExecutor<DType, AccReal> {
  public:
   using Super::ctx;
 
+  static mxnet::ShapeVector ShapesFor(const mxnet::TShape& inputShape,
+                                      const test::op::kwargs_t& kwargs) {
+    mxnet::op::BatchNormParam param;
+    param.Init(kwargs, dmlc::parameter::kAllowUnknown);
+    const int channelAxis =
+        param.axis < 0 ? static_cast<int>(inputShape.ndim()) + param.axis : param.axis;
+    CHECK_GE(channelAxis, 0);
+    CHECK_LT(channelAxis, inputShape.ndim());
+    const mxnet::TShape channelShape({inputShape[channelAxis]});
+    return {inputShape, channelShape, channelShape, channelShape, channelShape};
+  }
+
   BNOperatorExecutor(const bool isGPU,
                      const mxnet::TShape& inputShape,
                      const test::op::kwargs_t& kwargs,
                      const bool hasWeightAndBias = false)
-      : test::op::CoreOpExecutor<DType, AccReal>(isGPU, {inputShape}),
+      : test::op::CoreOpExecutor<DType, AccReal>(isGPU, ShapesFor(inputShape, kwargs)),
         hasWeightAndBias_(hasWeightAndBias) {
     param_.Init(kwargs);
   }
@@ -961,9 +973,7 @@ static void timingTest(const std::string& label,
 #endif                        // MXNET_USE_CUDNN == 1 && CUDNN_MAJOR >= 5
 
 /*! \brief Stress-test random batch size/channels/dimension(s) */
-TEST(BATCH_NORM, DISABLED_TestStochasticTiming_2D) {
-  // Test is disabled due to suspected flakiness
-  // https://github.com/apache/mxnet/issues/14411
+TEST(BATCH_NORM, TestStochasticTiming_2D) {
   MSHADOW_REAL_TYPE_SWITCH_EX(mshadow::kFloat32, DType, AccReal, {
     timingTest<BatchNormCoreOpProp, BNOperatorExecutor<DType, AccReal>>(
         "RANDOM: BatchNormCoreOpProp<cpu>", false, true, blank_kwargs_nocudnn, GPU_TEST_DIMENSIONS);

@@ -16,6 +16,8 @@ fatbin support is tracked in [`issues.md`](issues.md) item 31.
   exercise the real bf16 path.
 - NVIDIA RTX PRO 4000 / RTX 50-series (compute capability 12.0).
 - NVIDIA driver R570 or newer.
+- macOS arm64 is covered only by the CPU-only smoke path. It is not a
+  CUDA/oneDNN release-wheel target.
 
 A full clean build takes roughly **35-50 minutes** on 64 threads. The
 CUDA compile phase dominates; expect `nvcc` to be the long pole.
@@ -92,6 +94,47 @@ Key flags:
 - `USE_ONEDNN=ON` picks up the vendored v3.11 submodule.
 - `USE_DIST_KVSTORE=OFF` skips ps-lite; not needed for single-host
   Blackwell development.
+
+## Apple Silicon CPU-only smoke build
+
+For native macOS arm64 validation, use a separate build directory and the
+minimal CPU-only feature set. This avoids the Linux/CUDA release settings and
+does not use the shared build scripts.
+
+```bash
+cmake -S . -B build-macos-arm64 -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DUSE_CUDA=OFF \
+  -DUSE_CUDNN=OFF \
+  -DUSE_NCCL=OFF \
+  -DUSE_ONEDNN=OFF \
+  -DUSE_OPENMP=OFF \
+  -DUSE_OPENCV=OFF \
+  -DUSE_BLAS=apple \
+  -DUSE_LAPACK=ON \
+  -DUSE_DIST_KVSTORE=OFF \
+  -DUSE_SSE=OFF \
+  -DUSE_F16C=OFF \
+  -DBUILD_CPP_EXAMPLES=OFF
+
+cmake --build build-macos-arm64 --target mxnet -- -j 3
+export MXNET_LIBRARY_PATH="$(pwd)/build-macos-arm64/libmxnet.dylib"
+uv venv .venv --python 3.11
+uv pip install --python .venv/bin/python "numpy<2" requests pytest pytest-timeout
+MXNET_SETUP_ENABLE_CUDA_DEPS=0 uv pip install --python .venv/bin/python -e ./python
+```
+
+Run the smoke subset tracked in test metadata:
+
+```bash
+grep -Ev '^\s*(#|$)' tests/python/apple_silicon_cpu_smoke \
+  | xargs .venv/bin/python -m pytest -v --timeout=180 --tb=short
+```
+
+The list currently covers `test_base.py`, `test_engine.py::test_bulk`,
+`test_engine_shutdown.py`, `test_inplace_dtype.py`,
+`test_numpy_default_dtype.py`, and `test_smoke.py`.
 
 ## Build
 

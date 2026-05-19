@@ -24,12 +24,13 @@ import copy
 import math
 import random
 import itertools
-from distutils.version import LooseVersion
+from packaging.version import Version
 from numpy.testing import assert_allclose, assert_array_equal
 from mxnet.test_utils import *
 from mxnet.operator import *
 from mxnet.base import py_str, MXNetError, _as_list
 from common import assert_raises_cudnn_not_satisfied, assert_raises_cuda_not_satisfied, assertRaises
+from common import legacy_np_semantics
 from common import xfail_when_nonstandard_decimal_separator, with_environment
 import pytest
 import os
@@ -2361,38 +2362,39 @@ def test_convolution_dilated_impulse_response():
         ((1, 2, 3, 64), (-2, -1, 16, -4), True,  (1, 2, 3, 4, 16))
 ])
 def test_reshape_new(src_shape, shape_args, reverse, dst_shape):
-    net = mx.sym.Variable("data")
-    net = mx.sym.Reshape(net, shape=shape_args, reverse=reverse)
-    js = net.tojson()
-    net = mx.sym.fromjson(js)
-    _, output_shape, __ = net.infer_shape(data=src_shape)
-    assert output_shape[0] == dst_shape, \
-        f'Src Shape = {str(src_shape)}, Shape Arguments = {str(shape_args)}, Reverse = {str(reverse)}, Dst Shape = {str(dst_shape)}, ' \
-        f'Output Shape = {str(output_shape[0])}'
-    dat_npy = np.random.rand(*src_shape)
-    grad_npy = np.random.rand(*dst_shape)
-    exe = net._simple_bind(default_device(), data=src_shape)
-    exe.arg_dict['data'][:] = dat_npy
-    exe.forward(is_train=True)
-    assert np.square(exe.outputs[0].asnumpy() - dat_npy.reshape(dst_shape)).mean() < 1E-7, \
-        f'Src Shape = {str(src_shape)}, Shape Arguments = {str(shape_args)}, Reverse = {str(reverse)}, Dst Shape = {str(dst_shape)}'
-    exe.backward(out_grads=mx.nd.array(grad_npy))
-    assert np.square(exe.grad_dict['data'].asnumpy() - grad_npy.reshape(src_shape)).mean() < 1E-7, \
-        f'Src Shape = {str(src_shape)}, Shape Arguments = {str(shape_args)}, Reverse = {str(reverse)}, Dst Shape = {str(dst_shape)}'
-
-    for i in range(len(src_shape)):
-        holdout_src_shape = list(src_shape)
-        holdout_src_shape[i] = 0
-        holdout_src_shape = tuple(holdout_src_shape)
-        net = mx.sym.Variable('data')
-        net = mx.sym.elemwise_add(net.reshape(shape_args, reverse=reverse), mx.sym.ones(shape=dst_shape))
-        input_shape, output_shape, __ = net.infer_shape(data=holdout_src_shape)
+    with legacy_np_semantics():
+        net = mx.sym.Variable("data")
+        net = mx.sym.Reshape(net, shape=shape_args, reverse=reverse)
+        js = net.tojson()
+        net = mx.sym.fromjson(js)
+        _, output_shape, __ = net.infer_shape(data=src_shape)
         assert output_shape[0] == dst_shape, \
-            f'Holdout Src Shape = {str(holdout_src_shape)}, Shape Arguments = {str(shape_args)}, ' \
-            f'Reverse = {str(reverse)}, Dst Shape = {str(dst_shape)}, Output Shape = {str(output_shape[0])}'
-        assert input_shape[0] == src_shape, \
-            f'Holdout Src Shape = {str(holdout_src_shape)}, Shape Arguments = {str(shape_args)}, ' \
-            f'Reverse = {str(reverse)}, Dst Shape = {str(dst_shape)}, Output Shape = {str(output_shape[0])}'
+            f'Src Shape = {str(src_shape)}, Shape Arguments = {str(shape_args)}, Reverse = {str(reverse)}, Dst Shape = {str(dst_shape)}, ' \
+            f'Output Shape = {str(output_shape[0])}'
+        dat_npy = np.random.rand(*src_shape)
+        grad_npy = np.random.rand(*dst_shape)
+        exe = net._simple_bind(default_device(), data=src_shape)
+        exe.arg_dict['data'][:] = dat_npy
+        exe.forward(is_train=True)
+        assert np.square(exe.outputs[0].asnumpy() - dat_npy.reshape(dst_shape)).mean() < 1E-7, \
+            f'Src Shape = {str(src_shape)}, Shape Arguments = {str(shape_args)}, Reverse = {str(reverse)}, Dst Shape = {str(dst_shape)}'
+        exe.backward(out_grads=mx.nd.array(grad_npy))
+        assert np.square(exe.grad_dict['data'].asnumpy() - grad_npy.reshape(src_shape)).mean() < 1E-7, \
+            f'Src Shape = {str(src_shape)}, Shape Arguments = {str(shape_args)}, Reverse = {str(reverse)}, Dst Shape = {str(dst_shape)}'
+
+        for i in range(len(src_shape)):
+            holdout_src_shape = list(src_shape)
+            holdout_src_shape[i] = 0
+            holdout_src_shape = tuple(holdout_src_shape)
+            net = mx.sym.Variable('data')
+            net = mx.sym.elemwise_add(net.reshape(shape_args, reverse=reverse), mx.sym.ones(shape=dst_shape))
+            input_shape, output_shape, __ = net.infer_shape(data=holdout_src_shape)
+            assert output_shape[0] == dst_shape, \
+                f'Holdout Src Shape = {str(holdout_src_shape)}, Shape Arguments = {str(shape_args)}, ' \
+                f'Reverse = {str(reverse)}, Dst Shape = {str(dst_shape)}, Output Shape = {str(output_shape[0])}'
+            assert input_shape[0] == src_shape, \
+                f'Holdout Src Shape = {str(holdout_src_shape)}, Shape Arguments = {str(shape_args)}, ' \
+                f'Reverse = {str(reverse)}, Dst Shape = {str(dst_shape)}, Output Shape = {str(output_shape[0])}'
 
 def test_reshape_old():
     net = mx.sym.Variable("data")
@@ -3501,7 +3503,7 @@ def check_layer_normalization(in_shape, axis, eps, dtype=np.float32,
 def test_norm():
     try:
         import scipy
-        assert LooseVersion(scipy.__version__) >= LooseVersion('0.1')
+        assert Version(scipy.__version__) >= Version('0.1')
         from scipy.linalg import norm as sp_norm
     except (AssertionError, ImportError):
         print("Could not import scipy.linalg.norm or scipy is too old. "
@@ -4578,96 +4580,97 @@ def test_reverse():
 
 
 def test_tile():
-    def test_normal_case():
-        ndim_min = 1
-        ndim_max = 5  # max number of dims of the ndarray
-        size_max = 10  # max number of elements in each dim
-        length_max = 3  # max length of reps
-        rep_max = 10  # max number of tiling in each dim
-        for ndim in range(ndim_min, ndim_max+1):
-            shape = []
-            for _ in range(1, ndim+1):
-                shape.append(np.random.randint(1, size_max+1))
-            shape = tuple(shape)
-            a = np.random.randint(0, 100, shape)
-            b = mx.nd.array(a, dtype=a.dtype)
+    with legacy_np_semantics():
+        def test_normal_case():
+            ndim_min = 1
+            ndim_max = 5  # max number of dims of the ndarray
+            size_max = 10  # max number of elements in each dim
+            length_max = 3  # max length of reps
+            rep_max = 10  # max number of tiling in each dim
+            for ndim in range(ndim_min, ndim_max+1):
+                shape = []
+                for _ in range(1, ndim+1):
+                    shape.append(np.random.randint(1, size_max+1))
+                shape = tuple(shape)
+                a = np.random.randint(0, 100, shape)
+                b = mx.nd.array(a, dtype=a.dtype)
 
-            reps_len = np.random.randint(1, length_max+1)
-            reps_tuple = ()
-            for _ in range(1, reps_len):
-                reps_tuple += (np.random.randint(1, rep_max), )
-            reps_array = np.asarray(reps_tuple)
+                reps_len = np.random.randint(1, length_max+1)
+                reps_tuple = ()
+                for _ in range(1, reps_len):
+                    reps_tuple += (np.random.randint(1, rep_max), )
+                reps_array = np.asarray(reps_tuple)
 
-            a_tiled = np.tile(a, reps_array)
-            b_tiled = mx.nd.tile(b, reps_tuple).asnumpy()
-            assert same(a_tiled, b_tiled)
+                a_tiled = np.tile(a, reps_array)
+                b_tiled = mx.nd.tile(b, reps_tuple).asnumpy()
+                assert same(a_tiled, b_tiled)
 
-    def test_empty_tensor():
-        shape = (2, 3, 0, 4)
-        with mx.np_shape():
-            a = np.array([], dtype=np.int32).reshape(shape)
+        def test_empty_tensor():
+            shape = (2, 3, 0, 4)
+            with mx.np_shape():
+                a = np.array([], dtype=np.int32).reshape(shape)
+                b = mx.nd.array(a, ctx=default_device(), dtype=a.dtype)
+
+                reps = (2, 4, 6)
+                a_tiled = np.tile(a, reps)
+                b_tiled = mx.nd.tile(b, reps).asnumpy()
+                assert same(a_tiled, b_tiled)
+
+        def test_empty_reps():
+            a = np.array([[2, 3, 4], [5, 6, 7]], dtype=np.int32)
             b = mx.nd.array(a, ctx=default_device(), dtype=a.dtype)
-
-            reps = (2, 4, 6)
-            a_tiled = np.tile(a, reps)
-            b_tiled = mx.nd.tile(b, reps).asnumpy()
+            a_tiled = np.tile(a, ())
+            b_tiled = mx.nd.tile(b, ()).asnumpy()
             assert same(a_tiled, b_tiled)
 
-    def test_empty_reps():
-        a = np.array([[2, 3, 4], [5, 6, 7]], dtype=np.int32)
-        b = mx.nd.array(a, ctx=default_device(), dtype=a.dtype)
-        a_tiled = np.tile(a, ())
-        b_tiled = mx.nd.tile(b, ()).asnumpy()
-        assert same(a_tiled, b_tiled)
+        def test_tile_backward():
+            data = mx.sym.Variable('data')
+            n1 = 2
+            n2 = 2
+            shape = (n1, n2)
+            data_tmp = np.random.randint(0, 10, n1 * n2).reshape(shape)
+            arr_data = mx.nd.array(data_tmp)
+            arr_grad = mx.nd.empty(shape)
+            reps1 = 2
+            reps2 = 2
+            reps = (reps1, reps2)
+            test = mx.sym.tile(data, reps=reps)
+            exe = test._bind(ctx=default_device(), args=[arr_data], args_grad=[arr_grad])
+            npout_grad = np.random.randint(0, 10, n1 * n2 * reps1 * reps2).reshape(n1 * reps1, n2 * reps2)
+            out_grad = mx.nd.array(npout_grad)
+            exe.backward(out_grad)
 
-    def test_tile_backward():
-        data = mx.sym.Variable('data')
-        n1 = 2
-        n2 = 2
-        shape = (n1, n2)
-        data_tmp = np.random.randint(0, 10, n1 * n2).reshape(shape)
-        arr_data = mx.nd.array(data_tmp)
-        arr_grad = mx.nd.empty(shape)
-        reps1 = 2
-        reps2 = 2
-        reps = (reps1, reps2)
-        test = mx.sym.tile(data, reps=reps)
-        exe = test._bind(ctx=default_device(), args=[arr_data], args_grad=[arr_grad])
-        npout_grad = np.random.randint(0, 10, n1 * n2 * reps1 * reps2).reshape(n1 * reps1, n2 * reps2)
-        out_grad = mx.nd.array(npout_grad)
-        exe.backward(out_grad)
+            expected_grad = np.zeros(shape)
+            for i in range(shape[0]):
+                for j in range(shape[1]):
+                    expected_grad[i][j] += sum(sum(npout_grad[i:(n1 * reps1):reps1, j:(n2 * reps2):reps2]))
 
-        expected_grad = np.zeros(shape)
-        for i in range(shape[0]):
-            for j in range(shape[1]):
-                expected_grad[i][j] += sum(sum(npout_grad[i:(n1 * reps1):reps1, j:(n2 * reps2):reps2]))
+            assert_almost_equal(expected_grad, arr_grad, rtol=1e-3)
 
-        assert_almost_equal(expected_grad, arr_grad, rtol=1e-3)
+        def test_tile_numeric_gradient():
+            data = mx.sym.Variable('data')
+            n1 = 2
+            n2 = 2
+            shape = (n1, n2)
+            data_tmp = np.random.randint(0, 10, n1 * n2).reshape(shape)
+            reps1 = 2
+            reps2 = 2
+            reps = (reps1, reps2)
+            test = mx.sym.tile(data, reps=reps)
+            check_numeric_gradient(test, [data_tmp], numeric_eps=1e-2, rtol=1e-2)
 
-    def test_tile_numeric_gradient():
-        data = mx.sym.Variable('data')
-        n1 = 2
-        n2 = 2
-        shape = (n1, n2)
-        data_tmp = np.random.randint(0, 10, n1 * n2).reshape(shape)
-        reps1 = 2
-        reps2 = 2
-        reps = (reps1, reps2)
-        test = mx.sym.tile(data, reps=reps)
-        check_numeric_gradient(test, [data_tmp], numeric_eps=1e-2, rtol=1e-2)
+        def test_invalid_reps():
+            data = mx.nd.arange(16).reshape((4, 4))
+            assert_exception(mx.nd.tile, MXNetError, data, (1, 2, -3))
+            assert_exception(mx.nd.tile, MXNetError, data, (1, 0, 3))
 
-    def test_invalid_reps():
-        data = mx.nd.arange(16).reshape((4, 4))
-        assert_exception(mx.nd.tile, MXNetError, data, (1, 2, -3))
-        assert_exception(mx.nd.tile, MXNetError, data, (1, 0, 3))
-
-    test_normal_case()
-    with mx.np_shape():
-        test_empty_tensor()
-    test_empty_reps()
-    test_tile_backward()
-    test_tile_numeric_gradient()
-    test_invalid_reps()
+        test_normal_case()
+        with mx.np_shape():
+            test_empty_tensor()
+        test_empty_reps()
+        test_tile_backward()
+        test_tile_numeric_gradient()
+        test_invalid_reps()
 
 
 def test_one_hot():
@@ -5495,6 +5498,7 @@ def test_rcbrt_op():
     check_symbolic_forward(test, [data_tmp], [1/np.cbrt(data_tmp)])
 
 
+@legacy_np_semantics()
 def test_custom_op():
     class Sqr(mx.operator.CustomOp):
         def forward(self, is_train, req, in_data, out_data, aux):
@@ -5692,6 +5696,7 @@ def test_custom_op():
 
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
 # @pytest.mark.skip(reason="Flaky test, tracked at https://github.com/apache/mxnet/issues/17467")
+@legacy_np_semantics()
 def test_custom_op_fork():
     # test custom operator fork
     # see https://github.com/apache/mxnet/issues/14396
@@ -5725,8 +5730,8 @@ def test_custom_op_fork():
             assert_almost_equal((a + b).asnumpy(), c.asnumpy())
 
         custom_add()
-        from multiprocessing import Process
-        p = Process(target=custom_add)
+        from multiprocessing import get_context
+        p = get_context('fork').Process(target=custom_add)
         p.daemon = True
         p.start()
         p.join(5)
@@ -8739,6 +8744,7 @@ def test_index_array():
     test_index_array_select_axes_zero_size()
 
 
+@legacy_np_semantics()
 def test_scalar_tensor_creation():
     assertRaises(MXNetError, mx.nd.zeros, shape=())
     assertRaises(MXNetError, mx.nd.ones, shape=())
@@ -8748,6 +8754,7 @@ def test_scalar_tensor_creation():
         assert same(data_mx.asnumpy(), data_np)
 
 
+@legacy_np_semantics()
 def test_zero_size_tensor_creation():
     assertRaises(MXNetError, mx.nd.zeros, shape=(0, 1, 3, 0))
     assertRaises(MXNetError, mx.nd.ones, shape=(0, 1, 3, 0))
@@ -8773,34 +8780,35 @@ def test_concat_with_zero_size_tensor():
 
 
 def test_np_shape_decorator():
-    @mx.use_np_shape
-    def check_scalar_one():
-        """Generate scalar one tensor"""
-        return mx.nd.ones(shape=())
-    assert check_scalar_one.__name__ == "check_scalar_one"
-    assert check_scalar_one.__doc__ == "Generate scalar one tensor"
-    assert check_scalar_one().shape == ()
-    for active in [True, False]:
-        with mx.np_shape(active=active):
-            assert check_scalar_one.__name__ == "check_scalar_one"
-            assert check_scalar_one.__doc__ == "Generate scalar one tensor"
-            assert check_scalar_one().shape == ()
+    with legacy_np_semantics():
+        @mx.use_np_shape
+        def check_scalar_one():
+            """Generate scalar one tensor"""
+            return mx.nd.ones(shape=())
+        assert check_scalar_one.__name__ == "check_scalar_one"
+        assert check_scalar_one.__doc__ == "Generate scalar one tensor"
+        assert check_scalar_one().shape == ()
+        for active in [True, False]:
+            with mx.np_shape(active=active):
+                assert check_scalar_one.__name__ == "check_scalar_one"
+                assert check_scalar_one.__doc__ == "Generate scalar one tensor"
+                assert check_scalar_one().shape == ()
 
-    @mx.use_np_shape
-    def check_concat(shape1, shape2, axis):
-        data1 = mx.nd.ones(shape1)
-        data2 = mx.nd.ones(shape2)
-        ret = mx.nd.Concat(data1, data2, dim=axis)
-        expected_ret = np.concatenate((data1.asnumpy(), data2.asnumpy()), axis=axis)
-        assert ret.shape == expected_ret.shape
+        @mx.use_np_shape
+        def check_concat(shape1, shape2, axis):
+            data1 = mx.nd.ones(shape1)
+            data2 = mx.nd.ones(shape2)
+            ret = mx.nd.Concat(data1, data2, dim=axis)
+            expected_ret = np.concatenate((data1.asnumpy(), data2.asnumpy()), axis=axis)
+            assert ret.shape == expected_ret.shape
 
-    check_concat((0, 3, 4), (5, 3, 4), 0)
-    check_concat((8, 0, 5), (8, 7, 5), 1)
-    check_concat((8, 0, 0), (8, 0, 0), 2)
-    for _ in [True, False]:
         check_concat((0, 3, 4), (5, 3, 4), 0)
         check_concat((8, 0, 5), (8, 7, 5), 1)
         check_concat((8, 0, 0), (8, 0, 0), 2)
+        for _ in [True, False]:
+            check_concat((0, 3, 4), (5, 3, 4), 0)
+            check_concat((8, 0, 5), (8, 7, 5), 1)
+            check_concat((8, 0, 0), (8, 0, 0), 2)
 
 
 def test_add_n():

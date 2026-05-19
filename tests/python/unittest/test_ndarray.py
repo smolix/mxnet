@@ -17,14 +17,14 @@
 
 import mxnet as mx
 import numpy as np
-from distutils.version import LooseVersion
+from packaging.version import Version
 from itertools import permutations, combinations_with_replacement
 import os
 import pickle as pkl
 import random
 import functools
 import pytest
-from common import assertRaises, TemporaryDirectory
+from common import assertRaises, legacy_np_semantics, TemporaryDirectory
 from mxnet.test_utils import almost_equal
 from mxnet.test_utils import assert_almost_equal, assert_exception
 from mxnet.test_utils import default_device
@@ -215,25 +215,26 @@ def test_ndarray_magic_abs():
 
 
 def test_ndarray_reshape():
-    tensor = (mx.nd.arange(30) + 1).reshape(2, 3, 5)
-    true_res = mx.nd.arange(30) + 1
-    assert same(tensor.reshape((-1,)).asnumpy(), true_res.asnumpy())
-    assert same(tensor.reshape((2, -1)).asnumpy(), true_res.reshape(2, 15).asnumpy())
-    assert same(tensor.reshape((0, -1)).asnumpy(), true_res.reshape(2, 15).asnumpy())
-    assert same(tensor.reshape((-1, 2)).asnumpy(), true_res.reshape(15, 2).asnumpy())
-    assert same(tensor.reshape(6, 5).asnumpy(), true_res.reshape(6, 5).asnumpy())
-    assert same(tensor.reshape(-1, 2).asnumpy(), true_res.reshape(15, 2).asnumpy())
-    assert same(tensor.reshape(-1).asnumpy(), true_res.asnumpy())
-    assert same(tensor.reshape(30).asnumpy(), true_res.asnumpy())
-    assert same(tensor.reshape(0, -1).asnumpy(), true_res.reshape(2, 15).asnumpy())
-    assert same(tensor.reshape(-1, 6).asnumpy(), true_res.reshape(5, 6).asnumpy())
-    assert same(tensor.reshape(-2,).asnumpy(), true_res.reshape(2, 3, 5).asnumpy())
-    assert same(tensor.reshape(-3, -1).asnumpy(), true_res.reshape(6, 5).asnumpy())
-    assert same(tensor.reshape(-1, 15).reshape(0, -4, 3, -1).asnumpy(), true_res.reshape(2, 3, 5).asnumpy())
-    assert same(tensor.reshape(-1, 0).asnumpy(), true_res.reshape(10, 3).asnumpy())
-    assert same(tensor.reshape(-1, 0, reverse=True).asnumpy(), true_res.reshape(6, 5).asnumpy())
-    # https://github.com/apache/mxnet/issues/18886
-    assertRaises(ValueError, tensor.reshape, (2, 3))
+    with legacy_np_semantics():
+        tensor = (mx.nd.arange(30) + 1).reshape(2, 3, 5)
+        true_res = mx.nd.arange(30) + 1
+        assert same(tensor.reshape((-1,)).asnumpy(), true_res.asnumpy())
+        assert same(tensor.reshape((2, -1)).asnumpy(), true_res.reshape(2, 15).asnumpy())
+        assert same(tensor.reshape((0, -1)).asnumpy(), true_res.reshape(2, 15).asnumpy())
+        assert same(tensor.reshape((-1, 2)).asnumpy(), true_res.reshape(15, 2).asnumpy())
+        assert same(tensor.reshape(6, 5).asnumpy(), true_res.reshape(6, 5).asnumpy())
+        assert same(tensor.reshape(-1, 2).asnumpy(), true_res.reshape(15, 2).asnumpy())
+        assert same(tensor.reshape(-1).asnumpy(), true_res.asnumpy())
+        assert same(tensor.reshape(30).asnumpy(), true_res.asnumpy())
+        assert same(tensor.reshape(0, -1).asnumpy(), true_res.reshape(2, 15).asnumpy())
+        assert same(tensor.reshape(-1, 6).asnumpy(), true_res.reshape(5, 6).asnumpy())
+        assert same(tensor.reshape(-2,).asnumpy(), true_res.reshape(2, 3, 5).asnumpy())
+        assert same(tensor.reshape(-3, -1).asnumpy(), true_res.reshape(6, 5).asnumpy())
+        assert same(tensor.reshape(-1, 15).reshape(0, -4, 3, -1).asnumpy(), true_res.reshape(2, 3, 5).asnumpy())
+        assert same(tensor.reshape(-1, 0).asnumpy(), true_res.reshape(10, 3).asnumpy())
+        assert same(tensor.reshape(-1, 0, reverse=True).asnumpy(), true_res.reshape(6, 5).asnumpy())
+        # https://github.com/apache/mxnet/issues/18886
+        assertRaises(ValueError, tensor.reshape, (2, 3))
 
 def test_ndarray_flatten():
     tensor = (mx.nd.arange(30) + 1).reshape(2, 3, 5)
@@ -436,6 +437,7 @@ def test_ndarray_load_fortran_order(tmp_path):
     assert np.sum(np_mx_arr != arr) == 0
 
 
+@legacy_np_semantics()
 def test_ndarray_legacy_load():
     data = []
     for _ in range(6):
@@ -1750,7 +1752,7 @@ def test_ndarray_astype():
 def test_norm(ctx=default_device()):
     try:
         import scipy
-        assert LooseVersion(scipy.__version__) >= LooseVersion('0.1')
+        assert Version(scipy.__version__) >= Version('0.1')
         from scipy.linalg import norm as sp_norm
     except (AssertionError, ImportError):
         print("Could not import scipy.linalg.norm or scipy is too old. "
@@ -1917,29 +1919,30 @@ def test_zero_from_numpy():
 
 
 def test_save_load_scalar_zero_size_ndarrays():
-    def check_save_load(save_is_np_shape, load_is_np_shape, shapes, save_throw_exception, load_throw_exception):
-        with mx.np_shape(save_is_np_shape):
-            array_list = [np.random.randint(0, 10, size=shape) for shape in shapes]
-            array_list = [mx.nd.array(arr) for arr in array_list]
-            with TemporaryDirectory() as work_dir:
-                fname = os.path.join(work_dir, 'dataset')
-                if save_throw_exception:
-                    assert_exception(mx.nd.save, mx.MXNetError, fname, array_list)
-                else:
-                    mx.nd.save(fname, array_list)
-                with mx.np_shape(load_is_np_shape):
-                    if load_throw_exception:
-                        assert_exception(mx.nd.load, mx.MXNetError, fname)
+    with legacy_np_semantics():
+        def check_save_load(save_is_np_shape, load_is_np_shape, shapes, save_throw_exception, load_throw_exception):
+            with mx.np_shape(save_is_np_shape):
+                array_list = [np.random.randint(0, 10, size=shape) for shape in shapes]
+                array_list = [mx.nd.array(arr) for arr in array_list]
+                with TemporaryDirectory() as work_dir:
+                    fname = os.path.join(work_dir, 'dataset')
+                    if save_throw_exception:
+                        assert_exception(mx.nd.save, mx.MXNetError, fname, array_list)
                     else:
-                        array_list_loaded = mx.nd.load(fname)
-                        assert len(array_list) == len(array_list_loaded)
-                        for a1, a2 in zip(array_list, array_list_loaded):
-                            assert np.array_equal(a1.asnumpy(), a2.asnumpy())
+                        mx.nd.save(fname, array_list)
+                    with mx.np_shape(load_is_np_shape):
+                        if load_throw_exception:
+                            assert_exception(mx.nd.load, mx.MXNetError, fname)
+                        else:
+                            array_list_loaded = mx.nd.load(fname)
+                            assert len(array_list) == len(array_list_loaded)
+                            for a1, a2 in zip(array_list, array_list_loaded):
+                                assert np.array_equal(a1.asnumpy(), a2.asnumpy())
 
-    check_save_load(False, False, [(2, 0, 1), (0,), (0, 4), (3, 0, 0, 0), (2, 1), (0, 5, 0)], False, False)
-    check_save_load(True, False, [(2, 0, 1), (0,), (0, 4), (3, 0, 0, 0), (2, 1), (0, 5, 0)], False, True)
-    check_save_load(False, True, [(2, 0, 1), (0,), (0, 4), (3, 0, 0, 0), (2, 1), (0, 5, 0)], False, True)
-    check_save_load(True, True, [(2, 0, 1), (0,), (), (), (0, 4), (), (3, 0, 0, 0), (2, 1), (0, 5, 0)], False, False)
+        check_save_load(False, False, [(2, 0, 1), (0,), (0, 4), (3, 0, 0, 0), (2, 1), (0, 5, 0)], False, False)
+        check_save_load(True, False, [(2, 0, 1), (0,), (0, 4), (3, 0, 0, 0), (2, 1), (0, 5, 0)], False, True)
+        check_save_load(False, True, [(2, 0, 1), (0,), (0, 4), (3, 0, 0, 0), (2, 1), (0, 5, 0)], False, True)
+        check_save_load(True, True, [(2, 0, 1), (0,), (), (), (0, 4), (), (3, 0, 0, 0), (2, 1), (0, 5, 0)], False, False)
 
 
 def _test_update_ops_mutation_impl():
@@ -2043,6 +2046,7 @@ def test_large_int_rounding():
     assert np.all((a == large_integer).asnumpy())
 
 
+@legacy_np_semantics()
 def test_load_saved_gpu_array_when_no_gpus_are_present():
     # State obtained with mx.nd.arange(1, ctx=mx.gpu()).__getstate__()
     # State needs to be exported manually, as running above command will only

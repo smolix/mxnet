@@ -17,6 +17,8 @@
 
 import sys, os, logging, functools
 import multiprocessing as mp
+import struct
+import zlib
 import mxnet as mx
 import numpy as np
 import random
@@ -39,6 +41,88 @@ xfail_when_nonstandard_decimal_separator = pytest.mark.xfail(
     "These operators should be rewritten to utilize the new FFI. Please see #18097 for more "
     "information."
 )
+
+
+def has_opencv():
+    """Return whether the loaded MXNet library was built with OpenCV support."""
+    return mx.runtime.Features().is_enabled("OPENCV")
+
+
+requires_opencv = pytest.mark.skipif(
+    not has_opencv(),
+    reason="MXNet built without OpenCV support"
+)
+
+
+@contextmanager
+def legacy_np_semantics():
+    """Temporarily disable NumPy semantics for legacy-shape tests."""
+    prev_np_shape = mx.util.is_np_shape()
+    prev_np_array = mx.util.is_np_array()
+    prev_np_dtype = mx.util.is_np_default_dtype()
+    mx.npx.reset_np()
+    try:
+        yield
+    finally:
+        mx.npx.set_np(shape=prev_np_shape, array=prev_np_array, dtype=prev_np_dtype)
+
+
+def _png_chunk(chunk_type, data):
+    payload = chunk_type + data
+    return (struct.pack(">I", len(data)) + payload +
+            struct.pack(">I", zlib.crc32(payload) & 0xffffffff))
+
+
+def write_rgb_png(path, image):
+    """Write an RGB uint8 numpy array as a PNG using only the Python stdlib."""
+    image = np.asarray(image, dtype=np.uint8)
+    assert image.ndim == 3 and image.shape[2] == 3
+    height, width, _ = image.shape
+    raw_rows = b"".join(b"\x00" + image[row].tobytes() for row in range(height))
+    with open(path, "wb") as out:
+        out.write(b"\x89PNG\r\n\x1a\n")
+        out.write(_png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)))
+        out.write(_png_chunk(b"IDAT", zlib.compress(raw_rows)))
+        out.write(_png_chunk(b"IEND", b""))
+
+
+def make_test_images(root, count=16):
+    """Create deterministic RGB PNG fixtures and return their file paths."""
+    os.makedirs(root, exist_ok=True)
+    images = []
+    yy, xx = np.mgrid[0:32, 0:32]
+    for idx in range(count):
+        image = np.empty((32, 32, 3), dtype=np.uint8)
+        image[:, :, 0] = (xx * 7 + idx * 11) % 256
+        image[:, :, 1] = (yy * 5 + idx * 17) % 256
+        image[:, :, 2] = ((xx + yy) * 3 + idx * 23) % 256
+        path = os.path.join(root, "image_{:02d}.png".format(idx))
+        write_rgb_png(path, image)
+        images.append(path)
+    return images
+
+
+def make_mnist_ubyte(root, train_count=60000, test_count=10000):
+    """Create deterministic MNIST-format ubyte files without downloading data."""
+    os.makedirs(root, exist_ok=True)
+
+    def write_images(path, count):
+        with open(path, "wb") as out:
+            out.write(struct.pack(">IIII", 2051, count, 28, 28))
+            chunk = bytes(28 * 28)
+            for _ in range(count):
+                out.write(chunk)
+
+    def write_labels(path, count):
+        labels = np.arange(count, dtype=np.uint8) % 10
+        with open(path, "wb") as out:
+            out.write(struct.pack(">II", 2049, count))
+            out.write(labels.tobytes())
+
+    write_images(os.path.join(root, "train-images-idx3-ubyte"), train_count)
+    write_labels(os.path.join(root, "train-labels-idx1-ubyte"), train_count)
+    write_images(os.path.join(root, "t10k-images-idx3-ubyte"), test_count)
+    write_labels(os.path.join(root, "t10k-labels-idx1-ubyte"), test_count)
 
 def assertRaises(expected_exception, func, *args, **kwargs):
     try:

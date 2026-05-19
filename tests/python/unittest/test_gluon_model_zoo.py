@@ -39,8 +39,10 @@ def eprint(*args, **kwargs):
     'mobilenet1.0', 'mobilenet0.75', 'mobilenet0.5', 'mobilenet0.25',
     'mobilenetv2_1.0', 'mobilenetv2_0.75', 'mobilenetv2_0.5', 'mobilenetv2_0.25'
 ])
-def test_models(model_name):
-    pretrained_to_test = set(['mobilenetv2_0.25'])
+def test_models(model_name, request):
+    pretrained_to_test = set()
+    if request.config.getoption("--run-remote"):
+        pretrained_to_test.add('mobilenetv2_0.25')
 
     test_pretrain = model_name in pretrained_to_test
     model = get_model(model_name, pretrained=test_pretrain, root='model/')
@@ -66,4 +68,3 @@ def test_parallel_download():
         p.start()
     for p in processes:
         p.join()
-

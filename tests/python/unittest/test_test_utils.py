@@ -16,16 +16,36 @@
 # under the License.
 
 import os
+import io
 
 import mxnet as mx
+import requests
 
 import pytest
 
+try:
+    from unittest import mock
+except ImportError:
+    import mock
 
+
+class MockResponse(requests.Response):
+    def __init__(self, status_code, content):
+        super(MockResponse, self).__init__()
+        self.status_code = status_code
+        self.raw = io.BytesIO(content)
+
+
+@mock.patch(
+    'requests.get', mock.Mock(side_effect=requests.exceptions.ConnectionError))
 def test_download_retries():
     with pytest.raises(Exception):
         mx.test_utils.download("http://doesnotexist.notfound")
 
+
+@mock.patch(
+    'requests.get',
+    mock.Mock(side_effect=lambda *args, **kwargs: MockResponse(200, b'MOCK CONTENT' * 100)))
 def test_download_successful(tmpdir):
     tmp = str(tmpdir)
     tmpfile = os.path.join(tmp, 'README.md')

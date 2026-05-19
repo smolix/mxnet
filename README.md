@@ -60,6 +60,9 @@ What works
 * F16C CPU intrinsics for fast fp16 host (de)serialization.
 * DNNL subgraph fusion, the activation/eltwise/layer-norm/softmax stack,
   pooling, batch norm fwd+bwd, transpose, concat, where, masked softmax.
+* Native macOS arm64 CPU-only source builds are smoke-tested for import,
+  NumPy/Gluon basics, dtype behavior, and engine lifecycle. This path does
+  not include CUDA, cuDNN, NCCL, OpenMP, oneDNN, SSE, or F16C.
 
 What is experimental or known-broken
 ------------------------------------
@@ -90,6 +93,10 @@ System requirements
   release wheel bundles 9.22 under `mxnet/lib/`.
 * NCCL 2.28.3.
 * Python 3.10+ (3.11 / 3.12 / 3.13 are CI-tested).
+* For Apple Silicon CPU-only builds: macOS arm64, Xcode Command Line Tools,
+  Homebrew `cmake`, `ninja`, `ccache`, and `uv`, and Python 3.11+. Use the
+  Accelerate BLAS/LAPACK path and keep CUDA, cuDNN, NCCL, OpenMP, oneDNN,
+  SSE, and F16C disabled for the baseline smoke configuration.
 
 Installation
 ------------

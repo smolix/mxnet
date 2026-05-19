@@ -383,7 +383,7 @@ def test_default_handlers():
     # test handler order
     train_metrics = est.train_metrics
     val_metrics = est.val_metrics
-    early_stopping = EarlyStoppingHandler(monitor=val_metrics[0])
+    early_stopping = EarlyStoppingHandler(monitor=val_metrics[0], mode='min')
     handlers = est._prepare_default_handlers(val_data=None, event_handlers=[early_stopping])
     assert len(handlers) == 5
     assert isinstance(handlers[0], GradientUpdateHandler)
@@ -463,4 +463,3 @@ def test_val_handlers():
 
     logging = LoggingHandler(log_interval=1, metrics=est.val_metrics)
     est.evaluate(val_data=val_data, event_handlers=[logging])
-

@@ -38,14 +38,33 @@
 #---------------------------------------------
 # Common libraries
 #---------------------------------------------
+set(MXNET_DARWIN_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
+if(NOT MXNET_DARWIN_PROCESSOR)
+  set(MXNET_DARWIN_PROCESSOR "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+endif()
+if(NOT MXNET_DARWIN_PROCESSOR)
+  execute_process(COMMAND uname -m
+                  OUTPUT_VARIABLE MXNET_DARWIN_PROCESSOR
+                  OUTPUT_STRIP_TRAILING_WHITESPACE)
+endif()
+string(TOLOWER "${MXNET_DARWIN_PROCESSOR}" MXNET_DARWIN_PROCESSOR)
+
 set(USE_BLAS "apple" CACHE STRING "BLAS Vendor")
 
-set(USE_OPENCV ON CACHE BOOL "Build with OpenCV support")
+if(MXNET_DARWIN_PROCESSOR MATCHES "^(arm64|aarch64)$")
+  set(USE_OPENCV OFF CACHE BOOL "Build with OpenCV support")
+else()
+  set(USE_OPENCV ON CACHE BOOL "Build with OpenCV support")
+endif()
 set(OPENCV_ROOT "" CACHE BOOL "OpenCV install path. Supports autodetection.")
 
 set(USE_OPENMP OFF CACHE BOOL "Build with Openmp support")
 
-set(USE_ONEDNN ON CACHE BOOL "Build with oneDNN support")
+if(MXNET_DARWIN_PROCESSOR MATCHES "^(arm64|aarch64)$")
+  set(USE_ONEDNN OFF CACHE BOOL "Build with oneDNN support")
+else()
+  set(USE_ONEDNN ON CACHE BOOL "Build with oneDNN support")
+endif()
 
 set(USE_LAPACK ON CACHE BOOL "Build with lapack support")
 
@@ -65,8 +84,13 @@ set(USE_TVM_OP OFF CACHE BOOL "Enable use of TVM operator build system.")
 #---------------------------------------------
 # CPU instruction sets: The support is autodetected if turned ON
 #---------------------------------------------
-set(USE_SSE ON CACHE BOOL "Build with x86 SSE instruction support")
-set(USE_F16C ON CACHE BOOL "Build with x86 F16C instruction support")
+if(MXNET_DARWIN_PROCESSOR MATCHES "^(x86_64|amd64)$")
+  set(USE_SSE ON CACHE BOOL "Build with x86 SSE instruction support")
+  set(USE_F16C ON CACHE BOOL "Build with x86 F16C instruction support")
+else()
+  set(USE_SSE OFF CACHE BOOL "Build with x86 SSE instruction support")
+  set(USE_F16C OFF CACHE BOOL "Build with x86 F16C instruction support")
+endif()
 
 
 #----------------------------

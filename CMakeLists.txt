@@ -17,6 +17,17 @@
 
 cmake_minimum_required(VERSION 3.13)
 
+# arm64 macOS is available from macOS 11 onward. Detect the host arch before
+# project() initializes compiler flags; CMAKE_HOST_SYSTEM_PROCESSOR is not
+# reliably populated yet on all CMake versions.
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+  execute_process(COMMAND uname -m OUTPUT_VARIABLE MXNET_HOST_ARCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(MXNET_HOST_ARCH MATCHES "^(arm64|aarch64)$"
+     AND (NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET OR CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "11.0"))
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS deployment target" FORCE)
+  endif()
+endif()
+
 # workaround to store CMAKE_CROSSCOMPILING because is getting reset by the project command
 if(CMAKE_CROSSCOMPILING)
   set(__CMAKE_CROSSCOMPILING ${CMAKE_CROSSCOMPILING})
@@ -56,7 +67,17 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Utils.cmake)
 include(CMakeDependentOption)
 #Some things have order. This must be put in front alone
 option(MXNET_BUILD_SHARED_LIBS "Build shared libraries instead of static libraries" ON)
-option(USE_CUDA "Build with CUDA support"   ON)
+if(APPLE)
+  set(MXNET_DEFAULT_USE_CUDA OFF)
+  set(MXNET_DEFAULT_USE_OPENCV OFF)
+  set(MXNET_DEFAULT_USE_OPENMP OFF)
+  set(USE_BLAS "apple" CACHE STRING "BLAS Vendor")
+else()
+  set(MXNET_DEFAULT_USE_CUDA ON)
+  set(MXNET_DEFAULT_USE_OPENCV ON)
+  set(MXNET_DEFAULT_USE_OPENMP ON)
+endif()
+option(USE_CUDA "Build with CUDA support" ${MXNET_DEFAULT_USE_CUDA})
 set(MXNET_CUDA_ARCH "8.0;8.6;8.9;9.0;12.0+PTX" CACHE STRING "Target NVIDIA GPU achitecture.
 Format: Auto | Common | All | LIST(ARCH_AND_PTX ...)
 - \"Auto\" detects local machine GPU compute arch at runtime.
@@ -69,8 +90,8 @@ Default targets Ampere (sm_80/sm_86), Ada (sm_89), Hopper (sm_90), and
 Blackwell consumer (sm_120) with a forward-compat PTX 12.0 fallback for
 future GPUs newer than sm_120.")
 option(USE_NCCL "Use NVidia NCCL with CUDA" OFF)
-option(USE_OPENCV "Build with OpenCV support" ON)
-option(USE_OPENMP "Build with Openmp support" ON)
+option(USE_OPENCV "Build with OpenCV support" ${MXNET_DEFAULT_USE_OPENCV})
+option(USE_OPENMP "Build with Openmp support" ${MXNET_DEFAULT_USE_OPENMP})
 option(USE_FATBIN_COMPRESSION "Compress nvcc fatbin output" ON)
 cmake_dependent_option(USE_NVML "Build with nvml support if found" ON "USE_CUDA" OFF)
 cmake_dependent_option(USE_CUDNN "Build with cudnn support" ON "USE_CUDA" OFF) # one could set CUDNN_ROOT for search path
@@ -78,7 +99,8 @@ cmake_dependent_option(USE_CUTENSOR "Build with cuTENSOR support" ON "USE_CUDA" 
 cmake_dependent_option(USE_NVTX "Build with nvtx support if found" ON "USE_CUDA" OFF)
 cmake_dependent_option(USE_SSE "Build with x86 SSE instruction support" ON
   "CMAKE_SYSTEM_PROCESSOR STREQUAL x86_64 OR CMAKE_SYSTEM_PROCESSOR STREQUAL amd64" OFF)
-option(USE_F16C "Build with x86 F16C instruction support" ON) # autodetects support if ON
+cmake_dependent_option(USE_F16C "Build with x86 F16C instruction support" ON
+  "CMAKE_SYSTEM_PROCESSOR STREQUAL x86_64 OR CMAKE_SYSTEM_PROCESSOR STREQUAL amd64" OFF) # autodetects support if ON
 option(USE_LAPACK "Build with lapack support" ON)
 option(USE_MKL_LAYERNORM "Use layer normalization from MKL, which is currently slower than internal. No effect unless USE_BLAS=MKL (or mkl)." OFF)
 if((NOT APPLE) AND (NOT MSVC) AND (CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64") AND (NOT CMAKE_CROSSCOMPILING))
@@ -499,7 +521,8 @@ if(USE_LAPACK)
   if(NOT USE_LAPACKE_INTERFACE)
     # BLAS=open case is handled in ChooseBlas.cmake
     if(NOT MSVC AND NOT CMAKE_BUILD_TYPE STREQUAL "Distribution"
-       AND NOT BLAS STREQUAL "Open" AND NOT BLAS STREQUAL "open")
+       AND NOT BLAS STREQUAL "Open" AND NOT BLAS STREQUAL "open"
+       AND NOT BLAS STREQUAL "apple")
       list(APPEND mxnet_LINKER_LIBS lapack)
     endif()
   endif()

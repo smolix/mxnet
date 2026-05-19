@@ -29,14 +29,14 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-22.04
-    # Artifact download + pip install + test run.  All chosen tests are
+    # Artifact download + uv install + test run.  All chosen tests are
     # CPU-only and have a 180 s per-test timeout; the full suite finishes
     # well under 20 min on a 4-core runner when the build artifact is
     # already present.
     timeout-minutes: 20
     env:
       VENV_DIR: ${{ github.workspace }}/.venv
-      PIP_CACHE_DIR: ${{ github.workspace }}/.pip-cache
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
 
     steps:
       - uses: actions/checkout@v4
@@ -50,18 +50,21 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
       # ------------------------------------------------------------------ #
-      # pip wheel cache — keyed on Python version + requirements hash so   #
+      # uv cache — keyed on Python version + requirements hash so          #
       # that a requirements change always busts it.                         #
       # ------------------------------------------------------------------ #
-      - name: Cache pip wheels
+      - name: Cache uv
         uses: actions/cache@v4
         with:
-          path: ${{ env.PIP_CACHE_DIR }}
-          key: pip-test-cpu-py311-${{ hashFiles('python/mxnet/requirements*.txt', 'tests/requirements*.txt') }}
+          path: ${{ env.UV_CACHE_DIR }}
+          key: uv-test-cpu-py311-${{ hashFiles('python/setup.py', 'tests/requirements*.txt') }}
           restore-keys: |
-            pip-test-cpu-py311-
-            pip-test-cpu-
+            uv-test-cpu-py311-
+            uv-test-cpu-
 
       # ------------------------------------------------------------------ #
       # Download the libmxnet.so produced by build-cpu.yml on the same SHA.#
@@ -91,32 +94,26 @@ jobs:
 
       # ------------------------------------------------------------------ #
       # Create venv and install runtime deps                                #
-      # Note: nvidia-cudnn-cu13 / nvidia-nccl-cu13 ship their shared libs  #
-      # as pure-Python wheels; installing them ensures the .so chain is     #
-      # present even on CPU runners (MXNet dlopen-loads them lazily).       #
+      # Use uv for the Python environment, matching the Linux build smoke.  #
       # ------------------------------------------------------------------ #
       - name: Create venv and install dependencies
         run: |
-          python -m venv "$VENV_DIR"
-          source "$VENV_DIR/bin/activate"
-          pip install --upgrade pip --cache-dir "$PIP_CACHE_DIR"
-          pip install --cache-dir "$PIP_CACHE_DIR" \
+          uv venv "$VENV_DIR" --python 3.11
+          uv pip install --python "$VENV_DIR/bin/python" \
             "numpy<2" \
             requests \
             pytest \
-            pytest-timeout \
-            nvidia-cudnn-cu13 \
-            nvidia-nccl-cu13
+            pytest-timeout
 
       - name: Install in-tree MXNet Python package
         env:
           MXNET_LIBRARY_PATH: ${{ steps.locate.outputs.libpath }}
+          MXNET_SETUP_ENABLE_CUDA_DEPS: "0"
         run: |
-          source "$VENV_DIR/bin/activate"
           cd python
-          pip install --cache-dir "$PIP_CACHE_DIR" -e .
+          uv pip install --python "$VENV_DIR/bin/python" -e .
           cd ..
-          python -c "import mxnet; print('mxnet import OK, version:', mxnet.__version__)"
+          "$VENV_DIR/bin/python" -c "import mxnet; print('mxnet import OK, version:', mxnet.__version__)"
 
       # ------------------------------------------------------------------ #
       # Run the fast CPU-capable subset                                     #
@@ -131,8 +128,7 @@ jobs:
           MXNET_LIBRARY_PATH: ${{ steps.locate.outputs.libpath }}
           MXNET_ENGINE_TYPE: NaiveEngine
         run: |
-          source "$VENV_DIR/bin/activate"
-          pytest \
+          "$VENV_DIR/bin/python" -m pytest \
             tests/python/dnnl/test_dnnl.py \
             tests/python/dnnl/subgraphs/test_fc_subgraph.py \
             tests/python/unittest/test_engine_shutdown.py \

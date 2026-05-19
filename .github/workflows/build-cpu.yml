@@ -25,6 +25,8 @@ jobs:
       CMAKE_BUILD_TYPE: Release
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: "2G"
+      VENV_DIR: ${{ github.workspace }}/.venv
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,6 +52,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -114,15 +119,16 @@ jobs:
       - name: Smoke test (import mxnet)
         env:
           MXNET_LIBRARY_PATH: ${{ github.workspace }}/${{ steps.locate.outputs.libpath }}
+          MXNET_SETUP_ENABLE_CUDA_DEPS: "0"
         run: |
-          python -m pip install --upgrade pip
+          uv venv "$VENV_DIR" --python 3.11
           # Install runtime deps used by python/mxnet (keep minimal).
-          python -m pip install "numpy<2" requests
+          uv pip install --python "$VENV_DIR/bin/python" "numpy<2" requests
           # Install the in-tree python package in editable mode, pointing at the freshly built .so.
           cd python
-          python -m pip install -e .
+          uv pip install --python "$VENV_DIR/bin/python" -e .
           cd ..
-          python -c "import mxnet; import mxnet.numpy as np; x = np.array([1,2,3]); print(x*2)"
+          "$VENV_DIR/bin/python" -c "import mxnet; import mxnet.numpy as np; x = np.array([1,2,3]); print(x*2)"
 
       - name: Upload libmxnet.so artefact
         if: always()

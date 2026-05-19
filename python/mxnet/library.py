@@ -29,6 +29,8 @@ class MXlib:
     def __init__(self, handle):
         self.handle = handle
     def __del__(self):
+        if not sys.platform.startswith('linux'):
+            return
         # glibc 2.34+ absorbed libdl into libc; bare "libdl.so" no longer
         # resolves on Ubuntu 22+ etc., so MXlib.__del__ raised OSError during
         # interpreter shutdown. Try the older soname, fall back to libc.so.6
@@ -51,7 +53,7 @@ def load(path, verbose=True):
     Parameters
     ---------
     path : string
-        Path to library .so/.dll file
+        Path to library .so/.dll/.dylib file
 
     verbose : boolean
         defaults to True, set to False to avoid printing library info
@@ -70,7 +72,7 @@ def load(path, verbose=True):
         raise MXNetError(f"load path {path} is not an absolute path")
     #check if path is to a library file
     _, file_ext = os.path.splitext(path)
-    if not file_ext in ['.so', '.dll']:
+    if file_ext not in ['.so', '.dll', '.dylib']:
         raise MXNetError(f"load path {path} is NOT a library file")
 
     verbose_val = 1 if verbose else 0

@@ -8625,9 +8625,9 @@ def test_np_tril_indices():
         def forward(self, x, *args, **kwargs):
             return x, np.tril_indices(n=self._n, k=self._k, m=self._m)
 
-    for n in onp.random.random_integers(-10, 50, 2):
-        for k in onp.random.random_integers(-50, 50, 2):
-            for m in onp.random.random_integers(-10, 50, 2):
+    for n in onp.random.randint(-10, 51, 2):
+        for k in onp.random.randint(-50, 51, 2):
+            for m in onp.random.randint(-10, 51, 2):
                 np_out = onp.tril_indices(n, k, m)
                 for hybridize in [True, False]:
                     # dummy nparray for hybridize

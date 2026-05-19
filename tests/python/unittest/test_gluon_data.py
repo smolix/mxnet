@@ -16,6 +16,8 @@
 # under the License.
 
 import os
+import gc
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -345,13 +347,19 @@ def test_multi_worker_dataloader_release_pool():
         print('Skip for windows since spawn on windows is too expensive.')
         return
 
-    for _ in range(10):
+    # macOS uses spawn for multiprocessing; creating 80 worker processes here
+    # dominates the unittest runtime while covering the same release path.
+    repeat = 3 if sys.platform == 'darwin' else 10
+    num_workers = 2 if sys.platform == 'darwin' else 8
+
+    for _ in range(repeat):
         A = np.random.rand(999, 2000)
-        D = mx.gluon.data.DataLoader(A, batch_size=8, num_workers=8)
+        D = mx.gluon.data.DataLoader(A, batch_size=8, num_workers=num_workers)
         the_iter = iter(D)
         next(the_iter)
         del the_iter
         del D
+        gc.collect()
 
 def test_dataloader_context():
     X = np.random.uniform(size=(10, 20))
@@ -362,12 +370,12 @@ def test_dataloader_context():
     # use non-pinned memory
     loader1 = gluon.data.DataLoader(dataset, 8)
     for _, x in enumerate(loader1):
-        assert x.context == context.cpu(default_dev_id)
+        assert x.device == context.cpu(default_dev_id)
 
     # use pinned memory with default device id
     loader2 = gluon.data.DataLoader(dataset, 8, pin_memory=True)
     for _, x in enumerate(loader2):
-        assert x.context == context.cpu_pinned(default_dev_id)
+        assert x.device == context.cpu_pinned(default_dev_id)
 
     if mx.device.num_gpus() <= 1:
         print('Bypassing custom_dev_id pinned mem test on system with < 2 gpus.')
@@ -376,7 +384,7 @@ def test_dataloader_context():
         loader3 = gluon.data.DataLoader(dataset, 8, pin_memory=True,
                                         pin_device_id=custom_dev_id)
         for _, x in enumerate(loader3):
-            assert x.context == context.cpu_pinned(custom_dev_id)
+            assert x.device == context.cpu_pinned(custom_dev_id)
 
 def batchify(a):
     return a

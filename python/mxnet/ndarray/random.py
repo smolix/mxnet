@@ -18,7 +18,7 @@
 """Random distribution generator NDArray API of MXNet."""
 
 from ..base import numeric_types, _Null
-from ..context import current_context
+from ..device import current_device
 from . import _internal
 from .ndarray import NDArray
 
@@ -38,7 +38,7 @@ def _random_helper(random, sampler, params, shape, dtype, ctx, out, kwargs):
         return sampler(*params, shape=shape, dtype=dtype, out=out, **kwargs)
     elif isinstance(params[0], numeric_types):
         if ctx is None:
-            ctx = current_context()
+            ctx = current_device()
         if shape is _Null and out is None:
             shape = 1
         for i in params[1:]:

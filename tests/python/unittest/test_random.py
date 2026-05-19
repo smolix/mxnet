@@ -406,7 +406,7 @@ def test_dirichlet():
 @legacy_np_semantics()
 def test_random():
     for dtype in [np.float16, np.float32, np.float64]:
-        check_with_device(mx.context.current_context(), dtype)
+        check_with_device(mx.current_device(), dtype)
 
 # Set seed variously based on `start_seed` and `num_init_seeds`, then set seed finally to `final_seed`
 def set_seed_variously(init_seed, num_init_seeds, final_seed):
@@ -419,7 +419,7 @@ def set_seed_variously(init_seed, num_init_seeds, final_seed):
 # Tests that seed setting of std (non-parallel) rng is synchronous w.r.t. rng use before and after.
 @pytest.mark.serial
 def test_random_seed_setting():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     seed_to_test = 1234
     num_temp_seeds = 25
     probs = [0.125, 0.25, 0.25, 0.0625, 0.125, 0.1875]
@@ -441,7 +441,7 @@ def test_random_seed_setting():
 # Tests that seed setting of parallel rng is synchronous w.r.t. rng use before and after.
 @pytest.mark.serial
 def test_parallel_random_seed_setting():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     seed_to_test = 1234
     for dtype in ['float16', 'float32', 'float64']:
         # Avoid excessive test cpu runtimes
@@ -495,14 +495,14 @@ def test_random_seed_setting_for_context():
     num_temp_seeds = 25
     probs = [0.125, 0.25, 0.25, 0.0625, 0.125, 0.1875]
     num_samples = 100000
-    dev_type = mx.context.current_context().device_type
+    dev_type = mx.current_device().device_type
     for dtype in ['float16', 'float32', 'float64']:
         samples_imp = []
         samples_sym = []
         # Collect random number samples from the generators of all devices, each seeded with the same number.
         for dev_id in range(0, mx.device.num_gpus() if dev_type == 'gpu' else 1):
-            with mx.Context(dev_type, dev_id):
-                ctx = mx.context.current_context()
+            with mx.Device(dev_type, dev_id):
+                ctx = mx.current_device()
                 seed = set_seed_variously_for_context(ctx, 1, num_temp_seeds, seed_to_test)
 
                 # Check imperative. `categorical` uses non-parallel rng.
@@ -526,14 +526,14 @@ def test_random_seed_setting_for_context():
 @pytest.mark.serial
 def test_parallel_random_seed_setting_for_context():
     seed_to_test = 1234
-    dev_type = mx.context.current_context().device_type
+    dev_type = mx.current_device().device_type
     for dtype in ['float16', 'float32', 'float64']:
         samples_imp = []
         samples_sym = []
         # Collect random number samples from the generators of all devices, each seeded with the same number.
         for dev_id in range(0, mx.device.num_gpus() if dev_type == 'gpu' else 1):
-            with mx.Context(dev_type, dev_id):
-                ctx = mx.context.current_context()
+            with mx.Device(dev_type, dev_id):
+                ctx = mx.current_device()
                 # Avoid excessive test cpu runtimes.
                 num_temp_seeds = 25 if dev_type == 'gpu' else 1
                 # To flush out a possible race condition, run multiple times.
@@ -601,7 +601,7 @@ def test_sample_categorical(dtype, x):
 # Test the generators with the chi-square testing
 @pytest.mark.serial
 def test_normal_generator():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     samples = 1000000
     # Default success rate is 0.25, so 2 successes of 8 trials will pass.
     trials = 8
@@ -625,7 +625,7 @@ def test_normal_generator():
 
 @pytest.mark.serial
 def test_uniform_generator():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     for dtype in ['float16', 'float32', 'float64']:
         for low, high in [(-1.0, 1.0), (1.0, 3.0)]:
             scale = high - low
@@ -644,7 +644,7 @@ def test_uniform_generator():
 @pytest.mark.serial
 def test_gamma_generator():
     success_rate = 0.05
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     for dtype in ['float16', 'float32', 'float64']:
         for kappa, theta in [(0.5, 1.0), (1.0, 5.0)]:
             buckets, probs = gen_buckets_probs_with_ppf(lambda x: ss.gamma.ppf(x, a=kappa, loc=0, scale=theta), 5)
@@ -658,7 +658,7 @@ def test_gamma_generator():
 
 @pytest.mark.serial
 def test_exponential_generator():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     for dtype in ['float16', 'float32', 'float64']:
         for scale in [0.1, 1.0]:
             buckets, probs = gen_buckets_probs_with_ppf(lambda x: ss.expon.ppf(x, loc=0, scale=scale), 5)
@@ -672,7 +672,7 @@ def test_exponential_generator():
 
 @pytest.mark.serial
 def test_poisson_generator():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     for dtype in ['float16', 'float32', 'float64']:
         for lam in [1, 10]:
             buckets = [(-1.0, lam - 0.5), (lam - 0.5, 2 * lam + 0.5), (2 * lam + 0.5, np.inf)]
@@ -687,7 +687,7 @@ def test_poisson_generator():
 
 @pytest.mark.serial
 def test_binomial_generator():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     for dtype in ['float16', 'float32', 'float64']:
         trials_num = 10000
         success_prob = 0.25
@@ -705,7 +705,7 @@ def test_binomial_generator():
 
 @pytest.mark.serial
 def test_negative_binomial_generator():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     for dtype in ['float16', 'float32', 'float64']:
         success_num = 2
         success_prob = 0.2
@@ -751,7 +751,7 @@ def test_categorical_generator():
             quantized_probs = np.array(probs)
         return quantized_probs
 
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     probs = [0.1, 0.2, 0.3, 0.05, 0.15, 0.2]
     samples = 1000000
     trials = 5
@@ -792,7 +792,7 @@ def test_multinomial_generator():
         shape = (int(mx.nd.sum(arr).asscalar()),)
         return mx.nd.cumsum(mx.nd.scatter_nd(data, ind, shape)) - 1
 
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     probs = np.array([0.1, 0.2, 0.3, 0.05, 0.15, 0.2])
 
     buckets = list(range(6))
@@ -807,7 +807,7 @@ def test_multinomial_generator():
 
 @pytest.mark.serial
 def test_with_random_seed():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     size = 100
     shape = (size,)
 
@@ -894,7 +894,7 @@ def test_random_seed():
 
 @pytest.mark.serial
 def test_unique_zipfian_generator():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     if ctx.device_type == 'cpu':
         num_sampled = 8192
         range_max = 793472
@@ -934,7 +934,7 @@ def test_zipfian_generator():
     true_classes_var = mx.sym.var('true_classes')
     outputs = mx.sym.contrib.rand_zipfian(true_classes_var, num_sampled, range_max)
     outputs = mx.sym.Group(outputs)
-    executor = outputs._bind(mx.context.current_context(), {'true_classes' : true_classes})
+    executor = outputs._bind(mx.current_device(), {'true_classes' : true_classes})
     executor.forward()
     sampled_classes, exp_cnt_true, exp_cnt_sampled = executor.outputs
     assert_almost_equal(exp_cnt_sampled, exp_cnt[sampled_classes], rtol=1e-1, atol=1e-2)
@@ -991,7 +991,7 @@ def test_shuffle():
         b = mx.sym.random.shuffle(a)
         c = mx.sym.random.shuffle(data=b, name='c')
         d = mx.sym.sort(c, axis=0)
-        assert (d.eval(a=data, ctx=mx.current_context())[0] == data).prod() == 1
+        assert (d.eval(a=data, ctx=mx.current_device())[0] == data).prod() == 1
 
     # This test is weaker than `testSmall` and to test larger arrays.
     # `repeat` should be much smaller than the factorial of `len(x.shape[0])`.
@@ -1029,7 +1029,7 @@ def test_randint():
             'high': 3,
             'shape' : (500, 500),
             'dtype' : dtype,
-            'ctx' : mx.context.current_context()
+            'ctx' : mx.current_device()
             }
         mx.random.seed(128)
         ret1 = mx.nd.random.randint(**params).asnumpy()
@@ -1040,12 +1040,12 @@ def test_randint():
 
 @pytest.mark.serial
 def test_randint_extremes():
-    a = mx.nd.random.randint(dtype='int64', low=50000000, high=50000010, ctx=mx.context.current_context())
+    a = mx.nd.random.randint(dtype='int64', low=50000000, high=50000010, ctx=mx.current_device())
     assert a>=50000000 and a<=50000010
 
 @pytest.mark.serial
 def test_randint_generator():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     for dtype in ['int32', 'int64']:
         for low, high in [(50000000, 50001000),(-50000100,-50000000),(-500,199)]:
             scale = high - low
@@ -1065,13 +1065,13 @@ def test_randint_generator():
 
 @pytest.mark.serial
 def test_randint_without_dtype():
-    a = mx.nd.random.randint(low=50000000, high=50000010, ctx=mx.context.current_context())
+    a = mx.nd.random.randint(low=50000000, high=50000010, ctx=mx.current_device())
     assert a.dtype == np.int32
 
 
 @pytest.mark.serial
 def test_sample_categorical_num_outputs():
-    ctx = mx.context.current_context()
+    ctx = mx.current_device()
     probs = [[0.125, 0.25, 0.25], [0.0625, 0.125, 0.1875]]
     out = mx.nd.random.categorical(data=mx.nd.array(probs, ctx=ctx), shape=10000, get_prob=False)
     assert isinstance(out, mx.nd.NDArray)

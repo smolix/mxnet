@@ -8261,13 +8261,14 @@ def test_np_round():
                 if hybridize:
                     test_round.hybridize()
                 x = rand_ndarray(shape, dtype=oneType).as_np_ndarray()
-                np_out = getattr(onp, func)(x.asnumpy(), d)
+                onp_func = 'round' if func == 'round_' else func
+                np_out = getattr(onp, onp_func)(x.asnumpy(), d)
                 mx_out = test_round(x)
                 assert mx_out.shape == np_out.shape
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
 
                 mx_out = getattr(mx.np, func)(x, d)
-                np_out = getattr(onp, func)(x.asnumpy(), d)
+                np_out = getattr(onp, onp_func)(x.asnumpy(), d)
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
 
 

@@ -1529,12 +1529,13 @@ def test_npx_index_update():
             else:
                 expect_tmp = val
             mx_tmp = mx_ret[t_ind]
-            close_pos = onp.where(onp.isclose(expect_tmp, mx_tmp, rtol=eps, atol=eps))
+            close = onp.isclose(expect_tmp, mx_tmp, rtol=eps, atol=eps)
             if a[t_ind].ndim == 0:
-                if close_pos[0].size == 1:
+                if close:
                     mx_ret[t_ind] = 0
                     a[t_ind] = 0
             else:
+                close_pos = onp.where(close)
                 mx_ret[t_ind][close_pos] = 0
                 a[t_ind][close_pos] = 0
         assert_almost_equal(mx_ret, a, rtol=eps, atol=eps)

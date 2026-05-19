@@ -40,6 +40,10 @@
 #define MXNET_USE_OPENCV 0
 #endif
 
+#ifndef MXNET_USE_LIBJPEG_TURBO
+#define MXNET_USE_LIBJPEG_TURBO 0
+#endif
+
 /*!
  *\brief whether to use cuda support
  */
@@ -173,6 +177,7 @@ enum : unsigned {
 
   // Image processing
   OPENCV,
+  LIBJPEG_TURBO,
 
   // Misc
   DIST_KVSTORE,

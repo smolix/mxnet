@@ -481,10 +481,42 @@ if(USE_JEMALLOC)
 endif()
 
 if(USE_LIBJPEG_TURBO)
-  find_package(PkgConfig REQUIRED)
-  pkg_search_module(TURBOJPEG REQUIRED libturbojpeg)
-  include_directories(SYSTEM ${TURBOJPEG_INCLUDE_DIRS})
-  list(APPEND mxnet_LINKER_LIBS ${TURBOJPEG_LINK_LIBRARIES})
+  set(TURBOJPEG_ROOT "" CACHE PATH "libjpeg-turbo install prefix")
+  if(TURBOJPEG_ROOT)
+    find_path(TURBOJPEG_INCLUDE_DIR
+              NAMES turbojpeg.h
+              PATHS "${TURBOJPEG_ROOT}/include"
+              NO_DEFAULT_PATH)
+    find_library(TURBOJPEG_LIBRARY
+                 NAMES turbojpeg libturbojpeg
+                 PATHS "${TURBOJPEG_ROOT}/lib" "${TURBOJPEG_ROOT}/lib64"
+                 NO_DEFAULT_PATH)
+    include(FindPackageHandleStandardArgs)
+    find_package_handle_standard_args(TurboJPEG
+                                      REQUIRED_VARS TURBOJPEG_INCLUDE_DIR TURBOJPEG_LIBRARY)
+    include_directories(SYSTEM ${TURBOJPEG_INCLUDE_DIR})
+    list(APPEND mxnet_LINKER_LIBS ${TURBOJPEG_LIBRARY})
+    message(STATUS "libjpeg-turbo found (${TURBOJPEG_LIBRARY})")
+  else()
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_search_module(TURBOJPEG libturbojpeg)
+    endif()
+    if(TURBOJPEG_FOUND)
+      include_directories(SYSTEM ${TURBOJPEG_INCLUDE_DIRS})
+      list(APPEND mxnet_LINKER_LIBS ${TURBOJPEG_LINK_LIBRARIES})
+      message(STATUS "libjpeg-turbo found (${TURBOJPEG_LINK_LIBRARIES})")
+    else()
+      find_path(TURBOJPEG_INCLUDE_DIR NAMES turbojpeg.h)
+      find_library(TURBOJPEG_LIBRARY NAMES turbojpeg libturbojpeg)
+      include(FindPackageHandleStandardArgs)
+      find_package_handle_standard_args(TurboJPEG
+                                        REQUIRED_VARS TURBOJPEG_INCLUDE_DIR TURBOJPEG_LIBRARY)
+      include_directories(SYSTEM ${TURBOJPEG_INCLUDE_DIR})
+      list(APPEND mxnet_LINKER_LIBS ${TURBOJPEG_LIBRARY})
+      message(STATUS "libjpeg-turbo found (${TURBOJPEG_LIBRARY})")
+    endif()
+  endif()
   add_definitions(-DMXNET_USE_LIBJPEG_TURBO=1)
 else()
   add_definitions(-DMXNET_USE_LIBJPEG_TURBO=0)

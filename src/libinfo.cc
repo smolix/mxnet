@@ -80,6 +80,7 @@ class FeatureSet {
 
     // Image
     feature_bits.set(OPENCV, MXNET_USE_OPENCV);
+    feature_bits.set(LIBJPEG_TURBO, MXNET_USE_LIBJPEG_TURBO);
 
     // Misc
     feature_bits.set(DIST_KVSTORE, MXNET_USE_DIST_KVSTORE);
@@ -152,6 +153,7 @@ const std::vector<std::string> EnumNames::names = {
     "LAPACK",
     "ONEDNN",
     "OPENCV",
+    "LIBJPEG_TURBO",
     "DIST_KVSTORE",
     "INT64_TENSOR_SIZE",
     "SIGNAL_HANDLER",

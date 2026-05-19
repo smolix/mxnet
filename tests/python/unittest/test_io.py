@@ -31,7 +31,7 @@ except ImportError:
     h5py = None
 import sys
 from common import assertRaises
-from common import has_opencv, make_mnist_ubyte
+from common import has_opencv, legacy_np_semantics, make_mnist_ubyte
 import pytest
 from itertools import zip_longest
 
@@ -326,7 +326,8 @@ def test_NDArrayIter_csr():
         begin += batch_size
 
 
-def test_LibSVMIter(tmpdir):
+@legacy_np_semantics()
+def test_LibSVMIter(tmpdir, request):
 
     def check_libSVMIter_synthetic():
         data_path = os.path.join(str(tmpdir), 'data.t')
@@ -410,7 +411,8 @@ def test_LibSVMIter(tmpdir):
             data_train.get_data().asnumpy()
 
     check_libSVMIter_synthetic()
-    check_libSVMIter_news_data()
+    if request.config.getoption("--run-remote"):
+        check_libSVMIter_news_data()
     assertRaises(MXNetError, check_libSVMIter_exception)
 
 

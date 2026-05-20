@@ -460,6 +460,7 @@ class _MultiWorkerIter(object):
         self._dataset = dataset
         self._data_loader = data_loader
         self._timeout = timeout
+        self._closed = False
         # pre-fetch
         for _ in range(prefetch):
             self._push_next()
@@ -478,9 +479,12 @@ class _MultiWorkerIter(object):
         self._sent_idx += 1
 
     def __next__(self):
+        if self._closed:
+            raise StopIteration
         self._push_next()
         if self._rcvd_idx == self._sent_idx:
             assert not self._data_buffer, "Data buffer should be empty at this moment"
+            self.close(shutdown_pool=False)
             raise StopIteration
 
         assert self._rcvd_idx < self._sent_idx, "rcvd_idx must be smaller than sent_idx"
@@ -504,10 +508,10 @@ class _MultiWorkerIter(object):
             Please consider reduce `num_workers` or increase shared_memory in system.
             '''
             print(msg)
+            self.close()
             raise
-        except Exception:
-            self._worker_pool.terminate()
-            self._worker_pool.join()
+        except BaseException:
+            self.close()
             raise
 
     def next(self):
@@ -515,6 +519,23 @@ class _MultiWorkerIter(object):
 
     def __iter__(self):
         return self
+
+    def close(self, shutdown_pool=True):
+        """Release outstanding worker results and optionally retire the worker pool."""
+        if self._closed:
+            return
+        self._closed = True
+        self._data_buffer.clear()
+        if shutdown_pool:
+            if self._data_loader is not None:
+                self._data_loader._shutdown_worker_pool()
+            elif self._worker_pool is not None:
+                self._worker_pool.terminate()
+                self._worker_pool.join()
+        self._worker_pool = None
+
+    def __del__(self):
+        self.close()
 
 
 class DataLoader(object):
@@ -630,7 +651,7 @@ class DataLoader(object):
         self._worker_pool = None
         self._prefetch = max(0, int(prefetch) if prefetch is not None else 2 * self._num_workers)
         if batchify_fn is None:
-            if num_workers > 0:
+            if num_workers > 0 and not thread_pool:
                 self._batchify_fn = _batchify.Stack(use_shared_mem=True)
             else:
                 self._batchify_fn = _batchify.Stack()
@@ -661,20 +682,25 @@ class DataLoader(object):
             gc.collect()
             nd.waitall()
             if self._num_workers > 0:
-                if self._thread_pool:
-                    self._worker_pool = ThreadPool(self._num_workers,
-                                                   initializer=_thread_worker_initializer,
-                                                   initargs=(is_np_shape(), is_np_array()))
-                else:
-                    # set ignore keyboard interupt signal before forking processes
-                    original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
-                    try:
-                        self._worker_pool = multiprocessing.Pool(
-                            self._num_workers, initializer=_worker_initializer,
-                            initargs=[self._dataset, is_np_shape(), is_np_array()])
-                    finally:
-                        # resume keyboard interupt signal in main process
-                        signal.signal(signal.SIGINT, original_sigint_handler)
+                self._create_worker_pool()
+
+    def _create_worker_pool(self):
+        if self._worker_pool is not None:
+            return
+        if self._thread_pool:
+            self._worker_pool = ThreadPool(self._num_workers,
+                                           initializer=_thread_worker_initializer,
+                                           initargs=(is_np_shape(), is_np_array()))
+        else:
+            # set ignore keyboard interupt signal before forking processes
+            original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            try:
+                self._worker_pool = multiprocessing.Pool(
+                    self._num_workers, initializer=_worker_initializer,
+                    initargs=[self._dataset, is_np_shape(), is_np_array()])
+            finally:
+                # resume keyboard interupt signal in main process
+                signal.signal(signal.SIGINT, original_sigint_handler)
 
     def __iter__(self):
         if self._mx_iter is not None:
@@ -690,6 +716,7 @@ class DataLoader(object):
             return same_process_iter()
 
         # multi-worker
+        self._create_worker_pool()
         return _MultiWorkerIter(self._worker_pool, self._batchify_fn, self._batch_sampler,
                                 pin_memory=self._pin_memory, pin_device_id=self._pin_device_id,
                                 worker_fn=_thread_worker_fn if self._thread_pool else _worker_fn,

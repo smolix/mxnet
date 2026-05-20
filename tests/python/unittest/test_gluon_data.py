@@ -21,6 +21,8 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import time
+import multiprocessing
 import mxnet as mx
 import numpy as np
 import random
@@ -220,7 +222,6 @@ def test_image_list_dataset_handle(prepare_record):
         assert len(img.shape) == 3
         assert label == 0
 
-@pytest.mark.garbage_expected
 def test_list_dataset():
     for num_worker in range(0, 3):
         data = mx.gluon.data.DataLoader([([1,2], 0), ([3, 4], 1)], batch_size=1, num_workers=num_worker)
@@ -234,13 +235,50 @@ class _Dataset(gluon.data.Dataset):
     def __getitem__(self, key):
         return mx.nd.full((10,), key)
 
-@pytest.mark.garbage_expected
 def test_multi_worker():
     data = _Dataset()
     for thread_pool in [True, False]:
         loader = gluon.data.DataLoader(data, batch_size=1, num_workers=5, thread_pool=thread_pool)
         for i, batch in enumerate(loader):
             assert (batch.asnumpy() == i).all()
+
+
+class _SlowDataset(gluon.data.Dataset):
+    def __len__(self):
+        return 4
+    def __getitem__(self, key):
+        time.sleep(1.0)
+        return mx.nd.full((1,), key)
+
+
+def test_multi_worker_iterator_close_recreates_pool():
+    loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, prefetch=2,
+                                   try_nopython=False)
+    iterator = iter(loader)
+    assert next(iterator).shape == (1, 10)
+    first_pool = loader._worker_pool
+    iterator.close()
+    assert loader._worker_pool is None
+
+    iterator = iter(loader)
+    assert loader._worker_pool is not None
+    assert loader._worker_pool is not first_pool
+    assert next(iterator).shape == (1, 10)
+    iterator.close()
+
+
+def test_multi_worker_timeout_releases_pool():
+    loader = gluon.data.DataLoader(_SlowDataset(), batch_size=1, num_workers=1, prefetch=1,
+                                   timeout=0.01, try_nopython=False)
+    iterator = iter(loader)
+    with pytest.raises(multiprocessing.context.TimeoutError):
+        next(iterator)
+    assert loader._worker_pool is None
+
+
+def test_thread_pool_default_batchify_avoids_shared_memory():
+    loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, thread_pool=True)
+    assert not loader._batchify_fn._use_shared_mem
 
 
 def test_multi_worker_shape():
@@ -505,7 +543,6 @@ def test_dataset_take_handle():
         total += sample
     assert total == expected_total
 
-@pytest.mark.garbage_expected
 def test_dataloader_scope():
     """
     Bug: Gluon DataLoader terminates the process pool early while

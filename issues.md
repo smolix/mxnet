@@ -232,7 +232,7 @@ This section tracks the code-audit findings from the Apple Silicon bring-up bran
 
 ### Local fix queue
 
-46. **DataLoader early-exit and timeout cleanup** — Python DataLoader workers can leave worker tasks, shared-memory handles, or subprocesses behind when an iterator is abandoned, times out, or receives `KeyboardInterrupt`. Hot spots: `python/mxnet/gluon/data/dataloader.py` result handling, worker pool shutdown, and the `thread_pool=True` fallback that can still select shared-memory batchify. Add deterministic iterator close/reset paths and tests that do not rely on `garbage_expected`.
+46. ~~**DataLoader early-exit and timeout cleanup**~~ — **RESOLVED on Apple Silicon follow-up branch.** Python DataLoader iterators now expose deterministic `close()`, retire/recreate worker pools after abandoned iterators, timeouts, or interrupts, and `thread_pool=True` no longer selects shared-memory batchify by default. The DataLoader leak tests now run without `garbage_expected`.
 
 47. **C++ no-python DataLoader early break** — the C++ DataLoader reset path is tied to natural generator exhaustion, so breaking early can keep iterator state alive longer than intended. Add a cleanup path on generator close and test early-break reuse.
 

@@ -252,11 +252,17 @@ setup(name='mxnet',
       version=__version__,
       description=open(os.path.join(CURRENT_DIR, 'README.md')).read(),
       packages=_find_mxnet_packages(),
-      # Bundle libmxnet.{so,dylib} plus any discovered runtime libs (CUDA/cuDNN/NCCL)
-      # inside the package so libinfo.find_lib_path() can find them under
-      # mxnet/ at install time. data_files goes to <sysprefix>/mxnet/ which
-      # find_lib_path() doesn't search.
-      package_data={'mxnet': ['libmxnet.so', 'libmxnet.dylib'] + bundled_libs},
+      # Bundle libmxnet.{so,dylib} plus staged runtime libraries inside the
+      # package so libinfo.find_lib_path() can find libmxnet under mxnet/ at
+      # install time. data_files goes to <sysprefix>/mxnet/ which find_lib_path()
+      # doesn't search.
+      package_data={'mxnet': [
+          'libmxnet.so',
+          'libmxnet.dylib',
+          'lib/*.so',
+          'lib/*.so.*',
+          'lib/*.dylib',
+      ] + bundled_libs},
       include_package_data=True,
       url='https://github.com/apache/mxnet',
       ext_modules=config_cython(),

@@ -99,6 +99,19 @@ def _env_flag(name):
     return value.strip().lower() not in ('0', 'false', 'off', 'no')
 
 
+def _find_mxnet_packages():
+    """Find Python packages, optionally omitting ONNX-only integration code."""
+    excludes = []
+    if _env_flag('MXNET_SETUP_EXCLUDE_ONNX'):
+        excludes.extend([
+            'mxnet.onnx',
+            'mxnet.onnx.*',
+            'mxnet.contrib.onnx',
+            'mxnet.contrib.onnx.*',
+        ])
+    return find_packages(exclude=excludes)
+
+
 def _cuda_enabled_from_cmake_cache():
     """Read USE_CUDA from a nearby CMakeCache.txt when building from a tree."""
     cache_paths = set()
@@ -238,7 +251,7 @@ def config_cython():
 setup(name='mxnet',
       version=__version__,
       description=open(os.path.join(CURRENT_DIR, 'README.md')).read(),
-      packages=find_packages(),
+      packages=_find_mxnet_packages(),
       # Bundle libmxnet.{so,dylib} plus any discovered runtime libs (CUDA/cuDNN/NCCL)
       # inside the package so libinfo.find_lib_path() can find them under
       # mxnet/ at install time. data_files goes to <sysprefix>/mxnet/ which

@@ -102,6 +102,7 @@ class CustomOperator {
       ctx.async_on_complete();
       return;
     }
+    auto exception = std::make_shared<std::exception_ptr>(nullptr);
     std::unique_lock<std::mutex> lock(mutex_);
     q_.push([=]() mutable {
       bool prev_recording = Imperative::Get()->set_is_recording(recording);
@@ -116,7 +117,7 @@ class CustomOperator {
           func();
         }
       } catch (dmlc::Error& e) {
-        exception_ = std::make_shared<std::exception_ptr>(std::current_exception());
+        *exception = std::current_exception();
       }
 
       Imperative::Get()->set_is_training(prev_training);
@@ -137,7 +138,7 @@ class CustomOperator {
       Engine::Get()->PushSync(
           [=](RunContext rctx) {
             try {
-              Throw();
+              Throw(exception);
               for (const auto& i : arrs) {
                 Engine::Get()->Throw(i.var());
               }
@@ -180,7 +181,6 @@ class CustomOperator {
     num_free_threads_ = 0;
     destructing_      = false;
     naive_engine_     = true;
-    exception_        = nullptr;
     if (std::string("NaiveEngine") != dmlc::GetEnv("MXNET_ENGINE_TYPE", std::string())) {
       naive_engine_ = false;
     }
@@ -199,10 +199,10 @@ class CustomOperator {
     workers_.clear();
   }
 
-  inline void Throw() {
-    if (exception_ && *exception_) {
-      std::exception_ptr tmp = *exception_;
-      exception_             = nullptr;
+  inline void Throw(const std::shared_ptr<std::exception_ptr>& exception) {
+    if (exception && *exception) {
+      std::exception_ptr tmp = *exception;
+      *exception             = nullptr;
       std::rethrow_exception(tmp);
     }
   }
@@ -242,7 +242,6 @@ class CustomOperator {
   std::vector<std::thread> workers_;
   std::atomic<uint32_t> num_free_threads_;
   std::queue<std::function<void(void)> > q_;
-  std::shared_ptr<std::exception_ptr> exception_;
   bool naive_engine_;
   bool destructing_;
 };

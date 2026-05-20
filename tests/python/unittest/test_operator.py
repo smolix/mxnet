@@ -5847,6 +5847,29 @@ def test_custom_op_exc():
         pytest.raises(MXNetError, custom_exc4)
 
 
+@legacy_np_semantics()
+def test_custom_op_exception_isolation_between_queued_ops():
+    def fail_forward(in_data, out_data):
+        raise RuntimeError("intentional custom-op failure")
+
+    def add_forward(in_data, out_data):
+        out_data[0][:] = in_data[0] + in_data[1]
+
+    _build_dot_custom(fail_forward, 'DotExceptionIsolationFail')
+    _build_dot_custom(add_forward, 'DotExceptionIsolationOk')
+
+    lhs = mx.nd.ones((2, 2))
+    rhs = mx.nd.ones((2, 2))
+    bad = mx.nd.Custom(lhs, rhs, op_type='DotExceptionIsolationFail')
+    good = mx.nd.Custom(lhs, rhs, op_type='DotExceptionIsolationOk')
+
+    with pytest.raises(MXNetError):
+        bad.wait_to_read()
+    good.wait_to_read()
+    assert_almost_equal(good, np.full((2, 2), 2.0))
+    mx.nd.waitall()
+
+
 def test_psroipooling():
     for num_rois in [1, 2]:
         for num_classes, num_group in itertools.product([2, 3], [2, 3]):

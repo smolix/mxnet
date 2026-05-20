@@ -43,21 +43,22 @@ OpenMP::OpenMP() : omp_num_threads_set_in_environment_(is_env_set("OMP_NUM_THREA
   initialize_process();
   const int max = dmlc::GetEnv("MXNET_OMP_MAX_THREADS", INT_MIN);
   if (max != INT_MIN) {
-    omp_thread_max_ = max;
+    set_thread_max(max);
   } else {
     if (!omp_num_threads_set_in_environment_) {
-      omp_thread_max_ = omp_get_num_procs();
+      int thread_max = omp_get_num_procs();
 #ifdef ARCH_IS_INTEL_X86
-      omp_thread_max_ >>= 1;
+      thread_max >>= 1;
 #endif
-      omp_set_num_threads(omp_thread_max_);
+      set_thread_max(thread_max);
+      omp_set_num_threads(thread_max);
     } else {
-      omp_thread_max_ = omp_get_max_threads();
+      set_thread_max(omp_get_max_threads());
     }
   }
 #else
-  enabled_        = false;
-  omp_thread_max_ = 1;
+  set_enabled(false);
+  set_thread_max(1);
 #endif
 }
 
@@ -77,36 +78,39 @@ void OpenMP::on_start_worker_thread(bool use_omp) {
 
 void OpenMP::set_reserve_cores(int cores) {
   CHECK_GE(cores, 0);
-  reserve_cores_ = cores;
+  reserve_cores_.store(cores, std::memory_order_relaxed);
 #ifdef _OPENMP
-  if (reserve_cores_ >= omp_thread_max_) {
+  const int thread_max = this->thread_max();
+  if (cores >= thread_max) {
     omp_set_num_threads(1);
   } else {
-    omp_set_num_threads(omp_thread_max_ - reserve_cores_);
+    omp_set_num_threads(thread_max - cores);
   }
 #endif
 }
 
 int OpenMP::GetRecommendedOMPThreadCount(bool exclude_reserved) const {
 #ifdef _OPENMP
-  if (enabled_) {
+  if (enabled()) {
     // OMP_NUM_THREADS was set in the environment at the time of static initialization
     if (omp_num_threads_set_in_environment_) {
       return omp_get_max_threads();
     }
     int thread_count = omp_get_max_threads();
     if (exclude_reserved) {
-      if (reserve_cores_ >= thread_count) {
+      const int reserve_cores = this->reserve_cores();
+      if (reserve_cores >= thread_count) {
         thread_count = 1;
       } else {
-        thread_count -= reserve_cores_;
+        thread_count -= reserve_cores;
       }
     }
     // Check that OMP doesn't suggest more than our 'omp_thread_max_' value
-    if (!omp_thread_max_ || thread_count < omp_thread_max_) {
+    const int thread_max = this->thread_max();
+    if (!thread_max || thread_count < thread_max) {
       return thread_count;
     }
-    return omp_thread_max_;
+    return thread_max;
   } else {
     return 1;
   }

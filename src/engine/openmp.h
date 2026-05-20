@@ -19,6 +19,8 @@
 #ifndef MXNET_ENGINE_OPENMP_H_
 #define MXNET_ENGINE_OPENMP_H_
 
+#include <atomic>
+
 namespace mxnet {
 namespace engine {
 
@@ -43,10 +45,10 @@ class OpenMP {
    * \param enabled Set to 'true' if this class should provide OMP behavior
    */
   void set_enabled(bool enabled) {
-    enabled_ = enabled;
+    enabled_.store(enabled, std::memory_order_relaxed);
   }
   bool enabled() const {
-    return enabled_;
+    return enabled_.load(std::memory_order_relaxed);
   }
 
   /*!
@@ -54,14 +56,14 @@ class OpenMP {
    * \param thread_max Maximum number of threads to be used in an OMP region
    */
   void set_thread_max(int thread_max) {
-    omp_thread_max_ = thread_max;
+    omp_thread_max_.store(thread_max, std::memory_order_relaxed);
   }
   /*!
    * \brief Maximum number of threads to be used in an OMP region
    * \return Maximum number of threads
    */
   int thread_max() const {
-    return omp_thread_max_;
+    return omp_thread_max_.load(std::memory_order_relaxed);
   }
 
   /*!
@@ -74,7 +76,7 @@ class OpenMP {
    * \return Number of cores to be excluded from OMP regions
    */
   int reserve_cores() const {
-    return reserve_cores_;
+    return reserve_cores_.load(std::memory_order_relaxed);
   }
 
   /*!
@@ -102,15 +104,15 @@ class OpenMP {
    * \brief Whether OpenMP layer is enabled (use more then one thread).  Independent of OMP library
    *        behavior
    */
-  volatile bool enabled_ = true;
+  std::atomic<bool> enabled_{true};
   /*!
    * \brief Maximum number of threads for any OMP region
    */
-  volatile int omp_thread_max_ = 0;
+  std::atomic<int> omp_thread_max_{0};
   /*!
    * \brief Number of cores to reserve for non-OMP regions
    */
-  volatile int reserve_cores_ = 0;
+  std::atomic<int> reserve_cores_{0};
   /*!
    * \brief Whether OMP_NUM_THREADS was set in the environment.  If it is, we fall back to
    *        the OMP's implementation's handling of that environment variable

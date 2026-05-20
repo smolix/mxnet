@@ -841,16 +841,18 @@ class _MXThreadedDataLoader(object):
                                         device_id=pin_device_id)
 
     def __iter__(self):
-        while self._iter.iter_next():
-            self._iter.first_batch = None
-            items = self._iter.getitems()
-            pad = self._iter.getpad()
-            if pad > 0:
-                items = tuple([x[:-pad] for x in items])
-            if len(items) < 2:
-                items = items[0]
-            yield items
-        self._iter.reset()
+        try:
+            while self._iter.iter_next():
+                self._iter.first_batch = None
+                items = self._iter.getitems()
+                pad = self._iter.getpad()
+                if pad > 0:
+                    items = tuple([x[:-pad] for x in items])
+                if len(items) < 2:
+                    items = items[0]
+                yield items
+        finally:
+            self._iter.reset()
 
     def __len__(self):
         return len(self._iter)

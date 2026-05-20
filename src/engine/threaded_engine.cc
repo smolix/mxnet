@@ -463,36 +463,42 @@ void ThreadedEngine::WaitForAll() {
   static const int diag_timeout_s_all = dmlc::GetEnv("MXNET_ENGINE_DIAG_TIMEOUT_S", 30);
 
   BulkFlush();
-  std::unique_lock<std::mutex> lock{finished_m_};
-  if (engine_diag_all) {
-    while (!finished_cv_.wait_for(lock,
-                                  std::chrono::seconds(diag_timeout_s_all),
-                                  [this]() { return pending_.load() == 0 || kill_.load(); })) {
-      LOG(WARNING) << "[MXNET_ENGINE_DIAG] WaitForAll timeout after " << diag_timeout_s_all
-                   << "s: pending_ops=" << pending_.load()
-                   << " shutdown_phase=" << shutdown_phase_.load()
-                   << " kill=" << kill_.load()
-                   << ". Engine may be deadlocked.";
-    }
-  } else {
-    finished_cv_.wait(lock, [this]() { return pending_.load() == 0 || kill_.load(); });
-  }
-  std::exception_ptr exception_to_rethrow = nullptr;
-  if (!global_exception_refs_.empty()) {
-    // iterate through all exception refs
-    for (const auto& global_exception_ref : global_exception_refs_) {
-      // the first exception will be saved to be rethrown later
-      if (*global_exception_ref != nullptr && exception_to_rethrow == nullptr) {
-        exception_to_rethrow = *global_exception_ref;
+  {
+    std::unique_lock<std::mutex> lock{finished_m_};
+    if (engine_diag_all) {
+      while (!finished_cv_.wait_for(lock,
+                                    std::chrono::seconds(diag_timeout_s_all),
+                                    [this]() { return pending_.load() == 0 || kill_.load(); })) {
+        LOG(WARNING) << "[MXNET_ENGINE_DIAG] WaitForAll timeout after " << diag_timeout_s_all
+                     << "s: pending_ops=" << pending_.load()
+                     << " shutdown_phase=" << shutdown_phase_.load()
+                     << " kill=" << kill_.load()
+                     << ". Engine may be deadlocked.";
       }
-      // clear exceptions, WaitToRead following WaitForAll shouldn't throw
-      *global_exception_ref = nullptr;
+    } else {
+      finished_cv_.wait(lock, [this]() { return pending_.load() == 0 || kill_.load(); });
     }
-    // A waitall following a waitall shouldn't throw any exceptions
-    global_exception_refs_.clear();
-    if (exception_to_rethrow != nullptr) {
-      std::rethrow_exception(exception_to_rethrow);
+  }
+
+  std::exception_ptr exception_to_rethrow = nullptr;
+  {
+    std::lock_guard<std::mutex> exception_lock(exception_m_);
+    if (!global_exception_refs_.empty()) {
+      // iterate through all exception refs
+      for (const auto& global_exception_ref : global_exception_refs_) {
+        // the first exception will be saved to be rethrown later
+        if (*global_exception_ref != nullptr && exception_to_rethrow == nullptr) {
+          exception_to_rethrow = *global_exception_ref;
+        }
+        // clear exceptions, WaitToRead following WaitForAll shouldn't throw
+        *global_exception_ref = nullptr;
+      }
+      // A waitall following a waitall shouldn't throw any exceptions
+      global_exception_refs_.clear();
     }
+  }
+  if (exception_to_rethrow != nullptr) {
+    std::rethrow_exception(exception_to_rethrow);
   }
 }
 
@@ -504,12 +510,7 @@ inline void ThreadedEngine::OnComplete(ThreadedOpr* threaded_opr) {
   }
   // Mark complete for write variables.
   for (auto&& i : threaded_opr->mutable_vars) {
-    if (threaded_opr->opr_exception && *threaded_opr->opr_exception) {
-      i->var_exception = threaded_opr->opr_exception;
-      // add current operator exceptions to global exceptions if not already
-      // added
-      AddToGlobalExceptions(threaded_opr->opr_exception);
-    }
+    SetVarExceptionAndAddToGlobal(i, threaded_opr->opr_exception);
     const bool debug_info = (engine_info_ && debug_wait_var_ == i);
     if (debug_info) {
       LOG(INFO) << "Complete write dep for " << i;
@@ -558,9 +559,8 @@ inline void ThreadedEngine::OnComplete(ThreadedOpr* threaded_opr) {
 }
 
 inline void ThreadedEngine::ThrowException(ThreadedVar* threaded_var) {
-  if (threaded_var->var_exception && *threaded_var->var_exception) {
-    std::exception_ptr tmp       = *threaded_var->var_exception;
-    *threaded_var->var_exception = nullptr;
+  std::exception_ptr tmp = ClearVarException(threaded_var);
+  if (tmp != nullptr) {
     std::rethrow_exception(tmp);
   }
   return;

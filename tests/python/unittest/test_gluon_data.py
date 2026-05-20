@@ -607,6 +607,29 @@ def test_mx_data_loader_nopython():
     for _ in dl1:
         pass
 
+@mx.util.use_np
+def test_mx_data_loader_nopython_early_close_resets():
+    from mxnet.gluon.data.dataloader import DataLoader
+
+    data = mx.np.arange(64, dtype='float32').reshape((64, 1))
+    label = mx.np.arange(64, dtype='float32')
+    dataset = mx.gluon.data.ArrayDataset(data, label)
+    loader = DataLoader(dataset=dataset, batch_size=8, num_workers=2,
+                        try_nopython=True, shuffle=False)
+    assert loader._mx_iter is not None
+
+    iterator = iter(loader)
+    try:
+        first_batch = next(iterator)
+        assert np.array_equal(first_batch[1].asnumpy(), np.arange(8, dtype=np.float32))
+    finally:
+        iterator.close()
+    gc.collect()
+
+    first_batch_after_close = next(iter(loader))
+    assert np.array_equal(first_batch_after_close[1].asnumpy(),
+                          np.arange(8, dtype=np.float32))
+
 def test_batchify_stack():
     a = np.array([[1, 2, 3, 4], [5, 6, 7, 8]])
     b = np.array([[5, 6, 7, 8], [1, 2, 3, 4]])

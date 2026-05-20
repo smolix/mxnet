@@ -19,6 +19,10 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <thread>
+#include <vector>
+
 #include "../include/test_util.h"
 #include "../../src/engine/openmp.h"
 
@@ -48,3 +52,41 @@ TEST(OMPBehaviour, after_fork) {
   }
 }
 #endif
+
+TEST(OMPBehaviour, concurrent_state_access) {
+  using namespace mxnet::engine;
+  auto openmp = OpenMP::Get();
+
+  const bool old_enabled     = openmp->enabled();
+  const int old_thread_max   = openmp->thread_max();
+  const int old_reserve_core = openmp->reserve_cores();
+
+  constexpr int kThreads = 4;
+  constexpr int kIters   = 1000;
+  std::atomic<bool> start(false);
+  std::vector<std::thread> threads;
+  threads.reserve(kThreads);
+
+  for (int t = 0; t < kThreads; ++t) {
+    threads.emplace_back([openmp, &start, t]() {
+      while (!start.load(std::memory_order_acquire)) {
+      }
+      for (int i = 0; i < kIters; ++i) {
+        openmp->set_enabled(((i + t) & 1) == 0);
+        openmp->set_thread_max(1 + ((i + t) % 8));
+        EXPECT_GE(openmp->thread_max(), 1);
+        EXPECT_GE(openmp->reserve_cores(), 0);
+        EXPECT_GE(openmp->GetRecommendedOMPThreadCount(false), 1);
+      }
+    });
+  }
+
+  start.store(true, std::memory_order_release);
+  for (auto& thread : threads) {
+    thread.join();
+  }
+
+  openmp->set_enabled(old_enabled);
+  openmp->set_thread_max(old_thread_max);
+  openmp->set_reserve_cores(old_reserve_core);
+}

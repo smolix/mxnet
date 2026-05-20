@@ -26,11 +26,6 @@ They can be fixed or at least partially verified on this Mac.
 
 | ID | Status | Area | Issue | Next action |
 |---|---|---|---|---|
-| A1 | Open | DataLoader | C++ no-python DataLoader only resets on natural generator exhaustion. Breaking early can keep iterator state alive longer than intended. | Add cleanup on generator close, then test early-break reuse with `try_nopython=True`. |
-| A2 | In progress | OpenMP | `src/engine/openmp.*` used `volatile` for shared state. | Atomic replacement is in the worktree; finish OpenMP build/test and commit. |
-| A3 | Open | Custom operators | Custom-op async exception state is shared through a singleton and can leak/race across queued invocations. | Store exception state per queued custom-op invocation; run custom-op exception tests. |
-| A4 | Open | KVStore CPU | `CommCPU::Reduce` async lambdas capture `this`, risking use-after-free if the KVStore is destroyed before queued engine work drains. | Capture only scalar config and NDArray/resources by value; add delete-before-wait stress test. |
-| A5 | Open | Threaded engine | ThreadedEngine exception references and global exception lists are not consistently synchronized. | Add a small locking/helper layer around exception state; add C++ stress test. |
 | A6 | Open | Resource shutdown | Custom-op workers and thread-local temp resources need a shutdown-order audit. | Treat as second pass unless a local reproducer appears. |
 
 ### Resolved On This Follow-Up Branch
@@ -48,6 +43,12 @@ They can be fixed or at least partially verified on this Mac.
 | R9 | Azure option | `USE_AZURE=ON` fails clearly at configure time instead of compiling incomplete dmlc-core Azure support. Commit `c4ffce3c2`. | Configure-failure check passed. |
 | R10 | oneDNN generated headers | Removed post-build copying of generated oneDNN headers into the source tree. Commit `c4ffce3c2`. | oneDNN configure/generate check passed. |
 | R11 | Plugin unload ownership | Python plugin handles are retained for process lifetime because MXNet has process-lifetime plugin registries and no unregister API. Commit `c4ffce3c2`. | Extension load tests passed. |
+| R12 | DataLoader | C++ no-python DataLoader resets in a generator `finally` block, so early close/break returns the iterator to the first batch. | `test_mx_data_loader_nopython_early_close_resets` passed. |
+| R13 | OpenMP | `src/engine/openmp.*` shared state now uses atomics instead of `volatile`. | `OMPBehaviour.concurrent_state_access` passed. |
+| R14 | Custom operators | Custom-op async exceptions are stored per queued invocation instead of in a singleton. | `test_custom_op_exception_isolation_between_queued_ops` and `test_custom_op_exc` passed. |
+| R15 | KVStore CPU | `CommCPU::Reduce` async lambdas capture arrays/resources and scalar config by value, not `this`. | `test_local_kvstore_delete_before_wait_releases_async_reduce` passed. |
+| R16 | Threaded engine | ThreadedEngine global and per-var exception refs are guarded by an exception mutex and cleared consistently. | `Engine.ThreadedAsyncExceptionsAreReportedOnce` passed. |
+| R17 | oneDNN C++ tests | C++ oneDNN unit-test helpers use current oneDNN descriptor APIs instead of stale `memory::desc.data` / `convolution_forward::desc` access. | `mxnet_unit_tests` built; `DNNL_UTIL_FUNC.*` and `DNNL_NDArray.GetDataReorder` passed. |
 
 ---
 
@@ -165,10 +166,9 @@ They stay here as context, not as active work.
 
 Before calling the Apple Silicon CPU port good enough for broader testing:
 
-1. Finish A2, A1, A3, and A4.
-2. Decide whether A5/A6 need code changes now or only documented follow-up tests.
-3. Run the focused Apple Silicon unit subset again after these commits.
-4. Re-run OpenCV/image/DataLoader tests in the final build profile.
+1. Decide whether A6 needs code changes now or only documented follow-up tests.
+2. Run the focused Apple Silicon unit subset again after these commits.
+3. Re-run OpenCV/image/DataLoader tests in the final build profile.
 
 Before shipping another public Linux/CUDA preview wheel:
 

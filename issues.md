@@ -246,7 +246,7 @@ This section tracks the code-audit findings from the Apple Silicon bring-up bran
 
 52. ~~**Quantized flatten empty tensors**~~ — **RESOLVED on Apple Silicon follow-up branch.** Flatten now propagates quantization min/max independently of the data-copy kernel, so empty flattened data still produces initialized range outputs. Covered by a focused CPU regression.
 
-53. **Proposal operator integer overflow risk** — proposal workspace and anchor counts use `int` in several size calculations. CPU code should be widened or guarded locally; CUDA variants need CUDA CI.
+53. ~~**Proposal operator integer overflow risk**~~ — **CPU path RESOLVED on Apple Silicon follow-up branch.** CPU `Proposal` and `MultiProposal` now use checked 64-bit arithmetic for anchor counts, workspace sizing, and loop bounds before narrowing to `mshadow::index_t`. CUDA variants remain in the deferred CUDA verification queue.
 
 54. ~~**oneDNN quantized transpose min/max writes**~~ — **RESOLVED on Apple Silicon follow-up branch.** The oneDNN quantized transpose path now honors scalar range outputs independently of the data output request, including Symbol graphs where only `min_output`/`max_output` are live.
 

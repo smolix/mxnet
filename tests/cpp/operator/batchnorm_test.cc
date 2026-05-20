@@ -303,9 +303,8 @@ class BatchNormValidator : public test::op::Validator<DType, AccReal> {
     const size_t channels = blob->shape_[1];
     const size_t length   = blob->shape_[2];
 
-    size_t itemCount = 0;
-
     for (size_t j = 0; j < channels; ++j) {
+      size_t itemCount = 0;
       AccReal sum = 0, var = 0;
       for (size_t i = 0; i < num; ++i) {
         for (size_t k = 0; k < length; ++k) {
@@ -351,9 +350,8 @@ class BatchNormValidator : public test::op::Validator<DType, AccReal> {
     const size_t height   = blob->shape_[2];
     const size_t width    = blob->shape_[3];
 
-    size_t itemCount = 0, nonZero = 0;
-
     for (size_t j = 0; j < channels; ++j) {
+      size_t itemCount = 0, nonZero = 0;
       AccReal sum = 0, var = 0;
       for (size_t i = 0; i < num; ++i) {
         for (size_t k = 0; k < height; ++k) {
@@ -369,9 +367,6 @@ class BatchNormValidator : public test::op::Validator<DType, AccReal> {
         }
       }
 
-      CHECK_GT(itemCount, 1U);  // Not a valid check for one item
-      CHECK_NE(nonZero, 0);
-
       const AccReal saveSum = sum, saveVar = var;
 
       // not channels
@@ -379,6 +374,7 @@ class BatchNormValidator : public test::op::Validator<DType, AccReal> {
       var /= height * width * num;
 
       if (itemCount > 1) {
+        CHECK_NE(nonZero, 0);
         const DType kErrorBound = Super::ErrorBound(blob);
         // expect zero mean
         EXPECT_NEAR(0, sum, kErrorBound);
@@ -408,9 +404,8 @@ class BatchNormValidator : public test::op::Validator<DType, AccReal> {
     const size_t height   = blob->shape_[3];
     const size_t width    = blob->shape_[4];
 
-    size_t itemCount = 0;
-
     for (size_t j = 0; j < channels; ++j) {
+      size_t itemCount = 0;
       AccReal sum = 0, var = 0;
       for (size_t i = 0; i < num; ++i) {
         for (size_t d = 0; d < depth; ++d) {

@@ -57,6 +57,7 @@ They can be fixed or at least partially verified on this Mac.
 | R23 | Quantized transpose/requantize CPU fallback | `requantize` has a native CPU registration in oneDNN builds, and quantized transpose has a native CPU implementation that preserves range outputs. | `tests/python/quantization/test_quantization.py` passed except the expected AArch64 oneDNN quantized-RNN skips. |
 | R24 | C++ oneDNN pooling tests | Pooling test helpers now derive forward/backward arity from the parsed operator parameters instead of stale input-dimensionality assumptions. | `mxnet_unit_tests --gtest_filter=IMPERATIVE.PoolingOp` passed. |
 | R25 | C++ oneDNN convolution tests | The oneDNN-vs-native convolution fixture now compares floating outputs with numeric tolerances instead of raw `memcmp`, preserving the existing data-gradient coverage. | `mxnet_unit_tests --gtest_filter=IMPERATIVE.ConvOp` passed. |
+| R26 | C++ BatchNorm stochastic test | BatchNorm validators now count samples per channel so single-sample stochastic normalization groups are not incorrectly checked for unit variance. | `mxnet_unit_tests --gtest_filter=BATCH_NORM.TestStochasticTiming_2D --gtest_repeat=20` passed. |
 
 ---
 

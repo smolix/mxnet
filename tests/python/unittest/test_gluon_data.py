@@ -41,14 +41,19 @@ from common import has_opencv, make_test_images
 def _has_posix_shared_memory():
     try:
         shm = shared_memory.SharedMemory(create=True, size=1)
-    except (FileNotFoundError, PermissionError, OSError):
+    except (FileNotFoundError, PermissionError, OSError, mx.base.MXNetError):
         return False
     else:
         try:
             shm.close()
         finally:
             shm.unlink()
-        return True
+
+    try:
+        mx.nd.empty((1,), ctx=mx.Device('cpu_shared', 0)).wait_to_read()
+    except mx.base.MXNetError:
+        return False
+    return True
 
 
 def _skip_without_posix_shared_memory():
@@ -320,6 +325,18 @@ def test_multi_worker_exception_releases_pool():
 def test_thread_pool_default_batchify_avoids_shared_memory():
     loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, thread_pool=True)
     assert not loader._batchify_fn._use_shared_mem
+
+
+def test_multi_worker_falls_back_to_pickle_transport_without_cpu_shared(monkeypatch):
+    import mxnet.gluon.data.dataloader as dataloader_module
+    monkeypatch.setattr(dataloader_module, '_cpu_shared_memory_available', lambda: False)
+
+    loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, try_nopython=False)
+    assert not loader._thread_pool
+    assert not loader._use_multiprocessing_shared_memory
+    assert not loader._batchify_fn._use_shared_mem
+    batch = next(iter(loader))
+    assert (batch.asnumpy() == 0).all()
 
 
 def test_multi_worker_shape():

@@ -87,6 +87,89 @@ def test_sgd():
                                   dtype, w_stype='csr', g_stype='csr')
 
 
+def _flatten(groups):
+    return [item for group in groups for item in group]
+
+
+def _expect_mxnet_error_after_wait(func, match):
+    with pytest.raises(mx.MXNetError, match=match):
+        func()
+        mx.nd.waitall()
+
+
+@pytest.mark.parametrize('op_name', [
+    'multi_sgd_update',
+    'multi_sgd_mom_update',
+    'multi_mp_sgd_update',
+    'multi_mp_sgd_mom_update',
+])
+def test_multi_sgd_rejects_too_many_weights(op_name):
+    num_weights = 61
+    weights = [mx.nd.ones((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+    grads = [mx.nd.ones((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+    lrs = [0.1] * num_weights
+    wds = [0.0] * num_weights
+
+    if op_name == 'multi_sgd_update':
+        args = _flatten(zip(weights, grads))
+        kwargs = {}
+    elif op_name == 'multi_sgd_mom_update':
+        moms = [mx.nd.zeros((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+        args = _flatten(zip(weights, grads, moms))
+        kwargs = {'momentum': 0.9}
+    elif op_name == 'multi_mp_sgd_update':
+        weights32 = [weight.copy() for weight in weights]
+        args = _flatten(zip(weights, grads, weights32))
+        kwargs = {}
+    else:
+        moms = [mx.nd.zeros((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+        weights32 = [weight.copy() for weight in weights]
+        args = _flatten(zip(weights, grads, moms, weights32))
+        kwargs = {'momentum': 0.9}
+
+    op = getattr(mx.nd, op_name)
+    kwargs.update({'out': weights, 'num_weights': num_weights, 'lrs': lrs, 'wds': wds})
+    _expect_mxnet_error_after_wait(
+        lambda: op(*args, **kwargs), "multi_sgd_update supports at most 60 weights")
+
+
+@pytest.mark.parametrize('op_name', [
+    'preloaded_multi_sgd_update',
+    'preloaded_multi_sgd_mom_update',
+    'preloaded_multi_mp_sgd_update',
+    'preloaded_multi_mp_sgd_mom_update',
+])
+def test_preloaded_multi_sgd_rejects_too_many_weights(op_name):
+    num_weights = 61
+    weights = [mx.nd.ones((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+    grads = [mx.nd.ones((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+    lrs = mx.nd.ones((num_weights,), ctx=mx.cpu())
+    wds = mx.nd.zeros((num_weights,), ctx=mx.cpu())
+
+    if op_name == 'preloaded_multi_sgd_update':
+        args = _flatten(zip(weights, grads))
+        kwargs = {}
+    elif op_name == 'preloaded_multi_sgd_mom_update':
+        moms = [mx.nd.zeros((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+        args = _flatten(zip(weights, grads, moms))
+        kwargs = {'momentum': 0.9}
+    elif op_name == 'preloaded_multi_mp_sgd_update':
+        weights32 = [weight.copy() for weight in weights]
+        args = _flatten(zip(weights, grads, weights32))
+        kwargs = {}
+    else:
+        moms = [mx.nd.zeros((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+        weights32 = [weight.copy() for weight in weights]
+        args = _flatten(zip(weights, grads, moms, weights32))
+        kwargs = {'momentum': 0.9}
+
+    op = getattr(mx.nd, op_name)
+    kwargs.update({'out': weights, 'num_weights': num_weights})
+    _expect_mxnet_error_after_wait(
+        lambda: op(*(args + [lrs, wds]), **kwargs),
+        "preloaded_multi_sgd_update supports at most 60 weights")
+
+
 class PySparseSGD(mx.optimizer.Optimizer):
     """python reference implemenation of sgd"""
     def __init__(self, learning_rate=0.1, momentum=0.0, **kwargs):

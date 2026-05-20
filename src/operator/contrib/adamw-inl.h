@@ -408,6 +408,10 @@ void FillMultiAdamKernelParam(const nnvm::NodeAttrs& attrs,
 
   pParam->epsilon = p.epsilon;
 
+  constexpr int max_num_weights = MultiAdamKernelParam<DType, MPDType>::N;
+  CHECK_LE(p.num_weights, max_num_weights)
+      << "multi_adamw_update supports at most " << max_num_weights
+      << " weights per fused call, got " << p.num_weights;
   pParam->count         = p.num_weights;
   pParam->max_size      = 0;
   constexpr bool isSame = std::is_same<DType, MPDType>::value;

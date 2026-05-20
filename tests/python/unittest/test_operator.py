@@ -4494,6 +4494,13 @@ def test_all_finite():
     assert sym_output[0] == 1
 
 
+def test_multi_all_finite_rejects_too_many_inputs():
+    arrays = [mx.nd.ones((1,), ctx=mx.cpu()) for _ in range(201)]
+    with pytest.raises(MXNetError, match="multi_all_finite supports at most 200 arrays"):
+        mx.nd.multi_all_finite(*arrays, num_arrays=len(arrays))
+        mx.nd.waitall()
+
+
 def test_repeat():
     def test_repeat_forward():
         ndim_max = 6 # max number of dims of the ndarray

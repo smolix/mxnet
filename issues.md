@@ -242,7 +242,7 @@ This section tracks the code-audit findings from the Apple Silicon bring-up bran
 
 50. ~~**Histogram validation and edge handling**~~ — **CPU/shared validation RESOLVED on Apple Silicon follow-up branch.** `histogram` now rejects non-positive uniform bin counts and the CPU explicit-bin scanner no longer reads past the last bin edge for values equal to the right edge. CUDA kernel parity remains in the deferred CUDA queue.
 
-51. **Fixed-size arrays in multi-array optimizers** — `multi_all_finite` and several multi-optimizer kernels use fixed arrays sized for a limited number of inputs. Validate or replace with dynamically sized storage to avoid overflow when large grouped updates are passed.
+51. ~~**Fixed-size arrays in multi-array optimizers**~~ — **RESOLVED on Apple Silicon follow-up branch.** `multi_all_finite`, fused SGD, preloaded fused SGD/LARS, AdamW, AdaBelief, LAMB, and LANS now validate grouped input counts before filling fixed-capacity launch structs. Focused CPU regressions cover clean MXNet errors for too-large grouped calls.
 
 52. ~~**Quantized flatten empty tensors**~~ — **RESOLVED on Apple Silicon follow-up branch.** Flatten now propagates quantization min/max independently of the data-copy kernel, so empty flattened data still produces initialized range outputs. Covered by a focused CPU regression.
 

@@ -42,6 +42,8 @@
 namespace mxnet {
 namespace op {
 
+constexpr int kMaxPreloadedMultiSGDWeights = 60;
+
 struct PreloadedMultiSGDParam : public dmlc::Parameter<PreloadedMultiSGDParam> {
   float rescale_grad;
   float clip_gradient;
@@ -86,6 +88,10 @@ inline bool PreloadedMultiSGDShape(const nnvm::NodeAttrs& attrs,
                                    std::vector<mxnet::TShape>* in_attrs,
                                    std::vector<mxnet::TShape>* out_attrs) {
   const ParamType& param = dmlc::get<ParamType>(attrs.parsed);
+  CHECK_LE(param.num_weights, kMaxPreloadedMultiSGDWeights)
+      << "preloaded_multi_sgd_update supports at most " << kMaxPreloadedMultiSGDWeights
+      << " weights per fused call, got "
+      << param.num_weights;
   CHECK_EQ(in_attrs->size(), input_stride * param.num_weights + 2);
   CHECK_EQ(out_attrs->size(), param.num_weights);
 
@@ -148,7 +154,7 @@ inline bool MP_PreloadedMultiSGD_InferType(const nnvm::NodeAttrs& attrs,
 
 template <typename DType, typename MPDType>
 struct PreloadedMultiSGDKernelParam {
-  static const int N = 60;
+  static const int N = kMaxPreloadedMultiSGDWeights;
   int count;
   size_t max_size;
   size_t sizes[N];
@@ -215,6 +221,10 @@ PreloadedMultiSGDKernelParam<DType, MPDType> FillPreloadedMultiSGDKernelParam(
   param.clip_gradient = p.clip_gradient;
   param.rescale_grad  = p.rescale_grad;
   param.momentum      = 0;
+  constexpr int max_num_weights = PreloadedMultiSGDKernelParam<DType, MPDType>::N;
+  CHECK_LE(p.num_weights, max_num_weights)
+      << "preloaded_multi_sgd_update supports at most " << max_num_weights
+      << " weights per fused call, got " << p.num_weights;
   param.count         = p.num_weights;
   param.max_size      = 0;
   for (int i = 0; i < param.count; ++i) {

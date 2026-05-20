@@ -555,7 +555,7 @@ inline void BroadcastReduceShapeCompact(const mxnet::TShape& big,
     (*new_big)[j++] = big.Size();
   } else {
     index_t bprod = 1, sprod = 1;
-    for (index_t i = 0, k = 0; i < big.ndim(); ++i) {
+    for (index_t i = 0; i < big.ndim(); ++i) {
       bool red_axis = big[i] != small[i];
       if ((red_axis && sprod > 1) || (!red_axis && bprod != sprod)) {
         (*new_big)[j]   = bprod;
@@ -564,9 +564,7 @@ inline void BroadcastReduceShapeCompact(const mxnet::TShape& big,
         ++j;
       }
       bprod *= big[i];
-      if (red_axis) {
-        ++k;
-      } else {
+      if (!red_axis) {
         sprod *= big[i];
       }
     }
@@ -1399,6 +1397,7 @@ void BroadcastCPU(const OpContext& ctx,
     IType* dst = static_cast<IType*>(outputs[0].dptr_);
     // broadcast axis independently with result reusage
     const int omp_threads = mxnet::engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+    (void)omp_threads;
     for (int ax = 0; ax < aux_data.num_broadcast_axes; ax++) {
       index_t axis     = aux_data.axes[ax];
       size_t bcast_dim = dst_shape[axis];
@@ -1413,7 +1412,7 @@ void BroadcastCPU(const OpContext& ctx,
 #if __GNUC__ >= 8
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
-            std::memcpy(dst + (elements_to_copy[ax] * (j + i * bcast_dim)),
+            std::memcpy(static_cast<void*>(dst + (elements_to_copy[ax] * (j + i * bcast_dim))),
                         src + (elements_to_copy[ax] * i),
                         elements_to_copy[ax] * sizeof(IType));
 #pragma GCC diagnostic pop

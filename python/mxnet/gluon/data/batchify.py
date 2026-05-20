@@ -268,7 +268,9 @@ def _append_arrs(arrs, use_shared_mem=False, expand=False, batch_axis=0):
     _arr = _np if is_np_array() else nd
     if isinstance(arrs[0], _arr.NDArray):
         if use_shared_mem:
-            out = [x.as_in_context(Device('cpu_shared', 0)) for x in arrs]
+            device = Device('cpu_shared', 0)
+            out = [x.to_device(device) if hasattr(x, 'to_device') else x.as_in_context(device)
+                   for x in arrs]
         else:
             out = arrs
     else:

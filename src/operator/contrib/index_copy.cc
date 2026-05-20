@@ -39,7 +39,7 @@ struct index_copy_fwd_cpu {
 #if __GNUC__ >= 8
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
-    std::memcpy(out_ptr, new_ptr, sizeof(DType) * dim_size);
+    std::memcpy(static_cast<void*>(out_ptr), new_ptr, sizeof(DType) * dim_size);
 #pragma GCC diagnostic pop
   }
 };
@@ -108,7 +108,7 @@ struct index_copy_bwd_cpu {
 #if __GNUC__ >= 8
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
-      std::memset(orig_ptr, 0, sizeof(DType) * dim_size);
+      std::memset(static_cast<void*>(orig_ptr), 0, sizeof(DType) * dim_size);
 #pragma GCC diagnostic pop
     }
   }

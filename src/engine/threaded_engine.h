@@ -495,20 +495,30 @@ class ThreadedEngine : public Engine {
    */
   inline void OnStart(ThreadedOpr* threaded_opr) {
     for (auto&& i : threaded_opr->const_vars) {
-      if (i->var_exception && *i->var_exception) {
-        threaded_opr->opr_exception = i->var_exception;
-        AddToGlobalExceptions(threaded_opr->opr_exception);
+      if (auto exception_ref = GetVarExceptionAndAddToGlobal(i)) {
+        threaded_opr->opr_exception = exception_ref;
         break;
       }
     }
     if (!(threaded_opr->opr_exception && *threaded_opr->opr_exception)) {
       for (auto&& i : threaded_opr->mutable_vars) {
-        if (i->var_exception && *i->var_exception) {
-          threaded_opr->opr_exception = i->var_exception;
-          AddToGlobalExceptions(threaded_opr->opr_exception);
+        if (auto exception_ref = GetVarExceptionAndAddToGlobal(i)) {
+          threaded_opr->opr_exception = exception_ref;
           break;
         }
       }
+    }
+  }
+
+  /*!
+   * \brief Add an exception ref to the global list. Caller must hold exception_m_.
+   * \param opr_exception the exception to be added to global_exception_refs
+   */
+  inline void AddToGlobalExceptionsLocked(const ExceptionRef& opr_exception) {
+    auto it =
+        std::find(global_exception_refs_.begin(), global_exception_refs_.end(), opr_exception);
+    if (it == global_exception_refs_.end()) {
+      global_exception_refs_.push_back(opr_exception);
     }
   }
 
@@ -517,12 +527,36 @@ class ThreadedEngine : public Engine {
    * \param opr_exception the exception to be added to global_exception_refs
    */
   inline void AddToGlobalExceptions(const ExceptionRef& opr_exception) {
-    auto it =
-        std::find(global_exception_refs_.begin(), global_exception_refs_.end(), opr_exception);
-    if (it == global_exception_refs_.end()) {
-      global_exception_refs_.push_back(opr_exception);
+    std::lock_guard<std::mutex> lock(exception_m_);
+    AddToGlobalExceptionsLocked(opr_exception);
+  }
+
+  inline ExceptionRef GetVarExceptionAndAddToGlobal(ThreadedVar* threaded_var) {
+    std::lock_guard<std::mutex> lock(exception_m_);
+    if (threaded_var->var_exception && *threaded_var->var_exception) {
+      AddToGlobalExceptionsLocked(threaded_var->var_exception);
+      return threaded_var->var_exception;
     }
-    return;
+    return nullptr;
+  }
+
+  inline void SetVarExceptionAndAddToGlobal(ThreadedVar* threaded_var,
+                                            const ExceptionRef& opr_exception) {
+    std::lock_guard<std::mutex> lock(exception_m_);
+    if (opr_exception && *opr_exception) {
+      threaded_var->var_exception = opr_exception;
+      AddToGlobalExceptionsLocked(opr_exception);
+    }
+  }
+
+  inline std::exception_ptr ClearVarException(ThreadedVar* threaded_var) {
+    std::lock_guard<std::mutex> lock(exception_m_);
+    if (threaded_var->var_exception && *threaded_var->var_exception) {
+      std::exception_ptr tmp       = *threaded_var->var_exception;
+      *threaded_var->var_exception = nullptr;
+      return tmp;
+    }
+    return nullptr;
   }
   /*! \brief append an operator to bulk */
   inline void BulkAppend(SyncFn exec_fn,
@@ -594,6 +628,8 @@ class ThreadedEngine : public Engine {
    */
   std::mutex finished_m_;
   std::condition_variable finished_cv_;
+  /*! \brief Guards global and per-variable exception refs. */
+  std::mutex exception_m_;
   /*! \brief global exception refs, which are rethrown when WaitForAll is called */
   std::vector<ExceptionRef> global_exception_refs_;
 

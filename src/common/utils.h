@@ -822,7 +822,7 @@ inline void ParallelCopy(DType* dst, const DType* src, index_t size) {
 #if __GNUC__ >= 8
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
-    std::memcpy(dst, src, sizeof(DType) * size);
+    std::memcpy(static_cast<void*>(dst), src, sizeof(DType) * size);
 #pragma GCC diagnostic pop
   }
 }

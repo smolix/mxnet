@@ -1332,7 +1332,7 @@ def test_deconvolution():
 def test_deconvolution_forward_with_bias(shape, num_filter, num_group, kernel, pad):
     """Check if deconvolution forward can work well with bias=True
     """
-    if len(kernel) == 3 and mx.current_context().device_type == 'gpu':
+    if len(kernel) == 3 and mx.current_device().device_type == 'gpu':
         pytest.skip('Skipping Conv3DTranspose tests for GPU')
 
     x = mx.sym.Variable('x')
@@ -3390,7 +3390,7 @@ def check_l2_normalization(in_shape, mode, dtype, norm_eps=1e-10):
     exe = out._simple_bind(ctx=ctx, data=in_data.shape)
     output = exe.forward(is_train=True, data=in_data)
     # compare numpy + mxnet
-    assert_almost_equal(exe.outputs[0], np_out, rtol=1e-2 if dtype is 'float16' else 1e-5, atol=1e-5)
+    assert_almost_equal(exe.outputs[0], np_out, rtol=1e-2 if dtype == 'float16' else 1e-5, atol=1e-5)
     # check gradient
     check_numeric_gradient(out, [in_data], numeric_eps=1e-3, rtol=1e-2, atol=5e-3)
 
@@ -3541,8 +3541,8 @@ def test_norm():
                             in_data = np.random.uniform(-1, 1, in_shape).astype(accumulation_type)
                             in_data[abs(in_data) < epsilon] = 2 * epsilon
                             norm_sym = mx.symbol.norm(data=data, ord=order, axis=i, out_dtype=out_dtype, keepdims=True)
-                            npy_out = l1norm(in_data, i) if order is 1 else l2norm(in_data, i)
-                            npy_out_backward = np.sign(in_data) if order is 1 else in_data/npy_out
+                            npy_out = l1norm(in_data, i) if order == 1 else l2norm(in_data, i)
+                            npy_out_backward = np.sign(in_data) if order == 1 else in_data/npy_out
                             check_symbolic_forward(norm_sym, [in_data.astype(dtype)], [npy_out.astype(out_dtype)],
                                                    rtol=1e-2 if dtype == np.float16 else 1e-3,
                                                    atol=1e-4 if dtype == np.float16 else 1e-5, ctx=ctx, dtype=dtype)
@@ -3558,8 +3558,8 @@ def test_norm():
                                                    rtol=1e-1, atol=1e-3, dtype=backward_dtype)
                             if i < in_data_dim-1:
                                 norm_sym = mx.symbol.norm(data=data, ord=order, axis=(i, i+1), keepdims=True)
-                                npy_out = l1norm(in_data, (i, i+1)) if order is 1 else l2norm(in_data, (i, i+1))
-                                npy_out_backward = np.sign(in_data) if order is 1 else in_data/npy_out
+                                npy_out = l1norm(in_data, (i, i+1)) if order == 1 else l2norm(in_data, (i, i+1))
+                                npy_out_backward = np.sign(in_data) if order == 1 else in_data/npy_out
                                 check_symbolic_forward(norm_sym, [in_data], [npy_out.astype(dtype)],
                                                        rtol=1e-2 if dtype is np.float16 else 1e-3,
                                                        atol=1e-4 if dtype is np.float16 else 1e-5, ctx=ctx)
@@ -4494,6 +4494,13 @@ def test_all_finite():
     assert sym_output[0] == 1
 
 
+def test_multi_all_finite_rejects_too_many_inputs():
+    arrays = [mx.nd.ones((1,), ctx=mx.cpu()) for _ in range(201)]
+    with pytest.raises(MXNetError, match="multi_all_finite supports at most 200 arrays"):
+        mx.nd.multi_all_finite(*arrays, num_arrays=len(arrays))
+        mx.nd.waitall()
+
+
 def test_repeat():
     def test_repeat_forward():
         ndim_max = 6 # max number of dims of the ndarray
@@ -5353,6 +5360,27 @@ def test_quantization_op():
     assert same(qa.asnumpy(), qa_real.asnumpy())
     assert_almost_equal(a_.asnumpy(),  a_real.asnumpy(), rtol=1e-2)
 
+
+def test_quantized_flatten_empty_output_range_cpu():
+    ctx = mx.cpu()
+    with mx.np_shape():
+        for dtype in ['int8', 'uint8']:
+            for shape, expected_shape in [((0, 2, 3), (0, 6)), ((2, 0, 3), (2, 0))]:
+                data = mx.nd.zeros(shape, ctx=ctx, dtype=dtype)
+                min_data = mx.nd.array([-2.5], ctx=ctx, dtype='float32')
+                max_data = mx.nd.array([3.5], ctx=ctx, dtype='float32')
+                out_data = mx.nd.empty(expected_shape, ctx=ctx, dtype=dtype)
+                out_min = mx.nd.array([1234.0], ctx=ctx, dtype='float32')
+                out_max = mx.nd.array([-5678.0], ctx=ctx, dtype='float32')
+
+                output, min_output, max_output = mx.nd.contrib.quantized_flatten(
+                    data, min_data, max_data, out=[out_data, out_min, out_max])
+
+                assert output.shape == expected_shape
+                assert_almost_equal(min_output.asnumpy(), np.array([-2.5], dtype=np.float32))
+                assert_almost_equal(max_output.asnumpy(), np.array([3.5], dtype=np.float32))
+
+
 def test_index_copy():
     x = mx.nd.zeros((5,3))
     t = mx.nd.array([[1,2,3],[4,5,6],[7,8,9]])
@@ -5817,6 +5845,96 @@ def test_custom_op_exc():
             c = mx.nd.Custom(a, b, op_type='Dot4')
             c.wait_to_read()
         pytest.raises(MXNetError, custom_exc4)
+
+
+@legacy_np_semantics()
+def test_custom_op_exception_isolation_between_queued_ops():
+    def fail_forward(in_data, out_data):
+        raise RuntimeError("intentional custom-op failure")
+
+    def add_forward(in_data, out_data):
+        out_data[0][:] = in_data[0] + in_data[1]
+
+    _build_dot_custom(fail_forward, 'DotExceptionIsolationFail')
+    _build_dot_custom(add_forward, 'DotExceptionIsolationOk')
+
+    lhs = mx.nd.ones((2, 2))
+    rhs = mx.nd.ones((2, 2))
+    bad = mx.nd.Custom(lhs, rhs, op_type='DotExceptionIsolationFail')
+    good = mx.nd.Custom(lhs, rhs, op_type='DotExceptionIsolationOk')
+
+    with pytest.raises(MXNetError):
+        bad.wait_to_read()
+    good.wait_to_read()
+    assert_almost_equal(good, np.full((2, 2), 2.0))
+    mx.nd.waitall()
+
+
+@legacy_np_semantics()
+def test_custom_op_backward_exception_isolation_between_queued_ops():
+    class FailBackward(mx.operator.CustomOp):
+        def forward(self, is_train, req, in_data, out_data, aux):
+            self.assign(out_data[0], req[0], in_data[0])
+
+        def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
+            raise RuntimeError("intentional custom-op backward failure")
+
+    class PassBackward(mx.operator.CustomOp):
+        def forward(self, is_train, req, in_data, out_data, aux):
+            self.assign(out_data[0], req[0], in_data[0])
+
+        def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
+            self.assign(in_grad[0], req[0], out_grad[0])
+
+    @mx.operator.register("FailBackwardExceptionIsolation")
+    class FailBackwardProp(mx.operator.CustomOpProp):
+        def __init__(self):
+            super(FailBackwardProp, self).__init__(need_top_grad=True)
+
+        def list_arguments(self):
+            return ['data']
+
+        def list_outputs(self):
+            return ['output']
+
+        def infer_shape(self, in_shape):
+            return in_shape, [in_shape[0]], []
+
+        def create_operator(self, ctx, shapes, dtypes):
+            return FailBackward()
+
+    @mx.operator.register("PassBackwardExceptionIsolation")
+    class PassBackwardProp(mx.operator.CustomOpProp):
+        def __init__(self):
+            super(PassBackwardProp, self).__init__(need_top_grad=True)
+
+        def list_arguments(self):
+            return ['data']
+
+        def list_outputs(self):
+            return ['output']
+
+        def infer_shape(self, in_shape):
+            return in_shape, [in_shape[0]], []
+
+        def create_operator(self, ctx, shapes, dtypes):
+            return PassBackward()
+
+    bad_data = mx.nd.ones((2, 2))
+    bad_data.attach_grad()
+    with mx.autograd.record():
+        bad = mx.nd.Custom(bad_data, op_type='FailBackwardExceptionIsolation')
+    bad.backward(mx.nd.ones_like(bad))
+    with pytest.raises(MXNetError):
+        mx.nd.waitall()
+
+    good_data = mx.nd.ones((2, 2))
+    good_data.attach_grad()
+    with mx.autograd.record():
+        good = mx.nd.Custom(good_data, op_type='PassBackwardExceptionIsolation')
+    good.backward(mx.nd.ones_like(good))
+    assert_almost_equal(good_data.grad, np.ones((2, 2)))
+    mx.nd.waitall()
 
 
 def test_psroipooling():
@@ -7828,6 +7946,24 @@ def test_histogram():
         executor2 = histo2._bind(ctx=default_device(), args={"data" : x, "bins" : mx_bins})
         executor2.forward(is_train=False)
         assert_almost_equal(np_histo2, executor2.outputs[0].asnumpy(), 0, 0, ("EXPECTED_histo2", "FORWARD_histo2"), equal_nan=False)
+
+
+def test_histogram_cpu_edge_and_invalid_bins():
+    x = mx.nd.array([0.0, 1.0, 2.0, 3.0], ctx=mx.cpu(), dtype=np.float64)
+
+    histo, bins = mx.nd.histogram(x, bins=mx.nd.array([0.0, 1.0, 2.0, 3.0],
+                                                      ctx=mx.cpu(),
+                                                      dtype=np.float64))
+    assert_almost_equal(histo.asnumpy(), np.array([1, 1, 2]))
+    assert_almost_equal(bins.asnumpy(), np.array([0.0, 1.0, 2.0, 3.0]))
+
+    histo, bins = mx.nd.histogram(x, bins=3, range=(0.0, 3.0))
+    assert_almost_equal(histo.asnumpy(), np.array([1, 1, 2]))
+    assert_almost_equal(bins.asnumpy(), np.array([0.0, 1.0, 2.0, 3.0]))
+
+    for bin_cnt in (0, -1):
+        with pytest.raises(MXNetError, match="bin_cnt"):
+            mx.nd.histogram(x, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
 
 
 # Re-enabled 2026-05-17 — audit at HEAD f103c5491 (cuDNN 9.22 + B2 SoftReLU/LogSigmoid fix).

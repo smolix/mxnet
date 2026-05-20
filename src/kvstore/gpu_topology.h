@@ -465,11 +465,9 @@ inline bool KernighanLin(const std::vector<T>& W,
       } while (g_max > 0 && count <= P->size());
 
       // 5) Update P using P_temp
-      int moves = 0;
       for (unsigned i = 0; i < P->size(); ++i) {
         if (P_temp[i] == -1) {
           (*P)[i] = *num_partitions;
-          moves++;
         }
       }
       cluster_pairs->push_back(

@@ -21,6 +21,8 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import time
+import multiprocessing
 import mxnet as mx
 import numpy as np
 import random
@@ -220,7 +222,6 @@ def test_image_list_dataset_handle(prepare_record):
         assert len(img.shape) == 3
         assert label == 0
 
-@pytest.mark.garbage_expected
 def test_list_dataset():
     for num_worker in range(0, 3):
         data = mx.gluon.data.DataLoader([([1,2], 0), ([3, 4], 1)], batch_size=1, num_workers=num_worker)
@@ -234,13 +235,66 @@ class _Dataset(gluon.data.Dataset):
     def __getitem__(self, key):
         return mx.nd.full((10,), key)
 
-@pytest.mark.garbage_expected
 def test_multi_worker():
     data = _Dataset()
     for thread_pool in [True, False]:
         loader = gluon.data.DataLoader(data, batch_size=1, num_workers=5, thread_pool=thread_pool)
         for i, batch in enumerate(loader):
             assert (batch.asnumpy() == i).all()
+
+
+class _SlowDataset(gluon.data.Dataset):
+    def __len__(self):
+        return 4
+    def __getitem__(self, key):
+        time.sleep(1.0)
+        return mx.nd.full((1,), key)
+
+
+class _FailingDataset(gluon.data.Dataset):
+    def __len__(self):
+        return 4
+    def __getitem__(self, key):
+        raise RuntimeError("intentional dataloader worker failure")
+
+
+def test_multi_worker_iterator_close_recreates_pool():
+    loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, prefetch=2,
+                                   try_nopython=False)
+    iterator = iter(loader)
+    assert next(iterator).shape == (1, 10)
+    first_pool = loader._worker_pool
+    iterator.close()
+    assert loader._worker_pool is None
+
+    iterator = iter(loader)
+    assert loader._worker_pool is not None
+    assert loader._worker_pool is not first_pool
+    assert next(iterator).shape == (1, 10)
+    iterator.close()
+
+
+def test_multi_worker_timeout_releases_pool():
+    loader = gluon.data.DataLoader(_SlowDataset(), batch_size=1, num_workers=1, prefetch=1,
+                                   timeout=0.01, try_nopython=False)
+    iterator = iter(loader)
+    with pytest.raises(multiprocessing.context.TimeoutError):
+        next(iterator)
+    assert loader._worker_pool is None
+
+
+def test_multi_worker_exception_releases_pool():
+    loader = gluon.data.DataLoader(_FailingDataset(), batch_size=1, num_workers=1,
+                                   prefetch=1, try_nopython=False)
+    iterator = iter(loader)
+    with pytest.raises(RuntimeError):
+        next(iterator)
+    assert loader._worker_pool is None
+
+
+def test_thread_pool_default_batchify_avoids_shared_memory():
+    loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, thread_pool=True)
+    assert not loader._batchify_fn._use_shared_mem
 
 
 def test_multi_worker_shape():
@@ -319,14 +373,15 @@ def _batchify(data):
         labels = np.asarray(labels, dtype=np.float32)
     inputs = inputs.transpose((1, 0, 2))
     labels = labels.transpose((1, 0))
+    shared_device = mx.Device('cpu_shared', 0)
 
-    return (nd.array(inputs, dtype=inputs.dtype, ctx=context.Context('cpu_shared', 0)),
-            nd.array(x_lens, ctx=context.Context('cpu_shared', 0))) \
+    return (nd.array(inputs, dtype=inputs.dtype, ctx=shared_device),
+            nd.array(x_lens, ctx=shared_device)) \
         if labels is None else (
-        nd.array(inputs, dtype=inputs.dtype, ctx=context.Context('cpu_shared', 0)),
-        nd.array(x_lens, ctx=context.Context('cpu_shared', 0)),
-        nd.array(labels, dtype=labels.dtype, ctx=context.Context('cpu_shared', 0)),
-        nd.array(y_lens, ctx=context.Context('cpu_shared', 0)))
+        nd.array(inputs, dtype=inputs.dtype, ctx=shared_device),
+        nd.array(x_lens, ctx=shared_device),
+        nd.array(labels, dtype=labels.dtype, ctx=shared_device),
+        nd.array(y_lens, ctx=shared_device))
 
 def test_multi_worker_forked_data_loader():
     data = _Dummy(False)
@@ -354,7 +409,8 @@ def test_multi_worker_dataloader_release_pool():
 
     for _ in range(repeat):
         A = np.random.rand(999, 2000)
-        D = mx.gluon.data.DataLoader(A, batch_size=8, num_workers=num_workers)
+        D = mx.gluon.data.DataLoader(A, batch_size=8, num_workers=num_workers,
+                                     prefetch=0)
         the_iter = iter(D)
         next(the_iter)
         del the_iter
@@ -503,7 +559,6 @@ def test_dataset_take_handle():
         total += sample
     assert total == expected_total
 
-@pytest.mark.garbage_expected
 def test_dataloader_scope():
     """
     Bug: Gluon DataLoader terminates the process pool early while
@@ -567,6 +622,29 @@ def test_mx_data_loader_nopython():
     assert np.all(next(iter(dl1))[1].asnumpy() == next(iter(dl2))[1].asnumpy())
     for _ in dl1:
         pass
+
+@mx.util.use_np
+def test_mx_data_loader_nopython_early_close_resets():
+    from mxnet.gluon.data.dataloader import DataLoader
+
+    data = mx.np.arange(64, dtype='float32').reshape((64, 1))
+    label = mx.np.arange(64, dtype='float32')
+    dataset = mx.gluon.data.ArrayDataset(data, label)
+    loader = DataLoader(dataset=dataset, batch_size=8, num_workers=2,
+                        try_nopython=True, shuffle=False)
+    assert loader._mx_iter is not None
+
+    iterator = iter(loader)
+    try:
+        first_batch = next(iterator)
+        assert np.array_equal(first_batch[1].asnumpy(), np.arange(8, dtype=np.float32))
+    finally:
+        iterator.close()
+    gc.collect()
+
+    first_batch_after_close = next(iter(loader))
+    assert np.array_equal(first_batch_after_close[1].asnumpy(),
+                          np.arange(8, dtype=np.float32))
 
 def test_batchify_stack():
     a = np.array([[1, 2, 3, 4], [5, 6, 7, 8]])

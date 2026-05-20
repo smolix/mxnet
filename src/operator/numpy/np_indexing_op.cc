@@ -45,7 +45,7 @@ struct AdvancedIndexingTakeCPU {
 #if __GNUC__ >= 8
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
-    std::memcpy(out_data + i * M, in_data + j * M, M * sizeof(DType));
+    std::memcpy(static_cast<void*>(out_data + i * M), in_data + j * M, M * sizeof(DType));
 #pragma GCC diagnostic pop
   }
 };
@@ -70,7 +70,9 @@ struct AdvancedIndexingTakeMultiDimensionCPU {
 #if __GNUC__ >= 8
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
-    std::memcpy(out_data + i * M, in_data + (i * K + j) * M, M * sizeof(DType));
+    std::memcpy(static_cast<void*>(out_data + i * M),
+                in_data + (i * K + j) * M,
+                M * sizeof(DType));
 #pragma GCC diagnostic pop
   }
 };
@@ -91,9 +93,11 @@ struct AdvancedIndexingBooleanMaskBackwardCPUWriteKernel {
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
     if (prev != curr) {
-      std::memcpy(igrad + i * col_size, ograd + prev * col_size, col_size * sizeof(DType));
+      std::memcpy(static_cast<void*>(igrad + i * col_size),
+                  ograd + prev * col_size,
+                  col_size * sizeof(DType));
     } else {
-      std::memset(igrad + i * col_size, 0, col_size * sizeof(DType));
+      std::memset(static_cast<void*>(igrad + i * col_size), 0, col_size * sizeof(DType));
     }
 #pragma GCC diagnostic pop
   }

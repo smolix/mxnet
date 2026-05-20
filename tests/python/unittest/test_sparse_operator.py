@@ -158,7 +158,7 @@ def all_zero(var):
 # @pytest.mark.skip(reason="https://github.com/apache/incubator-mxnet/issues/18740")
 def test_elemwise_binary_ops():
     # skip testing on GPU because only CPU ops are implemented
-    if default_device().device_type is 'gpu':
+    if default_device().device_type == 'gpu':
         return
 
     def test_elemwise_binary_op(name, lhs_stype, rhs_stype, shape,
@@ -361,8 +361,8 @@ def test_elemwise_binary_ops():
                                 lhs_density=lhs_density, rhs_density=rhs_density,
                                 verbose=False)
 
-        if ((lhs_stype is 'default' and rhs_stype is 'row_sparse') or
-            (lhs_stype is 'row_sparse' and rhs_stype is 'row_sparse') and (rhs_density == 0.0)):
+        if ((lhs_stype == 'default' and rhs_stype == 'row_sparse') or
+            (lhs_stype == 'row_sparse' and rhs_stype == 'row_sparse') and (rhs_density == 0.0)):
             test_elemwise_binary_op("elemwise_add", lhs_stype, rhs_stype, shape,
                                     lambda l, r: mx.sym.sparse.elemwise_add(l, r, out=l),
                                     lambda l, r: l + r,
@@ -383,7 +383,7 @@ def test_elemwise_binary_ops():
                                     force_grad_overlap=force_grad_overlap,
                                     lhs_density=lhs_density, rhs_density=rhs_density,
                                     verbose=False)
-        if ((lhs_stype is 'row_sparse' and rhs_stype is 'row_sparse') and (lhs_density == 0.0)):
+        if ((lhs_stype == 'row_sparse' and rhs_stype == 'row_sparse') and (lhs_density == 0.0)):
             test_elemwise_binary_op("elemwise_add", lhs_stype, rhs_stype, shape,
                                     lambda l, r: mx.sym.sparse.elemwise_add(l, r, out=r),
                                     lambda l, r: l + r,
@@ -1226,7 +1226,7 @@ def test_cast_storage_ex():
             check_cast_storage(shape, d, 'default', 'row_sparse')
             check_cast_storage(shape, d, 'row_sparse', 'default')
         # Test specific gpu kernels
-        if default_device().device_type is 'gpu':
+        if default_device().device_type == 'gpu':
             dim0 = rnd.randint(1, 10)
             # test gpu thread kernel
             check_cast_storage((dim0, rnd.randint(  1,   32)), d, 'default', 'csr')
@@ -1730,7 +1730,7 @@ def test_sparse_elementwise_sum():
         shape = tuple(np.random.randint(5, 10, size=dim))
         rsp_test_cnt = np.random.randint(1, 9)
         check_sparse_elementwise_sum_with_shape(['row_sparse' for i in range(rsp_test_cnt)], shape, rsp_test_cnt)
-        if dim is 2:
+        if dim == 2:
             check_sparse_elementwise_sum_with_shape(['default', 'csr', 'default'], shape, 3)
             test_len = np.random.randint(5, 10)
             # at least one default type
@@ -1738,7 +1738,7 @@ def test_sparse_elementwise_sum():
             for _ in range(test_len):
                 pick_side = np.random.randint(2)
                 pick_type = np.random.randint(3)
-                stypes = ([all_stypes[pick_type]] if pick_side is 0 else []) + stypes + ([all_stypes[pick_type]] if pick_side is 1 else [])
+                stypes = ([all_stypes[pick_type]] if pick_side == 0 else []) + stypes + ([all_stypes[pick_type]] if pick_side == 1 else [])
             check_sparse_elementwise_sum_with_shape(stypes, shape, test_len+1)
 
 

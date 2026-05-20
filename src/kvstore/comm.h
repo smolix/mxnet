@@ -164,12 +164,15 @@ class CommCPU : public Comm {
         const_vars[i - 1] = reduce[i].var();
       }
 
+      const size_t bigarray_bound = bigarray_bound_;
+      const int nthread_reduction = nthread_reduction_;
       Engine::Get()->PushAsync(
-          [reduce, this](RunContext rctx,
-                         Engine::CallbackOnStart on_start,
-                         Engine::CallbackOnComplete on_complete) {
+          [reduce, bigarray_bound, nthread_reduction](
+              RunContext rctx,
+              Engine::CallbackOnStart on_start,
+              Engine::CallbackOnComplete on_complete) {
             on_start();
-            ReduceSumCPU(reduce);
+            ReduceSumCPU(reduce, bigarray_bound, nthread_reduction);
             on_complete();
           },
           Context::CPU(),
@@ -200,13 +203,15 @@ class CommCPU : public Comm {
       }
       Resource rsc = ResourceManager::Get()->Request(buf_merged.ctx(),
                                                      ResourceRequest(ResourceRequest::kTempSpace));
+      const bool is_serial_push = is_serial_push_;
       Engine::Get()->PushAsync(
-          [reduce, buf_merged, rsc, this](RunContext rctx,
-                                          Engine::CallbackOnStart on_start,
-                                          Engine::CallbackOnComplete on_complete) {
+          [reduce, buf_merged, rsc, is_serial_push](
+              RunContext rctx,
+              Engine::CallbackOnStart on_start,
+              Engine::CallbackOnComplete on_complete) {
             on_start();
             NDArray out = buf_merged;
-            is_serial_push_ ?
+            is_serial_push ?
                 ReduceSumCPUExSerial(reduce, &out) :
                 mxnet::ndarray::ElementwiseSum(rctx.get_stream<cpu>(), rsc, reduce, &out);
             on_complete();
@@ -299,7 +304,9 @@ class CommCPU : public Comm {
 
  private:
   // reduce sum into val[0]
-  inline void ReduceSumCPU(const std::vector<NDArray>& in_data) {
+  inline static void ReduceSumCPU(const std::vector<NDArray>& in_data,
+                                  const size_t bigarray_bound,
+                                  const int nthread_reduction) {
     MSHADOW_TYPE_SWITCH(in_data[0].dtype(), DType, {
       std::vector<DType*> dptr(in_data.size());
       for (size_t i = 0; i < in_data.size(); ++i) {
@@ -308,12 +315,12 @@ class CommCPU : public Comm {
         dptr[i] = data.FlatTo2D<cpu, DType>().dptr_;
       }
       size_t total = in_data[0].shape().Size();
-      ReduceSumCPUImpl(dptr, total);
+      ReduceSumCPUImpl(dptr, total, bigarray_bound, nthread_reduction);
     });
   }
 
   // serial implementation of reduce sum for row sparse NDArray.
-  inline void ReduceSumCPUExSerial(const std::vector<NDArray>& in, NDArray* out) {
+  inline static void ReduceSumCPUExSerial(const std::vector<NDArray>& in, NDArray* out) {
     using namespace rowsparse;
     using namespace mshadow;
     auto stype = out->storage_type();
@@ -422,13 +429,16 @@ class CommCPU : public Comm {
   }
 
   template <typename DType>
-  inline void ReduceSumCPUImpl(std::vector<DType*> dptr, size_t total) {
-    const size_t step = std::min(bigarray_bound_, static_cast<size_t>(4 << 10));
+  inline static void ReduceSumCPUImpl(std::vector<DType*> dptr,
+                                      size_t total,
+                                      const size_t bigarray_bound,
+                                      const int nthread_reduction) {
+    const size_t step = std::min(bigarray_bound, static_cast<size_t>(4 << 10));
     long ntask        = (total + step - 1) / step;  // NOLINT(*)
-    if (total < bigarray_bound_ || nthread_reduction_ <= 1) {
+    if (total < bigarray_bound || nthread_reduction <= 1) {
       ReduceSumCPU(dptr, 0, total);
     } else {
-#pragma omp parallel for schedule(static) num_threads(nthread_reduction_)
+#pragma omp parallel for schedule(static) num_threads(nthread_reduction)
       for (long j = 0; j < ntask; ++j) {  // NOLINT(*)
         size_t k     = static_cast<size_t>(j);
         size_t begin = std::min(k * step, total);

@@ -86,7 +86,7 @@ inline std::string MXNetPadType2String(const int s) {
     LOG(FATAL) << "unknown type " << s;
   }
   LOG(FATAL) << "should not reach here ";
-  return 0;
+  return std::string();
 }
 
 struct NumpyPadParam : public dmlc::Parameter<NumpyPadParam> {

@@ -135,6 +135,7 @@ NDArray::Chunk::~Chunk() {
   if (auto engine = engine_ref_.lock()) {
     engine->DeleteVariable(
         [mem, skip_free, var = this->var](RunContext s) mutable {
+          (void)var;
 #if MXNET_USE_CUDA
           auto& sync_obj = var->sync_object;
           Storage::SyncObj storage_sync_obj;
@@ -1752,7 +1753,7 @@ void SampleExponential(real_t lambda, NDArray* out) {
   if (out->ctx().dev_mask() != cpu::kDevMask) {
     LOG(FATAL) << "exponential sampling only valid on cpu";
   }
-  real_t dummy;
+  real_t dummy = 0;
   SampleOP<ndarray::ExponentialDistribution>(lambda, dummy, out);
 }
 
@@ -1760,7 +1761,7 @@ void SamplePoisson(real_t lambda, NDArray* out) {
   if (out->ctx().dev_mask() != cpu::kDevMask) {
     LOG(FATAL) << "poisson sampling only valid on cpu";
   }
-  real_t dummy;
+  real_t dummy = 0;
   SampleOP<ndarray::PoissonDistribution>(lambda, dummy, out);
 }
 

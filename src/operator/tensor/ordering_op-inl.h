@@ -275,6 +275,7 @@ MSHADOW_FORCE_INLINE void TopKSort(const Tensor<cpu, 1, DType>& dat,
   // Batch size.
   const size_t M(work.size(0) / (sizeof(DType) * N));
   const int omp_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount());
+  (void)omp_threads;
 #pragma omp parallel for num_threads(omp_threads)
   for (index_t i = 0; i < static_cast<index_t>(M); ++i) {
     // Tensor `work` stores the flattened source data, while `dat` stores the sorted result.

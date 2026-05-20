@@ -63,6 +63,7 @@ inline void DeformablePSROIPoolForwardCPU(const index_t count,
                                           DType* top_data,
                                           DType* top_count) {
   const int omp_threads = mxnet::engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  (void)omp_threads;
 #pragma omp parallel for num_threads(omp_threads)
   for (index_t index = 0; index < count; index++) {
     // The output is in order (n, ctop, ph, pw)

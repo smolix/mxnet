@@ -1,6 +1,6 @@
 # Fast CPU-only pytest subset for native macOS arm64 builds.
 # Keep this list focused on import, engine lifecycle, NumPy semantics, and
-# Gluon smoke coverage that does not require CUDA, oneDNN, OpenMP, OpenCV,
+# Gluon and oneDNN smoke coverage that does not require CUDA, OpenMP, OpenCV,
 # SciPy, network access, or downloaded datasets.
 tests/python/unittest/test_base.py
 tests/python/unittest/test_engine.py::test_bulk
@@ -8,3 +8,4 @@ tests/python/unittest/test_engine_shutdown.py
 tests/python/unittest/test_inplace_dtype.py
 tests/python/unittest/test_numpy_default_dtype.py
 tests/python/unittest/test_smoke.py
+tests/python/dnnl/test_dnnl.py::test_dnnl_ndarray_slice

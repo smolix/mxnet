@@ -43,6 +43,8 @@
 namespace mxnet {
 namespace op {
 
+constexpr int kMaxMultiLANSTensors = 45;
+
 namespace multilans {
 enum MultiLANSUpdateResource { kTempSpace };
 }  // namespace multilans
@@ -102,8 +104,9 @@ inline bool MultiLANSInferShape(const nnvm::NodeAttrs& attrs,
   auto& input_shapes  = *in_attrs;
   auto& output_shapes = *out_attrs;
 
-  CHECK_LE(param.num_tensors, 45) << "Invalid number of tensors, the maximum value is 45, and got "
-                                  << param.num_tensors;
+  CHECK_LE(param.num_tensors, kMaxMultiLANSTensors)
+      << "multi_lans_update supports at most " << kMaxMultiLANSTensors
+      << " tensors per fused call, got " << param.num_tensors;
   CHECK_EQ(param.learning_rates.ndim(), param.num_tensors)
       << "Number of learning rates is inconsistent with num_tensors "
       << "parameter passed. Expected number of learning rates: " << param.num_tensors
@@ -174,7 +177,7 @@ class LANSSinglePrecision {
 
 template <typename DType, typename MPDType>
 struct MultiLANSKernelParam {
-  static const int N = 45;
+  static const int N = kMaxMultiLANSTensors;
   size_t ntensors;
   size_t max_size;
   size_t total_size;
@@ -208,6 +211,10 @@ void FillMultiLANSKernelParam(const nnvm::NodeAttrs& attrs,
   const ParamType& p       = nnvm::get<ParamType>(attrs.parsed);
   mxnet_op::Stream<xpu>* s = ctx.get_stream<xpu>();
 
+  constexpr int max_num_tensors = MultiLANSKernelParam<DType, MPDType>::N;
+  CHECK_LE(p.num_tensors, max_num_tensors)
+      << "multi_lans_update supports at most " << max_num_tensors
+      << " tensors per fused call, got " << p.num_tensors;
   multi_param->ntensors   = p.num_tensors;
   multi_param->total_size = 0;
   multi_param->max_size   = 0;

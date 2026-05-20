@@ -747,7 +747,7 @@ def test_np_ndarray_indexing():
 
         # test value shape are expanded to be longer than index array's shape
         # this is currently only supported in basic indexing
-        if _is_basic_index(index):
+        if _is_basic_index(index) and len(indexed_array_shape) > 0:
             expanded_value_shape = (1, 1) + np_value.shape
             assert_same(np_array, np_index, mx_array, index, np.array(np_value.reshape(expanded_value_shape)))
             assert_same(np_array, np_index, mx_array, index, np_value.reshape(expanded_value_shape))

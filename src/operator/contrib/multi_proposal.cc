@@ -8,6 +8,50 @@
 
 #include "./multi_proposal-inl.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+
+namespace {
+
+inline int64_t CheckedMul(int64_t lhs, int64_t rhs, const char* what) {
+  CHECK_GE(lhs, 0);
+  CHECK_GE(rhs, 0);
+  CHECK(rhs == 0 || lhs <= std::numeric_limits<int64_t>::max() / rhs)
+      << what << " exceeds int64_t range: " << lhs << " * " << rhs;
+  return lhs * rhs;
+}
+
+inline int64_t CheckedAdd(int64_t lhs, int64_t rhs, const char* what) {
+  CHECK_GE(lhs, 0);
+  CHECK_GE(rhs, 0);
+  CHECK_LE(lhs, std::numeric_limits<int64_t>::max() - rhs)
+      << what << " exceeds int64_t range: " << lhs << " + " << rhs;
+  return lhs + rhs;
+}
+
+inline int64_t CheckedMul3(int64_t a, int64_t b, int64_t c, const char* what) {
+  return CheckedMul(CheckedMul(a, b, what), c, what);
+}
+
+inline mshadow::index_t CheckedIndexT(int64_t value, const char* what) {
+  CHECK_GE(value, 0);
+  CHECK_LE(value, static_cast<int64_t>(std::numeric_limits<mshadow::index_t>::max()))
+      << what << " exceeds mshadow index_t range: " << value;
+  return static_cast<mshadow::index_t>(value);
+}
+
+inline mshadow::index_t CheckedWorkspaceShape(int64_t elements, const char* what) {
+  const uint64_t max_elements =
+      static_cast<uint64_t>(std::numeric_limits<size_t>::max() / sizeof(mxnet::real_t));
+  CHECK_GE(elements, 0);
+  CHECK_LE(static_cast<uint64_t>(elements), max_elements)
+      << what << " exceeds size_t allocation range: " << elements;
+  return CheckedIndexT(elements, what);
+}
+
+}  // namespace
+
 //============================
 // Bounding Box Transform Utils
 //============================
@@ -25,16 +69,28 @@ inline void BBoxTransformInv(const mshadow::Tensor<cpu, 2>& boxes,
                              mshadow::Tensor<cpu, 2>* out_pred_boxes) {
   CHECK_GE(boxes.size(1), 4);
   CHECK_GE(out_pred_boxes->size(1), 4);
-  int anchors = deltas.size(0) / 4;
-  int heights = deltas.size(1);
-  int widths  = deltas.size(2);
+  const index_t anchors = deltas.size(0) / 4;
+  const index_t heights = deltas.size(1);
+  const index_t widths  = deltas.size(2);
+  const index_t anchor_stride =
+      CheckedIndexT(CheckedMul(static_cast<int64_t>(widths),
+                               static_cast<int64_t>(anchors),
+                               "multi_proposal bbox transform anchor stride"),
+                    "multi_proposal bbox transform anchor stride");
+  const index_t count = CheckedIndexT(CheckedMul(static_cast<int64_t>(heights),
+                                                 static_cast<int64_t>(anchor_stride),
+                                                 "multi_proposal bbox transform size"),
+                                      "multi_proposal bbox transform size");
 
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-  for (int index = 0; index < anchors * heights * widths; ++index) {
+  for (mshadow::openmp_index_t raw_index = 0;
+       raw_index < static_cast<mshadow::openmp_index_t>(count);
+       ++raw_index) {
     // index_t index = h * (widths * anchors) + w * (anchors) + a;
-    int a = index % anchors;
-    int w = (index / anchors) % widths;
-    int h = index / (widths * anchors);
+    const index_t index = static_cast<index_t>(raw_index);
+    const index_t a     = index % anchors;
+    const index_t w     = (index / anchors) % widths;
+    const index_t h     = index / anchor_stride;
 
     float width  = boxes[index][2] - boxes[index][0] + 1.0;
     float height = boxes[index][3] - boxes[index][1] + 1.0;
@@ -82,16 +138,28 @@ inline void IoUTransformInv(const mshadow::Tensor<cpu, 2>& boxes,
                             mshadow::Tensor<cpu, 2>* out_pred_boxes) {
   CHECK_GE(boxes.size(1), 4);
   CHECK_GE(out_pred_boxes->size(1), 4);
-  int anchors = deltas.size(0) / 4;
-  int heights = deltas.size(1);
-  int widths  = deltas.size(2);
+  const index_t anchors = deltas.size(0) / 4;
+  const index_t heights = deltas.size(1);
+  const index_t widths  = deltas.size(2);
+  const index_t anchor_stride =
+      CheckedIndexT(CheckedMul(static_cast<int64_t>(widths),
+                               static_cast<int64_t>(anchors),
+                               "multi_proposal iou transform anchor stride"),
+                    "multi_proposal iou transform anchor stride");
+  const index_t count = CheckedIndexT(CheckedMul(static_cast<int64_t>(heights),
+                                                 static_cast<int64_t>(anchor_stride),
+                                                 "multi_proposal iou transform size"),
+                                      "multi_proposal iou transform size");
 
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-  for (int index = 0; index < anchors * heights * widths; ++index) {
+  for (mshadow::openmp_index_t raw_index = 0;
+       raw_index < static_cast<mshadow::openmp_index_t>(count);
+       ++raw_index) {
     // index_t index = h * (widths * anchors) + w * (anchors) + a;
-    int a = index % anchors;
-    int w = (index / anchors) % widths;
-    int h = index / (widths * anchors);
+    const index_t index = static_cast<index_t>(raw_index);
+    const index_t a     = index % anchors;
+    const index_t w     = (index / anchors) % widths;
+    const index_t h     = index / anchor_stride;
 
     float x1 = boxes[index][0];
     float y1 = boxes[index][1];
@@ -128,9 +196,12 @@ inline void IoUTransformInv(const mshadow::Tensor<cpu, 2>& boxes,
 // * height or width < rpn_min_size
 inline void FilterBox(mshadow::Tensor<cpu, 2>* dets, const float min_size) {
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-  for (int i = 0; i < static_cast<int>(dets->size(0)); ++i) {
-    float iw = (*dets)[i][2] - (*dets)[i][0] + 1.0f;
-    float ih = (*dets)[i][3] - (*dets)[i][1] + 1.0f;
+  for (mshadow::openmp_index_t raw_i = 0;
+       raw_i < static_cast<mshadow::openmp_index_t>(dets->size(0));
+       ++raw_i) {
+    const index_t i = static_cast<index_t>(raw_i);
+    float iw        = (*dets)[i][2] - (*dets)[i][0] + 1.0f;
+    float ih        = (*dets)[i][3] - (*dets)[i][1] + 1.0f;
     if (iw < min_size || ih < min_size) {
       (*dets)[i][0] -= min_size / 2;
       (*dets)[i][1] -= min_size / 2;
@@ -165,9 +236,12 @@ inline void CopyScore(const mshadow::Tensor<cpu, 2>& dets,
                       mshadow::Tensor<cpu, 1>* score,
                       mshadow::Tensor<cpu, 1>* order) {
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-  for (int i = 0; i < static_cast<int>(dets.size(0)); ++i) {
-    (*score)[i] = dets[i][4];
-    (*order)[i] = i;
+  for (mshadow::openmp_index_t raw_i = 0;
+       raw_i < static_cast<mshadow::openmp_index_t>(dets.size(0));
+       ++raw_i) {
+    const index_t i = static_cast<index_t>(raw_i);
+    (*score)[i]     = dets[i][4];
+    (*order)[i]     = i;
   }
 }
 
@@ -184,12 +258,18 @@ inline void ReorderProposals(const mshadow::Tensor<cpu, 2>& prev_dets,
                              const index_t pre_nms_top_n,
                              mshadow::Tensor<cpu, 2>* dets) {
   CHECK_EQ(dets->size(0), pre_nms_top_n);
-  const int dets_size0 = static_cast<int>(dets->size(0));
-  const int dets_size1 = static_cast<int>(dets->size(1));
+  const index_t dets_size0 = dets->size(0);
+  const index_t dets_size1 = dets->size(1);
+  const index_t dets_size  = CheckedIndexT(CheckedMul(static_cast<int64_t>(dets_size0),
+                                                     static_cast<int64_t>(dets_size1),
+                                                     "multi_proposal reorder size"),
+                                          "multi_proposal reorder size");
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-  for (int k = 0; k < dets_size0 * dets_size1; ++k) {
-    int i               = k / dets_size1;
-    int j               = k % dets_size1;
+  for (mshadow::openmp_index_t raw_k = 0; raw_k < static_cast<mshadow::openmp_index_t>(dets_size);
+       ++raw_k) {
+    const index_t k     = static_cast<index_t>(raw_k);
+    const index_t i     = k / dets_size1;
+    const index_t j     = k % dets_size1;
     const index_t index = order[i];
     (*dets)[i][j]       = prev_dets[index][j];
   }
@@ -202,7 +282,7 @@ inline void NonMaximumSuppression(const mshadow::Tensor<cpu, 2>& dets,
                                   mshadow::Tensor<cpu, 1>* area,
                                   mshadow::Tensor<cpu, 1>* suppressed,
                                   mshadow::Tensor<cpu, 1>* keep,
-                                  int* out_size) {
+                                  index_t* out_size) {
   CHECK_EQ(dets.shape_[1], 5) << "dets: [x1, y1, x2, y2, score]";
   CHECK_GT(dets.shape_[0], 0);
   CHECK_EQ(dets.CheckContiguous(), true);
@@ -211,13 +291,16 @@ inline void NonMaximumSuppression(const mshadow::Tensor<cpu, 2>& dets,
   CHECK_EQ(keep->CheckContiguous(), true);
 // calculate area
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-  for (int i = 0; i < static_cast<int>(dets.size(0)); ++i) {
-    (*area)[i] = (dets[i][2] - dets[i][0] + 1) * (dets[i][3] - dets[i][1] + 1);
+  for (mshadow::openmp_index_t raw_i = 0;
+       raw_i < static_cast<mshadow::openmp_index_t>(dets.size(0));
+       ++raw_i) {
+    const index_t i = static_cast<index_t>(raw_i);
+    (*area)[i]      = (dets[i][2] - dets[i][0] + 1) * (dets[i][3] - dets[i][1] + 1);
   }
 
   // calculate nms
   *out_size = 0;
-  for (index_t i = 0; i < dets.size(0) && (*out_size) < static_cast<int>(post_nms_top_n); ++i) {
+  for (index_t i = 0; i < dets.size(0) && (*out_size) < post_nms_top_n; ++i) {
     float ix1   = dets[i][0];
     float iy1   = dets[i][1];
     float ix2   = dets[i][2];
@@ -230,7 +313,10 @@ inline void NonMaximumSuppression(const mshadow::Tensor<cpu, 2>& dets,
 
     (*keep)[(*out_size)++] = i;
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-    for (int j = i + 1; j < static_cast<int>(dets.size(0)); ++j) {
+    for (mshadow::openmp_index_t raw_j = static_cast<mshadow::openmp_index_t>(i + 1);
+         raw_j < static_cast<mshadow::openmp_index_t>(dets.size(0));
+         ++raw_j) {
+      const index_t j = static_cast<index_t>(raw_j);
       if ((*suppressed)[j] > 0.0f) {
         continue;
       }
@@ -277,6 +363,28 @@ class MultiProposalOp : public Operator {
 
     Stream<xpu>* s = ctx.get_stream<xpu>();
 
+    const mxnet::TShape& cls_shape = in_data[proposal::kClsProb].shape_;
+    const index_t num_images       = CheckedIndexT(cls_shape[0], "multi_proposal batch size");
+    const index_t num_score_channels =
+        CheckedIndexT(cls_shape[1], "multi_proposal score channel count");
+    const index_t num_anchors     = num_score_channels / 2;
+    const index_t height          = CheckedIndexT(cls_shape[2], "multi_proposal height");
+    const index_t width           = CheckedIndexT(cls_shape[3], "multi_proposal width");
+    const int64_t count_anchors64 = CheckedMul3(static_cast<int64_t>(num_anchors),
+                                                static_cast<int64_t>(height),
+                                                static_cast<int64_t>(width),
+                                                "multi_proposal anchor count");
+    const index_t count_anchors   = CheckedIndexT(count_anchors64, "multi_proposal anchor count");
+    const index_t anchor_stride   = CheckedIndexT(CheckedMul(static_cast<int64_t>(width),
+                                                           static_cast<int64_t>(num_anchors),
+                                                           "multi_proposal anchor stride"),
+                                                "multi_proposal anchor stride");
+    const int64_t num_images64    = static_cast<int64_t>(num_images);
+    const int64_t image_anchor_count64 =
+        CheckedMul(num_images64, count_anchors64, "multi_proposal image anchor count");
+    const index_t image_anchor_count =
+        CheckedIndexT(image_anchor_count64, "multi_proposal image anchor count");
+
     Tensor<cpu, 4> scores      = in_data[proposal::kClsProb].get<cpu, 4, real_t>(s);
     Tensor<cpu, 4> bbox_deltas = in_data[proposal::kBBoxPred].get<cpu, 4, real_t>(s);
     Tensor<cpu, 2> im_info     = in_data[proposal::kImInfo].get<cpu, 2, real_t>(s);
@@ -284,32 +392,62 @@ class MultiProposalOp : public Operator {
     Tensor<cpu, 2> out       = out_data[proposal::kOut].get<cpu, 2, real_t>(s);
     Tensor<cpu, 2> out_score = out_data[proposal::kScore].get<cpu, 2, real_t>(s);
 
-    int num_images    = scores.size(0);
-    int num_anchors   = scores.size(1) / 2;
-    int height        = scores.size(2);
-    int width         = scores.size(3);
-    int count_anchors = num_anchors * height * width;
-    int rpn_pre_nms_top_n =
-        (param_.rpn_pre_nms_top_n > 0) ? param_.rpn_pre_nms_top_n : count_anchors;
-    rpn_pre_nms_top_n      = std::min(rpn_pre_nms_top_n, count_anchors);
-    int rpn_post_nms_top_n = std::min(param_.rpn_post_nms_top_n, rpn_pre_nms_top_n);
+    int64_t rpn_pre_nms_top_n64 =
+        (param_.rpn_pre_nms_top_n > 0) ? param_.rpn_pre_nms_top_n : count_anchors64;
+    rpn_pre_nms_top_n64 = std::min(rpn_pre_nms_top_n64, count_anchors64);
+    const index_t rpn_pre_nms_top_n =
+        CheckedIndexT(rpn_pre_nms_top_n64, "multi_proposal pre-NMS top_n");
+    const int64_t rpn_post_nms_top_n64 =
+        std::min(static_cast<int64_t>(param_.rpn_post_nms_top_n), rpn_pre_nms_top_n64);
+    const index_t rpn_post_nms_top_n =
+        CheckedIndexT(rpn_post_nms_top_n64, "multi_proposal post-NMS top_n");
+    const int64_t output_stride64 = static_cast<int64_t>(param_.rpn_post_nms_top_n);
+    const index_t output_stride   = CheckedIndexT(output_stride64, "multi_proposal output size");
+    CheckedIndexT(CheckedMul(num_images64, output_stride64, "multi_proposal output size"),
+                  "multi_proposal output size");
 
-    int workspace_size = num_images * (count_anchors * 5 + 2 * count_anchors +
-                                       rpn_pre_nms_top_n * 5 + 3 * rpn_pre_nms_top_n);
+    const int64_t workspace_proposals_size64 =
+        CheckedMul(image_anchor_count64, 5, "multi_proposal workspace size");
+    const int64_t workspace_pre_nms_size64 =
+        CheckedMul(image_anchor_count64, 2, "multi_proposal workspace size");
+    const int64_t image_pre_nms_count64 =
+        CheckedMul(num_images64, rpn_pre_nms_top_n64, "multi_proposal workspace size");
+    const int64_t workspace_ordered_proposals_size64 =
+        CheckedMul(image_pre_nms_count64, 5, "multi_proposal workspace size");
+    const int64_t workspace_nms_size64 =
+        CheckedMul(image_pre_nms_count64, 3, "multi_proposal workspace size");
+    const int64_t workspace_size64 =
+        CheckedAdd(CheckedAdd(CheckedAdd(workspace_proposals_size64,
+                                         workspace_pre_nms_size64,
+                                         "multi_proposal workspace size"),
+                              workspace_ordered_proposals_size64,
+                              "multi_proposal workspace size"),
+                   workspace_nms_size64,
+                   "multi_proposal workspace size");
+    const index_t workspace_proposals_size =
+        CheckedIndexT(workspace_proposals_size64, "multi_proposal workspace size");
+    const index_t workspace_pre_nms_size =
+        CheckedIndexT(workspace_pre_nms_size64, "multi_proposal workspace size");
+    const index_t workspace_ordered_proposals_size =
+        CheckedIndexT(workspace_ordered_proposals_size64, "multi_proposal workspace size");
+    const index_t workspace_nms_size =
+        CheckedIndexT(workspace_nms_size64, "multi_proposal workspace size");
+    const index_t workspace_size =
+        CheckedWorkspaceShape(workspace_size64, "multi_proposal workspace size");
 
     Tensor<cpu, 1> workspace =
         ctx.requested[proposal::kTempResource].get_space<cpu>(Shape1(workspace_size), s);
-    int start = 0;
+    index_t start = 0;
     Tensor<cpu, 3> workspace_proposals(workspace.dptr_ + start,
                                        Shape3(num_images, count_anchors, 5));
-    start += num_images * count_anchors * 5;
+    start += workspace_proposals_size;
     Tensor<cpu, 3> workspace_pre_nms(workspace.dptr_ + start, Shape3(num_images, 2, count_anchors));
-    start += num_images * 2 * count_anchors;
+    start += workspace_pre_nms_size;
     Tensor<cpu, 3> workspace_ordered_proposals(workspace.dptr_ + start,
                                                Shape3(num_images, rpn_pre_nms_top_n, 5));
-    start += num_images * rpn_pre_nms_top_n * 5;
+    start += workspace_ordered_proposals_size;
     Tensor<cpu, 3> workspace_nms(workspace.dptr_ + start, Shape3(num_images, 3, rpn_pre_nms_top_n));
-    start += num_images * 3 * rpn_pre_nms_top_n;
+    start += workspace_nms_size;
     CHECK_EQ(workspace_size, start) << workspace_size << " " << start << std::endl;
 
     // Generate anchors
@@ -326,27 +464,35 @@ class MultiProposalOp : public Operator {
     Tensor<cpu, 2> workspace_proposals0 = workspace_proposals[0];
 // Enumerate all shifted anchors
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-    for (int index = 0; index < num_anchors * height * width; ++index) {
+    for (mshadow::openmp_index_t raw_index = 0;
+         raw_index < static_cast<mshadow::openmp_index_t>(count_anchors);
+         ++raw_index) {
       // index_t index = j * (width * num_anchors) + k * (num_anchors) + i;
-      int i                          = index % num_anchors;
-      int k                          = (index / num_anchors) % width;
-      int j                          = index / (width * num_anchors);
-      workspace_proposals0[index][0] = workspace_proposals0[i][0] + k * param_.feature_stride;
-      workspace_proposals0[index][1] = workspace_proposals0[i][1] + j * param_.feature_stride;
-      workspace_proposals0[index][2] = workspace_proposals0[i][2] + k * param_.feature_stride;
-      workspace_proposals0[index][3] = workspace_proposals0[i][3] + j * param_.feature_stride;
+      const index_t index            = static_cast<index_t>(raw_index);
+      const index_t i                = index % num_anchors;
+      const index_t k                = (index / num_anchors) % width;
+      const index_t j                = index / anchor_stride;
+      const float shift_x            = static_cast<float>(k) * param_.feature_stride;
+      const float shift_y            = static_cast<float>(j) * param_.feature_stride;
+      workspace_proposals0[index][0] = workspace_proposals0[i][0] + shift_x;
+      workspace_proposals0[index][1] = workspace_proposals0[i][1] + shift_y;
+      workspace_proposals0[index][2] = workspace_proposals0[i][2] + shift_x;
+      workspace_proposals0[index][3] = workspace_proposals0[i][3] + shift_y;
       workspace_proposals0[index][4] = scores[0][i + num_anchors][j][k];
     }
 
 // Copy shifted anchors to other images
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-    for (int t = count_anchors; t < num_images * count_anchors; ++t) {
-      int b     = t / count_anchors;
-      int index = t % count_anchors;
-      int i     = index % num_anchors;
-      int k     = (index / num_anchors) % width;
-      int j     = index / (width * num_anchors);
-      for (int w = 0; w < 4; ++w) {
+    for (mshadow::openmp_index_t raw_t = static_cast<mshadow::openmp_index_t>(count_anchors);
+         raw_t < static_cast<mshadow::openmp_index_t>(image_anchor_count);
+         ++raw_t) {
+      const index_t t     = static_cast<index_t>(raw_t);
+      const index_t b     = t / count_anchors;
+      const index_t index = t % count_anchors;
+      const index_t i     = index % num_anchors;
+      const index_t k     = (index / num_anchors) % width;
+      const index_t j     = index / anchor_stride;
+      for (index_t w = 0; w < 4; ++w) {
         workspace_proposals[b][index][w] = workspace_proposals[0][index][w];
       }
       workspace_proposals[b][index][4] = scores[b][i + num_anchors][j][k];
@@ -354,7 +500,10 @@ class MultiProposalOp : public Operator {
 
 // Assign Foreground Scores for each anchor
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-    for (int b = 0; b < num_images; ++b) {
+    for (mshadow::openmp_index_t raw_b = 0;
+         raw_b < static_cast<mshadow::openmp_index_t>(num_images);
+         ++raw_b) {
+      const index_t b = static_cast<index_t>(raw_b);
       // prevent padded predictions
       int real_height = static_cast<int>(im_info[b][0] / param_.feature_stride);
       int real_width  = static_cast<int>(im_info[b][1] / param_.feature_stride);
@@ -392,7 +541,7 @@ class MultiProposalOp : public Operator {
       utils::ReverseArgsort(score, &order);
       utils::ReorderProposals(
           workspace_proposals_i, order, rpn_pre_nms_top_n, &workspace_ordered_proposals_i);
-      int out_size              = 0;
+      index_t out_size          = 0;
       Tensor<cpu, 1> area       = workspace_nms_i[0];
       Tensor<cpu, 1> suppressed = workspace_nms_i[1];
       Tensor<cpu, 1> keep       = workspace_nms_i[2];
@@ -408,9 +557,12 @@ class MultiProposalOp : public Operator {
 
 // fill in output rois and output scores
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-      for (int i = 0; i < param_.rpn_post_nms_top_n; ++i) {
-        int out_index     = b * param_.rpn_post_nms_top_n + i;
-        out[out_index][0] = b;
+      for (mshadow::openmp_index_t raw_i = 0;
+           raw_i < static_cast<mshadow::openmp_index_t>(output_stride);
+           ++raw_i) {
+        const index_t i         = static_cast<index_t>(raw_i);
+        const index_t out_index = b * output_stride + i;
+        out[out_index][0]       = b;
         if (i < out_size) {
           index_t index = keep[i];
           for (index_t j = 0; j < 4; ++j) {

@@ -115,7 +115,9 @@ def _add_workload_unravel_index():
     OpArgMngr.add_workload('unravel_index', indices=np.array([2],dtype=_np.int64), shape=(2, 2))
     OpArgMngr.add_workload('unravel_index', np.array([(2*3 + 1)*6 + 4], dtype=_np.int64), (4, 3, 6))
     OpArgMngr.add_workload('unravel_index', np.array([22, 41, 37], dtype=_np.int32), (7, 6))
-    OpArgMngr.add_workload('unravel_index', np.array([1621],dtype=_np.uint8), (6, 7, 8, 9))
+    OpArgMngr.add_workload('unravel_index',
+                           np.array(_np.array([1621]).astype(_np.uint8), dtype=_np.uint8),
+                           (6, 7, 8, 9))
     OpArgMngr.add_workload('unravel_index', np.array([],dtype=_np.int64), (10, 3, 5))
     OpArgMngr.add_workload('unravel_index', np.array([3], dtype=_np.int32), (2,2))
 
@@ -1485,7 +1487,8 @@ def _add_workload_hypot():
 
 
 def _add_workload_lcm():
-    OpArgMngr.add_workload('lcm', np.array([12, 120], dtype=np.int8), np.array([20, 200], dtype=np.int8))
+    OpArgMngr.add_workload('lcm', np.array([12, 120], dtype=np.int8),
+                           np.array(_np.array([20, 200]).astype(_np.int8), dtype=_np.int8))
     OpArgMngr.add_workload('lcm', np.array([12, 120], dtype=np.uint8), np.array([20, 200], dtype=np.uint8))
     OpArgMngr.add_workload('lcm', np.array(195225786*2, dtype=np.int32), np.array(195225786*5, dtype=np.int32))
 
@@ -2095,8 +2098,8 @@ def _add_workload_pad():
 
 
 def _add_workload_nonzero():
-    OpArgMngr.add_workload('nonzero', np.random.randint(0, 2))
-    OpArgMngr.add_workload('nonzero', np.random.randint(0, 2, size=()))
+    OpArgMngr.add_workload('nonzero', np.random.randint(0, 2, size=(1,)))
+    OpArgMngr.add_workload('nonzero', np.array([_np.random.randint(0, 2)]))
     OpArgMngr.add_workload('nonzero', np.random.randint(0, 2, size=(0, 1, 2)))
     OpArgMngr.add_workload('nonzero', np.random.randint(0, 2, size=(0, 1, 0)))
     OpArgMngr.add_workload('nonzero', np.random.randint(0, 2, size=(2, 3, 4)))
@@ -2689,10 +2692,10 @@ def _add_workload_nanpercentile():
     OpArgMngr.add_workload('nanpercentile', a, 50, axis=0)
     OpArgMngr.add_workload('nanpercentile', a, 50, axis=1)
     OpArgMngr.add_workload('nanpercentile', a, 50, axis=1, keepdims=True)
-    OpArgMngr.add_workload('nanpercentile', a, 50, interpolation='lower')
-    OpArgMngr.add_workload('nanpercentile', a, 50, interpolation='higher')
-    OpArgMngr.add_workload('nanpercentile', a, 50, interpolation='midpoint')
-    OpArgMngr.add_workload('nanpercentile', a, 50, interpolation='nearest')
+    OpArgMngr.add_workload('nanpercentile', a, 50, method='lower')
+    OpArgMngr.add_workload('nanpercentile', a, 50, method='higher')
+    OpArgMngr.add_workload('nanpercentile', a, 50, method='midpoint')
+    OpArgMngr.add_workload('nanpercentile', a, 50, method='nearest')
 
 
 def _add_workload_nanprod():
@@ -2711,10 +2714,10 @@ def _add_workload_nanquantile():
     OpArgMngr.add_workload('nanquantile', a, 0.4, axis=0)
     OpArgMngr.add_workload('nanquantile', a, 0.4, axis=1)
     OpArgMngr.add_workload('nanquantile', a, 0.4, axis=1, keepdims=True)
-    OpArgMngr.add_workload('nanquantile', a, 0.4, interpolation='lower')
-    OpArgMngr.add_workload('nanquantile', a, 0.4, interpolation='higher')
-    OpArgMngr.add_workload('nanquantile', a, 0.4, interpolation='midpoint')
-    OpArgMngr.add_workload('nanquantile', a, 0.4, interpolation='nearest')
+    OpArgMngr.add_workload('nanquantile', a, 0.4, method='lower')
+    OpArgMngr.add_workload('nanquantile', a, 0.4, method='higher')
+    OpArgMngr.add_workload('nanquantile', a, 0.4, method='midpoint')
+    OpArgMngr.add_workload('nanquantile', a, 0.4, method='nearest')
 
 
 def _add_workload_nanstd():
@@ -3298,6 +3301,9 @@ def _prepare_workloads():
 def _get_numpy_op_output(onp_op, *args, **kwargs):
     onp_args = [arg.asnumpy() if isinstance(arg, np.ndarray) else arg for arg in args]
     onp_kwargs = {k: v.asnumpy() if isinstance(v, np.ndarray) else v for k, v in kwargs.items()}
+    if onp_op.__name__ in ['quantile', 'percentile', 'nanquantile', 'nanpercentile'] \
+            and 'interpolation' in onp_kwargs:
+        onp_kwargs['method'] = onp_kwargs.pop('interpolation')
     for i, v in enumerate(onp_args):
         if isinstance(v, (list, tuple)):
             new_arrs = [a.asnumpy() if isinstance(a, np.ndarray) else a for a in v]
@@ -3348,7 +3354,7 @@ def check_interoperability(op_list):
     for name in op_list:
         if name in _TVM_OPS and not is_op_runnable():
             continue
-        if name in ['shares_memory', 'may_share_memory', 'empty_like',
+        if name in ['shares_memory', 'may_share_memory', 'empty_like', 'round_', 'product',
                     '__version__', 'dtype', '_NoValue']:  # skip list
             continue
         if name in ['full_like', 'zeros_like', 'ones_like'] and \

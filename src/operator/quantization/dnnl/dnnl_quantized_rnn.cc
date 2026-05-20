@@ -33,6 +33,9 @@ namespace op {
 
 std::vector<float> GetDNNLRnnWeightsQParams(const DNNLRnnFullParam& full_param, float* w_ptr) {
   const int nthreads            = mxnet::engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+#if MXNET_USE_OPENMP != 1
+  (void)nthreads;
+#endif
   const int num_gates           = 4;
   const RNNParam& default_param = full_param.default_param;
   const LayerParamVector& layer_params = full_param.layer_params;

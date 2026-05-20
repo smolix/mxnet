@@ -17,6 +17,24 @@
 
 cmake_minimum_required(VERSION 3.13)
 
+# CMake 4 no longer accepts subprojects that request very old policy
+# compatibility. Several vendored dependencies still declare older minima, so
+# keep their policy floor explicit while preserving MXNet's existing CMake
+# minimum for downstream builders.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE STRING
+    "Minimum CMake policy version used by vendored dependencies")
+
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW CACHE STRING
+    "Let option() honor normal variables in vendored dependencies")
+set(CMAKE_POLICY_DEFAULT_CMP0148 NEW CACHE STRING
+    "Use MXNet's compatibility module for legacy FindPythonInterp calls")
+
+if(POLICY CMP0144)
+  cmake_policy(SET CMP0144 NEW)
+  set(CMAKE_POLICY_DEFAULT_CMP0144 NEW CACHE STRING
+      "Use upper-case <PACKAGENAME>_ROOT variables in vendored dependencies")
+endif()
+
 # arm64 macOS is available from macOS 11 onward. Detect the host arch before
 # project() initializes compiler flags; CMAKE_HOST_SYSTEM_PROCESSOR is not
 # reliably populated yet on all CMake versions.
@@ -77,6 +95,25 @@ else()
   set(MXNET_DEFAULT_USE_OPENCV ON)
   set(MXNET_DEFAULT_USE_OPENMP ON)
 endif()
+
+set(MXNET_DEFAULT_USE_ONEDNN OFF)
+if(NOT MSVC AND NOT CMAKE_CROSSCOMPILING)
+  if((NOT APPLE) AND (CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+    set(MXNET_DEFAULT_USE_ONEDNN ON)
+  elseif(APPLE)
+    set(MXNET_DARWIN_ONEDNN_PROCESSOR "${CMAKE_OSX_ARCHITECTURES}")
+    if(NOT MXNET_DARWIN_ONEDNN_PROCESSOR)
+      set(MXNET_DARWIN_ONEDNN_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    if(NOT MXNET_DARWIN_ONEDNN_PROCESSOR)
+      set(MXNET_DARWIN_ONEDNN_PROCESSOR "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    endif()
+    string(TOLOWER "${MXNET_DARWIN_ONEDNN_PROCESSOR}" MXNET_DARWIN_ONEDNN_PROCESSOR)
+    if(MXNET_DARWIN_ONEDNN_PROCESSOR MATCHES "^(arm64|aarch64)$")
+      set(MXNET_DEFAULT_USE_ONEDNN ON)
+    endif()
+  endif()
+endif()
 option(USE_CUDA "Build with CUDA support" ${MXNET_DEFAULT_USE_CUDA})
 set(MXNET_CUDA_ARCH "8.0;8.6;8.9;9.0;12.0+PTX" CACHE STRING "Target NVIDIA GPU achitecture.
 Format: Auto | Common | All | LIST(ARCH_AND_PTX ...)
@@ -103,11 +140,7 @@ cmake_dependent_option(USE_F16C "Build with x86 F16C instruction support" ON
   "CMAKE_SYSTEM_PROCESSOR STREQUAL x86_64 OR CMAKE_SYSTEM_PROCESSOR STREQUAL amd64" OFF) # autodetects support if ON
 option(USE_LAPACK "Build with lapack support" ON)
 option(USE_MKL_LAYERNORM "Use layer normalization from MKL, which is currently slower than internal. No effect unless USE_BLAS=MKL (or mkl)." OFF)
-if((NOT APPLE) AND (NOT MSVC) AND (CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64") AND (NOT CMAKE_CROSSCOMPILING))
-  option(USE_ONEDNN "Build with oneDNN support" ON)
-else()
-  option(USE_ONEDNN "Build with oneDNN support" OFF)
-endif()
+option(USE_ONEDNN "Build with oneDNN support" ${MXNET_DEFAULT_USE_ONEDNN})
 cmake_dependent_option(USE_INTGEMM "Build with x86_64 intgemm library for low-precision multiplication" ON "CMAKE_SYSTEM_PROCESSOR STREQUAL x86_64" OFF)
 if(NOT MSVC)
   option(USE_OPERATOR_TUNING  "Enable auto-tuning of operators" ON)
@@ -137,6 +170,14 @@ option(LOG_FATAL_THROW "Log exceptions but do not abort" ON)
 cmake_dependent_option(USE_SPLIT_ARCH_DLL "Build a separate DLL for each Cuda arch (Windows only)." ON "MSVC" OFF)
 cmake_dependent_option(USE_CCACHE "Attempt using CCache to wrap the compilation" ON "UNIX" OFF)
 cmake_dependent_option(MXNET_FORCE_SHARED_CRT "Build with dynamic CRT on Windows (/MD)" ON "MXNET_BUILD_SHARED_LIBS" OFF)
+
+if(DEFINED USE_AZURE AND USE_AZURE)
+  message(FATAL_ERROR
+    "USE_AZURE is not supported by this MXNet CMake build: the vendored "
+    "dmlc-core Azure filesystem is incomplete and Azure SDK dependencies are "
+    "not wired. Disable USE_AZURE or add full Azure SDK integration before "
+    "enabling it.")
+endif()
 
 message(STATUS "CMAKE_CROSSCOMPILING ${CMAKE_CROSSCOMPILING}")
 message(STATUS "CMAKE_HOST_SYSTEM_PROCESSOR ${CMAKE_HOST_SYSTEM_PROCESSOR}")
@@ -182,6 +223,10 @@ endif()
 message(STATUS "CMake version '${CMAKE_VERSION}' using generator '${CMAKE_GENERATOR}'")
 if(USE_CUDA)
   cmake_minimum_required(VERSION 3.13.2)  # CUDA 10 (Turing) detection available starting 3.13.2
+  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES OFF CACHE STRING
+        "MXNet sets CUDA -gencode flags from MXNET_CUDA_ARCH")
+  endif()
   include(CheckLanguage)
   check_language(CUDA)
   if(NOT CMAKE_CUDA_COMPILER AND UNIX AND EXISTS "/usr/local/cuda/bin/nvcc")
@@ -228,7 +273,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Distribution")
   set(Protobuf_USE_STATIC_LIBS ON)
 endif()
 
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/upstream;${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules;${CMAKE_MODULE_PATH}")
+set(MXNET_UPSTREAM_CMAKE_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake/upstream")
+set(MXNET_CMAKE_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules")
+set(CMAKE_MODULE_PATH "${MXNET_UPSTREAM_CMAKE_MODULE_DIR};${MXNET_CMAKE_MODULE_DIR};${CMAKE_MODULE_PATH}")
 
 SET(EXTRA_OPERATORS "" CACHE PATH "EXTRA OPERATORS PATH")
 
@@ -340,6 +387,46 @@ include(GNUInstallDirs)
 if(USE_MKL_LAYERNORM)
   add_definitions(-DMXNET_USE_MKL_LAYERNORM=1)
 endif()
+
+set(OPENMP_ROOT "" CACHE PATH "OpenMP runtime install prefix")
+function(mxnet_prepare_openmp_root)
+  if(NOT OPENMP_ROOT)
+    return()
+  endif()
+
+  unset(MXNET_OPENMP_INCLUDE_DIR CACHE)
+  unset(MXNET_OPENMP_LIBRARY CACHE)
+  unset(OpenMP_C_INCLUDE_DIR CACHE)
+  unset(OpenMP_CXX_INCLUDE_DIR CACHE)
+  unset(OpenMP_omp_LIBRARY CACHE)
+  find_path(MXNET_OPENMP_INCLUDE_DIR
+            NAMES omp.h
+            PATHS "${OPENMP_ROOT}/include"
+            NO_DEFAULT_PATH)
+  find_library(MXNET_OPENMP_LIBRARY
+               NAMES omp libomp
+               PATHS "${OPENMP_ROOT}/lib" "${OPENMP_ROOT}/lib64"
+               NO_DEFAULT_PATH)
+
+  if(MXNET_OPENMP_INCLUDE_DIR)
+    include_directories(SYSTEM "${MXNET_OPENMP_INCLUDE_DIR}")
+    set(OpenMP_C_INCLUDE_DIR "${MXNET_OPENMP_INCLUDE_DIR}" CACHE PATH "OpenMP C include directory" FORCE)
+    set(OpenMP_CXX_INCLUDE_DIR "${MXNET_OPENMP_INCLUDE_DIR}" CACHE PATH "OpenMP CXX include directory" FORCE)
+  endif()
+  if(MXNET_OPENMP_LIBRARY)
+    set(OpenMP_C_LIB_NAMES "omp" CACHE STRING "OpenMP C library names" FORCE)
+    set(OpenMP_CXX_LIB_NAMES "omp" CACHE STRING "OpenMP CXX library names" FORCE)
+    set(OpenMP_omp_LIBRARY "${MXNET_OPENMP_LIBRARY}" CACHE FILEPATH "OpenMP runtime library" FORCE)
+  endif()
+  if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp" CACHE STRING "OpenMP C compiler flags" FORCE)
+    set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp" CACHE STRING "OpenMP CXX compiler flags" FORCE)
+  endif()
+endfunction()
+if(USE_OPENMP)
+  mxnet_prepare_openmp_root()
+endif()
+
 if(USE_ONEDNN)
   # CPU architecture (e.g., C5) can't run on another architecture (e.g., g3).
   if(MSVC)
@@ -457,10 +544,42 @@ if(USE_JEMALLOC)
 endif()
 
 if(USE_LIBJPEG_TURBO)
-  find_package(PkgConfig REQUIRED)
-  pkg_search_module(TURBOJPEG REQUIRED libturbojpeg)
-  include_directories(SYSTEM ${TURBOJPEG_INCLUDE_DIRS})
-  list(APPEND mxnet_LINKER_LIBS ${TURBOJPEG_LINK_LIBRARIES})
+  set(TURBOJPEG_ROOT "" CACHE PATH "libjpeg-turbo install prefix")
+  if(TURBOJPEG_ROOT)
+    find_path(TURBOJPEG_INCLUDE_DIR
+              NAMES turbojpeg.h
+              PATHS "${TURBOJPEG_ROOT}/include"
+              NO_DEFAULT_PATH)
+    find_library(TURBOJPEG_LIBRARY
+                 NAMES turbojpeg libturbojpeg
+                 PATHS "${TURBOJPEG_ROOT}/lib" "${TURBOJPEG_ROOT}/lib64"
+                 NO_DEFAULT_PATH)
+    include(FindPackageHandleStandardArgs)
+    find_package_handle_standard_args(TurboJPEG
+                                      REQUIRED_VARS TURBOJPEG_INCLUDE_DIR TURBOJPEG_LIBRARY)
+    include_directories(SYSTEM ${TURBOJPEG_INCLUDE_DIR})
+    list(APPEND mxnet_LINKER_LIBS ${TURBOJPEG_LIBRARY})
+    message(STATUS "libjpeg-turbo found (${TURBOJPEG_LIBRARY})")
+  else()
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_search_module(TURBOJPEG libturbojpeg)
+    endif()
+    if(TURBOJPEG_FOUND)
+      include_directories(SYSTEM ${TURBOJPEG_INCLUDE_DIRS})
+      list(APPEND mxnet_LINKER_LIBS ${TURBOJPEG_LINK_LIBRARIES})
+      message(STATUS "libjpeg-turbo found (${TURBOJPEG_LINK_LIBRARIES})")
+    else()
+      find_path(TURBOJPEG_INCLUDE_DIR NAMES turbojpeg.h)
+      find_library(TURBOJPEG_LIBRARY NAMES turbojpeg libturbojpeg)
+      include(FindPackageHandleStandardArgs)
+      find_package_handle_standard_args(TurboJPEG
+                                        REQUIRED_VARS TURBOJPEG_INCLUDE_DIR TURBOJPEG_LIBRARY)
+      include_directories(SYSTEM ${TURBOJPEG_INCLUDE_DIR})
+      list(APPEND mxnet_LINKER_LIBS ${TURBOJPEG_LIBRARY})
+      message(STATUS "libjpeg-turbo found (${TURBOJPEG_LIBRARY})")
+    endif()
+  endif()
   add_definitions(-DMXNET_USE_LIBJPEG_TURBO=1)
 else()
   add_definitions(-DMXNET_USE_LIBJPEG_TURBO=0)
@@ -468,15 +587,42 @@ endif()
 
 # ---[ OpenCV
 if(USE_OPENCV)
-  find_package(OpenCV COMPONENTS core highgui imgproc imgcodecs)
+  set(OPENCV_ROOT "" CACHE PATH "OpenCV install path. Supports autodetection.")
+  if(OPENCV_ROOT)
+    find_package(OpenCV
+                 CONFIG
+                 COMPONENTS core imgproc imgcodecs
+                 PATHS "${OPENCV_ROOT}" "${OPENCV_ROOT}/lib/cmake/opencv4"
+                 NO_DEFAULT_PATH)
+  else()
+    find_package(OpenCV COMPONENTS core imgproc imgcodecs)
+  endif()
   if(NOT OpenCV_FOUND) # if not OpenCV 3.x, then imgcodecs are not found
-    message(STATUS "OpenCV imgcodecs missing")
-    find_package(OpenCV REQUIRED COMPONENTS core highgui imgproc)
+    message(STATUS "OpenCV imgcodecs missing; trying OpenCV 2.x highgui codec layout")
+    if(OPENCV_ROOT)
+      find_package(OpenCV
+                   REQUIRED
+                   CONFIG
+                   COMPONENTS core highgui imgproc
+                   PATHS "${OPENCV_ROOT}" "${OPENCV_ROOT}/lib/cmake/opencv4"
+                   NO_DEFAULT_PATH)
+    else()
+      find_package(OpenCV REQUIRED COMPONENTS core highgui imgproc)
+    endif()
   endif()
   include_directories(SYSTEM ${OpenCV_INCLUDE_DIRS})
-  list(APPEND mxnet_LINKER_LIBS ${OpenCV_LIBS})
+  set(MXNET_OPENCV_LINK_LIBS ${OpenCV_LIBS})
+  if(OpenCV_VERSION_MAJOR GREATER 2 AND TARGET opencv_imgcodecs)
+    get_target_property(MXNET_OPENCV_IMGCODECS_DEPS opencv_imgcodecs INTERFACE_LINK_LIBRARIES)
+    if(MXNET_OPENCV_IMGCODECS_DEPS MATCHES "(^|;)opencv_core(;|$)" AND
+       MXNET_OPENCV_IMGCODECS_DEPS MATCHES "(^|;)opencv_imgproc(;|$)")
+      set(MXNET_OPENCV_LINK_LIBS opencv_imgcodecs)
+    endif()
+  endif()
+  list(APPEND mxnet_LINKER_LIBS ${MXNET_OPENCV_LINK_LIBS})
   message(STATUS "OpenCV ${OpenCV_VERSION} found (${OpenCV_CONFIG_PATH})")
   message(STATUS " OpenCV_LIBS=${OpenCV_LIBS}")
+  message(STATUS " MXNet OpenCV link libs=${MXNET_OPENCV_LINK_LIBS}")
   add_definitions(-DMXNET_USE_OPENCV=1)
 else(USE_OPENCV)
   message(STATUS "OpenCV Disabled")
@@ -485,8 +631,9 @@ endif()
 
 # ---[ OpenMP
 if(USE_OPENMP)
-  find_package(OpenMP REQUIRED)
-  if(OPENMP_FOUND)
+  find_package(OpenMP REQUIRED COMPONENTS C CXX)
+  if(OpenMP_FOUND)
+    include_directories(SYSTEM ${OpenMP_CXX_INCLUDE_DIRS})
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
     # Enable pragma omp simd
@@ -503,6 +650,11 @@ if(USE_OPENMP)
       # Linker flags for Intel OMP are already set in case MKL is used. Only set if not MKL
       set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
       set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
+    endif()
+    if(TARGET OpenMP::OpenMP_CXX)
+      list(APPEND mxnet_LINKER_LIBS OpenMP::OpenMP_CXX)
+    else()
+      list(APPEND mxnet_LINKER_LIBS ${OpenMP_CXX_LIBRARIES})
     endif()
     add_definitions(-DMXNET_USE_OPENMP=1)
   endif()
@@ -539,10 +691,11 @@ if(USE_JEMALLOC)
 endif()
 
 include(CTest)
-set(GTEST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/googletest/googletest")
-set(GTEST_INCLUDE_DIR ${GTEST_ROOT}/include)
+set(GTEST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/googletest")
+set(GTEST_INCLUDE_DIR "${GTEST_ROOT}/googletest/include")
 set(GTEST_MAIN_LIBRARY gtest_main)
 set(GTEST_LIBRARY gtest)
+set(BUILD_GMOCK OFF)
 
 add_subdirectory(${GTEST_ROOT})
 set_target_properties(gtest PROPERTIES CXX_CLANG_TIDY "")  # don't lint 3rdparty dependency
@@ -602,6 +755,9 @@ FILE(GLOB_RECURSE NNVMSOURCE
   3rdparty/tvm/nnvm/include/*.h)
 add_library(nnvm OBJECT ${NNVMSOURCE})
 set_target_properties(nnvm PROPERTIES CXX_CLANG_TIDY "")  # don't lint 3rdparty dependency
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(nnvm PRIVATE -Wno-deprecated-declarations -Wno-unused-value)
+endif()
 list(APPEND SOURCE $<TARGET_OBJECTS:nnvm>)
 
 add_library(miniz STATIC "3rdparty/miniz/miniz.c")
@@ -669,8 +825,16 @@ if(USE_CUDA)
 
   string(REPLACE ";" " " CUDA_ARCH_FLAGS_SPACES "${CUDA_ARCH_FLAGS}")
 
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.17)
+    set(MXNET_CMAKE_MODULE_PATH_WITH_UPSTREAM "${CMAKE_MODULE_PATH}")
+    list(REMOVE_ITEM CMAKE_MODULE_PATH "${MXNET_UPSTREAM_CMAKE_MODULE_DIR}")
+  endif()
   find_package(CUDAToolkit REQUIRED cublas cufft cusolver curand nvrtc
     OPTIONAL_COMPONENTS nvToolsExt)
+  if(DEFINED MXNET_CMAKE_MODULE_PATH_WITH_UPSTREAM)
+    set(CMAKE_MODULE_PATH "${MXNET_CMAKE_MODULE_PATH_WITH_UPSTREAM}")
+    unset(MXNET_CMAKE_MODULE_PATH_WITH_UPSTREAM)
+  endif()
 
   list(APPEND mxnet_LINKER_LIBS CUDA::cudart CUDA::cublas CUDA::cufft CUDA::cusolver CUDA::curand
                                 CUDA::nvrtc)
@@ -872,6 +1036,9 @@ elseif(MSVC)
   endif()
 endif()
 target_compile_definitions(mxnet PUBLIC DMLC_LOG_FATAL_THROW=$<BOOL:${LOG_FATAL_THROW}>)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(mxnet PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>")
+endif()
 
 # extension libraries (custom operators, custom subgraphs) are built by default
 add_library(customop_lib SHARED ${CMAKE_CURRENT_SOURCE_DIR}/example/extensions/lib_custom_op/gemm_lib.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/lib_api.cc)
@@ -933,14 +1100,6 @@ if(USE_DIST_KVSTORE)
   set_target_properties(pslite PROPERTIES CXX_CLANG_TIDY "")  # don't lint 3rdparty dependency
 endif()
 
-if(USE_ONEDNN)
-    add_custom_command(TARGET mxnet POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy
-      ${CMAKE_BINARY_DIR}/3rdparty/onednn/include/oneapi/dnnl/dnnl_config.h  ${CMAKE_SOURCE_DIR}/include/onednn/oneapi/dnnl/
-      COMMAND ${CMAKE_COMMAND} -E copy
-      ${CMAKE_BINARY_DIR}/3rdparty/onednn/include/oneapi/dnnl/dnnl_version.h  ${CMAKE_SOURCE_DIR}/include/onednn/oneapi/dnnl/)
-endif()
-
 if(USE_INTGEMM)
   target_link_libraries(mxnet PRIVATE intgemm)
 endif()
@@ -993,12 +1152,10 @@ target_link_libraries(mxnet PUBLIC dmlc)
 
 if(USE_OPENCV AND OpenCV_VERSION_MAJOR GREATER 2)
   add_executable(im2rec "tools/im2rec.cc")
-  target_link_libraries(im2rec
-    ${mxnet_LINKER_LIBS}
-    ${OpenCV_LIBS}
-    mxnet
-    dmlc
-    )
+  target_link_libraries(im2rec PRIVATE mxnet)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(im2rec PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>")
+  endif()
 else()
     message(WARNING "OpenCV_VERSION_MAJOR: ${OpenCV_VERSION_MAJOR}, version 3 with imgcodecs \
     is required for im2rec, im2rec will not be available")

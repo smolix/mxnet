@@ -609,6 +609,7 @@ template <typename DType>
 void FuseBias(DType* fuse_bias, DType* native_bias, const int mode, const size_t state_size) {
   const size_t ngates   = GetRnnGatesNum(mode);
   const int omp_threads = mxnet::engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  (void)omp_threads;
   const size_t nbias    = mode == rnn_enum::kGru ? ngates + 1 : ngates;
   // MSVC-14.0 (OpenMP 2.0 compatible) doesn't support unsigned integral type in
   // OpenMP 'for' statement.

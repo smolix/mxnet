@@ -31,7 +31,8 @@ from ctypes import c_void_p, c_int, c_char, c_char_p, cast, c_bool
 
 from .base import _LIB, check_call, MXCallbackList, c_array, c_array_buf, mx_int, OpHandle
 from .base import c_str, mx_uint, mx_float, ctypes2numpy_shared, NDArrayHandle, py_str
-from . import symbol, context
+from . import symbol
+from .device import Device
 from .ndarray import NDArray, dtype_np_to_mx, dtype_mx_to_np
 from .ndarray.ndarray import _STORAGE_TYPE_STR_TO_ID, _STORAGE_TYPE_ID_TO_STR
 from .ndarray.ndarray import _STORAGE_TYPE_UNDEFINED, _STORAGE_TYPE_DEFAULT
@@ -984,7 +985,7 @@ def register(reg_name):
                 try:
                     ctx = py_str(ctx)
                     sep = ctx.find('(')
-                    ctx = context.Context(ctx[:sep], int(ctx[sep+1:-1]))
+                    ctx = Device(ctx[:sep], int(ctx[sep+1:-1]))
                     ndims = [ndims[i] for i in range(num_inputs)]
                     shapes = [[shapes[i][j] for j in range(ndims[i])] for i in range(num_inputs)]
                     dtypes = [dtypes[i] for i in range(num_inputs)]

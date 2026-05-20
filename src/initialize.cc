@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <csignal>
+#include <vector>
 
 #if defined(_WIN32) || defined(_WIN64) || defined(__WINDOWS__)
 #include <windows.h>
@@ -253,10 +254,10 @@ void LibraryInitializer::init_mkl_dynamic_library() {
 static inline void printStackTrace(FILE* out = stderr, const unsigned int max_frames = 63) {
 #if !defined(_WIN32) && !defined(_WIN64) && !defined(__WINDOWS__)
   // storage array for stack trace address data
-  void* addrlist[max_frames + 1];
+  std::vector<void*> addrlist(max_frames + 1);
 
   // retrieve current stack addresses
-  size_t addrlen = backtrace(addrlist, sizeof(addrlist) / sizeof(void*));
+  size_t addrlen = backtrace(addrlist.data(), addrlist.size());
 
   if (addrlen < 5) {
     return;
@@ -268,7 +269,7 @@ static inline void printStackTrace(FILE* out = stderr, const unsigned int max_fr
   // resolve addresses into strings containing "filename(function+address)",
   // Actually it will be ## program address function + offset
   // this array must be free()-ed
-  char** symbollist = backtrace_symbols(addrlist, addrlen);
+  char** symbollist = backtrace_symbols(addrlist.data(), addrlen);
 
   size_t funcnamesize = 1024;
   char funcname[1024];

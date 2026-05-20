@@ -101,6 +101,7 @@ inline void MultiBoxDetectionForward(const Tensor<cpu, 3, DType>& out,
   const DType* p_anchor = anchors.dptr_;
 
   const int omp_threads = mxnet::engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  (void)omp_threads;
   std::vector<DType> outputs(num_anchors * 6);
   for (int nbatch = 0; nbatch < num_batches; ++nbatch) {
     const DType* p_cls_prob = cls_prob.dptr_ + nbatch * num_classes * num_anchors;

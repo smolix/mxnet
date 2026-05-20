@@ -582,7 +582,7 @@ def test_sample_categorical(dtype, x):
     y = y.asnumpy()
     x = x.asnumpy()
     dx = dx.asnumpy()
-    if len(x.shape) is 1:
+    if len(x.shape) == 1:
         x = x.reshape((1, x.shape[0]))
         dx = dx.reshape(1, dx.shape[0])
         y = y.reshape((1, y.shape[0]))

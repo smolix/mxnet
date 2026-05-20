@@ -262,6 +262,10 @@ MultiSGDKernelParam<DType, MPDType> FillMultiSGDKernelParam(const nnvm::NodeAttr
   param.clip_gradient = p.clip_gradient;
   param.rescale_grad  = p.rescale_grad;
   param.momentum      = 0;
+  constexpr int max_num_weights = MultiSGDKernelParam<DType, MPDType>::N;
+  CHECK_LE(p.num_weights, max_num_weights)
+      << "multi_sgd_update supports at most " << max_num_weights
+      << " weights per fused call, got " << p.num_weights;
   param.count         = p.num_weights;
   param.max_size      = 0;
   for (int i = 0; i < param.count; ++i) {

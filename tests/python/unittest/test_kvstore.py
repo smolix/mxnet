@@ -120,6 +120,43 @@ def test_pull():
     check_pull(mx.kv.create('device'))
     check_pull(mx.kv.create())
 
+def test_local_kvstore_delete_before_wait_releases_async_reduce():
+    """Destroying a local KVStore must not invalidate queued CPU reductions."""
+    import gc
+
+    large_shape = (1024, 1024)
+
+    def queue_reduce_and_destroy(key):
+        kv = mx.kv.create('local')
+        kv.init(key, mx.nd.zeros(large_shape))
+        vals = [mx.nd.ones(large_shape) * (i + 1) for i in range(4)]
+        kv.push(key, vals)
+
+    for key in range(100, 104):
+        queue_reduce_and_destroy(key)
+        gc.collect()
+
+    mx.nd.waitall()
+
+def test_local_kvstore_row_sparse_delete_before_wait_releases_async_reduce():
+    """Destroying a local KVStore must not invalidate queued sparse CPU reductions."""
+    import gc
+
+    large_shape = (512, 128)
+
+    def queue_reduce_and_destroy(key):
+        kv = mx.kv.create('local')
+        kv.init(key, mx.nd.zeros(large_shape).tostype('row_sparse'))
+        vals = [(mx.nd.ones(large_shape) * (i + 1)).tostype('row_sparse')
+                for i in range(4)]
+        kv.push(key, vals)
+
+    for key in range(200, 204):
+        queue_reduce_and_destroy(key)
+        gc.collect()
+
+    mx.nd.waitall()
+
 def test_list_kv_pair():
     """list key-value pair push & pull"""
     def check_list_kv_pair(kv, key, stype):
@@ -143,7 +180,7 @@ def test_aggregator():
     def check_aggregator(kv, key, key_list, stype):
         # devices
         num_devs = 4
-        devs = [mx.Context('cpu', i) for i in range(num_devs)]
+        devs = [mx.Device('cpu', i) for i in range(num_devs)]
 
         # single
         vals = [mx.nd.ones(shape, d).tostype(stype) for d in devs]
@@ -181,7 +218,7 @@ def test_sparse_aggregator():
 
         # devices
         num_devs = 4
-        devs = [mx.Context('cpu', i) for i in range(num_devs)]
+        devs = [mx.Device('cpu', i) for i in range(num_devs)]
 
         # single
         vals = [rand_ndarray(shape, stype).copyto(devs[i]) for i in range(num_devs)]
@@ -239,7 +276,7 @@ def test_updater(dev='cpu'):
     def check_updater(kv, key, key_list, stype):
         # devices
         num_devs = 4
-        devs = [mx.Context(dev, i) for i in range(num_devs)]
+        devs = [mx.Device(dev, i) for i in range(num_devs)]
 
         # single
         vals = [mx.nd.ones(shape, d).tostype(stype) for d in devs]
@@ -338,4 +375,3 @@ def test_invalid_pull():
         # kvstore should be restricted to only accept either int or str keys
         check_invalid_key_types_single(kvs[i], single_keys[1 - i])
         check_invalid_key_types_list(kvs[i], list_keys[1 - i])
-

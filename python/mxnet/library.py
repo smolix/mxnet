@@ -25,26 +25,12 @@ from .ndarray.register import _make_ndarray_function
 from .symbol.register import _make_symbol_function
 
 class MXlib:
-    """Holds a pointed to a loaded shared library and closes it on destruction"""
+    """Holds a pointer to a loaded shared library for process lifetime."""
     def __init__(self, handle):
         self.handle = handle
-    def __del__(self):
-        if not sys.platform.startswith('linux'):
-            return
-        # glibc 2.34+ absorbed libdl into libc; bare "libdl.so" no longer
-        # resolves on Ubuntu 22+ etc., so MXlib.__del__ raised OSError during
-        # interpreter shutdown. Try the older soname, fall back to libc.so.6
-        # (still exports dlclose), and swallow if neither loads.
-        try:
-            libdl = ctypes.CDLL("libdl.so.2")
-        except OSError:
-            try:
-                libdl = ctypes.CDLL("libc.so.6")
-            except OSError:
-                return
-        libdl.dlclose(self.handle)
 
-# set of libraries loaded
+# Custom library functions are registered in MXNet process-lifetime registries.
+# There is no unregister API, so plugin handles must not be dlclosed from Python.
 loaded_libs = []
 
 def load(path, verbose=True):

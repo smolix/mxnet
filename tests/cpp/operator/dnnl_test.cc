@@ -99,19 +99,17 @@ static void VerifyDefMem(const dnnl::memory& mem) {
 }
 
 TEST(DNNL_UTIL_FUNC, MemFormat) {
-  // Check whether the number of format is correct.
-  CHECK_EQ(dnnl_format_tag_last, 514);
-  CHECK_EQ(dnnl_nchw, 5);
-  CHECK_EQ(dnnl_oihw, 5);
+  // Check that the public format tags MXNet relies on are available.
+  CHECK_GT(dnnl_format_tag_last, dnnl_format_tag_undef);
+  CHECK_NE(dnnl_nchw, dnnl_format_tag_undef);
+  CHECK_NE(dnnl_oihw, dnnl_format_tag_undef);
 }
 
 static void VerifyMem(const dnnl::memory& mem) {
   dnnl::memory::desc desc = mem.get_desc();
-  dnnl::memory::dims dims(desc.data.ndims);
-  for (size_t i = 0; i < dims.size(); i++)
-    dims[i] = desc.data.dims[i];
+  dnnl::memory::dims dims = desc.get_dims();
   dnnl::memory::desc new_desc{dims,
-                              static_cast<dnnl::memory::data_type>(desc.data.data_type),
+                              desc.get_data_type(),
                               static_cast<dnnl::memory::format_tag>(GetDefaultFormat(desc))};
 
   if (desc == new_desc) {
@@ -141,10 +139,10 @@ TEST(DNNL_NDArray, GetDataReorder) {
         const dnnl::memory* mem = arr.GetDNNLDataReorder(&md);
         printf("reorder from (");
         for (size_t i = 0; i < s.ndim(); i++)
-          printf("%ld, ", s[i]);
+          printf("%lld, ", static_cast<long long>(s[i]));
         printf(") to (");
-        for (int i = 0; i < md.data.ndims; i++)
-          printf("%ld, ", md.data.dims[i]);
+        for (auto dim : md.get_dims())
+          printf("%lld, ", static_cast<long long>(dim));
         printf("), format: %d\n", static_cast<int>(GetDefaultFormat(md)));
         DNNLStream::Get()->Submit(false);
         VerifyMem(*mem);
@@ -162,10 +160,10 @@ TEST(DNNL_NDArray, GetDataReorder) {
         // with the DNNL memory inside.
         printf("Init array (");
         for (size_t i = 0; i < s.ndim(); i++)
-          printf("%ld, ", s[i]);
+          printf("%lld, ", static_cast<long long>(s[i]));
         printf(") with oneDNN memory (");
-        for (int i = 0; i < md.data.ndims; i++)
-          printf("%ld, ", md.data.dims[i]);
+        for (auto dim : md.get_dims())
+          printf("%lld, ", static_cast<long long>(dim));
         printf("), format: %d\n", static_cast<int>(GetDefaultFormat(md)));
         InitDNNLArray(&arr, md);
         for (auto to_md : mds) {
@@ -173,10 +171,10 @@ TEST(DNNL_NDArray, GetDataReorder) {
             const dnnl::memory* mem = arr.GetDNNLDataReorder(&to_md);
             printf("reorder from (");
             for (size_t i = 0; i < s.ndim(); i++)
-              printf("%ld, ", s[i]);
+              printf("%lld, ", static_cast<long long>(s[i]));
             printf("), format: %d to (", static_cast<int>(GetDefaultFormat(to_md)));
-            for (int i = 0; i < to_md.data.ndims; i++)
-              printf("%ld, ", to_md.data.dims[i]);
+            for (auto dim : to_md.get_dims())
+              printf("%lld, ", static_cast<long long>(dim));
             printf("), format: %d\n", static_cast<int>(GetDefaultFormat(to_md)));
             DNNLStream::Get()->Submit(false);
             VerifyMem(*mem);

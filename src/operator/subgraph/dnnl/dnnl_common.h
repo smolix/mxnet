@@ -55,6 +55,9 @@ static std::vector<float> GetWeightScales(const NDArray& weight,
                                           const float data_scale,
                                           bool weight_channelwise_scale) {
   auto nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+#if MXNET_USE_OPENMP != 1
+  (void)nthreads;
+#endif
   std::vector<float> weight_scales;
   const DType* weight_ptr = weight.data().dptr<DType>();
   const DType* bias_ptr   = bias ? bias->data().dptr<DType>() : nullptr;

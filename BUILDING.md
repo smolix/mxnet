@@ -16,8 +16,8 @@ fatbin support is tracked in [`issues.md`](issues.md) item 31.
   exercise the real bf16 path.
 - NVIDIA RTX PRO 4000 / RTX 50-series (compute capability 12.0).
 - NVIDIA driver R570 or newer.
-- macOS arm64 is covered only by the CPU-only smoke path. It is not a
-  CUDA/oneDNN release-wheel target.
+- macOS arm64 is covered by the CPU-only smoke path with oneDNN enabled. It is
+  not a CUDA release-wheel target.
 
 A full clean build takes roughly **35-50 minutes** on 64 threads. The
 CUDA compile phase dominates; expect `nvcc` to be the long pole.
@@ -108,7 +108,7 @@ cmake -S . -B build-macos-arm64 -G Ninja \
   -DUSE_CUDA=OFF \
   -DUSE_CUDNN=OFF \
   -DUSE_NCCL=OFF \
-  -DUSE_ONEDNN=OFF \
+  -DUSE_ONEDNN=ON \
   -DUSE_OPENMP=OFF \
   -DUSE_OPENCV=OFF \
   -DUSE_BLAS=apple \
@@ -125,6 +125,96 @@ uv pip install --python .venv/bin/python "numpy<2" requests pytest pytest-timeou
 MXNET_SETUP_ENABLE_CUDA_DEPS=0 uv pip install --python .venv/bin/python -e ./python
 ```
 
+### Optional OpenMP via UV
+
+AppleClang does not include an OpenMP runtime. To validate the OpenMP path on
+macOS without Homebrew, MacPorts, or a system LLVM install, build LLVM's
+`libomp` into a repo-local `.deps/` prefix and point CMake at it:
+
+```bash
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    python tools/dependencies/build_openmp.py
+
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    cmake -S . -B build-macos-arm64-openmp -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DUSE_CUDA=OFF \
+  -DUSE_CUDNN=OFF \
+  -DUSE_NCCL=OFF \
+  -DUSE_ONEDNN=ON \
+  -DUSE_OPENMP=ON \
+  -DOPENMP_ROOT="$(pwd)/.deps/openmp-22.1.5-macos-arm64" \
+  -DUSE_OPENCV=OFF \
+  -DUSE_BLAS=apple \
+  -DUSE_LAPACK=ON \
+  -DUSE_DIST_KVSTORE=OFF \
+  -DUSE_SSE=OFF \
+  -DUSE_F16C=OFF \
+  -DBUILD_CPP_EXAMPLES=OFF
+```
+
+### Optional OpenCV via UV
+
+The arm64 macOS smoke recipe keeps OpenCV off by default, but the image and
+vision tests can be enabled without Homebrew, MacPorts, or system OpenCV by
+building a repo-local OpenCV through UV. The same helper also supports Linux
+and installs under a platform/architecture-specific `.deps/` prefix.
+
+```bash
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    python tools/dependencies/build_libturbojpeg.py
+
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    python tools/dependencies/build_opencv.py
+
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    cmake -S . -B build-macos-arm64-opencv -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DUSE_CUDA=OFF \
+  -DUSE_CUDNN=OFF \
+  -DUSE_NCCL=OFF \
+  -DUSE_ONEDNN=ON \
+  -DUSE_OPENMP=OFF \
+  -DUSE_OPENCV=ON \
+  -DOPENCV_ROOT="$(pwd)/.deps/opencv-4.9.0-macos-arm64" \
+  -DOpenCV_DIR="$(pwd)/.deps/opencv-4.9.0-macos-arm64/lib/cmake/opencv4" \
+  -DUSE_LIBJPEG_TURBO=ON \
+  -DTURBOJPEG_ROOT="$(pwd)/.deps/libjpeg-turbo-3.0.4-macos-arm64" \
+  -DUSE_BLAS=apple \
+  -DUSE_LAPACK=ON \
+  -DUSE_DIST_KVSTORE=OFF \
+  -DUSE_SSE=OFF \
+  -DUSE_F16C=OFF \
+  -DBUILD_CPP_EXAMPLES=OFF \
+  -DPython3_EXECUTABLE="$(pwd)/.venv/bin/python"
+
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    cmake --build build-macos-arm64-opencv --target mxnet im2rec -- -j 3
+export MXNET_LIBRARY_PATH="$(pwd)/build-macos-arm64-opencv/libmxnet.dylib"
+```
+
+The helpers build libjpeg-turbo 3.0.4 and OpenCV 4.9.0 under `.deps/`. OpenCV
+is configured with bundled image codec dependencies; MXNet also links directly
+against libjpeg-turbo for the JPEG RecordIO fast path. On macOS OpenCV uses
+Apple SDK zlib to avoid SDK conflicts; on Linux it builds zlib with OpenCV. It
+ignores `/opt/local` and `/usr/local` during OpenCV configuration so MacPorts,
+Homebrew, and ad hoc local installs do not bleed into the dependency tree.
+MXNet CMake is pointed at the resulting prefixes via `OPENCV_ROOT` and
+`TURBOJPEG_ROOT`.
+
+If the checkout path contains shell-special characters such as spaces or
+parentheses, the helper re-enters through a stable `/private/tmp/mxnet-opencv-*`
+symlink before invoking OpenCV's CMake build. The installed files still live
+under the checkout's `.deps/` directory.
+
 Run the smoke subset tracked in test metadata:
 
 ```bash
@@ -132,9 +222,8 @@ grep -Ev '^\s*(#|$)' tests/python/apple_silicon_cpu_smoke \
   | xargs .venv/bin/python -m pytest -v --timeout=180 --tb=short
 ```
 
-The list currently covers `test_base.py`, `test_engine.py::test_bulk`,
-`test_engine_shutdown.py`, `test_inplace_dtype.py`,
-`test_numpy_default_dtype.py`, and `test_smoke.py`.
+The list currently covers base, engine, NumPy smoke, Gluon smoke, and a minimal
+oneDNN execution test.
 
 ## Build
 

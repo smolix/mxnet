@@ -3256,12 +3256,9 @@ inline void SplitOpForwardImpl(const nnvm::NodeAttrs& attrs,
   const SplitParam& param = nnvm::get<SplitParam>(attrs.parsed);
   Stream<xpu>* s          = ctx.get_stream<xpu>();
   const TBlob& input_data = inputs[split_enum::kData];
-  size_t leading = 1, trailing = 1;
+  size_t trailing = 1;
   CHECK_LT(real_axis, input_data.ndim());
   size_t mid = input_data.shape_[real_axis];
-  for (int i = 0; i < real_axis; ++i) {
-    leading *= input_data.shape_[i];
-  }
   for (int i = real_axis + 1; i < input_data.ndim(); ++i) {
     trailing *= input_data.shape_[i];
   }
@@ -3339,12 +3336,9 @@ inline void SplitOpBackwardImpl(const nnvm::NodeAttrs& attrs,
   const SplitParam& param = nnvm::get<SplitParam>(attrs.parsed);
   Stream<xpu>* s          = ctx.get_stream<xpu>();
   TBlob input_grad        = outputs[split_enum::kData];
-  size_t leading = 1, trailing = 1;
+  size_t trailing = 1;
   CHECK_LT(real_axis, input_grad.ndim());
   size_t mid = input_grad.shape_[real_axis];
-  for (int i = 0; i < real_axis; ++i) {
-    leading *= input_grad.shape_[i];
-  }
   for (int i = real_axis + 1; i < input_grad.ndim(); ++i) {
     trailing *= input_grad.shape_[i];
   }

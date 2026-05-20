@@ -64,6 +64,77 @@ def test_group_adagrad():
 def _fn_noimpl(*args, **kwargs):
     raise NotImplementedError()
 
+
+def _expect_mxnet_error_after_wait(func, match):
+    with pytest.raises(mx.MXNetError, match=match):
+        func()
+        mx.nd.waitall()
+
+
+@pytest.mark.parametrize('op, mp, match', [
+    (mx.nd.contrib.multi_adamw_update, False, "multi_adamw_update supports at most 50 weights"),
+    (mx.nd.contrib.multi_mp_adamw_update, True, "multi_adamw_update supports at most 50 weights"),
+    (mx.nd.contrib.multi_adabelief_update,
+     False,
+     "multi_adabelief_update supports at most 50 weights"),
+    (mx.nd.contrib.multi_mp_adabelief_update,
+     True,
+     "multi_adabelief_update supports at most 50 weights"),
+])
+def test_multi_adam_like_rejects_too_many_weights(op, mp, match):
+    num_weights = 51
+    weights = [mx.nd.ones((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+    grads = [mx.nd.ones((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+    means = [mx.nd.zeros((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+    variances = [mx.nd.zeros((1,), ctx=mx.cpu()) for _ in range(num_weights)]
+    lrs = [0.1] * num_weights
+    wds = [0.0] * num_weights
+    etas = [1.0] * num_weights
+    rescale_grad = mx.nd.array([1.0], ctx=mx.cpu())
+
+    if mp:
+        weights32 = [weight.copy() for weight in weights]
+        call = lambda: op(weights, grads, means, variances, weights32, rescale_grad,
+                          lrs, wds, etas, out=weights)
+    else:
+        call = lambda: op(weights, grads, means, variances, rescale_grad,
+                          lrs, wds, etas, out=weights)
+
+    _expect_mxnet_error_after_wait(call, match)
+
+
+@pytest.mark.parametrize('op, mp, match', [
+    (mx.nd.contrib.multi_lamb_update, False, "multi_lamb_update supports at most 45 tensors"),
+    (mx.nd.contrib.multi_mp_lamb_update, True, "multi_lamb_update supports at most 45 tensors"),
+    (mx.nd.contrib.multi_lans_update, False, "multi_lans_update supports at most 45 tensors"),
+    (mx.nd.contrib.multi_mp_lans_update, True, "multi_lans_update supports at most 45 tensors"),
+])
+def test_multi_lamb_lans_rejects_too_many_tensors(op, mp, match):
+    num_tensors = 46
+    weights = [mx.nd.ones((1,), ctx=mx.cpu()) for _ in range(num_tensors)]
+    grads = [mx.nd.ones((1,), ctx=mx.cpu()) for _ in range(num_tensors)]
+    means = [mx.nd.zeros((1,), ctx=mx.cpu()) for _ in range(num_tensors)]
+    variances = [mx.nd.zeros((1,), ctx=mx.cpu()) for _ in range(num_tensors)]
+    step_count = [1] * num_tensors
+    lrs = [0.1] * num_tensors
+    wds = [0.0] * num_tensors
+    kwargs = {
+        'out': weights,
+        'num_tensors': num_tensors,
+        'step_count': step_count,
+        'lrs': lrs,
+        'wds': wds,
+    }
+
+    if mp:
+        weights32 = [weight.copy() for weight in weights]
+        call = lambda: op(weights, grads, means, variances, weights32, **kwargs)
+    else:
+        call = lambda: op(weights, grads, means, variances, **kwargs)
+
+    _expect_mxnet_error_after_wait(call, match)
+
+
 class _AdamLikeTestHelper:
     fn_update = _fn_noimpl
     fn_multi_update = _fn_noimpl

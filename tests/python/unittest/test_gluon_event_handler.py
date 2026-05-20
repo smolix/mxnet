@@ -39,6 +39,13 @@ except ImportError:
 # invocation. Replace with an autouse fixture so the np-semantics flip is
 # scoped per-test and cross-file sweeps stay clean.
 import pytest as _pytest_for_reset_np_fixture
+pytestmark = [
+    _pytest_for_reset_np_fixture.mark.filterwarnings(
+        "ignore:No trainer specified, default SGD optimizer:UserWarning"),
+    _pytest_for_reset_np_fixture.mark.filterwarnings(
+        "ignore:Parameter '(weight|bias)' is already initialized:UserWarning"),
+]
+
 @_pytest_for_reset_np_fixture.fixture(autouse=True)
 def _legacy_nd_semantics():
     _prev_arr = mx.util.is_np_array()
@@ -103,6 +110,7 @@ def test_checkpoint_handler():
                                                              model_prefix=model_prefix,
                                                              monitor=acc,
                                                              save_best=True,
+                                                             mode='max',
                                                              epoch_period=1)
         est.fit(test_data, event_handlers=[checkpoint_handler], epochs=1)
         assert checkpoint_handler.current_epoch == 1
@@ -149,6 +157,7 @@ def test_resume_checkpoint():
         checkpoint_handler = event_handler.CheckpointHandler(model_dir=tmpdir,
                                                              model_prefix=model_prefix,
                                                              monitor=acc,
+                                                             mode='max',
                                                              max_checkpoints=1)
         est.fit(test_data, event_handlers=[checkpoint_handler], epochs=2)
         assert os.path.isfile(file_path + '-epoch1batch8.params')
@@ -156,6 +165,7 @@ def test_resume_checkpoint():
         checkpoint_handler = event_handler.CheckpointHandler(model_dir=tmpdir,
                                                              model_prefix=model_prefix,
                                                              monitor=acc,
+                                                             mode='max',
                                                              max_checkpoints=1,
                                                              resume_from_checkpoint=True)
         est.fit(test_data, event_handlers=[checkpoint_handler], epochs=5)
@@ -181,7 +191,7 @@ def test_early_stopping():
 
     early_stopping = event_handler.EarlyStoppingHandler(monitor=acc,
                                                         patience=2,
-                                                        mode='auto')
+                                                        mode='max')
     est.fit(test_data, event_handlers=[early_stopping], epochs=1)
     assert early_stopping.current_epoch == 1
 

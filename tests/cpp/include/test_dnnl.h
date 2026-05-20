@@ -48,13 +48,23 @@ inline static dnnl::memory::desc GetMemDesc(const mxnet::TShape s,
   return desc;
 }
 
+inline static int GetMemDescNDim(const dnnl::memory::desc& md) {
+  return md.get_ndims();
+}
+
+inline static dnnl::memory::dims GetMemDescDims(const dnnl::memory::desc& md) {
+  return md.get_dims();
+}
+
 inline static dnnl::memory::desc GetExpandedMemDesc(dnnl::memory::desc md,
                                                     const float scale,
                                                     const int dim = 0) {
-  CHECK(dim < md.data.ndims) << "dimension cannot be larger than total dimensions of input";
-  mxnet::TShape s(md.data.ndims, -1);
-  for (size_t i = 0; i < md.data.ndims; i++)
-    s[i] = md.data.dims[i];
+  const int ndims = GetMemDescNDim(md);
+  const auto dims = GetMemDescDims(md);
+  CHECK(dim < ndims) << "dimension cannot be larger than total dimensions of input";
+  mxnet::TShape s(ndims, -1);
+  for (int i = 0; i < ndims; i++)
+    s[i] = dims[i];
   s[dim] = static_cast<int64_t>(s[dim] * scale);
   return GetMemDesc(s,
                     mshadow::DataType<mshadow::default_real_t>::kFlag,
@@ -91,10 +101,11 @@ inline static void InitDNNLArray(NDArray* arr,
 }
 
 inline static bool IsSameShape(const dnnl::memory::desc& desc, const mxnet::TShape& shape) {
-  if (desc.data.ndims != shape.ndim())
+  if (GetMemDescNDim(desc) != shape.ndim())
     return false;
+  const auto dims = GetMemDescDims(desc);
   for (size_t i = 0; i < shape.ndim(); i++)
-    if (desc.data.dims[i] != shape[i])
+    if (dims[i] != shape[i])
       return false;
   return true;
 }
@@ -115,15 +126,15 @@ inline static std::vector<dnnl::memory::format_tag> GetDNNLFormat(size_t num_dim
     dnnl::memory::dims strides{4, 4};
     dnnl::memory::dims padding{0, 0};
 
-    dnnl::convolution_forward::desc desc(dnnl::prop_kind::forward_training,
-                                         dnnl::algorithm::convolution_direct,
-                                         data_md,
-                                         weight_md,
-                                         out_md,
-                                         strides,
-                                         padding,
-                                         padding);
-    dnnl::convolution_forward::primitive_desc pd(desc, CpuEngine::Get()->get_engine());
+    dnnl::convolution_forward::primitive_desc pd(CpuEngine::Get()->get_engine(),
+                                                 dnnl::prop_kind::forward_training,
+                                                 dnnl::algorithm::convolution_direct,
+                                                 data_md,
+                                                 weight_md,
+                                                 out_md,
+                                                 strides,
+                                                 padding,
+                                                 padding);
     while (pd.dst_desc().get_size() != GetMemDescSize(out_md) ||
            pd.src_desc().get_size() != GetMemDescSize(data_md) ||
            pd.weights_desc().get_size() != GetMemDescSize(weight_md)) {
@@ -144,15 +155,15 @@ inline static std::vector<dnnl::memory::format_tag> GetDNNLFormat(size_t num_dim
     dnnl::memory::dims strides{1, 1};
     dnnl::memory::dims padding{1, 1};
 
-    dnnl::convolution_forward::desc desc(dnnl::prop_kind::forward_training,
-                                         dnnl::algorithm::convolution_direct,
-                                         data_md,
-                                         weight_md,
-                                         out_md,
-                                         strides,
-                                         padding,
-                                         padding);
-    dnnl::convolution_forward::primitive_desc pd(desc, CpuEngine::Get()->get_engine());
+    dnnl::convolution_forward::primitive_desc pd(CpuEngine::Get()->get_engine(),
+                                                 dnnl::prop_kind::forward_training,
+                                                 dnnl::algorithm::convolution_direct,
+                                                 data_md,
+                                                 weight_md,
+                                                 out_md,
+                                                 strides,
+                                                 padding,
+                                                 padding);
     while (pd.dst_desc().get_size() != GetMemDescSize(out_md) ||
            pd.src_desc().get_size() != GetMemDescSize(data_md) ||
            pd.weights_desc().get_size() != GetMemDescSize(weight_md)) {
@@ -388,7 +399,7 @@ inline std::vector<NDArrayAttrs> GetTestInputArrays(int types                = A
     for (auto md : mds) {
       for (size_t dim = 0; dim < scale.size(); ++dim) {
         // preserve if matching layout else just expand on 0 dim
-        if (shape.ndim() == md.data.ndims)
+        if (shape.ndim() == GetMemDescNDim(md))
           md = GetExpandedMemDesc(md, scale[dim], dim);
         else
           md = GetExpandedMemDesc(md, scale[dim]);
@@ -399,18 +410,19 @@ inline std::vector<NDArrayAttrs> GetTestInputArrays(int types                = A
 
       // Type 2, 3.
       arr = NDArray(shape, Context());
-      if (shape.ndim() == md.data.ndims && IsSameShape(md, shape) && types & ArrayTypes::DNNL) {
+      const int md_ndims = GetMemDescNDim(md);
+      if (shape.ndim() == md_ndims && IsSameShape(md, shape) && types & ArrayTypes::DNNL) {
         desc_str = "oneDNN NDArray";
         InitDNNLArray(&arr, md, rand, max);
         in_arrs.emplace_back(arr, desc_str);
-      } else if (shape.ndim() == md.data.ndims && !IsSameShape(md, shape) &&
+      } else if (shape.ndim() == md_ndims && !IsSameShape(md, shape) &&
                  types & ArrayTypes::DNNLDiffShape) {
         desc_str = "oneDNN NDArray with different shape";
         InitDNNLArray(&arr, md, rand, max);
         in_arrs.emplace_back(arr, desc_str);
-      } else if (shape.ndim() != md.data.ndims && types & ArrayTypes::DNNLDiffDim) {
+      } else if (shape.ndim() != md_ndims && types & ArrayTypes::DNNLDiffDim) {
         std::stringstream ss;
-        ss << "oneDNN NDArray with different dim " << shape.ndim() << "/" << md.data.ndims;
+        ss << "oneDNN NDArray with different dim " << shape.ndim() << "/" << md_ndims;
         desc_str = ss.str();
         InitDNNLArray(&arr, md, rand, max);
         in_arrs.emplace_back(arr, desc_str);
@@ -418,19 +430,19 @@ inline std::vector<NDArrayAttrs> GetTestInputArrays(int types                = A
 
       // Type 5, 6.
       arr = NDArray(shape, Context());
-      if (shape.ndim() == md.data.ndims && IsSameShape(md, shape) &&
+      if (shape.ndim() == md_ndims && IsSameShape(md, shape) &&
           types & ArrayTypes::DNNLReshaped) {
         desc_str = "Reshaped oneDNN NDArray";
         InitDNNLArray(&arr, md, rand, max);
         in_arrs.emplace_back(arr.Slice(slice_amount, arr.shape()[0] - slice_amount), desc_str);
-      } else if (shape.ndim() == md.data.ndims && !IsSameShape(md, shape) &&
+      } else if (shape.ndim() == md_ndims && !IsSameShape(md, shape) &&
                  types & ArrayTypes::DNNLReshapedDiffShape) {
         desc_str = "Reshaped oneDNN NDArray with different shape";
         InitDNNLArray(&arr, md, rand, max);
         in_arrs.emplace_back(arr.Slice(slice_amount, arr.shape()[0] - slice_amount), desc_str);
-      } else if (shape.ndim() != md.data.ndims && types & ArrayTypes::DNNLReshapedDiffDim) {
+      } else if (shape.ndim() != md_ndims && types & ArrayTypes::DNNLReshapedDiffDim) {
         std::stringstream ss;
-        ss << "oneDNN NDArray with different dim " << shape.ndim() << "/" << md.data.ndims;
+        ss << "oneDNN NDArray with different dim " << shape.ndim() << "/" << md_ndims;
         desc_str = ss.str();
         InitDNNLArray(&arr, md, rand, max);
         in_arrs.emplace_back(arr.Slice(slice_amount, arr.shape()[0] - slice_amount), desc_str);
@@ -524,7 +536,8 @@ inline std::vector<NDArrayAttrs> GetTestOutputArrays(const mxnet::TShape& shp,
     if (shape.Size() != md.get_size() / sizeof(mshadow::default_real_t))
       continue;
 
-    if (scale.size() > md.data.ndims)
+    const int md_ndims = GetMemDescNDim(md);
+    if (scale.size() > md_ndims)
       continue;
 
     for (int dim = 0; dim < scale.size(); dim++)
@@ -533,14 +546,14 @@ inline std::vector<NDArrayAttrs> GetTestOutputArrays(const mxnet::TShape& shp,
     // Type 2, 3.
     arr      = NDArray(shape, Context());
     desc_str = "oneDNN NDArray";
-    if (shape.ndim() != md.data.ndims) {
+    if (shape.ndim() != md_ndims) {
       std::stringstream ss;
-      ss << "oneDNN NDArray with different memory layout " << shape.ndim() << "/" << md.data.ndims;
+      ss << "oneDNN NDArray with different memory layout " << shape.ndim() << "/" << md_ndims;
       desc_str = ss.str();
     }
 
-    if ((types & ArrayTypes::DNNL && shape.ndim() == md.data.ndims) ||
-        (types & ArrayTypes::DNNLDiffDim && shape.ndim() != md.data.ndims)) {
+    if ((types & ArrayTypes::DNNL && shape.ndim() == md_ndims) ||
+        (types & ArrayTypes::DNNLDiffDim && shape.ndim() != md_ndims)) {
       in_arrs.emplace_back(arr, desc_str);
       InitDNNLArray(&in_arrs.back().arr, md, rand, max);
     }
@@ -553,15 +566,15 @@ inline std::vector<NDArrayAttrs> GetTestOutputArrays(const mxnet::TShape& shp,
     arr         = arr.AsArray(shape, arr.dtype());
     InitDNNLArray(&arr, md, rand, max);
     desc_str = "Reused oneDNN NDArray";
-    if (shape.ndim() != md.data.ndims) {
+    if (shape.ndim() != md_ndims) {
       std::stringstream ss;
       ss << "Reused oneDNN NDArray with different memory layout " << shape.ndim() << "/"
-         << md.data.ndims;
+         << md_ndims;
       desc_str = ss.str();
     }
 
-    if ((types & ArrayTypes::DNNLReused && shape.ndim() == md.data.ndims) ||
-        (types & ArrayTypes::DNNLReusedDiffDim && shape.ndim() != md.data.ndims)) {
+    if ((types & ArrayTypes::DNNLReused && shape.ndim() == md_ndims) ||
+        (types & ArrayTypes::DNNLReusedDiffDim && shape.ndim() != md_ndims)) {
       in_arrs.emplace_back(arr, desc_str);
     }
   }

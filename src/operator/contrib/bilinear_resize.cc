@@ -44,6 +44,7 @@ void SpatialUpSamplingBilinearUpdateOutput(mshadow::Stream<cpu>* s,
   int inputWidth                = itensor.size(3);
 
   const auto nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  (void)nthreads;
 
   DType* idata                       = itensor.dptr_;
   DType* odata                       = otensor.dptr_;
@@ -118,6 +119,7 @@ void SpatialUpSamplingBilinearUpdateGradInput(mshadow::Stream<cpu>* s,
   int inputWidth   = gradInput.size(3);
 
   const auto nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  (void)nthreads;
 
   DType* dataInput                   = gradInput.dptr_;
   DType* dataOutput                  = gradOutput.dptr_;

@@ -25,6 +25,50 @@
 
 #include "./proposal-inl.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+
+namespace {
+
+inline int64_t CheckedMul(int64_t lhs, int64_t rhs, const char* what) {
+  CHECK_GE(lhs, 0);
+  CHECK_GE(rhs, 0);
+  CHECK(rhs == 0 || lhs <= std::numeric_limits<int64_t>::max() / rhs)
+      << what << " exceeds int64_t range: " << lhs << " * " << rhs;
+  return lhs * rhs;
+}
+
+inline int64_t CheckedAdd(int64_t lhs, int64_t rhs, const char* what) {
+  CHECK_GE(lhs, 0);
+  CHECK_GE(rhs, 0);
+  CHECK_LE(lhs, std::numeric_limits<int64_t>::max() - rhs)
+      << what << " exceeds int64_t range: " << lhs << " + " << rhs;
+  return lhs + rhs;
+}
+
+inline int64_t CheckedMul3(int64_t a, int64_t b, int64_t c, const char* what) {
+  return CheckedMul(CheckedMul(a, b, what), c, what);
+}
+
+inline mshadow::index_t CheckedIndexT(int64_t value, const char* what) {
+  CHECK_GE(value, 0);
+  CHECK_LE(value, static_cast<int64_t>(std::numeric_limits<mshadow::index_t>::max()))
+      << what << " exceeds mshadow index_t range: " << value;
+  return static_cast<mshadow::index_t>(value);
+}
+
+inline mshadow::index_t CheckedWorkspaceShape(int64_t elements, const char* what) {
+  const uint64_t max_elements =
+      static_cast<uint64_t>(std::numeric_limits<size_t>::max() / sizeof(mxnet::real_t));
+  CHECK_GE(elements, 0);
+  CHECK_LE(static_cast<uint64_t>(elements), max_elements)
+      << what << " exceeds size_t allocation range: " << elements;
+  return CheckedIndexT(elements, what);
+}
+
+}  // namespace
+
 //============================
 // Bounding Box Transform Utils
 //============================
@@ -42,14 +86,22 @@ inline void BBoxTransformInv(const mshadow::Tensor<cpu, 2>& boxes,
                              mshadow::Tensor<cpu, 2>* out_pred_boxes) {
   CHECK_GE(boxes.size(1), 4);
   CHECK_GE(out_pred_boxes->size(1), 4);
-  int anchors = deltas.size(1) / 4;
-  int heights = deltas.size(2);
-  int widths  = deltas.size(3);
+  const index_t anchors       = deltas.size(1) / 4;
+  const index_t heights       = deltas.size(2);
+  const index_t widths        = deltas.size(3);
+  const index_t anchor_stride = CheckedIndexT(CheckedMul(static_cast<int64_t>(widths),
+                                                         static_cast<int64_t>(anchors),
+                                                         "proposal bbox transform anchor stride"),
+                                              "proposal bbox transform anchor stride");
+  CheckedIndexT(CheckedMul(static_cast<int64_t>(heights),
+                           static_cast<int64_t>(anchor_stride),
+                           "proposal bbox transform size"),
+                "proposal bbox transform size");
 
-  for (int a = 0; a < anchors; ++a) {
-    for (int h = 0; h < heights; ++h) {
-      for (int w = 0; w < widths; ++w) {
-        index_t index = h * (widths * anchors) + w * (anchors) + a;
+  for (index_t a = 0; a < anchors; ++a) {
+    for (index_t h = 0; h < heights; ++h) {
+      for (index_t w = 0; w < widths; ++w) {
+        index_t index = h * anchor_stride + w * anchors + a;
         float width   = boxes[index][2] - boxes[index][0] + 1.0;
         float height  = boxes[index][3] - boxes[index][1] + 1.0;
         float ctr_x   = boxes[index][0] + 0.5 * (width - 1.0);
@@ -98,14 +150,22 @@ inline void IoUTransformInv(const mshadow::Tensor<cpu, 2>& boxes,
                             mshadow::Tensor<cpu, 2>* out_pred_boxes) {
   CHECK_GE(boxes.size(1), 4);
   CHECK_GE(out_pred_boxes->size(1), 4);
-  int anchors = deltas.size(1) / 4;
-  int heights = deltas.size(2);
-  int widths  = deltas.size(3);
+  const index_t anchors       = deltas.size(1) / 4;
+  const index_t heights       = deltas.size(2);
+  const index_t widths        = deltas.size(3);
+  const index_t anchor_stride = CheckedIndexT(CheckedMul(static_cast<int64_t>(widths),
+                                                         static_cast<int64_t>(anchors),
+                                                         "proposal iou transform anchor stride"),
+                                              "proposal iou transform anchor stride");
+  CheckedIndexT(CheckedMul(static_cast<int64_t>(heights),
+                           static_cast<int64_t>(anchor_stride),
+                           "proposal iou transform size"),
+                "proposal iou transform size");
 
-  for (int a = 0; a < anchors; ++a) {
-    for (int h = 0; h < heights; ++h) {
-      for (int w = 0; w < widths; ++w) {
-        index_t index = h * (widths * anchors) + w * (anchors) + a;
+  for (index_t a = 0; a < anchors; ++a) {
+    for (index_t h = 0; h < heights; ++h) {
+      for (index_t w = 0; w < widths; ++w) {
+        index_t index = h * anchor_stride + w * anchors + a;
         float x1      = boxes[index][0];
         float y1      = boxes[index][1];
         float x2      = boxes[index][2];
@@ -287,11 +347,29 @@ class ProposalOp : public Operator {
 
     Stream<xpu>* s = ctx.get_stream<xpu>();
 
-    Shape<4> scores_shape        = Shape4(in_data[proposal::kClsProb].shape_[0],
-                                   in_data[proposal::kClsProb].shape_[1] / 2,
-                                   in_data[proposal::kClsProb].shape_[2],
-                                   in_data[proposal::kClsProb].shape_[3]);
-    real_t* foreground_score_ptr = in_data[proposal::kClsProb].dptr<real_t>() + scores_shape.Size();
+    const mxnet::TShape& cls_shape   = in_data[proposal::kClsProb].shape_;
+    const index_t num_images         = CheckedIndexT(cls_shape[0], "proposal batch size");
+    const index_t num_score_channels = CheckedIndexT(cls_shape[1], "proposal score channel count");
+    const index_t num_anchors        = num_score_channels / 2;
+    const index_t height             = CheckedIndexT(cls_shape[2], "proposal height");
+    const index_t width              = CheckedIndexT(cls_shape[3], "proposal width");
+    const int64_t count64            = CheckedMul3(static_cast<int64_t>(num_anchors),
+                                        static_cast<int64_t>(height),
+                                        static_cast<int64_t>(width),
+                                        "proposal anchor count");
+    const index_t count              = CheckedIndexT(count64, "proposal anchor count");
+    const index_t anchor_stride      = CheckedIndexT(CheckedMul(static_cast<int64_t>(width),
+                                                           static_cast<int64_t>(num_anchors),
+                                                           "proposal anchor stride"),
+                                                "proposal anchor stride");
+    const int64_t foreground_score_offset64 =
+        CheckedMul(static_cast<int64_t>(num_images), count64, "proposal foreground score offset");
+    const index_t foreground_score_offset =
+        CheckedIndexT(foreground_score_offset64, "proposal foreground score offset");
+
+    Shape<4> scores_shape        = Shape4(num_images, num_anchors, height, width);
+    real_t* foreground_score_ptr =
+        in_data[proposal::kClsProb].dptr<real_t>() + foreground_score_offset;
     Tensor<cpu, 4> scores        = Tensor<cpu, 4>(foreground_score_ptr, scores_shape);
     Tensor<cpu, 4> bbox_deltas   = in_data[proposal::kBBoxPred].get<cpu, 4, real_t>(s);
     Tensor<cpu, 2> im_info       = in_data[proposal::kImInfo].get<cpu, 2, real_t>(s);
@@ -299,27 +377,50 @@ class ProposalOp : public Operator {
     Tensor<cpu, 2> out       = out_data[proposal::kOut].get<cpu, 2, real_t>(s);
     Tensor<cpu, 2> out_score = out_data[proposal::kScore].get<cpu, 2, real_t>(s);
 
-    int num_anchors        = in_data[proposal::kClsProb].shape_[1] / 2;
-    int height             = scores.size(2);
-    int width              = scores.size(3);
-    int count              = num_anchors * height * width;
-    int rpn_pre_nms_top_n  = (param_.rpn_pre_nms_top_n > 0) ? param_.rpn_pre_nms_top_n : count;
-    rpn_pre_nms_top_n      = std::min(rpn_pre_nms_top_n, count);
-    int rpn_post_nms_top_n = std::min(param_.rpn_post_nms_top_n, rpn_pre_nms_top_n);
+    int64_t rpn_pre_nms_top_n64 =
+        (param_.rpn_pre_nms_top_n > 0) ? param_.rpn_pre_nms_top_n : count64;
+    rpn_pre_nms_top_n64             = std::min(rpn_pre_nms_top_n64, count64);
+    const index_t rpn_pre_nms_top_n = CheckedIndexT(rpn_pre_nms_top_n64, "proposal pre-NMS top_n");
+    const int64_t rpn_post_nms_top_n64 =
+        std::min(static_cast<int64_t>(param_.rpn_post_nms_top_n), rpn_pre_nms_top_n64);
+    const index_t rpn_post_nms_top_n =
+        CheckedIndexT(rpn_post_nms_top_n64, "proposal post-NMS top_n");
 
-    int workspace_size = count * 5 + 2 * count + rpn_pre_nms_top_n * 5 + 3 * rpn_pre_nms_top_n;
+    const int64_t workspace_proposals_size64 = CheckedMul(count64, 5, "proposal workspace size");
+    const int64_t workspace_pre_nms_size64   = CheckedMul(count64, 2, "proposal workspace size");
+    const int64_t workspace_ordered_proposals_size64 =
+        CheckedMul(rpn_pre_nms_top_n64, 5, "proposal workspace size");
+    const int64_t workspace_nms_size64 =
+        CheckedMul(rpn_pre_nms_top_n64, 3, "proposal workspace size");
+    const int64_t workspace_size64 = CheckedAdd(CheckedAdd(CheckedAdd(workspace_proposals_size64,
+                                                                      workspace_pre_nms_size64,
+                                                                      "proposal workspace size"),
+                                                           workspace_ordered_proposals_size64,
+                                                           "proposal workspace size"),
+                                                workspace_nms_size64,
+                                                "proposal workspace size");
+    const index_t workspace_proposals_size =
+        CheckedIndexT(workspace_proposals_size64, "proposal workspace size");
+    const index_t workspace_pre_nms_size =
+        CheckedIndexT(workspace_pre_nms_size64, "proposal workspace size");
+    const index_t workspace_ordered_proposals_size =
+        CheckedIndexT(workspace_ordered_proposals_size64, "proposal workspace size");
+    const index_t workspace_nms_size =
+        CheckedIndexT(workspace_nms_size64, "proposal workspace size");
+    const index_t workspace_size =
+        CheckedWorkspaceShape(workspace_size64, "proposal workspace size");
     Tensor<cpu, 1> workspace =
         ctx.requested[proposal::kTempResource].get_space<cpu>(Shape1(workspace_size), s);
-    int start = 0;
+    index_t start = 0;
     Tensor<cpu, 2> workspace_proposals(workspace.dptr_ + start, Shape2(count, 5));
-    start += count * 5;
+    start += workspace_proposals_size;
     Tensor<cpu, 2> workspace_pre_nms(workspace.dptr_ + start, Shape2(2, count));
-    start += 2 * count;
+    start += workspace_pre_nms_size;
     Tensor<cpu, 2> workspace_ordered_proposals(workspace.dptr_ + start,
                                                Shape2(rpn_pre_nms_top_n, 5));
-    start += rpn_pre_nms_top_n * 5;
+    start += workspace_ordered_proposals_size;
     Tensor<cpu, 2> workspace_nms(workspace.dptr_ + start, Shape2(3, rpn_pre_nms_top_n));
-    start += 3 * rpn_pre_nms_top_n;
+    start += workspace_nms_size;
     CHECK_EQ(workspace_size, start) << workspace_size << " " << start << std::endl;
 
     // Generate anchors
@@ -337,11 +438,13 @@ class ProposalOp : public Operator {
     for (index_t i = 0; i < static_cast<index_t>(num_anchors); ++i) {
       for (index_t j = 0; j < static_cast<index_t>(height); ++j) {
         for (index_t k = 0; k < static_cast<index_t>(width); ++k) {
-          index_t index                 = j * (width * num_anchors) + k * (num_anchors) + i;
-          workspace_proposals[index][0] = workspace_proposals[i][0] + k * param_.feature_stride;
-          workspace_proposals[index][1] = workspace_proposals[i][1] + j * param_.feature_stride;
-          workspace_proposals[index][2] = workspace_proposals[i][2] + k * param_.feature_stride;
-          workspace_proposals[index][3] = workspace_proposals[i][3] + j * param_.feature_stride;
+          index_t index                 = j * anchor_stride + k * num_anchors + i;
+          const float shift_x           = static_cast<float>(k) * param_.feature_stride;
+          const float shift_y           = static_cast<float>(j) * param_.feature_stride;
+          workspace_proposals[index][0] = workspace_proposals[i][0] + shift_x;
+          workspace_proposals[index][1] = workspace_proposals[i][1] + shift_y;
+          workspace_proposals[index][2] = workspace_proposals[i][2] + shift_x;
+          workspace_proposals[index][3] = workspace_proposals[i][3] + shift_y;
           workspace_proposals[index][4] = scores[0][i][j][k];
         }
       }

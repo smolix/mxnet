@@ -75,6 +75,9 @@ MultiAllFiniteKernelParam<DType> FillMultiAllFiniteParam(const MultiAllFinitePar
   MultiAllFiniteKernelParam<DType> param;
   using namespace mxnet_op;
   Stream<xpu>* s = ctx.get_stream<xpu>();
+  CHECK_LE(op_param.num_arrays, MultiAllFiniteKernelParam<DType>::N)
+      << "multi_all_finite supports at most " << MultiAllFiniteKernelParam<DType>::N
+      << " arrays per fused call, got " << op_param.num_arrays;
   param.count    = op_param.num_arrays;
   param.max_size = 0;
   for (int i = 0; i < param.count; ++i) {

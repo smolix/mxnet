@@ -378,7 +378,7 @@ class Parameter(object):
             self._grad = [_mx_np.zeros(shape=i.shape, dtype=i.dtype, device=i.device)
                           for i in self._data]
         else:
-            self._grad = [ndarray.zeros(shape=i.shape, dtype=i.dtype, ctx=i.context,
+            self._grad = [ndarray.zeros(shape=i.shape, dtype=i.dtype, ctx=i.device,
                                         stype=self._grad_stype) for i in self._data]
 
         autograd.mark_variables(self._check_and_get(self._data, list),

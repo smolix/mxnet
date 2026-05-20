@@ -56,15 +56,11 @@ if(MXNET_DARWIN_PROCESSOR MATCHES "^(arm64|aarch64)$")
 else()
   set(USE_OPENCV ON CACHE BOOL "Build with OpenCV support")
 endif()
-set(OPENCV_ROOT "" CACHE BOOL "OpenCV install path. Supports autodetection.")
+set(OPENCV_ROOT "" CACHE PATH "OpenCV install path. Supports autodetection.")
 
 set(USE_OPENMP OFF CACHE BOOL "Build with Openmp support")
 
-if(MXNET_DARWIN_PROCESSOR MATCHES "^(arm64|aarch64)$")
-  set(USE_ONEDNN OFF CACHE BOOL "Build with oneDNN support")
-else()
-  set(USE_ONEDNN ON CACHE BOOL "Build with oneDNN support")
-endif()
+set(USE_ONEDNN ON CACHE BOOL "Build with oneDNN support")
 
 set(USE_LAPACK ON CACHE BOOL "Build with lapack support")
 

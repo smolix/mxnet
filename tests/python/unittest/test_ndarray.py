@@ -340,7 +340,7 @@ def test_init_from_scalar():
 
 def test_ndarray_copy():
     c = mx.nd.array(np.random.uniform(-10, 10, (10, 10)))
-    d = c.copyto(mx.Context('cpu', 0))
+    d = c.copyto(mx.cpu())
     assert np.sum(np.abs(c.asnumpy() != d.asnumpy())) == 0.0
 
 
@@ -1788,7 +1788,7 @@ def test_norm(ctx=default_device()):
 
 
 def test_ndarray_cpu_shared_ctx():
-    ctx = mx.Context('cpu_shared', 0)
+    ctx = mx.Device('cpu_shared', 0)
     res = mx.nd.zeros((1, 2, 3), ctx=ctx)
     assert(res.context == ctx)
 

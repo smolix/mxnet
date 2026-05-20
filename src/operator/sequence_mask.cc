@@ -39,10 +39,8 @@ struct SequenceMask0CPUKernel {
                                   index_t restsize,
                                   DType value) {
     const index_t seqpos = static_cast<int>(idx[batch]);
-#pragma unroll
     for (index_t s = seqpos; s < max_s_len; ++s) {
       index_t incr = (s * batch_size * restsize) + (batch * restsize);
-#pragma unroll
       for (index_t r = 0; r < restsize; ++r)
         KERNEL_ASSIGN(in[incr + r], req, value);
     }
@@ -61,10 +59,8 @@ struct SequenceMask1CPUKernel {
                                   index_t restsize,
                                   DType value) {
     const index_t seqpos = static_cast<int>(idx[batch]);
-#pragma unroll
     for (index_t s = seqpos; s < max_s_len; ++s) {
       index_t incr = (batch * max_s_len * restsize) + (s * restsize);
-#pragma unroll
       for (index_t r = 0; r < restsize; ++r)
         KERNEL_ASSIGN(in[incr + r], req, value);
     }

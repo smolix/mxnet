@@ -11,6 +11,7 @@ on:
       - "include/**"
       - "python/**"
       - "src/**"
+      - "tests/python/dnnl/**"
       - "tests/python/apple_silicon_cpu_smoke"
       - "tests/python/unittest/**"
   pull_request:
@@ -22,6 +23,7 @@ on:
       - "include/**"
       - "python/**"
       - "src/**"
+      - "tests/python/dnnl/**"
       - "tests/python/apple_silicon_cpu_smoke"
       - "tests/python/unittest/**"
   workflow_dispatch:
@@ -101,7 +103,7 @@ jobs:
             -DUSE_CUDA=OFF \
             -DUSE_CUDNN=OFF \
             -DUSE_NCCL=OFF \
-            -DUSE_ONEDNN=OFF \
+            -DUSE_ONEDNN=ON \
             -DUSE_OPENMP=OFF \
             -DUSE_OPENCV=OFF \
             -DUSE_BLAS=apple \

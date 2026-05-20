@@ -1529,12 +1529,13 @@ def test_npx_index_update():
             else:
                 expect_tmp = val
             mx_tmp = mx_ret[t_ind]
-            close_pos = onp.where(onp.isclose(expect_tmp, mx_tmp, rtol=eps, atol=eps))
+            close = onp.isclose(expect_tmp, mx_tmp, rtol=eps, atol=eps)
             if a[t_ind].ndim == 0:
-                if close_pos[0].size == 1:
+                if close:
                     mx_ret[t_ind] = 0
                     a[t_ind] = 0
             else:
+                close_pos = onp.where(close)
                 mx_ret[t_ind][close_pos] = 0
                 a[t_ind][close_pos] = 0
         assert_almost_equal(mx_ret, a, rtol=eps, atol=eps)
@@ -3253,7 +3254,7 @@ def test_np_binary_funcs():
         for func, func_data in funcs.items():
             dtypes = None
             assert (len(func_data) == 4 or len(func_data) == 5)
-            if len(func_data) is 4:
+            if len(func_data) == 4:
                 low, high, lgrads, rgrads = func_data
             else:
                 low, high, lgrads, rgrads, dtypes = func_data
@@ -3931,7 +3932,7 @@ def test_np_split():
                               axis=self._axis)
 
     def get_indices(axis_size):
-        if axis_size is 0:
+        if axis_size == 0:
             axis_size = random.randint(3, 6)
         samples = random.randint(1, axis_size - 1)
         indices = sorted(random.sample([i for i in range(1, axis_size)], samples))
@@ -3943,7 +3944,7 @@ def test_np_split():
     for hybridize in [True, False]:
         for axis in range(-len(shape)+1, len(shape)):
             indices = get_indices(shape[axis])
-            sections = 7 if shape[axis] is 0 else shape[axis]
+            sections = 7 if shape[axis] == 0 else shape[axis]
             for indices_or_sections in [indices, sections]:
                 # test gluon
                 test_split = TestSplit(axis=axis, indices_or_sections=indices_or_sections)
@@ -3983,7 +3984,7 @@ def test_np_array_split():
                               axis=self._axis)
 
     def get_indices(axis_size):
-        if axis_size is 0:
+        if axis_size == 0:
             axis_size = random.randint(3, 6)
         samples = random.randint(1, axis_size - 1)
         indices = sorted(random.sample([i for i in range(0, axis_size + 1)], samples))
@@ -4003,7 +4004,7 @@ def test_np_array_split():
         for axis in range(len(shape)):
             x = np.random.uniform(-5.0, 5.0, size=shape).astype(dtype)
             indices = get_indices(shape[axis])
-            sections = 7 if x.shape[axis] is 0 else random.randint(1,x.shape[axis])
+            sections = 7 if x.shape[axis] == 0 else random.randint(1,x.shape[axis])
             for indices_or_sections in [indices, sections]:
                 # test gluon
                 test_array_split = TestArray_split(axis=axis, indices_or_sections=indices_or_sections)
@@ -4037,7 +4038,7 @@ def test_np_vsplit():
             return np.vsplit(a, indices_or_sections=self._indices_or_sections)
 
     def get_indices(axis_size):
-        if axis_size is 0:
+        if axis_size == 0:
             axis_size = random.randint(3, 6)
         samples = random.randint(1, axis_size - 1)
         indices = sorted(random.sample([i for i in range(1, axis_size)], samples))
@@ -4054,7 +4055,7 @@ def test_np_vsplit():
         for shape in shapes:
             axis_size = shape[0]
             indices = get_indices(axis_size)
-            sections = 7 if axis_size is 0 else axis_size
+            sections = 7 if axis_size == 0 else axis_size
             for indices_or_sections in [indices, sections]:
                 # test gluon
                 test_vsplit = TestVsplit(indices_or_sections=indices_or_sections)
@@ -5611,6 +5612,26 @@ def test_np_histogram():
             np_cnts, np_bins = onp.histogram(np_a, bins=bins if isinstance(bins, mx.base.numeric_types) else bins.asnumpy(), range=_range)
             assert_almost_equal(mx_cnts.asnumpy(), np_cnts, rtol=1e-3, atol=1e-5)
             assert_almost_equal(mx_bins.asnumpy(), np_bins, rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_np_histogram_cpu_edge_and_invalid_bins():
+    mx_a = np.array([0.0, 1.0, 2.0, 3.0], device=mx.cpu(), dtype=onp.float64)
+
+    mx_cnts, mx_bins = np.histogram(
+        mx_a, bins=np.array([0.0, 1.0, 2.0, 3.0], device=mx.cpu(), dtype=onp.float64))
+    assert_almost_equal(mx_cnts.asnumpy(), onp.array([1, 1, 2]), rtol=1e-3, atol=1e-5)
+    assert_almost_equal(mx_bins.asnumpy(), onp.array([0.0, 1.0, 2.0, 3.0]),
+                        rtol=1e-3, atol=1e-5)
+
+    mx_cnts, mx_bins = np.histogram(mx_a, bins=3, range=(0.0, 3.0))
+    assert_almost_equal(mx_cnts.asnumpy(), onp.array([1, 1, 2]), rtol=1e-3, atol=1e-5)
+    assert_almost_equal(mx_bins.asnumpy(), onp.array([0.0, 1.0, 2.0, 3.0]),
+                        rtol=1e-3, atol=1e-5)
+
+    for bin_cnt in (0, -1):
+        with pytest.raises(MXNetError, match="bin_cnt"):
+            np.histogram(mx_a, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
 
 
 @use_np
@@ -8260,13 +8281,14 @@ def test_np_round():
                 if hybridize:
                     test_round.hybridize()
                 x = rand_ndarray(shape, dtype=oneType).as_np_ndarray()
-                np_out = getattr(onp, func)(x.asnumpy(), d)
+                onp_func = 'round' if func == 'round_' else func
+                np_out = getattr(onp, onp_func)(x.asnumpy(), d)
                 mx_out = test_round(x)
                 assert mx_out.shape == np_out.shape
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
 
                 mx_out = getattr(mx.np, func)(x, d)
-                np_out = getattr(onp, func)(x.asnumpy(), d)
+                np_out = getattr(onp, onp_func)(x.asnumpy(), d)
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
 
 
@@ -8288,7 +8310,8 @@ def test_np_nonzero():
                 if hybridize:
                     test_nonzero.hybridize()
                 x = rand_ndarray(shape, dtype=oneType).as_np_ndarray()
-                np_out = onp.nonzero(x.asnumpy())
+                np_x = x.asnumpy()
+                np_out = onp.atleast_1d(np_x).nonzero() if np_x.ndim == 0 else onp.nonzero(np_x)
                 np_out = onp.transpose(np_out)
                 mx_out = test_nonzero(x)
                 assert mx_out.shape == np_out.shape
@@ -8296,7 +8319,7 @@ def test_np_nonzero():
 
                 # Test imperative once again
                 mx_out = npx.nonzero(x)
-                np_out = onp.nonzero(x.asnumpy())
+                np_out = onp.atleast_1d(np_x).nonzero() if np_x.ndim == 0 else onp.nonzero(np_x)
                 np_out = onp.transpose(np_out)
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol, atol)
 
@@ -8622,9 +8645,9 @@ def test_np_tril_indices():
         def forward(self, x, *args, **kwargs):
             return x, np.tril_indices(n=self._n, k=self._k, m=self._m)
 
-    for n in onp.random.random_integers(-10, 50, 2):
-        for k in onp.random.random_integers(-50, 50, 2):
-            for m in onp.random.random_integers(-10, 50, 2):
+    for n in onp.random.randint(-10, 51, 2):
+        for k in onp.random.randint(-50, 51, 2):
+            for m in onp.random.randint(-10, 51, 2):
                 np_out = onp.tril_indices(n, k, m)
                 for hybridize in [True, False]:
                     # dummy nparray for hybridize
@@ -9485,12 +9508,12 @@ def test_np_quantile():
         if hybridize:
             test_quantile.hybridize()
         mx_out = test_quantile(a) if (q_scalar and q_shape == ()) else test_quantile(a, q)
-        np_out = onp.quantile(a.asnumpy(), np_q, axis=axis, interpolation=interpolation, keepdims=keepdims)
+        np_out = onp.quantile(a.asnumpy(), np_q, axis=axis, method=interpolation, keepdims=keepdims)
         assert mx_out.shape == np_out.shape
         assert_almost_equal(mx_out.asnumpy(), np_out, atol=atol, rtol=rtol)
 
         mx_out = np.quantile(a, q, axis=axis, interpolation=interpolation, keepdims=keepdims)
-        np_out = onp.quantile(a.asnumpy(), np_q, axis=axis, interpolation=interpolation, keepdims=keepdims)
+        np_out = onp.quantile(a.asnumpy(), np_q, axis=axis, method=interpolation, keepdims=keepdims)
         assert_almost_equal(mx_out.asnumpy(), np_out, atol=atol, rtol=rtol)
 
 
@@ -9532,8 +9555,10 @@ def test_np_percentile():
     for hybridize, keepdims, q_scalar, (a_shape, q_shape, axis), interpolation, dtype in \
         itertools.product(flags, flags, flags, tensor_shapes, interpolation_options, dtypes):
         if dtype == np.float16 and interpolation == 'linear': continue
-        atol = 3e-4 if dtype == np.float16 else 1e-4
-        rtol = 3e-2 if dtype == np.float16 else 1e-2
+        # See the matching quantile case above: fp16 non-linear interpolation
+        # can differ by several ULPs when midpoint/selection crosses exponent blocks.
+        atol = 5e-3 if dtype == np.float16 else 1e-4
+        rtol = 1e-1 if dtype == np.float16 else 1e-2
         a = np.random.uniform(-10.0, 10.0, size=a_shape).astype(dtype)
         qtype = random.choice(qtypes)
         q = np.random.uniform(0, 1.0, size=q_shape).astype(qtype)
@@ -9547,12 +9572,12 @@ def test_np_percentile():
         if hybridize:
             test_percentile.hybridize()
         mx_out = test_percentile(a) if (q_scalar and q_shape == ()) else test_percentile(a, q)
-        np_out = onp.percentile(a.asnumpy(), np_q, axis=axis, interpolation=interpolation, keepdims=keepdims)
+        np_out = onp.percentile(a.asnumpy(), np_q, axis=axis, method=interpolation, keepdims=keepdims)
         assert mx_out.shape == np_out.shape
         assert_almost_equal(mx_out.asnumpy(), np_out, atol=atol, rtol=rtol)
 
         mx_out = np.percentile(a, q, axis=axis, interpolation=interpolation, keepdims=keepdims)
-        np_out = onp.percentile(a.asnumpy(), np_q, axis=axis, interpolation=interpolation, keepdims=keepdims)
+        np_out = onp.percentile(a.asnumpy(), np_q, axis=axis, method=interpolation, keepdims=keepdims)
         assert_almost_equal(mx_out.asnumpy(), np_out, atol=atol, rtol=rtol)
 
 
@@ -10986,9 +11011,9 @@ def test_np_broadcast_ops_on_misaligned_input(dtype, lead_dim, both_ways):
         big_shape = [1, shape[1], lead_dim]
     else:
         big_shape = shape
-    size = onp.product(shape)
-    small_size = onp.product(small_shape)
-    big_size = onp.product(big_shape)
+    size = onp.prod(shape)
+    small_size = onp.prod(small_shape)
+    big_size = onp.prod(big_shape)
     a = np.arange(5000)
     b = np.arange(5000)
     e = np.arange(5000)
@@ -11013,9 +11038,9 @@ def test_np_broadcast_ops_on_misaligned_input_oneside(dtype, lead_dim, both_ways
         big_shape = [1, shape[1], lead_dim]
     else:
         big_shape = shape
-    size = onp.product(shape)
-    small_size = onp.product(small_shape)
-    big_size = onp.product(big_shape)
+    size = onp.prod(shape)
+    small_size = onp.prod(small_shape)
+    big_size = onp.prod(big_shape)
     a = np.arange(5000)
     b = np.arange(5000)
     e = np.arange(5000)

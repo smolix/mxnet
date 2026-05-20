@@ -48,8 +48,6 @@ enum BatchNormWithReLUOpOutputs { kOut, kMean, kVar, kWorkspace };  // req, out_
 enum BatchNormWithReLUOpResource { kTempSpace };
 enum BatchNormWithReLUOpAuxiliary { kMovingMean, kMovingVar };  // aux_states
 
-/*! \brief Default channel axis if none specified in the params */
-constexpr int DEFAULT_AXIS = 1;
 }  // namespace batchnormrelu
 
 static bool BatchNormWithReLUShape(const nnvm::NodeAttrs& attrs,

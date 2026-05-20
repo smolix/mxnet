@@ -307,7 +307,7 @@ static std::shared_ptr<dnnl::convolution_backward_data::primitive_desc> GetConvB
                << ", supporting only 1 or 2 or 3.";
   }
 
-  auto GetConvBwdDataPd = [&data, &weight, &output, &fwd_pd](
+  auto GetConvBwdDataPd = [&data, &weight, &output](
                               std::shared_ptr<dnnl::convolution_backward_data::primitive_desc>
                                   conv_pd) {
     try {
@@ -387,7 +387,7 @@ static std::shared_ptr<dnnl::convolution_backward_weights::primitive_desc> GetCo
                << ", supporting only 1 or 2 or 3.";
   }
 
-  auto GetConvBwdWeightsPd = [&data, &weight, &output, &fwd_pd](
+  auto GetConvBwdWeightsPd = [&data, &weight, &output](
                                  std::shared_ptr<
                                      dnnl::convolution_backward_weights::primitive_desc> conv_pd) {
     try {

@@ -2157,9 +2157,9 @@ def test_bilinear_sampler_versions():
                 exe.arg_dict['grid'][:] = test_grid
                 exe.forward(is_train=True)
                 exe.backward(mx.nd.array(out_grad))
-                if req_dict['data'] is 'write':
+                if req_dict['data'] == 'write':
                     assert_almost_equal(exe.grad_dict['data'], exe_list[ref_idx].grad_dict['data'], rtol=1e-3, atol=1e-5)
-                if req_dict['grid'] is 'write':
+                if req_dict['grid'] == 'write':
                     assert_almost_equal(exe.grad_dict['grid'], exe_list[ref_idx].grad_dict['grid'], rtol=1e-3, atol=1e-5)
 
 

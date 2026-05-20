@@ -76,7 +76,7 @@ class ImageRecordIOParser2 {
                     const float contrast_scaled,
                     const float illumination_scaled);
 #if MXNET_USE_LIBJPEG_TURBO
-  cv::Mat TJimdecode(cv::Mat buf, int color);
+  cv::Mat TJimdecode(const cv::Mat& buf, int color);
 #endif
 #endif
   inline size_t ParseChunk(DType* data_dptr,
@@ -410,13 +410,13 @@ void ImageRecordIOParser2<DType>::ProcessImage(const cv::Mat& res,
   }
 
   int swap_indices[n_channels];  // NOLINT(*)
-  if (n_channels == 1) {
+  if constexpr (n_channels == 1) {
     swap_indices[0] = 0;
-  } else if (n_channels == 3) {
+  } else if constexpr (n_channels == 3) {
     swap_indices[0] = 2;
     swap_indices[1] = 1;
     swap_indices[2] = 0;
-  } else if (n_channels == 4) {
+  } else if constexpr (n_channels == 4) {
     swap_indices[0] = 2;
     swap_indices[1] = 1;
     swap_indices[2] = 0;
@@ -470,38 +470,40 @@ void ImageRecordIOParser2<DType>::ProcessImage(const cv::Mat& res,
 
 #if MXNET_USE_LIBJPEG_TURBO
 
-bool is_jpeg(unsigned char* file) {
-  if ((file[0] == 255) && (file[1] == 216)) {
-    return true;
-  } else {
-    return false;
-  }
+bool is_jpeg(const unsigned char* file, size_t size) {
+  return size >= 2 && file[0] == 255 && file[1] == 216;
 }
 
 template <typename DType>
-cv::Mat ImageRecordIOParser2<DType>::TJimdecode(cv::Mat image, int color) {
-  unsigned char* jpeg = image.ptr();
-  size_t jpeg_size    = image.rows * image.cols;
+cv::Mat ImageRecordIOParser2<DType>::TJimdecode(const cv::Mat& image, int color) {
+  unsigned char* jpeg = const_cast<unsigned char*>(image.ptr<unsigned char>());
+  size_t jpeg_size    = image.total() * image.elemSize();
 
-  if (!is_jpeg(jpeg)) {
+  if (!is_jpeg(jpeg, jpeg_size)) {
     // If it is not JPEG then fall back to OpenCV
     return cv::imdecode(image, color);
   }
 
-  tjhandle handle = tjInitDecompress();
+  std::unique_ptr<void, decltype(&tjDestroy)> handle(tjInitDecompress(), tjDestroy);
+  if (!handle) {
+    return cv::imdecode(image, color);
+  }
   int h, w, subsamp;
-  int err = tjDecompressHeader2(handle, jpeg, jpeg_size, &w, &h, &subsamp);
+  int err = tjDecompressHeader2(handle.get(), jpeg, jpeg_size, &w, &h, &subsamp);
   if (err != 0) {
     // If it is a malformed JPEG then fall back to OpenCV
+    return cv::imdecode(image, color);
+  }
+  if (h <= 0 || w <= 0) {
     return cv::imdecode(image, color);
   }
   cv::Mat ret = cv::Mat(h, w, color ? CV_8UC3 : CV_8UC1);
-  err = tjDecompress2(handle, jpeg, jpeg_size, ret.ptr(), w, 0, h, color ? TJPF_BGR : TJPF_GRAY, 0);
+  err = tjDecompress2(
+      handle.get(), jpeg, jpeg_size, ret.ptr(), w, 0, h, color ? TJPF_BGR : TJPF_GRAY, 0);
   if (err != 0) {
     // If it is a malformed JPEG then fall back to OpenCV
     return cv::imdecode(image, color);
   }
-  tjDestroy(handle);
   return ret;
 }
 #endif

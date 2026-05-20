@@ -40,8 +40,11 @@ except ImportError:
 from . import sampler as _sampler
 from . import batchify as _batchify
 from ... import ndarray as nd, context
+from ...device import Device
 from ...util import is_np_shape, is_np_array, set_np
 from ... import numpy as _mx_np  # pylint: disable=reimported
+
+_CPU_SHARED = Device('cpu_shared', 0)
 
 if sys.platform == 'darwin' or sys.platform == 'win32':
     def rebuild_ndarray(*args):
@@ -62,7 +65,7 @@ else:
     def reduce_ndarray(data):
         """Reduce ndarray to shared memory handle"""
         # keep a local ref before duplicating fd
-        data = data.as_in_context(context.Context('cpu_shared', 0))
+        data = data.as_in_context(_CPU_SHARED)
         pid, fd, shape, dtype = data._to_shared_mem()
         fd = multiprocessing.reduction.DupFd(fd)
         return rebuild_ndarray, (pid, fd, shape, dtype)
@@ -88,7 +91,7 @@ else:
     def reduce_np_ndarray(data):
         """Reduce ndarray to shared memory handle"""
         # keep a local ref before duplicating fd
-        data = data.as_in_context(context.Context('cpu_shared', 0))
+        data = data.to_device(_CPU_SHARED)
         pid, fd, shape, dtype = data._to_shared_mem()
         fd = multiprocessing.reduction.DupFd(fd)
         return rebuild_np_ndarray, (pid, fd, shape, dtype)
@@ -159,7 +162,7 @@ def default_mp_batchify_fn(data):
     if isinstance(data[0], nd.NDArray):
         empty_fn = _mx_np.empty if is_np_array() else nd.empty
         out = empty_fn((len(data),) + data[0].shape, dtype=data[0].dtype,
-                       ctx=context.Context('cpu_shared', 0))
+                       ctx=_CPU_SHARED)
         if is_np_array():
             return _mx_np.stack(data, out=out)
         else:
@@ -171,7 +174,7 @@ def default_mp_batchify_fn(data):
         data = np.asarray(data)
         array_fn = _mx_np.array if is_np_array() else nd.array
         return array_fn(data, dtype=data.dtype,
-                        ctx=context.Context('cpu_shared', 0))
+                        ctx=_CPU_SHARED)
 
 
 def _as_in_context(data, ctx):
@@ -457,6 +460,7 @@ class _MultiWorkerIter(object):
         self._dataset = dataset
         self._data_loader = data_loader
         self._timeout = timeout
+        self._closed = False
         # pre-fetch
         for _ in range(prefetch):
             self._push_next()
@@ -475,9 +479,12 @@ class _MultiWorkerIter(object):
         self._sent_idx += 1
 
     def __next__(self):
+        if self._closed:
+            raise StopIteration
         self._push_next()
         if self._rcvd_idx == self._sent_idx:
             assert not self._data_buffer, "Data buffer should be empty at this moment"
+            self.close(shutdown_pool=False)
             raise StopIteration
 
         assert self._rcvd_idx < self._sent_idx, "rcvd_idx must be smaller than sent_idx"
@@ -501,9 +508,10 @@ class _MultiWorkerIter(object):
             Please consider reduce `num_workers` or increase shared_memory in system.
             '''
             print(msg)
+            self.close()
             raise
-        except Exception:
-            self._worker_pool.terminate()
+        except BaseException:
+            self.close()
             raise
 
     def next(self):
@@ -511,6 +519,23 @@ class _MultiWorkerIter(object):
 
     def __iter__(self):
         return self
+
+    def close(self, shutdown_pool=True):
+        """Release outstanding worker results and optionally retire the worker pool."""
+        if self._closed:
+            return
+        self._closed = True
+        self._data_buffer.clear()
+        if shutdown_pool:
+            if self._data_loader is not None:
+                self._data_loader._shutdown_worker_pool()
+            elif self._worker_pool is not None:
+                self._worker_pool.terminate()
+                self._worker_pool.join()
+        self._worker_pool = None
+
+    def __del__(self):
+        self.close()
 
 
 class DataLoader(object):
@@ -626,7 +651,7 @@ class DataLoader(object):
         self._worker_pool = None
         self._prefetch = max(0, int(prefetch) if prefetch is not None else 2 * self._num_workers)
         if batchify_fn is None:
-            if num_workers > 0:
+            if num_workers > 0 and not thread_pool:
                 self._batchify_fn = _batchify.Stack(use_shared_mem=True)
             else:
                 self._batchify_fn = _batchify.Stack()
@@ -657,18 +682,25 @@ class DataLoader(object):
             gc.collect()
             nd.waitall()
             if self._num_workers > 0:
-                if self._thread_pool:
-                    self._worker_pool = ThreadPool(self._num_workers,
-                                                   initializer=_thread_worker_initializer,
-                                                   initargs=(is_np_shape(), is_np_array()))
-                else:
-                    # set ignore keyboard interupt signal before forking processes
-                    original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
-                    self._worker_pool = multiprocessing.Pool(
-                        self._num_workers, initializer=_worker_initializer,
-                        initargs=[self._dataset, is_np_shape(), is_np_array()])
-                    # resume keyboard interupt signal in main process
-                    signal.signal(signal.SIGINT, original_sigint_handler)
+                self._create_worker_pool()
+
+    def _create_worker_pool(self):
+        if self._worker_pool is not None:
+            return
+        if self._thread_pool:
+            self._worker_pool = ThreadPool(self._num_workers,
+                                           initializer=_thread_worker_initializer,
+                                           initargs=(is_np_shape(), is_np_array()))
+        else:
+            # set ignore keyboard interupt signal before forking processes
+            original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            try:
+                self._worker_pool = multiprocessing.Pool(
+                    self._num_workers, initializer=_worker_initializer,
+                    initargs=[self._dataset, is_np_shape(), is_np_array()])
+            finally:
+                # resume keyboard interupt signal in main process
+                signal.signal(signal.SIGINT, original_sigint_handler)
 
     def __iter__(self):
         if self._mx_iter is not None:
@@ -684,6 +716,7 @@ class DataLoader(object):
             return same_process_iter()
 
         # multi-worker
+        self._create_worker_pool()
         return _MultiWorkerIter(self._worker_pool, self._batchify_fn, self._batch_sampler,
                                 pin_memory=self._pin_memory, pin_device_id=self._pin_device_id,
                                 worker_fn=_thread_worker_fn if self._thread_pool else _worker_fn,
@@ -694,12 +727,17 @@ class DataLoader(object):
     def __len__(self):
         return len(self._batch_sampler)
 
+    def _shutdown_worker_pool(self):
+        worker_pool = self._worker_pool
+        self._worker_pool = None
+        if worker_pool:
+            worker_pool.terminate()
+            worker_pool.join()
+
     def __del__(self):
-        if self._worker_pool:
-            # manually terminate due to a bug that pool is not automatically terminated
-            # https://bugs.python.org/issue34172
-            assert isinstance(self._worker_pool, multiprocessing.pool.Pool)
-            self._worker_pool.terminate()
+        # manually terminate due to a bug that pool is not automatically terminated
+        # https://bugs.python.org/issue34172
+        self._shutdown_worker_pool()
 
 def _check_mx_loader_capability(dataset, batch_sampler, batchify_fn):
     from ._internal import MXDataset, MXSampler
@@ -803,16 +841,18 @@ class _MXThreadedDataLoader(object):
                                         device_id=pin_device_id)
 
     def __iter__(self):
-        while self._iter.iter_next():
-            self._iter.first_batch = None
-            items = self._iter.getitems()
-            pad = self._iter.getpad()
-            if pad > 0:
-                items = tuple([x[:-pad] for x in items])
-            if len(items) < 2:
-                items = items[0]
-            yield items
-        self._iter.reset()
+        try:
+            while self._iter.iter_next():
+                self._iter.first_batch = None
+                items = self._iter.getitems()
+                pad = self._iter.getpad()
+                if pad > 0:
+                    items = tuple([x[:-pad] for x in items])
+                if len(items) < 2:
+                    items = items[0]
+                yield items
+        finally:
+            self._iter.reset()
 
     def __len__(self):
         return len(self._iter)

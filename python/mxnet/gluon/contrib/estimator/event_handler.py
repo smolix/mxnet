@@ -34,6 +34,11 @@ __all__ = ['TrainBegin', 'TrainEnd', 'EpochBegin', 'EpochEnd', 'BatchBegin', 'Ba
            'LoggingHandler', 'CheckpointHandler', 'EarlyStoppingHandler', 'GradientUpdateHandler']
 
 
+def _greater_is_better(metric_name):
+    metric_name = metric_name.lower()
+    return 'acc' in metric_name or 'f1' in metric_name
+
+
 class EventHandler(object):
     pass
 
@@ -419,7 +424,7 @@ class CheckpointHandler(TrainBegin, BatchEnd, EpochEnd):
                 self.best = -np.Inf
             else:
                 # use greater for accuracy and f1 and less otherwise
-                if 'acc' or 'f1' in self.monitor.get()[0].lower():
+                if _greater_is_better(self.monitor.get()[0]):
                     warnings.warn("`greater` operator will be used to determine if {} has improved. "
                                   "Please specify `mode='min'` to use the `less` operator. "
                                   "Specify `mode='max' to disable this warning.`"
@@ -664,7 +669,7 @@ class EarlyStoppingHandler(TrainBegin, EpochEnd, TrainEnd):
         elif mode == 'max':
             self.monitor_op = np.greater
         else:
-            if 'acc' or 'f1' in self.monitor.get()[0].lower():
+            if _greater_is_better(self.monitor.get()[0]):
                 warnings.warn("`greater` operator will be used to determine if {} has improved. "
                               "Please specify `mode='min'` to use the `less` operator. "
                               "Specify `mode='max' to disable this warning.`"

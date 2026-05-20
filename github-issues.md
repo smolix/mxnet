@@ -2,6 +2,8 @@
 
 Updated: 2026-05-20
 Repository reviewed: `apache/mxnet`
+Review status: GitHub issue/PR crawl complete for the Apple Silicon handoff PR.
+Current branch: `followup/full-sweep-macos-wheel`
 
 This file tracks GitHub findings that are not already represented in
 `issues.md`. It intentionally excludes the known Apple Silicon oneDNN/Xbyak
@@ -18,6 +20,11 @@ there.
 | G2 | [#21141](https://github.com/apache/mxnet/pull/21141), [#20297](https://github.com/apache/mxnet/pull/20297), [#20491](https://github.com/apache/mxnet/pull/20491), [#20316](https://github.com/apache/mxnet/pull/20316), [#18583](https://github.com/apache/mxnet/pull/18583) | C / C++ inference API | C Predict and C++ inference/subgraph APIs have unresolved correctness gaps: duplicate input names can trigger uninitialized reads, executor binding needs locking, deleted subgraph nodes need handling, and C++ shape/backend APIs lag Python. | Treat as a focused inference-API audit. Add C API/C++ API regression tests before changing behavior. |
 | G3 | [#16686](https://github.com/apache/mxnet/issues/16686), [#21091](https://github.com/apache/mxnet/pull/21091), [#19275](https://github.com/apache/mxnet/pull/19275), [#19076](https://github.com/apache/mxnet/pull/19076), [#18027](https://github.com/apache/mxnet/pull/18027), [#17209](https://github.com/apache/mxnet/pull/17209) | Autograd/Gluon semantics | There are unresolved gradient and Gluon export semantics issues outside the lifecycle fixes: `grad_req='add'` numerical behavior, `attach_grad` on non-leaf HybridizedBlock values, `autograd.grad`, `block.export`, mixed binary backward handling, and Gluon `Variable` dtype propagation. | Prioritize CPU-reproducible autograd tests first; defer any GPU-only parity checks to CUDA CI. |
 | G4 | [#21204](https://github.com/apache/mxnet/pull/21204), [#15702](https://github.com/apache/mxnet/pull/15702) | Resource hygiene | Logger/file-handle lifetime and repeated `Extract()` memory leak reports are separate from the engine/DataLoader lifecycle issues already tracked. | Add leak/file-handle regression tests around the affected Python/C++ utility paths. |
+
+Status for this PR: none of the GitHub-delta items above were fixed directly in
+`followup/full-sweep-macos-wheel`. The branch focused on the Apple Silicon CPU
+port, optimized macOS arm64 build, ONNX-free packaging, and the macOS
+`cpu_shared` DataLoader fallback captured in `issues.md`.
 
 ## Medium Priority
 
@@ -39,6 +46,19 @@ there.
 | G13 | [#20762](https://github.com/apache/mxnet/pull/20762), [#18325](https://github.com/apache/mxnet/pull/18325), [#18285](https://github.com/apache/mxnet/pull/18285), [#17129](https://github.com/apache/mxnet/pull/17129), [#16955](https://github.com/apache/mxnet/pull/16955) | Training/data API extensions | Feature PRs also cover RAdam, SGD/momentum behavior changes, Estimator iterable inputs, and dataset flattening. The optimizer items are behavior-sensitive because old checkpoints or training recipes may rely on current semantics. | Split additions from behavior changes. New APIs can be considered later; optimizer semantic changes need migration notes and numerical regression tests. |
 | G14 | [#20043](https://github.com/apache/mxnet/pull/20043), [#13715](https://github.com/apache/mxnet/pull/13715), [#15678](https://github.com/apache/mxnet/pull/15678), [#18583](https://github.com/apache/mxnet/pull/18583), [#20491](https://github.com/apache/mxnet/pull/20491) | C/C++ API extensions | The C/C++ backlog includes general C API enhancement work, a C++ Predictor class, contrib-op exposure in the C++ package, partial shape inference, and C++ `OptimizeForBackend`. These overlap with G2 where correctness is involved, but the feature aspect is broader API modernization. | Fold only the correctness pieces into near-term work. Broader C++ API expansion should wait for ABI/API policy decisions for the fork. |
 
+## Recommended Carry-Forward Order
+
+After the Apple Silicon PR is merged and the work moves to a Linux/CUDA host:
+
+1. Start with `issues.md` deferred CUDA/Linux validation rather than the feature
+   additions here.
+2. Use G2 and G3 as the first GitHub-derived correctness audits because they are
+   Python/C++ core behavior and likely CPU-reproducible.
+3. Keep G10-G14 out of the stabilization branch unless a failing test requires
+   one of those features.
+4. Revisit G8 only after Linux CPU benchmark infrastructure exists; these PRs
+   can easily change performance without clear correctness signals.
+
 ## Notes
 
 - Open PR metadata was fetched from GitHub on 2026-05-20.
@@ -46,3 +66,6 @@ there.
   there rather than being duplicated here.
 - Non-Python/C++ language-binding PRs are intentionally ignored for this fork
   triage.
+- The current macOS arm64 wheel branch does not attempt to merge stale upstream
+  PRs wholesale; each entry here should be treated as a prompt for a fresh,
+  tested patch against this fork.

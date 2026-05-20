@@ -3,6 +3,8 @@
 Updated: 2026-05-20
 Current branch: `followup/full-sweep-macos-wheel`
 Code baseline when reorganized: `e04b407507`; current follow-up base: `862669419`
+Current branch head: `85351c546`
+Local release tag: `macos-arm64-slim-wheel-20260520`
 
 This file is a status index, not a changelog. Historical details live in git
 commits, `handover.md`, and the linked investigation notes. Items are grouped
@@ -27,6 +29,8 @@ They can be fixed or at least partially verified on this Mac.
 | ID | Status | Area | Issue | Next action |
 |---|---|---|---|---|
 | A6 | Resolved locally | Resource shutdown | Custom-op workers and thread-local temp resources needed shutdown-order hardening. | Mirror the new lifecycle tests on Linux x86/CUDA before calling this platform-complete. |
+| A7 | Resolved locally | macOS multiprocessing | Some Apple Silicon/macOS environments allow Python `multiprocessing.shared_memory` probes to pass while MXNet `cpu_shared` allocation fails with `shm_open: Operation not permitted`, breaking multiworker `DataLoader`. | Validate the pickle-transport fallback on Linux x86/CUDA; it should remain inactive there when `cpu_shared` works. |
+| A8 | Resolved locally | macOS wheel | Build a slim optimized Apple Silicon wheel with Accelerate, oneDNN, OpenMP, OpenCV, and libjpeg-turbo, but without ONNX/MPS/GPU. | Install and smoke-test the wheel on another Apple Silicon machine if available; then move to Linux/CUDA validation. |
 
 ### Resolved On This Follow-Up Branch
 
@@ -64,6 +68,10 @@ They can be fixed or at least partially verified on this Mac.
 | R30 | Apple Silicon smoke manifest | Added lifecycle, DLPack byte-offset, DataLoader, and oneDNN AArch64 fallback checks to `tests/python/apple_silicon_cpu_smoke`. | Listed Python checks passed; process-worker DataLoader checks now skip only when POSIX shared memory is unavailable. |
 | R31 | C++ oneDNN AArch64 helpers | C++ oneDNN fixtures now avoid synthetic blocked layouts on AArch64, and direct oneDNN memory copy/sum helpers use contiguous CPU fallbacks for plain buffers instead of Xbyak-backed reorder/sum primitives. | `IMPERATIVE.ConcatBackwardsOp`, `DNNL_NDArray.CopyFrom`, `DNNL_BASE.DNNLMemorySum`, and `DNNL_BASE.CreateDNNLMem` passed; full C++ sweep passed 89/89. |
 | R32 | Stale XPASS markers | The Windows-only `slogdet` xfail no longer matches `darwin`, and the stale boolean-index assignment xfail was removed. | `test_np_linalg_slogdet` passed 84/84 parameters and `test_boolean_index_assign` passed. |
+| R33 | Random binomial test | The binomial-generator statistical test now accounts for output dtype quantization before computing expected decile buckets. | Full optimized Python sweep found this as the only pre-existing non-DataLoader failure; focused `test_random.py` passed after the fix. |
+| R34 | Apple Silicon oneDNN JIT fallbacks | AArch64 oneDNN/Xbyak fallback gates were expanded and hardened for the current optimized build profile. | Optimized C++ suite passed 89/89; focused AArch64 oneDNN fallback and quantization checks passed before the final wheel build. |
+| R35 | DataLoader `cpu_shared` fallback | Multiworker DataLoader now probes actual MXNet `cpu_shared` allocation and, if unavailable, keeps process workers but uses normal pickle transport instead of shared-memory NDArray transport. | `test_recordimage_dataset_with_data_loader_multiworker` and `test_multi_worker_falls_back_to_pickle_transport_without_cpu_shared` passed against the optimized library. |
+| R36 | ONNX-free wheel packaging | `MXNET_SETUP_EXCLUDE_ONNX=1` excludes `mxnet.onnx` and `mxnet.contrib.onnx` packages/data; `mxnet.contrib` tolerates their absence; staged runtime libraries under `mxnet/lib` are packaged. | Fresh-venv wheel smoke test confirmed `mxnet.onnx` and `mxnet.contrib.onnx` are absent, `OPENMP/OPENCV/ONEDNN` are enabled, and a basic NDArray op works. |
 
 ---
 
@@ -134,6 +142,9 @@ quality of a public fork.
 | T12 | Resolved locally | C++ oneDNN pooling | Full `mxnet_unit_tests` on Apple Silicon reached `IMPERATIVE.PoolingOp` failure: `outputs.size() == GetNumOutputs(param) (1 vs. 2)`. | Fixed by deriving fixture arity from parsed pooling params; focused Apple Silicon run passed. Validate in Linux x86 oneDNN CI. |
 | T13 | Resolved locally | C++ oneDNN convolution | Full `mxnet_unit_tests` on Apple Silicon reached `IMPERATIVE.ConvOp` oneDNN-vs-native data mismatches in `tests/cpp/include/test_dnnl.h:637`. | Fixed as a test-harness comparison issue by replacing raw `memcmp` with tolerant numeric comparison; focused Apple Silicon run passed. Validate in Linux x86 oneDNN CI. |
 | T14 | Resolved locally | Apple Silicon oneDNN fallbacks | Fresh-process Python model and operator tests still found AArch64 Xbyak crashes outside the earlier quantized/RNN scope. | Added fallback coverage for the remaining failing float primitive families and a fresh-process regression test. Validate on Linux x86 oneDNN CI to ensure those paths remain enabled there. |
+| T15 | Resolved locally | Optimized Apple Silicon C++ sweep | Optimized `-O3 -DNDEBUG -g0 -mcpu=apple-m1` C++ test build completed with OpenMP, OpenCV, oneDNN, Accelerate, and libjpeg-turbo enabled. | `mxnet_unit_tests` passed 89/89 in `build-macos-arm64-slim-optimized`. |
+| T16 | Resolved locally | Optimized Apple Silicon Python sweep | Full optimized Python unittest sweep was run before the final DataLoader fallback. It finished with exactly one failure, the known macOS `cpu_shared` DataLoader failure that was fixed afterward. | Pre-fix result: `1 failed, 14045 passed, 67 skipped, 65347 warnings in 1:26:34`; post-fix targeted DataLoader checks passed. Full re-run was skipped because the final fix is Python-only and targeted coverage passed. |
+| T17 | Resolved locally | macOS wheel smoke | Final ONNX-free macOS arm64 wheel was installed into a fresh UV-created venv. | Import succeeded; `mx.__version__ == 2.0.0+macos.arm64.20260520`; ONNX specs were absent; `OPENMP`, `OPENCV`, and `ONEDNN` reported enabled; `mx.nd.ones((2,3)).sum()` returned `6.0`. |
 
 ### Cross-Platform Lifecycle Coverage TODO
 
@@ -166,6 +177,8 @@ the rest of the build matrix:
 | O7 | Open | Packaging ecosystem | No conda/system package story for this fork. |
 | O8 | Strategic | Upstream status | Apache MXNet was archived on 2023-11-17; all future fixes must live in this fork or downstream users must migrate. |
 | O9 | Strategic | oneDNN cadence | Future oneDNN major releases will likely require repeated porting work. |
+| O10 | Resolved locally | macOS wheel artifact | Slim optimized CPython 3.12 macOS arm64 wheel built with `-mcpu=apple-m1`, Accelerate, oneDNN, OpenMP, OpenCV, and libjpeg-turbo; ONNX and MPS/GPU are excluded. | Artifact: `dist/mxnet-2.0.0+macos.arm64.20260520-cp312-cp312-macosx_11_0_arm64.whl`; SHA256 `3953e9ad44934259ab0518f2c00f29bd0bd7bff8d959c1093fd1d3c2371a20af`. The `dist/` directory is intentionally not part of the PR. |
+| O11 | Open | Variant versioning | Source `python/mxnet/libinfo.py` still carries the prior CUDA local version suffix. The macOS wheel was stamped in the staging tree only to avoid changing CUDA packaging metadata on this branch. | Decide a general versioning scheme for CPU/CUDA/macOS wheels before public release automation. |
 
 ---
 
@@ -201,9 +214,9 @@ They stay here as context, not as active work.
 
 Before calling the Apple Silicon CPU port good enough for broader testing:
 
-1. Decide whether A6 needs code changes now or only documented follow-up tests.
-2. Run the full C++ and Python Apple Silicon sweeps after the T12/T13 fixes.
-3. Re-run OpenCV/image/DataLoader tests in the final build profile.
+1. Treat Apple Silicon CPU correctness as locally complete for the current scope, excluding ONNX and GPU/MPS.
+2. Install the generated macOS wheel on a clean Apple Silicon host if possible.
+3. Move to Linux x86/CUDA validation for lifecycle, oneDNN parity, and CUDA-specific deferred items.
 
 Before shipping another public Linux/CUDA preview wheel:
 

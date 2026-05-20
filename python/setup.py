@@ -112,6 +112,29 @@ def _find_mxnet_packages():
     return find_packages(exclude=excludes)
 
 
+def _package_data():
+    """Return package data bundled into the mxnet package."""
+    return {'mxnet': [
+        'libmxnet.so',
+        'libmxnet.dylib',
+        'lib/*.so',
+        'lib/*.so.*',
+        'lib/*.dylib',
+    ] + bundled_libs}
+
+
+def _exclude_package_data():
+    """Return package data exclusions for optional integrations."""
+    if not _env_flag('MXNET_SETUP_EXCLUDE_ONNX'):
+        return {}
+    return {'mxnet': [
+        'onnx/*',
+        'onnx/**/*',
+        'contrib/onnx/*',
+        'contrib/onnx/**/*',
+    ]}
+
+
 def _cuda_enabled_from_cmake_cache():
     """Read USE_CUDA from a nearby CMakeCache.txt when building from a tree."""
     cache_paths = set()
@@ -256,13 +279,8 @@ setup(name='mxnet',
       # package so libinfo.find_lib_path() can find libmxnet under mxnet/ at
       # install time. data_files goes to <sysprefix>/mxnet/ which find_lib_path()
       # doesn't search.
-      package_data={'mxnet': [
-          'libmxnet.so',
-          'libmxnet.dylib',
-          'lib/*.so',
-          'lib/*.so.*',
-          'lib/*.dylib',
-      ] + bundled_libs},
+      package_data=_package_data(),
+      exclude_package_data=_exclude_package_data(),
       include_package_data=True,
       url='https://github.com/apache/mxnet',
       ext_modules=config_cython(),

@@ -2192,7 +2192,7 @@ def test_np_argsort(descending, shape, hybrid):
             self._descending = descending
 
         def forward(self, x):
-            return np.argsort(x, axis=self._axis, descending=self._descending)
+            return np.argsort(x, axis=self._axis, descending=self._descending, stable=False)
 
     data = np.random.uniform(size=shape)
     np_data = data.asnumpy()
@@ -2209,7 +2209,7 @@ def test_np_argsort(descending, shape, hybrid):
         mx_out = test_argsort(data)
         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-5, atol=1e-6, use_broadcast=False)
 
-        mx_out = np.argsort(data, axis, descending)
+        mx_out = np.argsort(data, axis, descending, stable=False)
         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-5, atol=1e-6, use_broadcast=False)
 
 

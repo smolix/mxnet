@@ -109,7 +109,11 @@ def test_sparse_nd_basic():
 def test_sparse_nd_setitem():
     def check_sparse_nd_setitem(stype, shape, dst):
         x = mx.nd.zeros(shape=shape, stype=stype)
-        x[:] = dst
+        if isinstance(dst, np.ndarray):
+            with pytest.warns(RuntimeWarning, match='Assigning non-NDArray object'):
+                x[:] = dst
+        else:
+            x[:] = dst
         dst_nd = mx.nd.array(dst) if isinstance(dst, (np.ndarray, np.generic)) else dst
         assert np.all(x.asnumpy() == dst_nd.asnumpy() if isinstance(dst_nd, NDArray) else dst)
 

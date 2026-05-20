@@ -612,6 +612,7 @@ def test_dot():
 
 
 @pytest.mark.serial
+@pytest.mark.filterwarnings('ignore:invalid value encountered in reduce:RuntimeWarning')
 def test_reduce():
     sample_num = 300
     def test_reduce_inner(numpy_reduce_func, nd_reduce_func, multi_axes,

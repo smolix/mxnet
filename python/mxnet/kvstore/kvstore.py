@@ -669,7 +669,8 @@ class KVStore(KVStoreBase):
             Path to input states file.
         """
         assert self._updater is not None, "Cannot load states for distributed training"
-        self._updater.set_states(open(fname, 'rb').read())
+        with open(fname, 'rb') as fin:
+            self._updater.set_states(fin.read())
 
     def _set_updater(self, updater):
         """Sets a push updater into the store.

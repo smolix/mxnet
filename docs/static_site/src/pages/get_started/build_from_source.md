@@ -94,11 +94,13 @@ xcode-select --install
 brew install cmake ninja ccache uv opencv
 ```
 
-Note: the compiler provided by Apple on macOS does not support OpenMP. To use
-OpenMP on macOS you need to install for example the Clang compiler via `brew`:
+Note: the compiler provided by Apple on macOS does not include an OpenMP
+runtime. To validate OpenMP without Homebrew or MacPorts, build LLVM's OpenMP
+runtime into a repo-local `.deps/` prefix with UV:
 
 ```bash
-brew install llvm
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --with cmake --with ninja python tools/dependencies/build_openmp.py
 ```
 
 For Apple Silicon (`arm64`) CPU-only builds, CUDA, cuDNN, NCCL, x86 SIMD, and
@@ -243,6 +245,10 @@ uv pip install --python .venv/bin/python "numpy<2" requests pytest pytest-timeou
 MXNET_SETUP_ENABLE_CUDA_DEPS=0 uv pip install --python .venv/bin/python -e ./python
 ```
 
+To opt into OpenMP on Apple Silicon, add `-DUSE_OPENMP=ON` and
+`-DOPENMP_ROOT="$(pwd)/.deps/openmp-22.1.5-macos-arm64"` to the CMake
+configure command.
+
 After installing the Python binding, run the focused Apple Silicon CPU smoke
 subset:
 
@@ -253,8 +259,9 @@ grep -Ev '^\s*(#|$)' tests/python/apple_silicon_cpu_smoke \
 
 This subset is intentionally smaller than the Linux CPU and CUDA suites. It
 covers native import/linking, backend environment handling, engine lifecycle,
-NumPy default dtype and in-place dtype behavior, and small Gluon/autograd smoke
-tests without requiring GPU hardware or network downloads.
+NumPy default dtype and in-place dtype behavior, small Gluon/autograd smoke
+tests, and a minimal oneDNN execution path without requiring GPU hardware or
+network downloads.
 
 Up to the MXNet 1.6 release, please follow the instructions in the
 [`make/config.mk`](https://github.com/apache/mxnet/blob/v1.x/make/config.mk)

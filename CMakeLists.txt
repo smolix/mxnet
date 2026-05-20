@@ -379,6 +379,46 @@ include(GNUInstallDirs)
 if(USE_MKL_LAYERNORM)
   add_definitions(-DMXNET_USE_MKL_LAYERNORM=1)
 endif()
+
+set(OPENMP_ROOT "" CACHE PATH "OpenMP runtime install prefix")
+function(mxnet_prepare_openmp_root)
+  if(NOT OPENMP_ROOT)
+    return()
+  endif()
+
+  unset(MXNET_OPENMP_INCLUDE_DIR CACHE)
+  unset(MXNET_OPENMP_LIBRARY CACHE)
+  unset(OpenMP_C_INCLUDE_DIR CACHE)
+  unset(OpenMP_CXX_INCLUDE_DIR CACHE)
+  unset(OpenMP_omp_LIBRARY CACHE)
+  find_path(MXNET_OPENMP_INCLUDE_DIR
+            NAMES omp.h
+            PATHS "${OPENMP_ROOT}/include"
+            NO_DEFAULT_PATH)
+  find_library(MXNET_OPENMP_LIBRARY
+               NAMES omp libomp
+               PATHS "${OPENMP_ROOT}/lib" "${OPENMP_ROOT}/lib64"
+               NO_DEFAULT_PATH)
+
+  if(MXNET_OPENMP_INCLUDE_DIR)
+    include_directories(SYSTEM "${MXNET_OPENMP_INCLUDE_DIR}")
+    set(OpenMP_C_INCLUDE_DIR "${MXNET_OPENMP_INCLUDE_DIR}" CACHE PATH "OpenMP C include directory" FORCE)
+    set(OpenMP_CXX_INCLUDE_DIR "${MXNET_OPENMP_INCLUDE_DIR}" CACHE PATH "OpenMP CXX include directory" FORCE)
+  endif()
+  if(MXNET_OPENMP_LIBRARY)
+    set(OpenMP_C_LIB_NAMES "omp" CACHE STRING "OpenMP C library names" FORCE)
+    set(OpenMP_CXX_LIB_NAMES "omp" CACHE STRING "OpenMP CXX library names" FORCE)
+    set(OpenMP_omp_LIBRARY "${MXNET_OPENMP_LIBRARY}" CACHE FILEPATH "OpenMP runtime library" FORCE)
+  endif()
+  if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp" CACHE STRING "OpenMP C compiler flags" FORCE)
+    set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp" CACHE STRING "OpenMP CXX compiler flags" FORCE)
+  endif()
+endfunction()
+if(USE_OPENMP)
+  mxnet_prepare_openmp_root()
+endif()
+
 if(USE_ONEDNN)
   # CPU architecture (e.g., C5) can't run on another architecture (e.g., g3).
   if(MSVC)
@@ -581,8 +621,9 @@ endif()
 
 # ---[ OpenMP
 if(USE_OPENMP)
-  find_package(OpenMP REQUIRED)
-  if(OPENMP_FOUND)
+  find_package(OpenMP REQUIRED COMPONENTS C CXX)
+  if(OpenMP_FOUND)
+    include_directories(SYSTEM ${OpenMP_CXX_INCLUDE_DIRS})
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
     # Enable pragma omp simd
@@ -599,6 +640,11 @@ if(USE_OPENMP)
       # Linker flags for Intel OMP are already set in case MKL is used. Only set if not MKL
       set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
       set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
+    endif()
+    if(TARGET OpenMP::OpenMP_CXX)
+      list(APPEND mxnet_LINKER_LIBS OpenMP::OpenMP_CXX)
+    else()
+      list(APPEND mxnet_LINKER_LIBS ${OpenMP_CXX_LIBRARIES})
     endif()
     add_definitions(-DMXNET_USE_OPENMP=1)
   endif()

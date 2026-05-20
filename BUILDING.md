@@ -125,6 +125,37 @@ uv pip install --python .venv/bin/python "numpy<2" requests pytest pytest-timeou
 MXNET_SETUP_ENABLE_CUDA_DEPS=0 uv pip install --python .venv/bin/python -e ./python
 ```
 
+### Optional OpenMP via UV
+
+AppleClang does not include an OpenMP runtime. To validate the OpenMP path on
+macOS without Homebrew, MacPorts, or a system LLVM install, build LLVM's
+`libomp` into a repo-local `.deps/` prefix and point CMake at it:
+
+```bash
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    python tools/dependencies/build_openmp.py
+
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
+    cmake -S . -B build-macos-arm64-openmp -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DUSE_CUDA=OFF \
+  -DUSE_CUDNN=OFF \
+  -DUSE_NCCL=OFF \
+  -DUSE_ONEDNN=ON \
+  -DUSE_OPENMP=ON \
+  -DOPENMP_ROOT="$(pwd)/.deps/openmp-22.1.5-macos-arm64" \
+  -DUSE_OPENCV=OFF \
+  -DUSE_BLAS=apple \
+  -DUSE_LAPACK=ON \
+  -DUSE_DIST_KVSTORE=OFF \
+  -DUSE_SSE=OFF \
+  -DUSE_F16C=OFF \
+  -DBUILD_CPP_EXAMPLES=OFF
+```
+
 ### Optional OpenCV via UV
 
 The arm64 macOS smoke recipe keeps OpenCV off by default, but the image and
@@ -183,9 +214,8 @@ grep -Ev '^\s*(#|$)' tests/python/apple_silicon_cpu_smoke \
   | xargs .venv/bin/python -m pytest -v --timeout=180 --tb=short
 ```
 
-The list currently covers `test_base.py`, `test_engine.py::test_bulk`,
-`test_engine_shutdown.py`, `test_inplace_dtype.py`,
-`test_numpy_default_dtype.py`, and `test_smoke.py`.
+The list currently covers base, engine, NumPy smoke, Gluon smoke, and a minimal
+oneDNN execution test.
 
 ## Build
 

@@ -47,6 +47,9 @@ def test_aarch64_onednn_jit_ops_fall_back_in_fresh_process():
         y2 = mx.nd.random.uniform(shape=(4, 2))
         xb = mx.nd.random.uniform(shape=(2, 3, 4))
         yb = mx.nd.random.uniform(shape=(2, 4, 5))
+        ln_data = mx.nd.random.uniform(shape=(2, 2048, 2048))
+        ln_gamma = mx.nd.ones((2048,))
+        ln_beta = mx.nd.zeros((2048,))
         np_lhs = mx.np.random.uniform(size=(2, 3, 32, 32))
         np_rhs = mx.np.random.uniform(size=(2, 3, 32, 32))
 
@@ -61,7 +64,13 @@ def test_aarch64_onednn_jit_ops_fall_back_in_fresh_process():
             mx.nd.log_softmax(x2, axis=1),
             mx.nd.dot(x2, y2),
             mx.nd.batch_dot(xb, yb),
+            mx.nd.elemwise_add(x2, x2),
+            mx.nd.concat(x2, x2, dim=0),
+            mx.nd.stack(x2, x2, axis=0),
+            mx.nd.sqrt(mx.nd.abs(x2) + 1),
+            mx.nd.LayerNorm(ln_data, ln_gamma, ln_beta, axis=-1),
             np_lhs + np_rhs,
+            mx.np.where(np_lhs > 0.5, np_lhs, np_rhs),
         ]
 
         gamma = mx.nd.ones((1,))

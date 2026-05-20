@@ -7749,7 +7749,8 @@ def test_np_linalg_det():
     (2, 2, 2, 2, 2),
     (1, 1)
 ])
-@pytest.mark.xfail('win' in sys.platform, reason="Flaky test even with very high tolerance, tracked in #18184")
+@pytest.mark.xfail(sys.platform.startswith('win'),
+                   reason="Flaky test even with very high tolerance, tracked in #18184")
 def test_np_linalg_slogdet(a_shape, grad_req, dtype, hybridize):
     class TestSlogdet(HybridBlock):
         def __init__(self):

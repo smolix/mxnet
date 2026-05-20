@@ -116,6 +116,10 @@ inline static bool IsSameShape(const dnnl::memory::desc& desc, const mxnet::TSha
 // for each of the formats: nchw, oihw, goihw.
 // To test the logic of the code in NDArray, these formats should be enough.
 inline static std::vector<dnnl::memory::format_tag> GetDNNLFormat(size_t num_dims, int dtype) {
+  if (!SupportDNNLAArch64JITPrimitives()) {
+    return std::vector<dnnl::memory::format_tag>();
+  }
+
   if (num_dims == 4) {
     dnnl::memory::dims data_dims{1, 3, 224, 224};
     dnnl::memory::desc data_md{data_dims, get_dnnl_type(dtype), dnnl::memory::format_tag::any};
@@ -224,7 +228,7 @@ inline static TestArrayShapes GetTestArrayShapes(bool spatial_data_format = fals
     mds.push_back(GetMemDesc(s2, dtype, dnnl::memory::format_tag::oihw));
 
     std::vector<dnnl::memory::format_tag> formats = GetDNNLFormat(4, dtype);
-    if (!spatial_data_format) {
+    if (!spatial_data_format && !formats.empty()) {
       mds.push_back(GetMemDesc(s1, dtype, formats[0]));
     }
   }
@@ -240,7 +244,7 @@ inline static TestArrayShapes GetTestArrayShapes(bool spatial_data_format = fals
     mds.push_back(GetMemDesc(s, dtype, dnnl::memory::format_tag::goihw));
 
     std::vector<dnnl::memory::format_tag> formats = GetDNNLFormat(5, dtype);
-    if (!spatial_data_format) {
+    if (!spatial_data_format && !formats.empty()) {
       mds.push_back(GetMemDesc(s, dtype, formats[0]));
     }
   }
@@ -284,6 +288,16 @@ enum ArrayTypes {
   NormalReusedDiffDtype = 4096,
   All                   = 8191,
 };
+
+inline int SanitizeDNNLArrayTypesForPlatform(int types) {
+  if (SupportDNNLAArch64JITPrimitives()) {
+    return types;
+  }
+  return types & ~(ArrayTypes::DNNL | ArrayTypes::DNNLDiffShape | ArrayTypes::DNNLDiffDim |
+                   ArrayTypes::DNNLReshaped | ArrayTypes::DNNLReshapedDiffShape |
+                   ArrayTypes::DNNLReshapedDiffDim | ArrayTypes::DNNLReused |
+                   ArrayTypes::DNNLReusedDiffDim);
+}
 
 inline NDArray CreateKernelNDArray(mxnet::TShape kernel,
                                    int num_filters,
@@ -366,6 +380,8 @@ inline std::vector<NDArrayAttrs> GetTestInputArrays(int types                = A
                                                     std::vector<float> scale = {1},
                                                     bool spatial_data_format = false,
                                                     int max                  = 50) {
+  types = SanitizeDNNLArrayTypesForPlatform(types);
+
   TestArrayShapes tas                 = GetTestArrayShapes(spatial_data_format);
   std::vector<mxnet::TShape> shapes   = tas.shapes;
   std::vector<dnnl::memory::desc> mds = tas.mds;
@@ -478,6 +494,8 @@ inline std::vector<NDArrayAttrs> GetTestOutputArrays(const mxnet::TShape& shp,
                                                      bool rand                = true,
                                                      int types                = ArrayTypes::All,
                                                      int max                  = 50) {
+  types = SanitizeDNNLArrayTypesForPlatform(types);
+
   mxnet::TShape shape = shp;
 
   for (int dim = 0; dim < scale.size(); dim++)

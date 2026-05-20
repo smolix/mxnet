@@ -30,7 +30,7 @@ namespace op {
 
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_eltwise.html
 bool SupportDNNLEltwise(const NDArray& input) {
-  return SupportDNNL<DNNLTypeMode::FloatTypes>(input);
+  return SupportDNNLAArch64JITPrimitives() && SupportDNNL<DNNLTypeMode::FloatTypes>(input);
 }
 
 DNNLEltwiseFwd& DNNLEltwiseFwd::GetCached(const NDArray& input,

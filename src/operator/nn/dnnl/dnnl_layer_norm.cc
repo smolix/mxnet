@@ -31,6 +31,8 @@ namespace op {
 
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_layer_normalization.html
 bool SupportDNNLLayerNorm(const LayerNormParam& param, const std::vector<NDArray>& inputs) {
+  if (!SupportDNNLAArch64JITPrimitives()) return false;
+
   const mxnet::TShape& shape = inputs[layernorm::kData].shape();
 
   // Native implementation (which can be found in function LayerNormCPU) is faster than oneDNN's one

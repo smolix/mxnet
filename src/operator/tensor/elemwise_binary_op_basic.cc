@@ -33,7 +33,7 @@ namespace op {
 #if MXNET_USE_ONEDNN == 1
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_eltwise.html
 bool SupportDNNLSum(const std::vector<NDArray>& inputs) {
-  return SupportDNNL(inputs[0]) && SupportDNNL(inputs[1]);
+  return SupportDNNLAArch64JITPrimitives() && SupportDNNL(inputs[0]) && SupportDNNL(inputs[1]);
 }
 #endif
 

@@ -1248,7 +1248,6 @@ def test_boolean_index_tuple():
 @pytest.mark.skipif(not is_op_runnable(), reason="Comparison ops can only run on either CPU instances, or GPU instances with"
                                                  " compute capability >= 53 if MXNet is built with USE_TVM_OP=ON")
 @use_np
-@pytest.mark.xfail(reason='Flaky boolean index assign. See #18334')
 def test_boolean_index_assign():
     # test boolean indexing assign
     shape = (3, 2, 3)

@@ -1175,7 +1175,7 @@ static void SplitForwardEx(const nnvm::NodeAttrs& attrs,
                            const std::vector<OpReqType>& req,
                            const std::vector<NDArray>& outputs) {
   CHECK(!inputs.empty());
-  if (SupportDNNL(inputs[0])) {
+  if (SupportDNNLAArch64JITPrimitives() && SupportDNNL(inputs[0])) {
     DNNL_OPCHECK_INIT(/*is backward*/ false, outputs.size(), inputs, outputs);
     DNNLRun(DNNLSplitForward, attrs, op_ctx, inputs, req, outputs);
     DNNL_OPCHECK_RUN(SplitOpForward<cpu>, attrs, op_ctx, inputs, req, outputs);
@@ -1189,8 +1189,12 @@ inline static bool SplitInferStorageType(const nnvm::NodeAttrs& attrs,
                                          DispatchMode* dispatch_mode,
                                          std::vector<int>* in_attrs,
                                          std::vector<int>* out_attrs) {
-  return DNNLStorageType(
-      attrs, dev_mask, /*support onednn*/ true, dispatch_mode, in_attrs, out_attrs);
+  return DNNLStorageType(attrs,
+                         dev_mask,
+                         /*support onednn*/ SupportDNNLAArch64JITPrimitives(),
+                         dispatch_mode,
+                         in_attrs,
+                         out_attrs);
 }
 #endif  // MXNET_USE_ONEDNN == 1
 

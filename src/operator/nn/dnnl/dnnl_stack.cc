@@ -44,6 +44,7 @@ namespace op {
 static constexpr size_t kDNNLStackMaxInputs = 256;
 
 bool SupportDNNLStack(const std::vector<NDArray>& inputs) {
+  if (!SupportDNNLAArch64JITPrimitives()) return false;
   if (inputs.size() > kDNNLStackMaxInputs) return false;
   return SupportDNNL<DNNLTypeMode::FloatTypes, DNNLTensorsDtypes::AllSame>(inputs);
 }

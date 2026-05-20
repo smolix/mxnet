@@ -23,6 +23,7 @@ import tempfile
 import unittest
 import time
 import multiprocessing
+from multiprocessing import shared_memory
 import mxnet as mx
 import numpy as np
 import random
@@ -35,6 +36,25 @@ from mxnet.gluon.data.dataset import Dataset
 from mxnet.gluon.data.dataset import ArrayDataset
 import pytest
 from common import has_opencv, make_test_images
+
+
+def _has_posix_shared_memory():
+    try:
+        shm = shared_memory.SharedMemory(create=True, size=1)
+    except (FileNotFoundError, PermissionError, OSError):
+        return False
+    else:
+        try:
+            shm.close()
+        finally:
+            shm.unlink()
+        return True
+
+
+def _skip_without_posix_shared_memory():
+    if not _has_posix_shared_memory():
+        pytest.skip("POSIX shared memory is unavailable; cpu_shared DataLoader transport cannot run")
+
 
 def test_array_dataset():
     X = np.random.uniform(size=(10, 20))
@@ -224,6 +244,8 @@ def test_image_list_dataset_handle(prepare_record):
 
 def test_list_dataset():
     for num_worker in range(0, 3):
+        if num_worker > 0:
+            _skip_without_posix_shared_memory()
         data = mx.gluon.data.DataLoader([([1,2], 0), ([3, 4], 1)], batch_size=1, num_workers=num_worker)
         for _ in data:
             pass
@@ -238,6 +260,8 @@ class _Dataset(gluon.data.Dataset):
 def test_multi_worker():
     data = _Dataset()
     for thread_pool in [True, False]:
+        if not thread_pool:
+            _skip_without_posix_shared_memory()
         loader = gluon.data.DataLoader(data, batch_size=1, num_workers=5, thread_pool=thread_pool)
         for i, batch in enumerate(loader):
             assert (batch.asnumpy() == i).all()
@@ -259,6 +283,7 @@ class _FailingDataset(gluon.data.Dataset):
 
 
 def test_multi_worker_iterator_close_recreates_pool():
+    _skip_without_posix_shared_memory()
     loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, prefetch=2,
                                    try_nopython=False)
     iterator = iter(loader)
@@ -384,6 +409,7 @@ def _batchify(data):
         nd.array(y_lens, ctx=shared_device))
 
 def test_multi_worker_forked_data_loader():
+    _skip_without_posix_shared_memory()
     data = _Dummy(False)
     loader = DataLoader(data, batch_size=40, batchify_fn=_batchify, num_workers=2)
     for _ in range(1):
@@ -401,6 +427,7 @@ def test_multi_worker_dataloader_release_pool():
     if os.name == 'nt':
         print('Skip for windows since spawn on windows is too expensive.')
         return
+    _skip_without_posix_shared_memory()
 
     # macOS uses spawn for multiprocessing; creating 80 worker processes here
     # dominates the unittest runtime while covering the same release path.
@@ -567,6 +594,7 @@ def test_dataloader_scope():
     Tests that DataLoader is not garbage collected while the iterator is
     in use.
     """
+    _skip_without_posix_shared_memory()
     args = {'num_workers': 1, 'batch_size': 2}
     dataset = nd.ones(5)
     iterator = iter(DataLoader(

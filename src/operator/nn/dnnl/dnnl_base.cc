@@ -20,6 +20,7 @@
 #if MXNET_USE_ONEDNN == 1
 
 #include <atomic>
+#include <cstring>
 
 #include "../../../common/exec_utils.h"
 #include "operator/operator_common.h"
@@ -69,7 +70,103 @@ DNNLStream* DNNLStream::Get() {
 }
 
 namespace op {
+namespace {
+
+size_t DNNLDataTypeSize(dnnl::memory::data_type dtype) {
+  switch (dtype) {
+    case dnnl::memory::data_type::f32:
+      return sizeof(float);
+    case dnnl::memory::data_type::bf16:
+      return sizeof(mshadow::bfloat::bf16_t);
+    case dnnl::memory::data_type::s32:
+      return sizeof(int32_t);
+    case dnnl::memory::data_type::s8:
+      return sizeof(int8_t);
+    case dnnl::memory::data_type::u8:
+      return sizeof(uint8_t);
+    default:
+      LOG(FATAL) << "Unsupported oneDNN data type for fallback sum: "
+                 << static_cast<int>(dtype);
+      return 0;
+  }
+}
+
+bool SamePlainDNNLBuffer(const dnnl::memory::desc& lhs, const dnnl::memory::desc& rhs) {
+  return lhs.get_data_type() == rhs.get_data_type() && lhs.get_size() == rhs.get_size() &&
+         IsDefaultFormat(lhs) && IsDefaultFormat(rhs);
+}
+
+template <typename DType>
+void DNNLMemorySumFallbackImpl(const dnnl::memory& arr1,
+                               const dnnl::memory& arr2,
+                               const dnnl::memory& out,
+                               size_t num_items) {
+  const DType* in_data1 = static_cast<const DType*>(arr1.get_data_handle());
+  const DType* in_data2 = static_cast<const DType*>(arr2.get_data_handle());
+  DType* out_data       = static_cast<DType*>(out.get_data_handle());
+  for (size_t i = 0; i < num_items; ++i) {
+    out_data[i] = static_cast<DType>(in_data1[i] + in_data2[i]);
+  }
+}
+
+void DNNLMemorySumFallback(const dnnl::memory& arr1,
+                           const dnnl::memory& arr2,
+                           const dnnl::memory& out) {
+  DNNLStream::Get()->Submit(false);
+
+  const auto output_pd = out.get_desc();
+  const dnnl::memory* in_mem1 = &arr1;
+  const dnnl::memory* in_mem2 = &arr2;
+  std::unique_ptr<dnnl::memory> tmp_memory1;
+  std::unique_ptr<dnnl::memory> tmp_memory2;
+  dnnl::stream stream(CpuEngine::Get()->get_engine());
+
+  if (arr1.get_desc() != output_pd && !SamePlainDNNLBuffer(arr1.get_desc(), output_pd)) {
+    dnnl::memory src_mem1 = arr1;
+    tmp_memory1.reset(new dnnl::memory(output_pd, CpuEngine::Get()->get_engine()));
+    dnnl::reorder(src_mem1, *tmp_memory1).execute(stream, src_mem1, *tmp_memory1);
+    in_mem1 = tmp_memory1.get();
+  }
+  if (arr2.get_desc() != output_pd && !SamePlainDNNLBuffer(arr2.get_desc(), output_pd)) {
+    dnnl::memory src_mem2 = arr2;
+    tmp_memory2.reset(new dnnl::memory(output_pd, CpuEngine::Get()->get_engine()));
+    dnnl::reorder(src_mem2, *tmp_memory2).execute(stream, src_mem2, *tmp_memory2);
+    in_mem2 = tmp_memory2.get();
+  }
+  stream.wait();
+
+  const auto dtype = static_cast<dnnl::memory::data_type>(output_pd.get_data_type());
+  const size_t num_items = output_pd.get_size() / DNNLDataTypeSize(dtype);
+  switch (dtype) {
+    case dnnl::memory::data_type::f32:
+      DNNLMemorySumFallbackImpl<float>(*in_mem1, *in_mem2, out, num_items);
+      break;
+    case dnnl::memory::data_type::bf16:
+      DNNLMemorySumFallbackImpl<mshadow::bfloat::bf16_t>(*in_mem1, *in_mem2, out, num_items);
+      break;
+    case dnnl::memory::data_type::s32:
+      DNNLMemorySumFallbackImpl<int32_t>(*in_mem1, *in_mem2, out, num_items);
+      break;
+    case dnnl::memory::data_type::s8:
+      DNNLMemorySumFallbackImpl<int8_t>(*in_mem1, *in_mem2, out, num_items);
+      break;
+    case dnnl::memory::data_type::u8:
+      DNNLMemorySumFallbackImpl<uint8_t>(*in_mem1, *in_mem2, out, num_items);
+      break;
+    default:
+      LOG(FATAL) << "Unsupported oneDNN data type for fallback sum: "
+                 << static_cast<int>(dtype);
+  }
+}
+
+}  // namespace
+
 void DNNLMemorySum(const dnnl::memory& arr1, const dnnl::memory& arr2, const dnnl::memory& out) {
+  if (!SupportDNNLAArch64JITPrimitives()) {
+    DNNLMemorySumFallback(arr1, arr2, out);
+    return;
+  }
+
   std::vector<dnnl::memory::desc> input_pds(2);
   std::vector<float> scales(2, 1);
   input_pds[0] = arr1.get_desc();
@@ -155,6 +252,12 @@ void DNNLMemoryCopy(const dnnl::memory& mem, const dnnl::memory* this_mem) {
   dnnl::memory::desc this_desc      = this_mem->get_desc();
   dnnl_format_tag_t from_def_format = GetDefaultFormat(from_desc);
   dnnl_format_tag_t this_def_format = GetDefaultFormat(this_desc);
+
+  if (!SupportDNNLAArch64JITPrimitives() && op::SamePlainDNNLBuffer(from_desc, this_desc)) {
+    stream->Submit(false);
+    std::memmove(this_mem->get_data_handle(), mem.get_data_handle(), from_desc.get_size());
+    return;
+  }
 
   if (!same_shape(this_desc, from_desc) && IsDefaultFormat(from_desc)) {
     // In this case, we can simply create a new DNNL memory for the required

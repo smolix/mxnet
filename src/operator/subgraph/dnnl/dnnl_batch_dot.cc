@@ -129,7 +129,8 @@ inline static bool DNNLBatchDotStorageType(const nnvm::NodeAttrs& attrs,
                                            std::vector<int>* in_attrs,
                                            std::vector<int>* out_attrs) {
   const DNNLDotParam& param = nnvm::get<DNNLDotParam>(attrs.parsed);
-  const bool support = !param.quantized || SupportDNNLQuantizedOps();
+  const bool support =
+      SupportDNNLAArch64JITPrimitives() && (!param.quantized || SupportDNNLQuantizedOps());
   return DNNLStorageType(attrs, dev_mask, support, dispatch_mode, in_attrs, out_attrs);
 }
 

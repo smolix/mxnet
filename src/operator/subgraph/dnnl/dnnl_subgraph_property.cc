@@ -32,6 +32,7 @@
 #include "dnnl_transformer_valatt_property.h"
 #include "dnnl_fc_sum_fuse_property.h"
 #include "dnnl_remove_casts_property.h"
+#include "operator/nn/dnnl/dnnl_base-inl.h"
 
 namespace mxnet {
 namespace op {
@@ -41,16 +42,23 @@ MXNET_REGISTER_SUBGRAPH_BACKEND(ONEDNN)
     .set_attr("context", Context::CPU());
 
 MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLIdentityProperty);
-MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLConvProperty);
+MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLConvProperty)
+    .set_attr("disable", !SupportDNNLAArch64JITPrimitives());
 MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLFCProperty);
-MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLBNReLUProperty);
+MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLBNReLUProperty)
+    .set_attr("disable", !SupportDNNLAArch64JITPrimitives());
 MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLRemoveCastsProperty);
-MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLTransformerQKSplitProperty);
-MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLTransformerQKProperty);
-MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLTransformerValAttProperty);
-MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLBatchDotProperty);
+MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLTransformerQKSplitProperty)
+    .set_attr("disable", !SupportDNNLAArch64JITPrimitives());
+MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLTransformerQKProperty)
+    .set_attr("disable", !SupportDNNLAArch64JITPrimitives());
+MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLTransformerValAttProperty)
+    .set_attr("disable", !SupportDNNLAArch64JITPrimitives());
+MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLBatchDotProperty)
+    .set_attr("disable", !SupportDNNLAArch64JITPrimitives());
 MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLPowMulScalarProperty);
-MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLFCSumFuseProperty);
+MXNET_REGISTER_SUBGRAPH_PROPERTY(ONEDNN, SgDNNLFCSumFuseProperty)
+    .set_attr("disable", !SupportDNNLAArch64JITPrimitives());
 
 MXNET_REGISTER_SUBGRAPH_BACKEND(ONEDNN_QUANTIZE).set_attr("context", Context::CPU());
 

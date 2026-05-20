@@ -58,6 +58,10 @@ They can be fixed or at least partially verified on this Mac.
 | R24 | C++ oneDNN pooling tests | Pooling test helpers now derive forward/backward arity from the parsed operator parameters instead of stale input-dimensionality assumptions. | `mxnet_unit_tests --gtest_filter=IMPERATIVE.PoolingOp` passed. |
 | R25 | C++ oneDNN convolution tests | The oneDNN-vs-native convolution fixture now compares floating outputs with numeric tolerances instead of raw `memcmp`, preserving the existing data-gradient coverage. | `mxnet_unit_tests --gtest_filter=IMPERATIVE.ConvOp` passed. |
 | R26 | C++ BatchNorm stochastic test | BatchNorm validators now count samples per channel so single-sample stochastic normalization groups are not incorrectly checked for unit variance. | `mxnet_unit_tests --gtest_filter=BATCH_NORM.TestStochasticTiming_2D --gtest_repeat=20` passed. |
+| R27 | Apple Silicon oneDNN float fallbacks | AArch64 oneDNN JIT-backed float primitives now fall back for activation, leaky ReLU, pooling, convolution, deconvolution, softmax/log-softmax, softmax-output, batch norm, dot, batch-dot, and NumPy binary broadcast. Matching oneDNN graph rewrites are disabled on AArch64 when they would bypass these operator-level gates. | `test_apple_silicon_onednn_fallback.py` passed; ResNet-18 forward passed after the NumPy binary-add guard; non-excluded oneDNN C++ filters passed 16/16. |
+| R28 | Gluon model-zoo NumPy semantics | `test_gluon_model_zoo.py` now scopes `mx.npx.reset_np()` with an autouse fixture and restores the previous NumPy semantics after each test. | `test_models[resnet18_v1]` plus `test_recordimage_dataset` passed. |
+| R29 | C++ stochastic shape helper | `rangedRand(min,max)` now samples the inclusive `[min,max]` interval instead of treating the range as `[min,max+1]` whenever `min != 0`. | `mxnet_unit_tests --gtest_filter=BATCH_NORM.TestStochasticTiming_2D --gtest_repeat=100` passed. |
+| R30 | Apple Silicon smoke manifest | Added lifecycle, DLPack byte-offset, DataLoader, and oneDNN AArch64 fallback checks to `tests/python/apple_silicon_cpu_smoke`. | Listed Python checks passed; DataLoader worker checks require running outside the sandbox because they use POSIX shared memory. |
 
 ---
 
@@ -127,6 +131,7 @@ quality of a public fork.
 | T11 | Open | Cross-platform lifecycle coverage | Apple Silicon now has focused async lifecycle tests. Mirror and validate the same patterns on Linux x86 CPU/oneDNN and CUDA before treating them as platform-complete. |
 | T12 | Resolved locally | C++ oneDNN pooling | Full `mxnet_unit_tests` on Apple Silicon reached `IMPERATIVE.PoolingOp` failure: `outputs.size() == GetNumOutputs(param) (1 vs. 2)`. | Fixed by deriving fixture arity from parsed pooling params; focused Apple Silicon run passed. Validate in Linux x86 oneDNN CI. |
 | T13 | Resolved locally | C++ oneDNN convolution | Full `mxnet_unit_tests` on Apple Silicon reached `IMPERATIVE.ConvOp` oneDNN-vs-native data mismatches in `tests/cpp/include/test_dnnl.h:637`. | Fixed as a test-harness comparison issue by replacing raw `memcmp` with tolerant numeric comparison; focused Apple Silicon run passed. Validate in Linux x86 oneDNN CI. |
+| T14 | Resolved locally | Apple Silicon oneDNN fallbacks | Fresh-process Python model and operator tests still found AArch64 Xbyak crashes outside the earlier quantized/RNN scope. | Added fallback coverage for the remaining failing float primitive families and a fresh-process regression test. Validate on Linux x86 oneDNN CI to ensure those paths remain enabled there. |
 
 ### Cross-Platform Lifecycle Coverage TODO
 

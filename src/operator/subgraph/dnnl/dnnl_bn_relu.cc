@@ -131,7 +131,9 @@ static bool BatchNormWithReLUType(const nnvm::NodeAttrs& attrs,
 #if MXNET_USE_ONEDNN == 1
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_batch_normalization.html
 static inline bool SupportDNNLBNReLU(const NDArray& input) {
-  return SupportDNNL<2, 12, DNNLTypeMode::FloatTypes>(input) && !mxnet::op::batchnorm::disable_mkl;
+  return SupportDNNLAArch64JITPrimitives() &&
+         SupportDNNL<2, 12, DNNLTypeMode::FloatTypes>(input) &&
+         !mxnet::op::batchnorm::disable_mkl;
 }
 
 void BatchNormWithReLUComputeExCPU(const nnvm::NodeAttrs& attrs,

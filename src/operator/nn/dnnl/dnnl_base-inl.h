@@ -218,6 +218,18 @@ static inline bool SupportDNNL(const std::vector<NDArray>& inputs) {
   return SupportDNNL<1, 12, TypeMode, MixedTensors>(inputs);
 }
 
+static inline bool SupportDNNLAArch64JITPrimitives() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  // oneDNN 3.x still sends several AArch64 primitives through Xbyak_aarch64
+  // paths that fail with ERR_INTERNAL on Apple Silicon. Keep oneDNN enabled
+  // for primitives verified on arm64, and gate the fragile JIT-backed ones at
+  // their individual support checks.
+  return false;
+#else
+  return true;
+#endif
+}
+
 static inline bool SupportDNNLQuantizedOps() {
 #if defined(__aarch64__) || defined(_M_ARM64)
   // oneDNN's AArch64 INT8 reorder/matmul quantization paths can enter the

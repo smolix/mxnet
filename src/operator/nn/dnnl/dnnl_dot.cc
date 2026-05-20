@@ -37,7 +37,8 @@ bool SupportDNNLDot(const std::vector<NDArray>& inputs) {
   return false;
 #endif
   // Remove cases where ndim of inputs is equal to 1, because output will be scalar in this case
-  return SupportDNNL<2, 12, DNNLTypeMode::FloatTypes>(inputs[DotIn::lhs]) &&
+  return SupportDNNLAArch64JITPrimitives() &&
+         SupportDNNL<2, 12, DNNLTypeMode::FloatTypes>(inputs[DotIn::lhs]) &&
          SupportDNNL<2, 12, DNNLTypeMode::FloatTypes>(inputs[DotIn::rhs]);
 }
 

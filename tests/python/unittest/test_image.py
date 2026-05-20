@@ -173,6 +173,20 @@ class TestImage(unittest.TestCase):
         with pytest.raises(mx.base.MXNetError):
             image = mx.image.imdecode(b'clearly not image content')
 
+    def test_imdecode_truncated_headers(self):
+        bad_images = [
+            b'\xff',
+            b'\xff\xd8',
+            b'\xff\xd8\xff\xe0',
+            b'\xff\xd8\xff\xe0\x00\x10JFIF\x00',
+            b'\x89PNG',
+            b'\x89PNG\r\n\x1a\n',
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR',
+        ]
+        for data in bad_images:
+            with pytest.raises(mx.base.MXNetError):
+                mx.image.imdecode(data, to_rgb=0)
+
     def test_scale_down(self):
         assert mx.image.scale_down((640, 480), (720, 120)) == (640, 106)
         assert mx.image.scale_down((360, 1000), (480, 500)) == (360, 375)

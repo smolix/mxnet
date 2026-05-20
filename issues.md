@@ -226,6 +226,56 @@ When agent #42 lands its commit, items 38-40 will be resolved or explicitly mark
 
 ---
 
+## APPLE SILICON / CPU STATIC AUDIT FOLLOW-UP
+
+This section tracks the code-audit findings from the Apple Silicon bring-up branch. The CUDA-only findings are retained here for later Linux/CUDA CI, but the current local fix queue is the non-CUDA subset that can be built and tested on this machine.
+
+### Local fix queue
+
+46. **DataLoader early-exit and timeout cleanup** — Python DataLoader workers can leave worker tasks, shared-memory handles, or subprocesses behind when an iterator is abandoned, times out, or receives `KeyboardInterrupt`. Hot spots: `python/mxnet/gluon/data/dataloader.py` result handling, worker pool shutdown, and the `thread_pool=True` fallback that can still select shared-memory batchify. Add deterministic iterator close/reset paths and tests that do not rely on `garbage_expected`.
+
+47. **C++ no-python DataLoader early break** — the C++ DataLoader reset path is tied to natural generator exhaustion, so breaking early can keep iterator state alive longer than intended. Add a cleanup path on generator close and test early-break reuse.
+
+48. ~~**Image header sniffers read past short buffers**~~ — **RESOLVED on Apple Silicon follow-up branch.** `src/io/image_io.cc` now length-gates JPEG/PNG signature and dimension reads before falling back to OpenCV. Regression coverage: `tests/python/unittest/test_image.py::TestImage::test_imdecode_truncated_headers`.
+
+49. ~~**libjpeg-turbo RecordIO decode lacks malformed-input cleanup**~~ — **RESOLVED on Apple Silicon follow-up branch.** `src/io/iter_image_recordio_2.cc` now short-buffer checks JPEG detection, uses full encoded byte size, and wraps `tjhandle` in RAII so malformed JPEG fallback cannot leak the handle. Rebuilt OpenCV/libjpeg-turbo profile and verified `test_image.py` plus focused RecordIO image tests.
+
+50. **Histogram validation and edge handling** — `histogram` accepts invalid bin counts and has right-edge paths that can touch one past the bin-bound array. CPU can be fixed and tested locally; the matching CUDA kernel should be handled under CUDA CI.
+
+51. **Fixed-size arrays in multi-array optimizers** — `multi_all_finite` and several multi-optimizer kernels use fixed arrays sized for a limited number of inputs. Validate or replace with dynamically sized storage to avoid overflow when large grouped updates are passed.
+
+52. **Quantized flatten empty tensors** — `src/operator/quantization/quantized_flatten-inl.h` can leave min/max outputs uninitialized for empty input. Define empty-input behavior and add a regression test.
+
+53. **Proposal operator integer overflow risk** — proposal workspace and anchor counts use `int` in several size calculations. CPU code should be widened or guarded locally; CUDA variants need CUDA CI.
+
+54. **oneDNN quantized transpose min/max writes** — `src/operator/quantization/dnnl/dnnl_quantized_transpose.cc` can skip scalar min/max writes when the data output request is `kNullOp`. Ensure aux outputs are still honored independently.
+
+55. **OpenMP state uses `volatile` for synchronization** — `src/engine/openmp.*` uses `volatile` state instead of atomics or locking. Replace with standard synchronization before enabling broader OpenMP coverage.
+
+56. **Engine and custom-op exception state is not consistently synchronized** — threaded engine exception tracking and custom-op exception globals have shared state paths that should be protected or made thread-local. Add targeted stress tests where practical.
+
+57. **Resource lifetime through async engine callbacks** — thread-local temp resources and local KVStore communication state can outlive assumptions when callbacks run asynchronously. Audit captures and ownership before broadening concurrency tests.
+
+58. **Azure filesystem option is selectable but incomplete** — CMake exposes `USE_AZURE`, but the dmlc-core Azure implementation is a stub/incomplete dependency path. Either wire the real SDK dependencies or fail configure clearly when enabled.
+
+59. **oneDNN generated headers copied into the source tree** — the current CMake path copies generated oneDNN headers into the checkout, risking stale tracked/untracked source-tree state. Generate them under the build tree instead.
+
+60. **Plugin unload ownership split** — C++ and Python plugin loading/unloading have separate ownership surfaces. Audit `dlclose` ownership and lifetime to avoid unloading a library while registered symbols remain reachable.
+
+### CUDA-only deferred queue
+
+61. **cuBLASLt shared workspace race** — CUDA-only; requires Linux/CUDA stress testing before changing.
+
+62. **CUDA architecture defaults and older CUDA 12.x compatibility** — CUDA-only build behavior; defer to Linux/CUDA CI.
+
+63. **cuDNN frontend no-plan aborts instead of fallback** — CUDA-only runtime path; defer to Linux/CUDA CI.
+
+64. **Skipped cuDNN multi-stream regression** — CUDA-only correctness/perf test; defer to Linux/CUDA CI.
+
+65. **CUDA zero-block launches and GPU split edge cases** — CUDA-only kernels; defer to Linux/CUDA CI.
+
+---
+
 ## Priority recommendation if triaging
 
 **Before a "preview release" wheel ships publicly:**

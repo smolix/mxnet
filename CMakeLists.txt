@@ -171,6 +171,14 @@ cmake_dependent_option(USE_SPLIT_ARCH_DLL "Build a separate DLL for each Cuda ar
 cmake_dependent_option(USE_CCACHE "Attempt using CCache to wrap the compilation" ON "UNIX" OFF)
 cmake_dependent_option(MXNET_FORCE_SHARED_CRT "Build with dynamic CRT on Windows (/MD)" ON "MXNET_BUILD_SHARED_LIBS" OFF)
 
+if(DEFINED USE_AZURE AND USE_AZURE)
+  message(FATAL_ERROR
+    "USE_AZURE is not supported by this MXNet CMake build: the vendored "
+    "dmlc-core Azure filesystem is incomplete and Azure SDK dependencies are "
+    "not wired. Disable USE_AZURE or add full Azure SDK integration before "
+    "enabling it.")
+endif()
+
 message(STATUS "CMAKE_CROSSCOMPILING ${CMAKE_CROSSCOMPILING}")
 message(STATUS "CMAKE_HOST_SYSTEM_PROCESSOR ${CMAKE_HOST_SYSTEM_PROCESSOR}")
 message(STATUS "CMAKE_SYSTEM_PROCESSOR ${CMAKE_SYSTEM_PROCESSOR}")
@@ -1090,14 +1098,6 @@ if(USE_DIST_KVSTORE)
   add_definitions(-DMXNET_USE_DIST_KVSTORE)
   list(APPEND mxnet_LINKER_LIBS pslite)
   set_target_properties(pslite PROPERTIES CXX_CLANG_TIDY "")  # don't lint 3rdparty dependency
-endif()
-
-if(USE_ONEDNN)
-    add_custom_command(TARGET mxnet POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy
-      ${CMAKE_BINARY_DIR}/3rdparty/onednn/include/oneapi/dnnl/dnnl_config.h  ${CMAKE_SOURCE_DIR}/include/onednn/oneapi/dnnl/
-      COMMAND ${CMAKE_COMMAND} -E copy
-      ${CMAKE_BINARY_DIR}/3rdparty/onednn/include/oneapi/dnnl/dnnl_version.h  ${CMAKE_SOURCE_DIR}/include/onednn/oneapi/dnnl/)
 endif()
 
 if(USE_INTGEMM)

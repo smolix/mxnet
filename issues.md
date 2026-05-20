@@ -256,11 +256,11 @@ This section tracks the code-audit findings from the Apple Silicon bring-up bran
 
 57. **Resource lifetime through async engine callbacks** — thread-local temp resources and local KVStore communication state can outlive assumptions when callbacks run asynchronously. Audit captures and ownership before broadening concurrency tests.
 
-58. **Azure filesystem option is selectable but incomplete** — CMake exposes `USE_AZURE`, but the dmlc-core Azure implementation is a stub/incomplete dependency path. Either wire the real SDK dependencies or fail configure clearly when enabled.
+58. ~~**Azure filesystem option is selectable but incomplete**~~ — **RESOLVED on Apple Silicon follow-up branch.** MXNet CMake now fails configure clearly when `USE_AZURE=ON` is requested, rather than compiling the incomplete dmlc-core Azure filesystem path without SDK integration.
 
-59. **oneDNN generated headers copied into the source tree** — the current CMake path copies generated oneDNN headers into the checkout, risking stale tracked/untracked source-tree state. Generate them under the build tree instead.
+59. ~~**oneDNN generated headers copied into the source tree**~~ — **RESOLVED on Apple Silicon follow-up branch.** The post-build copy of generated oneDNN headers into the source checkout has been removed; generated headers remain build-tree artifacts.
 
-60. **Plugin unload ownership split** — C++ and Python plugin loading/unloading have separate ownership surfaces. Audit `dlclose` ownership and lifetime to avoid unloading a library while registered symbols remain reachable.
+60. ~~**Plugin unload ownership split**~~ — **RESOLVED on Apple Silicon follow-up branch.** Python plugin handles are retained for process lifetime because MXNet registers plugin callbacks in process-lifetime registries and has no unregister API.
 
 ### CUDA-only deferred queue
 

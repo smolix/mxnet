@@ -19,6 +19,7 @@
 
 import os
 import platform
+import gc
 import mxnet as mx
 import numpy as np
 from mxnet import nd
@@ -57,6 +58,25 @@ def test_library_load_accepts_dylib_extension(tmp_path, monkeypatch):
 
     assert calls == {'path': str(lib_path), 'verbose': 0}
     assert len(mx.library.loaded_libs) == 1
+
+def test_library_handle_owner_does_not_dlclose(monkeypatch):
+    dlclose_calls = []
+
+    class FakeLibdl:
+        def __init__(self, name):
+            dlclose_calls.append(('open', name))
+
+        def dlclose(self, handle):
+            dlclose_calls.append(('close', handle))
+
+    monkeypatch.setattr(mx.library.sys, 'platform', 'linux')
+    monkeypatch.setattr(mx.library.ctypes, 'CDLL', FakeLibdl)
+
+    handle = mx.library.MXlib(1)
+    del handle
+    gc.collect()
+
+    assert dlclose_calls == []
 
 @pytest.mark.skipif(check_platform(), reason="not all machine types supported")
 @pytest.mark.skipif(is_cd_run(), reason="continuous delivery run - ignoring test")

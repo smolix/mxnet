@@ -240,11 +240,11 @@ This section tracks the code-audit findings from the Apple Silicon bring-up bran
 
 49. ~~**libjpeg-turbo RecordIO decode lacks malformed-input cleanup**~~ — **RESOLVED on Apple Silicon follow-up branch.** `src/io/iter_image_recordio_2.cc` now short-buffer checks JPEG detection, uses full encoded byte size, and wraps `tjhandle` in RAII so malformed JPEG fallback cannot leak the handle. Rebuilt OpenCV/libjpeg-turbo profile and verified `test_image.py` plus focused RecordIO image tests.
 
-50. **Histogram validation and edge handling** — `histogram` accepts invalid bin counts and has right-edge paths that can touch one past the bin-bound array. CPU can be fixed and tested locally; the matching CUDA kernel should be handled under CUDA CI.
+50. ~~**Histogram validation and edge handling**~~ — **CPU/shared validation RESOLVED on Apple Silicon follow-up branch.** `histogram` now rejects non-positive uniform bin counts and the CPU explicit-bin scanner no longer reads past the last bin edge for values equal to the right edge. CUDA kernel parity remains in the deferred CUDA queue.
 
 51. **Fixed-size arrays in multi-array optimizers** — `multi_all_finite` and several multi-optimizer kernels use fixed arrays sized for a limited number of inputs. Validate or replace with dynamically sized storage to avoid overflow when large grouped updates are passed.
 
-52. **Quantized flatten empty tensors** — `src/operator/quantization/quantized_flatten-inl.h` can leave min/max outputs uninitialized for empty input. Define empty-input behavior and add a regression test.
+52. ~~**Quantized flatten empty tensors**~~ — **RESOLVED on Apple Silicon follow-up branch.** Flatten now propagates quantization min/max independently of the data-copy kernel, so empty flattened data still produces initialized range outputs. Covered by a focused CPU regression.
 
 53. **Proposal operator integer overflow risk** — proposal workspace and anchor counts use `int` in several size calculations. CPU code should be widened or guarded locally; CUDA variants need CUDA CI.
 

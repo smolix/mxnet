@@ -40,14 +40,22 @@ struct quantized_flatten {
   template <typename DstDType, typename SrcDType>
   MSHADOW_XINLINE static void Map(int i,
                                   DstDType* out,
+                                  const SrcDType* in,
+                                  const OpReqType req) {
+    KERNEL_ASSIGN(out[i], req, in[i]);
+  }
+};
+
+struct quantized_flatten_ranges {
+  MSHADOW_XINLINE static void Map(int,
                                   float* omin_range,
                                   float* omax_range,
-                                  const SrcDType* in,
                                   const float* imin_range,
-                                  const float* imax_range) {
-    out[i]        = in[i];
-    omin_range[0] = imin_range[0];
-    omax_range[0] = imax_range[0];
+                                  const float* imax_range,
+                                  const OpReqType min_req,
+                                  const OpReqType max_req) {
+    KERNEL_ASSIGN(omin_range[0], min_req, imin_range[0]);
+    KERNEL_ASSIGN(omax_range[0], max_req, imax_range[0]);
   }
 };
 
@@ -66,28 +74,37 @@ void QuantizedFlattenCompute(const nnvm::NodeAttrs& attrs,
   using namespace mxnet_op;
   Stream<xpu>* s = ctx.get_stream<xpu>();
 
+  // Flatten does not change quantization calibration, even when the data output is empty.
+  if (req[1] != kNullOp || req[2] != kNullOp) {
+    Kernel<quantized_flatten_ranges, xpu>::Launch(s,
+                                                  1,
+                                                  outputs[1].dptr<float>(),
+                                                  outputs[2].dptr<float>(),
+                                                  inputs[1].dptr<float>(),
+                                                  inputs[2].dptr<float>(),
+                                                  req[1],
+                                                  req[2]);
+  }
+
+  if (req[0] == kNullOp || req[0] == kWriteInplace)
+    return;
+
   if (inputs[0].type_flag_ == mshadow::kUint8) {
     typedef uint8_t SrcDType;
     typedef uint8_t DstDType;
     Kernel<quantized_flatten, xpu>::Launch(s,
                                            outputs[0].Size(),
                                            outputs[0].dptr<DstDType>(),
-                                           outputs[1].dptr<float>(),
-                                           outputs[2].dptr<float>(),
                                            inputs[0].dptr<SrcDType>(),
-                                           inputs[1].dptr<float>(),
-                                           inputs[2].dptr<float>());
+                                           req[0]);
   } else if (inputs[0].type_flag_ == mshadow::kInt8) {
     typedef int8_t SrcDType;
     typedef int8_t DstDType;
     Kernel<quantized_flatten, xpu>::Launch(s,
                                            outputs[0].Size(),
                                            outputs[0].dptr<DstDType>(),
-                                           outputs[1].dptr<float>(),
-                                           outputs[2].dptr<float>(),
                                            inputs[0].dptr<SrcDType>(),
-                                           inputs[1].dptr<float>(),
-                                           inputs[2].dptr<float>());
+                                           req[0]);
   } else {
     LOG(FATAL) << "quantized_flatten op only supports int8 and uint8 as input and output type";
   }

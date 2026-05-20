@@ -40,8 +40,12 @@ struct ComputeBinKernel {
     if (data >= min && data <= max) {
       target = (data - min) * bin_cnt / (max - min);
       target = mshadow_op::minimum::Map(bin_cnt - 1, target);
-      target -= (data < bin_bounds[target]) ? 1 : 0;
-      target += ((data >= bin_bounds[target + 1]) && (target != bin_cnt - 1)) ? 1 : 0;
+      if (target > 0 && data < bin_bounds[target]) {
+        target -= 1;
+      }
+      if (target < bin_cnt - 1 && data >= bin_bounds[target + 1]) {
+        target += 1;
+      }
     }
     bin_indices[i] = target;
   }
@@ -56,10 +60,9 @@ struct ComputeBinKernel {
     int target = -1;
     if (data >= bin_bounds[0] && data <= bin_bounds[num_bins]) {
       target = 0;
-      while ((data - bin_bounds[target]) >= 0) {
+      while (target < num_bins - 1 && data >= bin_bounds[target + 1]) {
         target += 1;
       }
-      target = mshadow_op::minimum::Map(target - 1, num_bins - 1);
     }
     bin_indices[i] = target;
   }

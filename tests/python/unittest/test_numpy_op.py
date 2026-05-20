@@ -5615,6 +5615,26 @@ def test_np_histogram():
 
 
 @use_np
+def test_np_histogram_cpu_edge_and_invalid_bins():
+    mx_a = np.array([0.0, 1.0, 2.0, 3.0], device=mx.cpu(), dtype=onp.float64)
+
+    mx_cnts, mx_bins = np.histogram(
+        mx_a, bins=np.array([0.0, 1.0, 2.0, 3.0], device=mx.cpu(), dtype=onp.float64))
+    assert_almost_equal(mx_cnts.asnumpy(), onp.array([1, 1, 2]), rtol=1e-3, atol=1e-5)
+    assert_almost_equal(mx_bins.asnumpy(), onp.array([0.0, 1.0, 2.0, 3.0]),
+                        rtol=1e-3, atol=1e-5)
+
+    mx_cnts, mx_bins = np.histogram(mx_a, bins=3, range=(0.0, 3.0))
+    assert_almost_equal(mx_cnts.asnumpy(), onp.array([1, 1, 2]), rtol=1e-3, atol=1e-5)
+    assert_almost_equal(mx_bins.asnumpy(), onp.array([0.0, 1.0, 2.0, 3.0]),
+                        rtol=1e-3, atol=1e-5)
+
+    for bin_cnt in (0, -1):
+        with pytest.raises(MXNetError, match="bin_cnt"):
+            np.histogram(mx_a, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
+
+
+@use_np
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
 # @pytest.mark.skip(reason='Skipped as the test is flaky and the feature causes curand error. Tracked in #18100')
 def test_np_choice():

@@ -97,7 +97,8 @@ inline bool HistogramOpShape(const nnvm::NodeAttrs& attrs,
   if (has_cnt) {
     // if cnt is specified, the output histogram has shape (cnt,)
     // while output bins has shape (cnt+1,)
-    const dim_t bin_cnt = param.bin_cnt.value();
+    const int bin_cnt = param.bin_cnt.value();
+    CHECK_GT(bin_cnt, 0) << "bin_cnt should be greater than 0";
     SHAPE_ASSIGN_CHECK(*out_attrs, 0, mxnet::TShape(1, bin_cnt));
     SHAPE_ASSIGN_CHECK(*out_attrs, 1, mxnet::TShape(1, bin_cnt + 1));
   } else {
@@ -169,6 +170,7 @@ void HistogramOpForward(const nnvm::NodeAttrs& attrs,
     double max        = param.range.value()[1];
     double min        = param.range.value()[0];
     const int bin_cnt = param.bin_cnt.value();
+    CHECK_GT(bin_cnt, 0) << "bin_cnt should be greater than 0";
     if (min == max) {
       min -= 0.5f;
       max += 0.5f;

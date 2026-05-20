@@ -5353,6 +5353,27 @@ def test_quantization_op():
     assert same(qa.asnumpy(), qa_real.asnumpy())
     assert_almost_equal(a_.asnumpy(),  a_real.asnumpy(), rtol=1e-2)
 
+
+def test_quantized_flatten_empty_output_range_cpu():
+    ctx = mx.cpu()
+    with mx.np_shape():
+        for dtype in ['int8', 'uint8']:
+            for shape, expected_shape in [((0, 2, 3), (0, 6)), ((2, 0, 3), (2, 0))]:
+                data = mx.nd.zeros(shape, ctx=ctx, dtype=dtype)
+                min_data = mx.nd.array([-2.5], ctx=ctx, dtype='float32')
+                max_data = mx.nd.array([3.5], ctx=ctx, dtype='float32')
+                out_data = mx.nd.empty(expected_shape, ctx=ctx, dtype=dtype)
+                out_min = mx.nd.array([1234.0], ctx=ctx, dtype='float32')
+                out_max = mx.nd.array([-5678.0], ctx=ctx, dtype='float32')
+
+                output, min_output, max_output = mx.nd.contrib.quantized_flatten(
+                    data, min_data, max_data, out=[out_data, out_min, out_max])
+
+                assert output.shape == expected_shape
+                assert_almost_equal(min_output.asnumpy(), np.array([-2.5], dtype=np.float32))
+                assert_almost_equal(max_output.asnumpy(), np.array([3.5], dtype=np.float32))
+
+
 def test_index_copy():
     x = mx.nd.zeros((5,3))
     t = mx.nd.array([[1,2,3],[4,5,6],[7,8,9]])
@@ -7828,6 +7849,24 @@ def test_histogram():
         executor2 = histo2._bind(ctx=default_device(), args={"data" : x, "bins" : mx_bins})
         executor2.forward(is_train=False)
         assert_almost_equal(np_histo2, executor2.outputs[0].asnumpy(), 0, 0, ("EXPECTED_histo2", "FORWARD_histo2"), equal_nan=False)
+
+
+def test_histogram_cpu_edge_and_invalid_bins():
+    x = mx.nd.array([0.0, 1.0, 2.0, 3.0], ctx=mx.cpu(), dtype=np.float64)
+
+    histo, bins = mx.nd.histogram(x, bins=mx.nd.array([0.0, 1.0, 2.0, 3.0],
+                                                      ctx=mx.cpu(),
+                                                      dtype=np.float64))
+    assert_almost_equal(histo.asnumpy(), np.array([1, 1, 2]))
+    assert_almost_equal(bins.asnumpy(), np.array([0.0, 1.0, 2.0, 3.0]))
+
+    histo, bins = mx.nd.histogram(x, bins=3, range=(0.0, 3.0))
+    assert_almost_equal(histo.asnumpy(), np.array([1, 1, 2]))
+    assert_almost_equal(bins.asnumpy(), np.array([0.0, 1.0, 2.0, 3.0]))
+
+    for bin_cnt in (0, -1):
+        with pytest.raises(MXNetError, match="bin_cnt"):
+            mx.nd.histogram(x, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
 
 
 # Re-enabled 2026-05-17 — audit at HEAD f103c5491 (cuDNN 9.22 + B2 SoftReLU/LogSigmoid fix).

@@ -5870,6 +5870,73 @@ def test_custom_op_exception_isolation_between_queued_ops():
     mx.nd.waitall()
 
 
+@legacy_np_semantics()
+def test_custom_op_backward_exception_isolation_between_queued_ops():
+    class FailBackward(mx.operator.CustomOp):
+        def forward(self, is_train, req, in_data, out_data, aux):
+            self.assign(out_data[0], req[0], in_data[0])
+
+        def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
+            raise RuntimeError("intentional custom-op backward failure")
+
+    class PassBackward(mx.operator.CustomOp):
+        def forward(self, is_train, req, in_data, out_data, aux):
+            self.assign(out_data[0], req[0], in_data[0])
+
+        def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
+            self.assign(in_grad[0], req[0], out_grad[0])
+
+    @mx.operator.register("FailBackwardExceptionIsolation")
+    class FailBackwardProp(mx.operator.CustomOpProp):
+        def __init__(self):
+            super(FailBackwardProp, self).__init__(need_top_grad=True)
+
+        def list_arguments(self):
+            return ['data']
+
+        def list_outputs(self):
+            return ['output']
+
+        def infer_shape(self, in_shape):
+            return in_shape, [in_shape[0]], []
+
+        def create_operator(self, ctx, shapes, dtypes):
+            return FailBackward()
+
+    @mx.operator.register("PassBackwardExceptionIsolation")
+    class PassBackwardProp(mx.operator.CustomOpProp):
+        def __init__(self):
+            super(PassBackwardProp, self).__init__(need_top_grad=True)
+
+        def list_arguments(self):
+            return ['data']
+
+        def list_outputs(self):
+            return ['output']
+
+        def infer_shape(self, in_shape):
+            return in_shape, [in_shape[0]], []
+
+        def create_operator(self, ctx, shapes, dtypes):
+            return PassBackward()
+
+    bad_data = mx.nd.ones((2, 2))
+    bad_data.attach_grad()
+    with mx.autograd.record():
+        bad = mx.nd.Custom(bad_data, op_type='FailBackwardExceptionIsolation')
+    bad.backward(mx.nd.ones_like(bad))
+    with pytest.raises(MXNetError):
+        mx.nd.waitall()
+
+    good_data = mx.nd.ones((2, 2))
+    good_data.attach_grad()
+    with mx.autograd.record():
+        good = mx.nd.Custom(good_data, op_type='PassBackwardExceptionIsolation')
+    good.backward(mx.nd.ones_like(good))
+    assert_almost_equal(good_data.grad, np.ones((2, 2)))
+    mx.nd.waitall()
+
+
 def test_psroipooling():
     for num_rois in [1, 2]:
         for num_classes, num_group in itertools.product([2, 3], [2, 3]):

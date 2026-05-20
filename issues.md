@@ -49,6 +49,7 @@ They can be fixed or at least partially verified on this Mac.
 | R15 | KVStore CPU | `CommCPU::Reduce` async lambdas capture arrays/resources and scalar config by value, not `this`. | `test_local_kvstore_delete_before_wait_releases_async_reduce` passed. |
 | R16 | Threaded engine | ThreadedEngine global and per-var exception refs are guarded by an exception mutex and cleared consistently. | `Engine.ThreadedAsyncExceptionsAreReportedOnce` passed. |
 | R17 | oneDNN C++ tests | C++ oneDNN unit-test helpers use current oneDNN descriptor APIs instead of stale `memory::desc.data` / `convolution_forward::desc` access. | `mxnet_unit_tests` built; `DNNL_UTIL_FUNC.*` and `DNNL_NDArray.GetDataReorder` passed. |
+| R18 | Lifecycle test coverage | Added focused regressions for DataLoader worker exceptions, KVStore row-sparse delete-before-wait, custom-op backward exception isolation, and `WaitForVar` exception clearing. | Focused Python lifecycle sweep and `Engine.WaitForVarClearsThreadedAsyncException` passed. |
 
 ---
 
@@ -115,6 +116,23 @@ quality of a public fork.
 | T8 | Resolved | ONNX opset 18 reductions | Exporter now emits axes as input tensors for opset >=18. Broad suite had one unrelated fp16 softmax numerical failure. |
 | T9 | Resolved | Gluon model zoo | 34/34 model zoo checks passed, aside from a pre-existing `test_parallel_download` skip. |
 | T10 | Resolved | Custom C++ operators | 9/9 in-tree extension/custom-op checks passed on Blackwell. |
+| T11 | Open | Cross-platform lifecycle coverage | Apple Silicon now has focused async lifecycle tests. Mirror and validate the same patterns on Linux x86 CPU/oneDNN and CUDA before treating them as platform-complete. |
+
+### Cross-Platform Lifecycle Coverage TODO
+
+These are the follow-ups for mirroring Apple Silicon lifecycle coverage across
+the rest of the build matrix:
+
+- [ ] Linux x86 CPU: run DataLoader, ThreadedEngine, KVStore, and custom-op
+      lifecycle tests with and without oneDNN.
+- [ ] Linux CUDA: add or enable CUDA analogues for engine exception propagation,
+      KVStore lifetime, and custom-op forward/backward failure isolation.
+- [ ] Linux CUDA: run the same lifecycle tests with `NaiveEngine`,
+      `ThreadedEnginePooled`, and `ThreadedEnginePerDevice` where supported.
+- [ ] Sanitizers: run the C++ engine/OpenMP/KVStore subset under TSAN, and the
+      C++/Python lifecycle subset under ASAN/UBSAN where the toolchain allows.
+- [ ] CI: add a quick job that builds `mxnet_unit_tests` and runs the focused
+      lifecycle filters before any expensive full-suite job.
 
 ---
 

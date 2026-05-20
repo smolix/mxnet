@@ -138,6 +138,25 @@ def test_local_kvstore_delete_before_wait_releases_async_reduce():
 
     mx.nd.waitall()
 
+def test_local_kvstore_row_sparse_delete_before_wait_releases_async_reduce():
+    """Destroying a local KVStore must not invalidate queued sparse CPU reductions."""
+    import gc
+
+    large_shape = (512, 128)
+
+    def queue_reduce_and_destroy(key):
+        kv = mx.kv.create('local')
+        kv.init(key, mx.nd.zeros(large_shape).tostype('row_sparse'))
+        vals = [(mx.nd.ones(large_shape) * (i + 1)).tostype('row_sparse')
+                for i in range(4)]
+        kv.push(key, vals)
+
+    for key in range(200, 204):
+        queue_reduce_and_destroy(key)
+        gc.collect()
+
+    mx.nd.waitall()
+
 def test_list_kv_pair():
     """list key-value pair push & pull"""
     def check_list_kv_pair(kv, key, stype):

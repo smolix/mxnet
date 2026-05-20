@@ -251,6 +251,13 @@ class _SlowDataset(gluon.data.Dataset):
         return mx.nd.full((1,), key)
 
 
+class _FailingDataset(gluon.data.Dataset):
+    def __len__(self):
+        return 4
+    def __getitem__(self, key):
+        raise RuntimeError("intentional dataloader worker failure")
+
+
 def test_multi_worker_iterator_close_recreates_pool():
     loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, prefetch=2,
                                    try_nopython=False)
@@ -272,6 +279,15 @@ def test_multi_worker_timeout_releases_pool():
                                    timeout=0.01, try_nopython=False)
     iterator = iter(loader)
     with pytest.raises(multiprocessing.context.TimeoutError):
+        next(iterator)
+    assert loader._worker_pool is None
+
+
+def test_multi_worker_exception_releases_pool():
+    loader = gluon.data.DataLoader(_FailingDataset(), batch_size=1, num_workers=1,
+                                   prefetch=1, try_nopython=False)
+    iterator = iter(loader)
+    with pytest.raises(RuntimeError):
         next(iterator)
     assert loader._worker_pool is None
 

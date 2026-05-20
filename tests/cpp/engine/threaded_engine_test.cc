@@ -216,6 +216,42 @@ TEST(Engine, ThreadedAsyncExceptionsAreReportedOnce) {
   }
 }
 
+TEST(Engine, WaitForVarClearsThreadedAsyncException) {
+  const int num_engine = 2;
+  std::vector<mxnet::Engine*> engines(num_engine);
+  engines[0]                = mxnet::engine::CreateThreadedEnginePooled();
+  engines[1]                = mxnet::engine::CreateThreadedEnginePerDevice();
+  std::string type_names[2] = {"ThreadedEnginePooled", "ThreadedEnginePerDevice"};
+
+  for (int e = 0; e < num_engine; ++e) {
+    auto engine = engines[e];
+    LOG(INFO) << "Testing WaitForVar exception clearing in " << type_names[e];
+
+    auto var = engine->NewVariable();
+    engine->PushAsync(
+        [](mxnet::RunContext,
+           mxnet::Engine::CallbackOnStart on_start,
+           mxnet::Engine::CallbackOnComplete on_complete) {
+          on_start();
+          dmlc::Error error("expected WaitForVar async failure");
+          on_complete(&error);
+        },
+        mxnet::Context::CPU(),
+        {},
+        {var},
+        mxnet::FnProperty::kAsync,
+        0,
+        "WaitForVarExceptionRegression");
+
+    EXPECT_THROW(engine->WaitForVar(var), dmlc::Error);
+    EXPECT_NO_THROW(engine->WaitForVar(var));
+    EXPECT_NO_THROW(engine->WaitForAll());
+
+    engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, var);
+    EXPECT_NO_THROW(engine->WaitForAll());
+  }
+}
+
 TEST(Engine, RandSumExpr) {
   std::vector<Workload> workloads;
   int num_repeat       = 5;

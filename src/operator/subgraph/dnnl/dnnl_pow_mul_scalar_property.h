@@ -32,6 +32,7 @@
 
 #include "operator/subgraph/common.h"
 #include "operator/tensor/elemwise_binary_scalar_op.h"
+#include "operator/nn/dnnl/dnnl_pow_mul_scalar-inl.h"
 #include "dnnl_subgraph_base-inl.h"
 
 namespace mxnet {
@@ -82,7 +83,8 @@ class SgDNNLPowMulScalarProperty : public SubgraphProperty {
     auto property                  = std::make_shared<SgDNNLPowMulScalarProperty>();
     property->SetAttr<std::string>("property_name", name);
     property->SetAttr<bool>("inference_only", true);
-    if (dmlc::GetEnv("MXNET_DISABLE_ONEDNN_POW_MUL_SCALAR_OPT", 0)) {
+    if (!SupportDNNLPowMulScalar() ||
+        dmlc::GetEnv("MXNET_DISABLE_ONEDNN_POW_MUL_SCALAR_OPT", 0)) {
       property->SetAttr<bool>("disable", true);
     }
     return property;

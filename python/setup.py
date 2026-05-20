@@ -24,9 +24,8 @@ import sys
 from setuptools import find_packages # This must precede distutils
 
 BASE_INSTALL_REQUIRES = [
-    # numpy 2.x removed np.PZERO / np.NZERO; mxnet/numpy/utils.py
-    # still uses them and would need a port (issues.md item #44).
-    # Cap at <2 for now.
+    # NumPy 2.x compatibility is being restored incrementally; keep the
+    # package metadata conservative until the full NumPy 2 test sweep passes.
     'numpy>=1.17,<2',
     'requests>=2.20.0,<3',
     'graphviz<0.9.0,>=0.8.1',

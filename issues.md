@@ -1,8 +1,8 @@
 # MXNet Port Issues
 
 Updated: 2026-05-20
-Current branch: `followup/dataloader-warnings`
-Code baseline when reorganized: `e04b407507`
+Current branch: `followup/full-sweep-macos-wheel`
+Code baseline when reorganized: `e04b407507`; current follow-up base: `862669419`
 
 This file is a status index, not a changelog. Historical details live in git
 commits, `handover.md`, and the linked investigation notes. Items are grouped
@@ -26,7 +26,7 @@ They can be fixed or at least partially verified on this Mac.
 
 | ID | Status | Area | Issue | Next action |
 |---|---|---|---|---|
-| A6 | Open | Resource shutdown | Custom-op workers and thread-local temp resources need a shutdown-order audit. | Treat as second pass unless a local reproducer appears. |
+| A6 | Resolved locally | Resource shutdown | Custom-op workers and thread-local temp resources needed shutdown-order hardening. | Mirror the new lifecycle tests on Linux x86/CUDA before calling this platform-complete. |
 
 ### Resolved On This Follow-Up Branch
 
@@ -50,6 +50,11 @@ They can be fixed or at least partially verified on this Mac.
 | R16 | Threaded engine | ThreadedEngine global and per-var exception refs are guarded by an exception mutex and cleared consistently. | `Engine.ThreadedAsyncExceptionsAreReportedOnce` passed. |
 | R17 | oneDNN C++ tests | C++ oneDNN unit-test helpers use current oneDNN descriptor APIs instead of stale `memory::desc.data` / `convolution_forward::desc` access. | `mxnet_unit_tests` built; `DNNL_UTIL_FUNC.*` and `DNNL_NDArray.GetDataReorder` passed. |
 | R18 | Lifecycle test coverage | Added focused regressions for DataLoader worker exceptions, KVStore row-sparse delete-before-wait, custom-op backward exception isolation, and `WaitForVar` exception clearing. | Focused Python lifecycle sweep and `Engine.WaitForVarClearsThreadedAsyncException` passed. |
+| R19 | Engine shutdown | Threaded engine start/stop is idempotent, late `DeleteVariable` work is drained safely, and custom-op worker teardown reports queued errors per invocation. | `test_engine_shutdown.py` plus the focused shutdown/DLPack/autograd/quantization sweep passed. |
+| R20 | DLPack CPU interop | Incoming DLTensor `byte_offset` is honored and Python capsule validation raises explicit `ValueError`s instead of relying on asserts. | `test_data_interchange.py` CPU DLPack tests and `test_dlpack_from_nonzero_byte_offset` passed. |
+| R21 | NumPy API drift | Removed noisy/stale aliases such as `np.Inf`, `np.NINF`, `np.NaN`, `np.PZERO`, `np.NZERO`, and `np.product` from tested paths. | Focused NumPy/DLPack/autograd sweep passed under the current NumPy 1.x test environment. |
+| R22 | Apple Silicon oneDNN fallbacks | AArch64 oneDNN paths that hit Xbyak internal errors now fall back for quantized ops, batch-dot, transpose/reorder, RNN, scalar pow/mul, and default-layout reshape. | Direct Xbyak repros for quantize, batch-dot, transpose, and RNN no longer crash; native quantization suite passed. |
+| R23 | Quantized transpose/requantize CPU fallback | `requantize` has a native CPU registration in oneDNN builds, and quantized transpose has a native CPU implementation that preserves range outputs. | `tests/python/quantization/test_quantization.py` passed except the expected AArch64 oneDNN quantized-RNN skips. |
 
 ---
 
@@ -78,8 +83,8 @@ current Apple Silicon task, but they still matter for the fork.
 
 | ID | Status | Area | Issue | Next action |
 |---|---|---|---|---|
-| B1 | Open | oneDNN INT8 subgraphs | `test_self_attention[*]`, `test_batch_dot[*]`, and `test_self_attention_negative` showed pervasive INT8 numerical blow-up or crashes in DNNL matmul/batch-dot paths. | Re-test against the current master tip after the INT8 conv/relu/u8 fixes; then audit quantized FC/matmul scale masks. |
-| B2 | Open | Quantized Gluon | `test_quantize_gluon_with_forward` segfaulted under the DNNL subgraph backend after 18 earlier quantization tests passed. | Re-test after B1-scale fixes; inspect `dnnl_quantized_fully_connected.cc` if still failing. |
+| B1 | Partial | oneDNN INT8 subgraphs | `test_self_attention[*]`, `test_batch_dot[*]`, and `test_self_attention_negative` showed pervasive INT8 numerical blow-up or crashes in DNNL matmul/batch-dot paths. | Scale fixes landed locally and AArch64 falls back instead of crashing; re-test real oneDNN INT8 on Linux x86 before closing. |
+| B2 | Partial | Quantized Gluon | `test_quantize_gluon_with_forward` segfaulted under the DNNL subgraph backend after 18 earlier quantization tests passed. | AArch64 oneDNN quantized backend is disabled and native CPU quantization passes; Linux x86 oneDNN quantized Gluon still needs validation. |
 | B3 | Open | Mixed dtype quantization | fp16 input/output is structurally absent in `quantize_v2`, `dequantize`, and DNNL quantize-v2 code. | Either add fp16 support or document AMP+quantize as unsupported and require fp32 casts. |
 | B4 | Partial | QAT backward | STE for `quantize_v2` and QAT parameter `grad_req` fixes landed; DNNL subgraph backward exists only on a local branch and has scale-magnitude caveats. | Decide whether to push/PR the gated `_backward_sg_onednn_*` implementation after more validation. |
 | B5 | Open | Mixed dtype matrix coverage | fp16/fp32 AMP, int8/fp32 quantize, and int8/fp16 combinations are separate paths. | Build an explicit coverage matrix; do not infer one path from another. |
@@ -110,13 +115,15 @@ quality of a public fork.
 | T2 | Open | Out-of-tree users | GluonNLP, Sockeye, AutoGluon, and DGL compatibility is untested. DGL is explicitly out of scope for the current Apple Silicon work. |
 | T3 | Partial | Distributed training | Single-machine local/device/NCCL tests passed on Blackwell; multi-machine ps-lite rendezvous was not deployed. |
 | T4 | Open | Python versions | Python 3.13+ is untested. |
-| T5 | Open | NumPy ABI | NumPy 2.x compatibility is not established; several failures already came from API drift. |
-| T6 | Open | DLPack | Vendored DLPack is old; PyTorch/JAX interop may be stale. |
+| T5 | Partial | NumPy ABI | NumPy 2.x compatibility is not established; several failures already came from API drift. |
+| T6 | Partial | DLPack | CPU byte-offset handling and NumPy interchange are fixed; PyTorch/JAX and CUDA interop remain stale/untested. |
 | T7 | Resolved | Data/image tests | Earlier `test_gluon_data.py`, `test_contrib_gluon_data_vision.py`, and `test_image.py` crashes no longer reproduce in isolation after data/batchify fixes. |
 | T8 | Resolved | ONNX opset 18 reductions | Exporter now emits axes as input tensors for opset >=18. Broad suite had one unrelated fp16 softmax numerical failure. |
 | T9 | Resolved | Gluon model zoo | 34/34 model zoo checks passed, aside from a pre-existing `test_parallel_download` skip. |
 | T10 | Resolved | Custom C++ operators | 9/9 in-tree extension/custom-op checks passed on Blackwell. |
 | T11 | Open | Cross-platform lifecycle coverage | Apple Silicon now has focused async lifecycle tests. Mirror and validate the same patterns on Linux x86 CPU/oneDNN and CUDA before treating them as platform-complete. |
+| T12 | Open | C++ oneDNN pooling | Full `mxnet_unit_tests` on Apple Silicon reached `IMPERATIVE.PoolingOp` failure: `outputs.size() == GetNumOutputs(param) (1 vs. 2)`. | Investigate whether the C++ test fixture needs to request workspace outputs for training-mode pooling or whether oneDNN storage inference changed output arity. |
+| T13 | Open | C++ oneDNN convolution | Full `mxnet_unit_tests` on Apple Silicon reached `IMPERATIVE.ConvOp` oneDNN-vs-native data mismatches in `tests/cpp/include/test_dnnl.h:637`. | Reproduce with a focused `--gtest_filter=IMPERATIVE.ConvOp` run, identify the failing dtype/layout/shape cases, and separate numeric tolerance issues from real layout/reorder bugs. |
 
 ### Cross-Platform Lifecycle Coverage TODO
 
@@ -185,8 +192,9 @@ They stay here as context, not as active work.
 Before calling the Apple Silicon CPU port good enough for broader testing:
 
 1. Decide whether A6 needs code changes now or only documented follow-up tests.
-2. Run the focused Apple Silicon unit subset again after these commits.
-3. Re-run OpenCV/image/DataLoader tests in the final build profile.
+2. Reproduce and fix the new C++ full-suite failures T12/T13.
+3. Run the focused Apple Silicon unit subset again after these commits.
+4. Re-run OpenCV/image/DataLoader tests in the final build profile.
 
 Before shipping another public Linux/CUDA preview wheel:
 

@@ -37,8 +37,10 @@ bool QuantizeStorageType(const nnvm::NodeAttrs& attrs,
                          std::vector<int>* out_attrs) {
   *dispatch_mode = DispatchMode::kFCompute;
 #if MXNET_USE_ONEDNN == 1
+  const QuantizeParam& param = nnvm::get<QuantizeParam>(attrs.parsed);
   if (dev_mask == mshadow::cpu::kDevMask) {
-    *dispatch_mode = DispatchMode::kFComputeEx;
+    *dispatch_mode =
+        SupportDNNLQuantize(param.out_type) ? DispatchMode::kFComputeEx : DispatchMode::kFCompute;
   }
 #endif
   (*out_attrs)[0] = kDefaultStorage;

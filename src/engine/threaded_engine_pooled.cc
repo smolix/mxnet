@@ -59,22 +59,37 @@ class ThreadedEnginePooled : public ThreadedEngine {
   }
 
   void StopNoWait() {
-    task_queue_->SignalForKill();
-    io_task_queue_->SignalForKill();
-    task_queue_     = nullptr;
-    io_task_queue_  = nullptr;
+    if (stopped_.exchange(true)) {
+      return;
+    }
+    if (task_queue_) {
+      task_queue_->SignalForKill();
+    }
+    if (io_task_queue_) {
+      io_task_queue_->SignalForKill();
+    }
     thread_pool_    = nullptr;
     io_thread_pool_ = nullptr;
-    streams_->Finalize();
-    streams_ = nullptr;
+    task_queue_     = nullptr;
+    io_task_queue_  = nullptr;
+    if (streams_) {
+      streams_->Finalize();
+      streams_ = nullptr;
+    }
   }
 
   void Stop() override {
+    if (stopped_.load()) {
+      return;
+    }
     WaitForAll();
     StopNoWait();
   }
 
   void Start() override {
+    if (!stopped_.exchange(false)) {
+      return;
+    }
     streams_ = std::make_unique<StreamManager<kMaxNumGpus, kNumStreamsPerGpu>>();
     task_queue_.reset(new dmlc::ConcurrentBlockingQueue<OprBlock*>());
     io_task_queue_.reset(new dmlc::ConcurrentBlockingQueue<OprBlock*>());
@@ -94,9 +109,18 @@ class ThreadedEnginePooled : public ThreadedEngine {
 
  protected:
   void PushToExecute(OprBlock* opr_block, bool pusher_thread) override {
-    if (opr_block->opr->prop == FnProperty::kAsync && pusher_thread) {
+    if (opr_block->opr->prop == FnProperty::kDeleteVar && pusher_thread) {
+      CallbackOnStart on_start = this->CreateOnStart(ThreadedEngine::OnStartStatic, opr_block);
+      CallbackOnComplete callback =
+          this->CreateCallback(ThreadedEngine::OnCompleteStatic, opr_block);
+      this->ExecuteOprBlock(RunContext{opr_block->ctx, nullptr, nullptr},
+                            opr_block,
+                            on_start,
+                            callback);
+    } else if (opr_block->opr->prop == FnProperty::kAsync && pusher_thread) {
       DoExecute(opr_block);
     } else {
+      CHECK(!stopped_.load()) << "Cannot queue operation after ThreadedEnginePooled stopped";
       DoPushToQueue(opr_block);
     }
   }
@@ -122,6 +146,7 @@ class ThreadedEnginePooled : public ThreadedEngine {
    */
   std::unique_ptr<ThreadPool> thread_pool_;
   std::unique_ptr<ThreadPool> io_thread_pool_;
+  std::atomic<bool> stopped_{true};
   /*!
    * \brief Worker.
    * \param task_queue Queue to work on.

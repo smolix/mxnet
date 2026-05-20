@@ -37,12 +37,13 @@ inline static bool QuantizedTransposeStorageType(const nnvm::NodeAttrs& attrs,
                                                  std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 3U);
   CHECK_EQ(out_attrs->size(), 3U);
-  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
+  return DNNLStorageType(
+      attrs, dev_mask, SupportDNNLQuantizedOps(), dispatch_mode, in_attrs, out_attrs);
 }
 
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_reorder.html
 bool SupportDNNLQuantizedTranspose(const NDArray& data) {
-  return SupportDNNL<DNNLTypeMode::ByteTypes>(data);
+  return SupportDNNLTranspose() && SupportDNNL<DNNLTypeMode::ByteTypes>(data);
 }
 
 void AssignQuantizedTransposeRange(const NDArray& output, const NDArray& input, OpReqType req) {
@@ -91,20 +92,12 @@ static void DNNLQuantizedTransposeForward(const nnvm::NodeAttrs& attrs,
 
 NNVM_REGISTER_OP(_npx_quantized_transpose)
     .set_attr<FInferStorageType>("FInferStorageType", QuantizedTransposeStorageType)
-    .set_attr<FResourceRequest>("FResourceRequest",
-                                [](const NodeAttrs& n) {
-                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
-                                })
     .set_attr<FComputeEx>("FComputeEx<cpu>",
                           DNNLQuantizedTransposeForward<NumpyTransposeParam, NumpyTranspose<cpu>>)
     .set_attr<bool>("TIsDNNL", true);
 
 NNVM_REGISTER_OP(_contrib_quantized_transpose)
     .set_attr<FInferStorageType>("FInferStorageType", QuantizedTransposeStorageType)
-    .set_attr<FResourceRequest>("FResourceRequest",
-                                [](const NodeAttrs& n) {
-                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
-                                })
     .set_attr<FComputeEx>("FComputeEx<cpu>",
                           DNNLQuantizedTransposeForward<TransposeParam, Transpose<cpu>>)
     .set_attr<bool>("TIsDNNL", true);

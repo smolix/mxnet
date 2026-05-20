@@ -59,7 +59,8 @@ bool PowerStorageType(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(inputs->size(), 1);
   CHECK_EQ(outputs->size(), 1);
 
-  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, inputs, outputs);
+  return DNNLStorageType(
+      attrs, dev_mask, SupportDNNLPowMulScalar(), dispatch_mode, inputs, outputs);
 }
 
 void PowerComputeExCPU(const nnvm::NodeAttrs& attrs,
@@ -67,7 +68,7 @@ void PowerComputeExCPU(const nnvm::NodeAttrs& attrs,
                        const std::vector<mxnet::NDArray>& inputs,
                        const std::vector<OpReqType>& req,
                        const std::vector<mxnet::NDArray>& outputs) {
-  if (SupportDNNL<DNNLTypeMode::FloatTypes>(inputs[0])) {
+  if (SupportDNNLPowMulScalar() && SupportDNNL<DNNLTypeMode::FloatTypes>(inputs[0])) {
     DNNL_OPCHECK_INIT(false, outputs.size(), inputs, outputs);
     DNNLRun(DNNLPowMulScalarForward<false>, attrs, ctx, inputs, req, outputs);
     DNNL_OPCHECK_RUN(

@@ -1864,8 +1864,8 @@ def test_ndarray_nan_comparison():
     random_shape = [np.random.randint(2, 5) for i in range(random_dimensions)]
     data1 = mxnet.test_utils.rand_ndarray(random_shape,'default')
     data2 = mxnet.test_utils.rand_ndarray(random_shape,'default')
-    data1[1][0] = np.NaN
-    data2[0][0] = np.NaN
+    data1[1][0] = np.nan
+    data2[0][0] = np.nan
 
     nd_max = mx.nd.maximum(data1, data2)
     np_max = np.maximum(data1.asnumpy(), data2.asnumpy())

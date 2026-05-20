@@ -290,7 +290,9 @@ static bool SgDNNLSelfAttStorageType(const nnvm::NodeAttrs& attrs,
                                      DispatchMode* dispatch_mode,
                                      std::vector<int>* in_attrs,
                                      std::vector<int>* out_attrs) {
-  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
+  const DNNLSelfAttParam& param = nnvm::get<DNNLSelfAttParam>(attrs.parsed);
+  const bool support = !param.quantized || SupportDNNLQuantizedOps();
+  return DNNLStorageType(attrs, dev_mask, support, dispatch_mode, in_attrs, out_attrs);
 }
 
 template <bool with_split>
@@ -353,10 +355,10 @@ void SgDNNLSelfAttQKOp::Initialize(const OpContext& ctx,
     if (param_.min_calib_range.has_value() && param_.max_calib_range.has_value()) {
       min_output_ = param_.min_calib_range.value();
       max_output_ = param_.max_calib_range.value();
-      oscale      = GetQuantizeScale(out_tensor.dtype(), min_output_, max_output_) /
-               (data_scale_0_ * data_scale_1_);
+      oscale      = (data_scale_0_ * data_scale_1_) /
+               GetQuantizeScale(out_tensor.dtype(), min_output_, max_output_);
     } else if (param_.enabled_float_output.has_value()) {
-      oscale = 1.0f / (data_scale_0_ * data_scale_1_);
+      oscale = data_scale_0_ * data_scale_1_;
     } else {
       mshadow::Stream<cpu>* s = ctx.get_stream<cpu>();
       mxnet_op::Kernel<QuantizationRangeForS8S8MultiplicationStruct, cpu>::Launch(
@@ -852,10 +854,10 @@ void DNNLSelfAttValAttOp::Initialize(const OpContext& ctx,
     if (param_.min_calib_range.has_value() && param_.max_calib_range.has_value()) {
       min_output_ = param_.min_calib_range.value();
       max_output_ = param_.max_calib_range.value();
-      oscale      = GetQuantizeScale(out_tensor.dtype(), min_output_, max_output_) /
-               (att_scale_ * qkv_scale_);
+      oscale      = (att_scale_ * qkv_scale_) /
+               GetQuantizeScale(out_tensor.dtype(), min_output_, max_output_);
     } else if (param_.enabled_float_output.has_value()) {
-      oscale = 1.0f / (att_scale_ * qkv_scale_);
+      oscale = att_scale_ * qkv_scale_;
     } else {
       mshadow::Stream<cpu>* s = ctx.get_stream<cpu>();
       mxnet_op::Kernel<QuantizationRangeForS8S8MultiplicationStruct, cpu>::Launch(

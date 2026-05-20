@@ -482,7 +482,7 @@ def isinf(data):
 
     Examples
     --------
-    >>> data = mx.nd.array([np.inf, -np.inf, np.NINF, -1])
+    >>> data = mx.nd.array([np.inf, -np.inf, -np.inf, -1])
     >>> output = mx.nd.contrib.isinf(data)
     >>> output
     [1. 1. 1. 0.]
@@ -509,7 +509,7 @@ def isfinite(data):
 
     Examples
     --------
-    >>> data = mx.nd.array([np.inf, -np.inf, np.NINF, -1])
+    >>> data = mx.nd.array([np.inf, -np.inf, -np.inf, -1])
     >>> output = mx.nd.contrib.isfinite(data)
     >>> output
     [0. 0. 0. 1.]

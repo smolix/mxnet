@@ -33,6 +33,16 @@
 namespace mxnet {
 namespace op {
 
+inline bool SupportDNNLTranspose() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  // oneDNN transpose is implemented as a reorder and can enter the
+  // Xbyak_aarch64 JIT on Apple Silicon, failing with ERR_INTERNAL.
+  return false;
+#else
+  return true;
+#endif
+}
+
 class DNNLTransposeFwd {
  public:
   std::shared_ptr<dnnl::memory> data_;

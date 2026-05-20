@@ -15,8 +15,16 @@
 # specific language governing permissions and limitations
 # under the License.
 import os
+import platform
 import sys
 import mxnet as mx
+import pytest
+
+if platform.machine().lower() in ('arm64', 'aarch64'):
+    pytest.skip(
+        'oneDNN quantized CPU operators are disabled on AArch64 due Xbyak_aarch64 '
+        'ERR_INTERNAL failures; the native CPU quantization suite still runs.',
+        allow_module_level=True)
 
 os.environ['ENABLE_ONEDNN_QUANTIZATION_TEST'] = '1'
 curr_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))

@@ -23,6 +23,9 @@
  * \author Ziheng Jiang, Jun Wu
  */
 #include "../nn/convolution-inl.h"
+#if MXNET_USE_ONEDNN == 1
+#include "operator/nn/dnnl/dnnl_base-inl.h"
+#endif
 
 namespace mxnet {
 namespace op {
@@ -163,7 +166,8 @@ bool QuantizedConvStorageType(const nnvm::NodeAttrs& attrs,
   *dispatch_mode = DispatchMode::kFCompute;
 #if MXNET_USE_ONEDNN == 1
   if (dev_mask == mshadow::cpu::kDevMask) {
-    *dispatch_mode = DispatchMode::kFComputeEx;
+    *dispatch_mode =
+        SupportDNNLQuantizedOps() ? DispatchMode::kFComputeEx : DispatchMode::kFCompute;
   }
 #endif
 

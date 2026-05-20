@@ -373,7 +373,8 @@ class ThreadedEngine : public Engine {
       LOG(INFO) << "ExecuteOprBlock " << opr_block << "shutdown_phase=" << shutdown_phase_;
     }
     // still run cleanup in shutdown_phase
-    if (!shutdown_phase_ || threaded_opr->prop == FnProperty::kDeleteVar) {
+    if (!shutdown_phase_ || threaded_opr->prop == FnProperty::kDeleteVar ||
+        threaded_opr->prop == FnProperty::kNoSkip) {
       try {
         OnStart(threaded_opr);
         if (debug_info) {

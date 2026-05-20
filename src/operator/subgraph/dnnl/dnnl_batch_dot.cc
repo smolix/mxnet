@@ -128,7 +128,9 @@ inline static bool DNNLBatchDotStorageType(const nnvm::NodeAttrs& attrs,
                                            DispatchMode* dispatch_mode,
                                            std::vector<int>* in_attrs,
                                            std::vector<int>* out_attrs) {
-  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
+  const DNNLDotParam& param = nnvm::get<DNNLDotParam>(attrs.parsed);
+  const bool support = !param.quantized || SupportDNNLQuantizedOps();
+  return DNNLStorageType(attrs, dev_mask, support, dispatch_mode, in_attrs, out_attrs);
 }
 
 NNVM_REGISTER_OP(_sg_onednn_batch_dot)

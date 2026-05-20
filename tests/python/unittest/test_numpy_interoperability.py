@@ -1379,12 +1379,12 @@ def _add_workload_add(array_pool):
 
 def _add_workload_arctan2():
     OpArgMngr.add_workload('arctan2', np.array([1, -1, 1]), np.array([1, 1, -1]))
-    OpArgMngr.add_workload('arctan2', np.array([np.PZERO, np.NZERO]), np.array([np.NZERO, np.NZERO]))
-    OpArgMngr.add_workload('arctan2', np.array([np.PZERO, np.NZERO]), np.array([np.PZERO, np.PZERO]))
-    OpArgMngr.add_workload('arctan2', np.array([np.PZERO, np.NZERO]), np.array([-1, -1]))
-    OpArgMngr.add_workload('arctan2', np.array([np.PZERO, np.NZERO]), np.array([1, 1]))
-    OpArgMngr.add_workload('arctan2', np.array([-1, -1]), np.array([np.PZERO, np.NZERO]))
-    OpArgMngr.add_workload('arctan2', np.array([1, 1]), np.array([np.PZERO, np.NZERO]))
+    OpArgMngr.add_workload('arctan2', np.array([0.0, -0.0]), np.array([-0.0, -0.0]))
+    OpArgMngr.add_workload('arctan2', np.array([0.0, -0.0]), np.array([0.0, 0.0]))
+    OpArgMngr.add_workload('arctan2', np.array([0.0, -0.0]), np.array([-1, -1]))
+    OpArgMngr.add_workload('arctan2', np.array([0.0, -0.0]), np.array([1, 1]))
+    OpArgMngr.add_workload('arctan2', np.array([-1, -1]), np.array([0.0, -0.0]))
+    OpArgMngr.add_workload('arctan2', np.array([1, 1]), np.array([0.0, -0.0]))
     OpArgMngr.add_workload('arctan2', np.array([1, -1, 1, -1]), np.array([-_np.inf, -_np.inf, _np.inf, _np.inf]))
     OpArgMngr.add_workload('arctan2', np.array([_np.inf, -_np.inf]), np.array([1, 1]))
     OpArgMngr.add_workload('arctan2', np.array([_np.inf, -_np.inf]), np.array([-_np.inf, -_np.inf]))
@@ -1754,7 +1754,7 @@ def _add_workload_log10(array_pool):
 
 
 def _add_workload_sqrt():
-    OpArgMngr.add_workload('sqrt', np.array([1, np.PZERO, np.NZERO, _np.inf, _np.nan]))
+    OpArgMngr.add_workload('sqrt', np.array([1, 0.0, -0.0, _np.inf, _np.nan]))
 
 
 def _add_workload_square():

@@ -112,6 +112,33 @@ def test_clean_exit_after_many_ops(trial):
     assert "done" in out, f"Expected 'done' in output.\nOutput:\n{out}"
 
 
+@pytest.mark.parametrize("engine_type", ["ThreadedEngine", "ThreadedEnginePerDevice"])
+def test_threaded_engine_clean_exit_after_resource_use(engine_type):
+    code = (
+        "import mxnet as mx\n"
+        "x = mx.nd.ones((4, 4))\n"
+        "print((x + 1).asnumpy()[0, 0])\n"
+    )
+    rc, out = _run([_VENV_PYTHON, "-c", code], env={"MXNET_ENGINE_TYPE": engine_type}, timeout=60)
+    assert rc == 0, f"engine={engine_type} exited with code {rc}.\nOutput:\n{out}"
+
+
+@pytest.mark.parametrize("engine_type", ["ThreadedEngine", "ThreadedEnginePerDevice"])
+def test_threaded_engine_notify_shutdown_is_idempotent(engine_type):
+    code = (
+        "import mxnet as mx\n"
+        "from mxnet.base import _LIB, check_call\n"
+        "mx.nd.ones((2, 2)).wait_to_read()\n"
+        "check_call(_LIB.MXNotifyShutdown())\n"
+        "print('first')\n"
+        "check_call(_LIB.MXNotifyShutdown())\n"
+        "print('second')\n"
+    )
+    rc, out = _run([_VENV_PYTHON, "-c", code], env={"MXNET_ENGINE_TYPE": engine_type}, timeout=60)
+    assert rc == 0, f"engine={engine_type} exited with code {rc}.\nOutput:\n{out}"
+    assert "first" in out and "second" in out, f"Missing shutdown markers.\nOutput:\n{out}"
+
+
 # ---------------------------------------------------------------------------
 # A6/A7 diagnostic mode: MXNET_ENGINE_DIAG=1 must not change behaviour
 # ---------------------------------------------------------------------------

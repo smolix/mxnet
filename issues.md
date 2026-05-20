@@ -248,7 +248,7 @@ This section tracks the code-audit findings from the Apple Silicon bring-up bran
 
 53. **Proposal operator integer overflow risk** — proposal workspace and anchor counts use `int` in several size calculations. CPU code should be widened or guarded locally; CUDA variants need CUDA CI.
 
-54. **oneDNN quantized transpose min/max writes** — `src/operator/quantization/dnnl/dnnl_quantized_transpose.cc` can skip scalar min/max writes when the data output request is `kNullOp`. Ensure aux outputs are still honored independently.
+54. ~~**oneDNN quantized transpose min/max writes**~~ — **RESOLVED on Apple Silicon follow-up branch.** The oneDNN quantized transpose path now honors scalar range outputs independently of the data output request, including Symbol graphs where only `min_output`/`max_output` are live.
 
 55. **OpenMP state uses `volatile` for synchronization** — `src/engine/openmp.*` uses `volatile` state instead of atomics or locking. Replace with standard synchronization before enabling broader OpenMP coverage.
 

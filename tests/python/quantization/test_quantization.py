@@ -839,6 +839,28 @@ def test_quantized_transpose():
         check_quantized_transpose((5,3,6,8), qtype, (2,3,0,1))
 
 
+def test_quantized_transpose_symbol_range_outputs_without_data_output():
+    data = mx.sym.Variable('data')
+    min_data = mx.sym.Variable('min_data')
+    max_data = mx.sym.Variable('max_data')
+    output = mx.sym.contrib.quantized_transpose(data, min_data, max_data, axes=(1, 0))
+    symbol = mx.sym.Group([output[1], output[2]])
+    executor = symbol._simple_bind(ctx=mx.cpu(),
+                                   data=(2, 2),
+                                   min_data=(1,),
+                                   max_data=(1,),
+                                   type_dict={'data': 'int8',
+                                              'min_data': 'float32',
+                                              'max_data': 'float32'})
+    executor.arg_dict['data'][:] = mx.nd.array([[1, 2], [3, 4]], dtype='int8')
+    executor.arg_dict['min_data'][:] = mx.nd.array([-2.5], dtype='float32')
+    executor.arg_dict['max_data'][:] = mx.nd.array([3.5], dtype='float32')
+    executor.forward()
+
+    assert_almost_equal(executor.outputs[0].asnumpy(), onp.array([-2.5], dtype=onp.float32))
+    assert_almost_equal(executor.outputs[1].asnumpy(), onp.array([3.5], dtype=onp.float32))
+
+
 @use_np
 def test_quantized_embedding():
     def check_quantized_embedding(data_shape, input_dim, output_dim):

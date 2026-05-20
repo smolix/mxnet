@@ -44,6 +44,23 @@ inline static bool QuantizedTransposeStorageType(const nnvm::NodeAttrs& attrs,
 bool SupportDNNLQuantizedTranspose(const NDArray& data) {
   return SupportDNNL<DNNLTypeMode::ByteTypes>(data);
 }
+
+void AssignQuantizedTransposeRange(const NDArray& output, const NDArray& input, OpReqType req) {
+  switch (req) {
+    case kNullOp:
+      return;
+    case kWriteTo:
+    case kWriteInplace:
+      output.data().dptr<float>()[0] = input.data().dptr<float>()[0];
+      return;
+    case kAddTo:
+      output.data().dptr<float>()[0] += input.data().dptr<float>()[0];
+      return;
+    default:
+      LOG(FATAL) << "Unsupported request type for quantized_transpose range output";
+  }
+}
+
 typedef void (*TransposeFallbackFunAny)(const nnvm::NodeAttrs&,
                                         const OpContext&,
                                         const std::vector<TBlob>&,
@@ -56,20 +73,20 @@ static void DNNLQuantizedTransposeForward(const nnvm::NodeAttrs& attrs,
                                           const std::vector<NDArray>& inputs,
                                           const std::vector<OpReqType>& req,
                                           const std::vector<NDArray>& outputs) {
+  CHECK_EQ(inputs.size(), 3U);
+  CHECK_EQ(outputs.size(), 3U);
   CHECK(inputs[0].dtype() == mshadow::kUint8 || inputs[0].dtype() == mshadow::kInt8)
       << "dnnl_quantized_transpose only supports uint8 and int8 as input type";
+  AssignQuantizedTransposeRange(outputs[1], inputs[1], req[1]);
+  AssignQuantizedTransposeRange(outputs[2], inputs[2], req[2]);
   if (req[0] == kNullOp) {
     return;
   }
-  CHECK_EQ(inputs.size(), 3U);
-  CHECK_EQ(outputs.size(), 3U);
   if (SupportDNNLQuantizedTranspose(inputs[0])) {
     DNNLRun(DNNLTransposeForward<ParamType>, attrs, ctx, inputs[0], req[0], outputs[0]);
   } else {
     FallBackCompute(TransposeFallback, attrs, ctx, inputs, req, outputs);
   }
-  outputs[1].data().dptr<float>()[0] = inputs[1].data().dptr<float>()[0];
-  outputs[2].data().dptr<float>()[0] = inputs[2].data().dptr<float>()[0];
 }
 
 NNVM_REGISTER_OP(_npx_quantized_transpose)

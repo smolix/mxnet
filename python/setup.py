@@ -127,12 +127,16 @@ def _exclude_package_data():
     """Return package data exclusions for optional integrations."""
     if not _env_flag('MXNET_SETUP_EXCLUDE_ONNX'):
         return {}
-    return {'mxnet': [
-        'onnx/*',
-        'onnx/**/*',
-        'contrib/onnx/*',
-        'contrib/onnx/**/*',
-    ]}
+    return {
+        'mxnet': [
+            'onnx/*',
+            'onnx/**/*',
+        ],
+        'mxnet.contrib': [
+            'onnx/*',
+            'onnx/**/*',
+        ],
+    }
 
 
 def _cuda_enabled_from_cmake_cache():

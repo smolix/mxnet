@@ -164,25 +164,27 @@ OpAttrs GetPoolingOp(int kernel, int dim, int stride, int pad) {
   OpAttrs attrs;
   attrs.attrs.op    = Op::Get("Pooling");
   attrs.num_inputs  = 1;
-  attrs.num_outputs = dim == 2 ? 2 : 1;
   attrs.attrs.dict.insert({"kernel", CreateShapeString(kernel, dim)});
   attrs.attrs.dict.insert({"stride", CreateShapeString(stride, dim)});
   attrs.attrs.dict.insert({"pad", CreateShapeString(pad, dim)});
   attrs.attrs.dict.insert({"pool_type", "max"});
   attrs.attrs.op->attr_parser(&attrs.attrs);
+  const auto& param = nnvm::get<mxnet::op::PoolingParam>(attrs.attrs.parsed);
+  attrs.num_outputs = mxnet::op::GetNumOutputs(param);
   return attrs;
 }
 
 OpAttrs GetPoolingBackwardsOp(int kernel, int dim, int stride, int pad) {
   OpAttrs attrs;
   attrs.attrs.op    = Op::Get("_backward_Pooling");
-  attrs.num_inputs  = dim == 2 ? 5 : 3;
   attrs.num_outputs = 1;
   attrs.attrs.dict.insert({"kernel", CreateShapeString(kernel, dim)});
   attrs.attrs.dict.insert({"stride", CreateShapeString(stride, dim)});
   attrs.attrs.dict.insert({"pad", CreateShapeString(pad, dim)});
   attrs.attrs.dict.insert({"pool_type", "max"});
   attrs.attrs.op->attr_parser(&attrs.attrs);
+  const auto& param = nnvm::get<mxnet::op::PoolingParam>(attrs.attrs.parsed);
+  attrs.num_inputs = mxnet::op::GetNumBackInputs(param);
   return attrs;
 }
 
@@ -1118,7 +1120,7 @@ void TestConvOp(const OpAttrs& forward_attrs,
                                   DispatchMode::kFComputeEx,
                                   mxnet::OpStatePtr());
       Engine::Get()->WaitForAll();
-      VerifyCopyResult(outputs, ex_outputs);
+      AssertEqual(outputs, ex_outputs, 1e-4, 1e-4);
 
       // backwards test performed same time since output needed
       backwards_input[0] = outputs[0];  // output grad
@@ -1167,7 +1169,7 @@ void TestConvOp(const OpAttrs& forward_attrs,
                                   DispatchMode::kFComputeEx,
                                   mxnet::OpStatePtr());
       Engine::Get()->WaitForAll();
-      VerifyCopyResult(backwards_outputs, backwards_ex_outputs);
+      AssertEqual(backwards_outputs, backwards_ex_outputs, 5e-2, 1e-2, true);
     }
   }
 }

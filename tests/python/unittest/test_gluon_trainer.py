@@ -323,6 +323,7 @@ def test_trainer_allreduce_hybridsequential():
 
 
 @mx.util.use_np
+@pytest.mark.filterwarnings("ignore:Parameter 'weight' is already initialized:UserWarning")
 def test_trainer_share_parameters():
     class Net(gluon.Block):
         def __init__(self, **kwargs):
@@ -360,4 +361,3 @@ def test_trainer_share_parameters():
             shared_params.append(p)
 
     assert((shared_params[0] == shared_params[1]).all())
-

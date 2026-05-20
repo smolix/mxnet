@@ -76,7 +76,8 @@ bool QuantizeAsymStorageType(const nnvm::NodeAttrs& attrs,
   *dispatch_mode = DispatchMode::kFCompute;
 #if MXNET_USE_ONEDNN == 1
   if (dev_mask == mshadow::cpu::kDevMask) {
-    *dispatch_mode = DispatchMode::kFComputeEx;
+    *dispatch_mode =
+        SupportDNNLQuantizedOps() ? DispatchMode::kFComputeEx : DispatchMode::kFCompute;
   }
 #endif
   out_attrs->at(0) = kDefaultStorage;
@@ -94,10 +95,12 @@ OpStatePtr CreateQuantizeAsymState(const nnvm::NodeAttrs& attrs,
     state = OpStatePtr::Create<QuantizeAsymOp<gpu>>(attrs);
   } else {
 #if MXNET_USE_ONEDNN == 1
-    if (in_shapes[0].ndim() == 3 && in_types[0] == mshadow::kFloat32) {
+    if (SupportDNNLQuantizedOps() && in_shapes[0].ndim() == 3 &&
+        in_types[0] == mshadow::kFloat32) {
       state = OpStatePtr::Create<DNNLQuantizeAsymOp>(attrs);
       return state;
     }
+    state = OpStatePtr::Create<QuantizeAsymOp<cpu>>(attrs);
 #else
     state = OpStatePtr::Create<QuantizeAsymOp<cpu>>(attrs);
 #endif

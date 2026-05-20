@@ -44,6 +44,11 @@ inline bool QuantizedTransposeType(const nnvm::NodeAttrs& attrs,
 typedef bool (*TransposeShapeFunAny)(const nnvm::NodeAttrs&,
                                      mxnet::ShapeVector*,
                                      mxnet::ShapeVector*);
+typedef void (*TransposeComputeFunAny)(const nnvm::NodeAttrs&,
+                                       const OpContext&,
+                                       const std::vector<TBlob>&,
+                                       const std::vector<OpReqType>&,
+                                       const std::vector<TBlob>&);
 
 template <TransposeShapeFunAny TransposeShapeFun>
 inline bool QuantizedTransposeShape(const nnvm::NodeAttrs& attrs,
@@ -65,7 +70,30 @@ inline bool QuantizedTransposeShape(const nnvm::NodeAttrs& attrs,
   return ret;
 }
 
-#define MXNET_OPERATOR_REGISTER_QUANTIZED_TRANSPOSE(name)                                    \
+template <TransposeComputeFunAny TransposeComputeFun>
+void QuantizedTransposeCompute(const nnvm::NodeAttrs& attrs,
+                               const OpContext& ctx,
+                               const std::vector<TBlob>& inputs,
+                               const std::vector<OpReqType>& req,
+                               const std::vector<TBlob>& outputs) {
+  CHECK_EQ(inputs.size(), 3U);
+  CHECK_EQ(outputs.size(), 3U);
+  CHECK_EQ(req.size(), 3U);
+
+  TransposeComputeFun(attrs, ctx, {inputs[0]}, {req[0]}, {outputs[0]});
+  if (req[1] == kWriteTo || req[1] == kWriteInplace) {
+    *outputs[1].dptr<float>() = *inputs[1].dptr<float>();
+  } else if (req[1] == kAddTo) {
+    *outputs[1].dptr<float>() += *inputs[1].dptr<float>();
+  }
+  if (req[2] == kWriteTo || req[2] == kWriteInplace) {
+    *outputs[2].dptr<float>() = *inputs[2].dptr<float>();
+  } else if (req[2] == kAddTo) {
+    *outputs[2].dptr<float>() += *inputs[2].dptr<float>();
+  }
+}
+
+#define MXNET_OPERATOR_REGISTER_QUANTIZED_TRANSPOSE(name, ComputeFun)                        \
   NNVM_REGISTER_OP(name)                                                                     \
       .set_num_inputs(3)                                                                     \
       .set_num_outputs(3)                                                                    \
@@ -81,6 +109,12 @@ inline bool QuantizedTransposeShape(const nnvm::NodeAttrs& attrs,
           [](const NodeAttrs& attrs) {                                                       \
             return std::vector<std::string>{"output", "min_output", "max_output"};           \
           })                                                                                 \
+      .set_attr<FCompute>("FCompute<cpu>", QuantizedTransposeCompute<ComputeFun>)             \
+      .set_attr<FResourceRequest>(                                                           \
+          "FResourceRequest",                                                                \
+          [](const NodeAttrs& n) {                                                           \
+            return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};                \
+          })                                                                                 \
       .set_attr<FQuantizable>("FQuantizable",                                                \
                               [](const NodeAttrs& attrs) { return QuantizeType::kSupport; }) \
       .add_argument("data", "NDArray-or-Symbol", "Array to be transposed.")                  \
@@ -93,12 +127,12 @@ inline bool QuantizedTransposeShape(const nnvm::NodeAttrs& attrs,
                     "The maximum scalar value "                                              \
                     "possibly produced for the data")
 
-MXNET_OPERATOR_REGISTER_QUANTIZED_TRANSPOSE(_npx_quantized_transpose)
+MXNET_OPERATOR_REGISTER_QUANTIZED_TRANSPOSE(_npx_quantized_transpose, NumpyTranspose<cpu>)
     .set_attr_parser(ParamParser<NumpyTransposeParam>)
     .set_attr<mxnet::FInferShape>("FInferShape", QuantizedTransposeShape<NumpyTransposeShape>)
     .add_arguments(NumpyTransposeParam::__FIELDS__());
 
-MXNET_OPERATOR_REGISTER_QUANTIZED_TRANSPOSE(_contrib_quantized_transpose)
+MXNET_OPERATOR_REGISTER_QUANTIZED_TRANSPOSE(_contrib_quantized_transpose, Transpose<cpu>)
     .add_alias("quantized_transpose")
     .set_attr_parser(ParamParser<TransposeParam>)
     .set_attr<mxnet::FInferShape>("FInferShape", QuantizedTransposeShape<TransposeShape>)

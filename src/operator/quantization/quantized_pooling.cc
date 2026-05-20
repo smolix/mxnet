@@ -162,7 +162,8 @@ inline static bool QuantizedPoolingStorageType(const nnvm::NodeAttrs& attrs,
   *dispatch_mode = DispatchMode::kFCompute;
 #if MXNET_USE_ONEDNN == 1
   const PoolingParam& param = nnvm::get<PoolingParam>(attrs.parsed);
-  if (dev_mask == mshadow::cpu::kDevMask && SupportDNNLPooling(param)) {
+  if (dev_mask == mshadow::cpu::kDevMask && SupportDNNLQuantizedOps() &&
+      SupportDNNLPooling(param)) {
     *dispatch_mode = DispatchMode::kFComputeEx;
   }
 #else

@@ -685,14 +685,17 @@ static inline void patternFill(const RunContext& run_ctx,
 /*! \brief Return a random number within a given range (inclusive) */
 template <class ScalarType>
 inline ScalarType rangedRand(const ScalarType min, const ScalarType max) {
-  uint64_t num_bins = static_cast<uint64_t>(max + 1), num_rand = static_cast<uint64_t>(RAND_MAX),
-           bin_size = num_rand / num_bins, defect = num_rand % num_bins;
-  ScalarType x;
+  CHECK_LE(min, max);
+  const uint64_t num_bins = static_cast<uint64_t>(max - min) + 1;
+  const uint64_t num_rand = static_cast<uint64_t>(RAND_MAX) + 1;
+  CHECK_LE(num_bins, num_rand);
+  const uint64_t defect = num_rand % num_bins;
+  uint64_t x;
   do {
     x = std::rand();
-  } while (num_rand - defect <= (uint64_t)x);
+  } while (num_rand - defect <= x);
 
-  return static_cast<ScalarType>(x / bin_size + min);
+  return static_cast<ScalarType>(min + (x % num_bins));
 }
 
 /*!

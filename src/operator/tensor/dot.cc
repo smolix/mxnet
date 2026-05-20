@@ -155,7 +155,8 @@ static bool BatchDotStorageType(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(in_attrs->size(), 2);
   CHECK_EQ(out_attrs->size(), 1);
 
-  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
+  return DNNLStorageType(
+      attrs, dev_mask, SupportDNNLAArch64JITPrimitives(), dispatch_mode, in_attrs, out_attrs);
 }
 #endif
 

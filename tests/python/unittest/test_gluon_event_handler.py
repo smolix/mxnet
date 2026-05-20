@@ -208,16 +208,21 @@ def test_logging():
         acc = mx.gluon.metric.Accuracy()
         est = estimator.Estimator(net, loss=ce_loss, train_metrics=acc)
 
-        est.logger.addHandler(logging.FileHandler(output_dir))
+        file_handler = logging.FileHandler(output_dir)
+        est.logger.addHandler(file_handler)
 
-        train_metrics = est.train_metrics
-        val_metrics = est.val_metrics
-        logging_handler = event_handler.LoggingHandler(metrics=train_metrics)
-        est.fit(test_data, event_handlers=[logging_handler], epochs=3)
-        assert logging_handler.batch_index == 0
-        assert logging_handler.current_epoch == 3
-        assert os.path.isfile(output_dir)
-        del est  # Clean up estimator and logger before deleting tmpdir
+        try:
+            train_metrics = est.train_metrics
+            val_metrics = est.val_metrics
+            logging_handler = event_handler.LoggingHandler(metrics=train_metrics)
+            est.fit(test_data, event_handlers=[logging_handler], epochs=3)
+            assert logging_handler.batch_index == 0
+            assert logging_handler.current_epoch == 3
+            assert os.path.isfile(output_dir)
+        finally:
+            est.logger.removeHandler(file_handler)
+            file_handler.close()
+            del est  # Clean up estimator and logger before deleting tmpdir
 
 
 @mx.util.use_np

@@ -61,7 +61,8 @@ bool SupportDNNLLogSoftmax(const SoftmaxParam& param, const NDArray& data) {
   // DNNL does not support temperature argument in their log_softmax function
   // now. Need update this once they start to support it.
   // Currently, DNNL shows bad performance when log_softmax is not performed on the last dimension
-  return !param.temperature.has_value() && CheckAxis(param.axis, ndim) == (ndim - 1) &&
+  return SupportDNNLAArch64JITPrimitives() &&
+         !param.temperature.has_value() && CheckAxis(param.axis, ndim) == (ndim - 1) &&
          SupportDNNL<1, 4, DNNLTypeMode::FloatTypes>(data) && out_dtype == data.dtype();
 }
 

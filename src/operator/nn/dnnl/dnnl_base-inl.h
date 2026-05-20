@@ -218,8 +218,33 @@ static inline bool SupportDNNL(const std::vector<NDArray>& inputs) {
   return SupportDNNL<1, 12, TypeMode, MixedTensors>(inputs);
 }
 
+static inline bool SupportDNNLAArch64JITPrimitives() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  // oneDNN 3.x still sends several AArch64 primitives through Xbyak_aarch64
+  // paths that fail with ERR_INTERNAL on Apple Silicon. Keep oneDNN enabled
+  // for primitives verified on arm64, and gate the fragile JIT-backed ones at
+  // their individual support checks.
+  return false;
+#else
+  return true;
+#endif
+}
+
+static inline bool SupportDNNLQuantizedOps() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  // oneDNN's AArch64 INT8 reorder/matmul quantization paths can enter the
+  // Xbyak_aarch64 JIT and fail with ERR_INTERNAL on Apple Silicon. Keep the
+  // float oneDNN backend enabled, but route quantized CPU ops to MXNet's
+  // fallback kernels until the upstream AArch64 INT8 JIT path is reliable.
+  return false;
+#else
+  return true;
+#endif
+}
+
 static inline bool SupportDNNLQuantize(const int out_type) {
-  return out_type == mshadow::kUint8 || out_type == mshadow::kInt8;
+  return SupportDNNLQuantizedOps() &&
+         (out_type == mshadow::kUint8 || out_type == mshadow::kInt8);
 }
 
 // Set by the pthread_atfork child handler (see src/initialize.cc). The

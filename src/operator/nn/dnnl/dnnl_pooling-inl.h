@@ -120,7 +120,8 @@ inline int GetPaddingSizeFull(dim_t x, int padl, int padr, int k, int s) {
 }
 
 inline bool SupportDNNLPooling(const PoolingParam& param) {
-  return (param.kernel.ndim() == 1 || param.kernel.ndim() == 2 || param.kernel.ndim() == 3) &&
+  return SupportDNNLAArch64JITPrimitives() &&
+         (param.kernel.ndim() == 1 || param.kernel.ndim() == 2 || param.kernel.ndim() == 3) &&
          (param.pool_type == pool_enum::kMaxPooling || param.pool_type == pool_enum::kAvgPooling) &&
          (!param.layout.has_value() ||
           (param.layout.value() == mshadow::kNCW || param.layout.value() == mshadow::kNCHW ||

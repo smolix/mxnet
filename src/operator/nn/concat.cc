@@ -258,6 +258,7 @@ inline static bool BackwardConcatStorageType(const nnvm::NodeAttrs& attrs,
 static constexpr size_t kDNNLConcatMaxInputs = 256;
 
 bool SupportDNNLConcat(const std::vector<NDArray>& arrs) {
+  if (!SupportDNNLAArch64JITPrimitives()) return false;
   if (arrs.size() > kDNNLConcatMaxInputs) return false;
   for (auto& arr : arrs) {
     if (arr.IsView() || !SupportDNNL<2, 12, AllTypes>(arr))

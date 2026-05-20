@@ -104,6 +104,12 @@ class CustomOperator {
     }
     auto exception = std::make_shared<std::exception_ptr>(nullptr);
     std::unique_lock<std::mutex> lock(mutex_);
+    if (destructing_) {
+      lock.unlock();
+      dmlc::Error err("CustomOperator is shutting down");
+      ctx.async_on_complete(&err);
+      return;
+    }
     q_.push([=]() mutable {
       bool prev_recording = Imperative::Get()->set_is_recording(recording);
       bool prev_training  = Imperative::Get()->set_is_training(training);
@@ -197,6 +203,7 @@ class CustomOperator {
     for (auto& worker : workers_)
       worker.join();
     workers_.clear();
+    num_free_threads_ = 0;
   }
 
   inline void Throw(const std::shared_ptr<std::exception_ptr>& exception) {

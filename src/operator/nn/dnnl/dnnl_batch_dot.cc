@@ -38,8 +38,16 @@ DMLC_REGISTER_PARAMETER(DNNLDotParam);
 
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_matmul.html
 bool SupportDNNLBatchDot(const std::vector<NDArray>& inputs) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  // The oneDNN AArch64 matmul/batch-dot implementation currently routes small
+  // CPU batch-dot workloads through a Xbyak_aarch64 JIT path that fails on
+  // Apple Silicon. Use MXNet's native CPU batch-dot fallback on ARM64 until
+  // that oneDNN path is reliable.
+  return false;
+#else
   return SupportDNNL<2, 12, DNNLTypeMode::FloatTypes>(inputs[DotIn::lhs]) &&
          SupportDNNL<2, 12, DNNLTypeMode::FloatTypes>(inputs[DotIn::rhs]);
+#endif
 }
 
 DNNLBatchDotFwd& DNNLBatchDotFwd::GetCached(const DNNLDotParam& param,
@@ -81,13 +89,13 @@ dnnl::primitive_attr GetQuantizationAttributes(const DNNLDotParam& param,
                                       inputs[DotIn::rhs_min].data().dptr<float>()[0],
                                       inputs[DotIn::rhs_max].data().dptr<float>()[0]);
   if (param.min_calib_range.has_value() && param.max_calib_range.has_value()) {
-    *out_scale = GetQuantizeScale(outputs[DotOut::out].dtype(),
+    *out_scale = lhs_scale_ * rhs_scale_ /
+                 GetQuantizeScale(outputs[DotOut::out].dtype(),
                                   param.min_calib_range.value(),
-                                  param.max_calib_range.value()) /
-                 lhs_scale_ / rhs_scale_;
+                                  param.max_calib_range.value());
     attr.set_scales_mask(DNNL_ARG_DST, 0);
   } else if (param.enabled_float_output.has_value()) {
-    *out_scale = 1.0f / lhs_scale_ / rhs_scale_;
+    *out_scale = lhs_scale_ * rhs_scale_;
     attr.set_scales_mask(DNNL_ARG_DST, 0);
   }
   return attr;

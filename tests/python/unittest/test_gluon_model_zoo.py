@@ -22,7 +22,14 @@ import sys
 import multiprocessing
 import pytest
 
-mx.npx.reset_np()
+
+@pytest.fixture(autouse=True)
+def _legacy_nd_semantics():
+    prev_arr = mx.util.is_np_array()
+    prev_shp = mx.util.is_np_shape()
+    mx.npx.reset_np()
+    yield
+    mx.npx.set_np(shape=prev_shp, array=prev_arr)
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)

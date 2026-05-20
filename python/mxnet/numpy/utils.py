@@ -47,13 +47,13 @@ uint64 = onp.dtype(onp.uint64)
 pi = onp.pi
 inf = onp.inf
 nan = onp.nan
-PZERO = onp.PZERO
-NZERO = onp.NZERO
-NINF = onp.NINF
-PINF = onp.PINF
+PZERO = getattr(onp, 'PZERO', 0.0)
+NZERO = getattr(onp, 'NZERO', -0.0)
+NINF = getattr(onp, 'NINF', -onp.inf)
+PINF = getattr(onp, 'PINF', onp.inf)
 e = onp.e
-NAN = onp.NAN
-NaN = onp.NaN
+NAN = getattr(onp, 'NAN', onp.nan)
+NaN = getattr(onp, 'NaN', onp.nan)
 
 newaxis = None
 

@@ -56,7 +56,8 @@ inline static bool DNNLPowMulScalarStorageType(const nnvm::NodeAttrs& attrs,
                                                DispatchMode* dispatch_mode,
                                                std::vector<int>* in_attrs,
                                                std::vector<int>* out_attrs) {
-  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
+  return DNNLStorageType(
+      attrs, dev_mask, SupportDNNLPowMulScalar(), dispatch_mode, in_attrs, out_attrs);
 }
 
 template <typename OP>
@@ -168,7 +169,7 @@ static void PowMulScalarComputeEx(const nnvm::NodeAttrs& attrs,
                                   const std::vector<mxnet::NDArray>& inputs,
                                   const std::vector<OpReqType>& req,
                                   const std::vector<mxnet::NDArray>& outputs) {
-  if (SupportDNNL<DNNLTypeMode::FloatTypes>(inputs[0])) {
+  if (SupportDNNLPowMulScalar() && SupportDNNL<DNNLTypeMode::FloatTypes>(inputs[0])) {
     DNNL_OPCHECK_INIT(false, outputs.size(), inputs, outputs);
     DNNLRun(DNNLPowMulScalarForward<true>, attrs, ctx, inputs, req, outputs);
     DNNL_OPCHECK_RUN(PowMulScalarCompute, attrs, ctx, inputs, req, outputs);

@@ -45,6 +45,24 @@ from ...util import is_np_shape, is_np_array, set_np
 from ... import numpy as _mx_np  # pylint: disable=reimported
 
 _CPU_SHARED = Device('cpu_shared', 0)
+_CPU_SHARED_MEMORY_AVAILABLE = None
+_CPU_SHARED_MEMORY_ERROR = None
+
+
+def _cpu_shared_memory_available():
+    """Return whether MXNet can allocate cpu_shared memory in this process."""
+    global _CPU_SHARED_MEMORY_AVAILABLE, _CPU_SHARED_MEMORY_ERROR
+    if _CPU_SHARED_MEMORY_AVAILABLE is None:
+        try:
+            arr = nd.empty((1,), ctx=_CPU_SHARED)
+            arr.wait_to_read()
+        except Exception as err:  # pylint: disable=broad-except
+            _CPU_SHARED_MEMORY_AVAILABLE = False
+            _CPU_SHARED_MEMORY_ERROR = str(err)
+        else:
+            _CPU_SHARED_MEMORY_AVAILABLE = True
+            _CPU_SHARED_MEMORY_ERROR = None
+    return _CPU_SHARED_MEMORY_AVAILABLE
 
 if sys.platform == 'darwin' or sys.platform == 'win32':
     def rebuild_ndarray(*args):
@@ -438,6 +456,15 @@ def _worker_fn(samples, batchify_fn, dataset=None):
     ForkingPickler(buf, pickle.HIGHEST_PROTOCOL).dump(batch)
     return buf.getvalue()
 
+
+def _worker_fn_no_shared_mem(samples, batchify_fn, dataset=None):
+    """Worker function that serializes batches without MXNet shared memory."""
+    # pylint: disable=unused-argument
+    global _worker_dataset
+    batch = batchify_fn([_worker_dataset[i] for i in samples])
+    return pickle.dumps(batch, pickle.HIGHEST_PROTOCOL)
+
+
 def _thread_worker_fn(samples, batchify_fn, dataset):
     """Threadpool worker function for processing data."""
     return batchify_fn([dataset[i] for i in samples])
@@ -650,8 +677,12 @@ class DataLoader(object):
         self._num_workers = num_workers if num_workers >= 0 else 0
         self._worker_pool = None
         self._prefetch = max(0, int(prefetch) if prefetch is not None else 2 * self._num_workers)
+        shared_memory_available = True
+        if self._num_workers > 0 and not self._thread_pool:
+            shared_memory_available = _cpu_shared_memory_available()
+        self._use_multiprocessing_shared_memory = shared_memory_available
         if batchify_fn is None:
-            if num_workers > 0 and not thread_pool:
+            if self._num_workers > 0 and not self._thread_pool and shared_memory_available:
                 self._batchify_fn = _batchify.Stack(use_shared_mem=True)
             else:
                 self._batchify_fn = _batchify.Stack()
@@ -682,6 +713,10 @@ class DataLoader(object):
             gc.collect()
             nd.waitall()
             if self._num_workers > 0:
+                if not self._thread_pool and not shared_memory_available:
+                    logging.info("MXNet cpu_shared memory is unavailable; falling back to "
+                                 "DataLoader pickle transport for %s workers. Last error: %s",
+                                 self._num_workers, _CPU_SHARED_MEMORY_ERROR)
                 self._create_worker_pool()
 
     def _create_worker_pool(self):
@@ -717,9 +752,15 @@ class DataLoader(object):
 
         # multi-worker
         self._create_worker_pool()
+        if self._thread_pool:
+            worker_fn = _thread_worker_fn
+        elif self._use_multiprocessing_shared_memory:
+            worker_fn = _worker_fn
+        else:
+            worker_fn = _worker_fn_no_shared_mem
         return _MultiWorkerIter(self._worker_pool, self._batchify_fn, self._batch_sampler,
                                 pin_memory=self._pin_memory, pin_device_id=self._pin_device_id,
-                                worker_fn=_thread_worker_fn if self._thread_pool else _worker_fn,
+                                worker_fn=worker_fn,
                                 prefetch=self._prefetch,
                                 dataset=self._dataset if self._thread_pool else None,
                                 data_loader=self, timeout=self._timeout)

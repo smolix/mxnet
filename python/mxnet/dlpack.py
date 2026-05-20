@@ -124,8 +124,8 @@ def ndarray_from_dlpack(array_cls):
         else:
             raise AttributeError("Required PyCapsule or object with __dlpack__")
         handle = NDArrayHandle()
-        assert ctypes.pythonapi.PyCapsule_IsValid(dlpack, _c_str_dltensor), ValueError(
-            'Invalid DLPack Tensor. DLTensor capsules can be consumed only once.')
+        if not ctypes.pythonapi.PyCapsule_IsValid(dlpack, _c_str_dltensor):
+            raise ValueError('Invalid DLPack Tensor. DLTensor capsules can be consumed only once.')
         dlpack_handle = ctypes.c_void_p(ctypes.pythonapi.PyCapsule_GetPointer(dlpack, _c_str_dltensor))
         check_call(_LIB.MXNDArrayFromDLPack(dlpack_handle, False, ctypes.byref(handle)))
         # Rename PyCapsule (DLPack)

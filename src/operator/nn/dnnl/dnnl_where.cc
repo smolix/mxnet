@@ -34,6 +34,8 @@ namespace op {
 
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_binary.html
 bool SupportDNNLWhere(const std::vector<NDArray>& inputs) {
+  if (!SupportDNNLAArch64JITPrimitives()) return false;
+
   if (inputs[0].dtype() == mshadow::kBool) {
     // oneDNN natively doesn't support bool type, however this operator was written
     // to allow using bool type for 'condition' tensor - data will be treated as uint8

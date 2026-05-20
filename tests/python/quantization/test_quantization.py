@@ -19,6 +19,7 @@
 Ref: http://images.nvidia.com/content/pdf/tesla/184457-Tesla-P4-Datasheet-NV-Final-Letter-Web.pdf
 """
 import os
+import platform
 import mxnet as mx
 import numpy as onp
 from mxnet import npx
@@ -63,6 +64,16 @@ def is_test_for_dnnl():
 def is_test_for_native_cpu():
     return (mx.current_device().device_type == 'cpu'
             and os.environ.get('ENABLE_ONEDNN_QUANTIZATION_TEST') == None)
+
+
+def is_aarch64():
+    return platform.machine().lower() in ('arm64', 'aarch64')
+
+
+def supports_dnnl_quantized_ops():
+    # oneDNN quantized and RNN paths currently hit Xbyak_aarch64 ERR_INTERNAL
+    # on Apple Silicon. x86 oneDNN coverage remains enabled.
+    return not is_aarch64()
 
 
 def get_low_high(qtype):
@@ -1524,6 +1535,9 @@ def test_get_optimal_thresholds():
         assert_almost_equal(onp.array([min_max_dict['layer1'][1]]), expected_threshold, rtol=1e-2, atol=1e-4)
 
 
+@_pytest_for_reset_np_fixture.mark.skipif(
+    not supports_dnnl_quantized_ops(),
+    reason='oneDNN quantized RNN is disabled on AArch64')
 @use_np
 def test_rnn_quantization():
     data_low = -1
@@ -1581,6 +1595,9 @@ def test_rnn_quantization():
 
 
 
+@_pytest_for_reset_np_fixture.mark.skipif(
+    not supports_dnnl_quantized_ops(),
+    reason='oneDNN quantized RNN is disabled on AArch64')
 @use_np
 def test_quantized_rnn():
     def check_quantized_rnn(num_layers, bidirectional, seq_len, batch_size, input_dim, state_size):

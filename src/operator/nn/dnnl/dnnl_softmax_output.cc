@@ -94,7 +94,7 @@ static DNNLSoftmaxOutputFwd& GetSoftmaxOutputForward(const SoftmaxOutputParam& p
 
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_softmax.html
 bool SupportDNNLSoftmaxOutput(const SoftmaxOutputParam& param, const NDArray& input) {
-  return SupportDNNL(input) && !param.multi_output;
+  return SupportDNNLAArch64JITPrimitives() && SupportDNNL(input) && !param.multi_output;
 }
 
 void DNNLSoftmaxOutputForward(const nnvm::NodeAttrs& attrs,

@@ -18,6 +18,8 @@
 # coding: utf-8
 """Experimental contributions"""
 
+import importlib.util
+
 from . import symbol
 from . import ndarray
 
@@ -27,7 +29,8 @@ from . import ndarray as nd
 from . import tensorboard
 
 from . import text
-from . import onnx
+if importlib.util.find_spec(__name__ + '.onnx') is not None:
+    from . import onnx
 from . import io
 from . import quantization
 from . import quantization as quant

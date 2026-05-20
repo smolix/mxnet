@@ -17,11 +17,29 @@
 
 import mxnet as mx
 from mxnet import np
-import torch
-import numpy
+import numpy as onp
 import pytest
 
+try:
+    import torch
+except ImportError:
+    torch = None
 
+
+def test_dlpack_numpy_mxnet_cpu():
+    x = onp.array([1.0, 2.0, 3.0], dtype=onp.float32)
+    nx = np.from_dlpack(x)
+    assert nx.device == mx.cpu(0)
+    assert onp.allclose(nx.asnumpy(), x)
+
+
+def test_dlpack_mxnet_numpy_cpu():
+    x = np.array([1.0, 2.0, 3.0], dtype="float32")
+    y = onp.from_dlpack(x)
+    assert onp.allclose(y, x.asnumpy())
+
+
+@pytest.mark.skipif(torch is None or not torch.cuda.is_available(), reason="CUDA is not available")
 def test_dlpack_torch_mxnet_torch():
     stream = torch.cuda.Stream()
     with torch.cuda.stream(stream):
@@ -36,6 +54,8 @@ def test_dlpack_torch_mxnet_torch():
     z += 1
     assert z == x
 
+
+@pytest.mark.skipif(torch is None or not torch.cuda.is_available(), reason="CUDA is not available")
 def test_dlpack_mxnet_torch_mxnet():
     x = np.array([5], device=mx.gpu(), dtype="float64") + 1
     stream = torch.cuda.Stream()
@@ -49,9 +69,11 @@ def test_dlpack_mxnet_torch_mxnet():
 
 def test_dlpack_error_message():
     with pytest.raises(AttributeError):
-        # raise Attribute Error, NumPy array is not PyCapsule or has __dlpack__ attribute
-        nx = numpy.array([5])
-        x = np.from_dlpack(nx)
+        # Raise AttributeError for objects that do not implement the DLPack protocol.
+        np.from_dlpack(object())
+
+    if torch is None or not torch.cuda.is_available():
+        pytest.skip("remaining error checks require CUDA")
     
     with pytest.raises(TypeError):
         # raise TypeError, Stream must be int or None

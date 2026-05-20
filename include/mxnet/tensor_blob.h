@@ -106,10 +106,16 @@ class TBlob {
    * \param DLTensor Object
    */
   explicit TBlob(const DLTensor& dltensor)
-      : dptr_(dltensor.data),
+      : dptr_(dltensor.data == nullptr ?
+                  nullptr :
+                  static_cast<void*>(static_cast<char*>(dltensor.data) + dltensor.byte_offset)),
         shape_(mxnet::TShape(dltensor.shape, dltensor.shape + dltensor.ndim)),
         type_flag_(DLDataTypeTransform(dltensor.dtype)),
         dltensor_(dltensor) {
+    dltensor_.data        = dptr_;
+    dltensor_.shape       = shape_.data();
+    dltensor_.strides     = nullptr;
+    dltensor_.byte_offset = 0;
     // compactness check for DLTensor
     if (dltensor.strides != nullptr) {
       // check strides

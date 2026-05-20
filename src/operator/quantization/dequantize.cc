@@ -38,7 +38,8 @@ bool DequantizeStorageType(const nnvm::NodeAttrs& attrs,
   *dispatch_mode = DispatchMode::kFCompute;
 #if MXNET_USE_ONEDNN == 1
   if (dev_mask == mshadow::cpu::kDevMask) {
-    *dispatch_mode = DispatchMode::kFComputeEx;
+    *dispatch_mode =
+        SupportDNNLQuantizedOps() ? DispatchMode::kFComputeEx : DispatchMode::kFCompute;
   }
 #endif
   (*out_attrs)[0] = kDefaultStorage;
@@ -54,7 +55,11 @@ static OpStatePtr CreateDequantizeState(const nnvm::NodeAttrs& attrs,
     state = OpStatePtr::Create<DequantizeOperator<gpu>>(attrs);
   } else {
 #if MXNET_USE_ONEDNN == 1
-    state = OpStatePtr::Create<SgDNNLDequantizeOperator>(attrs);
+    if (SupportDNNLQuantizedOps()) {
+      state = OpStatePtr::Create<SgDNNLDequantizeOperator>(attrs);
+    } else {
+      state = OpStatePtr::Create<DequantizeOperator<cpu>>(attrs);
+    }
 #else
     state = OpStatePtr::Create<DequantizeOperator<cpu>>(attrs);
 #endif

@@ -58,8 +58,11 @@ bool RequantizeStorageType(const nnvm::NodeAttrs& attrs,
                            std::vector<int>* out_attrs) {
   *dispatch_mode = DispatchMode::kFCompute;
 #if MXNET_USE_ONEDNN == 1
+  const RequantizeParam& param = nnvm::get<RequantizeParam>(attrs.parsed);
+  auto out_type                = GetQuantizeOutputType(param);
   if (dev_mask == mshadow::cpu::kDevMask) {
-    *dispatch_mode = DispatchMode::kFComputeEx;
+    *dispatch_mode =
+        SupportDNNLQuantize(out_type) ? DispatchMode::kFComputeEx : DispatchMode::kFCompute;
   }
 #endif
   (*out_attrs)[0] = kDefaultStorage;
@@ -95,9 +98,8 @@ inference accuracy.
 #if MXNET_USE_ONEDNN == 1
     .set_attr<bool>("TIsDNNL", true)
     .set_attr<FComputeEx>("FComputeEx<cpu>", RequantizeForwardExCPU)
-#else
-.set_attr<FCompute>("FCompute<cpu>", RequantizeForward<cpu>)
 #endif
+    .set_attr<FCompute>("FCompute<cpu>", RequantizeForward<cpu>)
     .set_attr<FNeedCalibrateInput>("FNeedCalibrateInput",
                                    [](const NodeAttrs& attrs) { return std::vector<int>{0}; })
     .set_attr<FResourceRequest>("FResourceRequest",

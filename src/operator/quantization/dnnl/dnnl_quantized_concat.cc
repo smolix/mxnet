@@ -211,7 +211,8 @@ inline static bool ConcatStorageType(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(in_attrs->size(), static_cast<size_t>(param_.num_args * 3));
   CHECK_EQ(out_attrs->size(), 3U);
 
-  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
+  return DNNLStorageType(
+      attrs, dev_mask, SupportDNNLQuantizedOps(), dispatch_mode, in_attrs, out_attrs);
 }
 
 NNVM_REGISTER_OP(_contrib_quantized_concat)

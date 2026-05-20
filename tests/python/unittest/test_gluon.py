@@ -964,6 +964,7 @@ def check_sequential_dc(net):
 
 @use_np
 @pytest.mark.garbage_expected
+@pytest.mark.filterwarnings('ignore:All children of this Sequential layer:UserWarning')
 def test_sequential():
     check_sequential(gluon.nn.Sequential())
     check_sequential(gluon.nn.HybridSequential())
@@ -1039,6 +1040,7 @@ def test_export(tmpdir):
     assert params_filename == tmpfile+'-0000.params'
 
 @use_np
+@pytest.mark.filterwarnings('ignore:Cannot decide type for the following arguments:UserWarning')
 def test_import():
     device = mx.device.current_device()
     net1 = gluon.model_zoo.vision.resnet18_v1(
@@ -1061,6 +1063,8 @@ def test_import():
     assert lines[2] == ')'
 
 
+@pytest.mark.filterwarnings('ignore:Currently the model has been hybridized:UserWarning')
+@pytest.mark.filterwarnings("ignore:Parameter '(weight|bias)' is already initialized:UserWarning")
 def test_hybrid_stale_cache():
     net = mx.gluon.nn.HybridSequential()
     net.add(mx.gluon.nn.Dense(10, weight_initializer='zeros', bias_initializer='ones', flatten=False))
@@ -1124,6 +1128,7 @@ def test_fill_shape_deferred():
 
 
 @use_np
+@pytest.mark.filterwarnings('ignore:Currently the model has been hybridized:UserWarning')
 def test_dtype():
     net = mx.gluon.model_zoo.vision.resnet18_v1()
     net.initialize()
@@ -1384,6 +1389,7 @@ def test_save_load(tmpdir):
     net2.load_parameters(param_path)
 
 @use_np
+@pytest.mark.filterwarnings("ignore:Parameter 'weight' is already initialized:UserWarning")
 def test_save_load_deduplicate_with_shared_params(tmpdir):
     class B(mx.gluon.Block):
         def __init__(self):
@@ -1566,6 +1572,7 @@ def test_hook():
     assert pre_hook_call_count == 2
 
 @use_np
+@pytest.mark.filterwarnings('ignore:register_op_hook is experimental:UserWarning')
 def test_op_hook_output_names():
     def check_name(block, expected_names, inputs=None, expected_opr_names=None, monitor_all=False):
         opr_names = []
@@ -1651,6 +1658,7 @@ def test_apply():
 
 @use_np
 @assert_raises_cudnn_not_satisfied(min_version='5.1.10')
+@pytest.mark.filterwarnings("ignore:Parameter 'weight' is already initialized:UserWarning")
 def test_summary():
     net = gluon.model_zoo.vision.resnet50_v1()
     net.initialize()
@@ -3049,6 +3057,7 @@ def test_ModulatedDeformableConvolution():
 @pytest.mark.parametrize('dc', [True, False])
 @pytest.mark.parametrize('hybridize', [True, False])
 @pytest.mark.garbage_expected
+@pytest.mark.filterwarnings('ignore:All children of this Sequential layer:UserWarning')
 def test_concatenate(dc, hybridize):
     if dc:
         class MyBlock(mx.gluon.HybridBlock):

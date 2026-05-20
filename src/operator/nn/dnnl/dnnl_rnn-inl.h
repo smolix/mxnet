@@ -568,10 +568,17 @@ class DNNLRnnOp {
 
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_rnn.html
 inline bool SupportDNNLRnn(const int input_dtype) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  // The oneDNN RNN primitive currently enters the Xbyak_aarch64 JIT on
+  // Apple Silicon and fails with ERR_INTERNAL. Keep generic oneDNN enabled,
+  // but route RNNs through MXNet's native CPU implementation on ARM64.
+  return false;
+#else
   if (input_dtype == mshadow::kFloat32 && dmlc::GetEnv("MXNET_USE_ONEDNN_RNN", 1)) {
     return true;
   }
   return false;
+#endif
 }
 
 inline bool SupportDNNLRnn(const RNNParam& param, const int input_dtype) {

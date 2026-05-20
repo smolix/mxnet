@@ -72,7 +72,8 @@ bool SupportDNNLBinary(const std::vector<NDArray>& inputs, const std::vector<NDA
   const bool is_any_dnnl_data =
       inputs[0].IsDNNLData() || inputs[1].IsDNNLData() || outputs[0].IsDNNLData();
 
-  return SupportDNNL<DNNLTypeMode::FloatTypes>(inputs[0]) &&
+  return SupportDNNLAArch64JITPrimitives() &&
+         SupportDNNL<DNNLTypeMode::FloatTypes>(inputs[0]) &&
          SupportDNNL<DNNLTypeMode::FloatTypes>(inputs[1]) &&
          (threshold_condition || is_any_dnnl_data);
 }

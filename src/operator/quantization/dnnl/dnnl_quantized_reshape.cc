@@ -59,7 +59,8 @@ inline bool QuantizedReshapeStorageType(const nnvm::NodeAttrs& attrs,
                                         std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 3U);
   CHECK_EQ(out_attrs->size(), 3U);
-  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
+  return DNNLStorageType(
+      attrs, dev_mask, SupportDNNLQuantizedOps(), dispatch_mode, in_attrs, out_attrs);
 }
 
 NNVM_REGISTER_OP(_contrib_quantized_reshape)

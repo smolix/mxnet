@@ -38,8 +38,11 @@ static bool QuantizeV2StorageType(const nnvm::NodeAttrs& attrs,
                                   std::vector<int>* out_attrs) {
   *dispatch_mode = DispatchMode::kFCompute;
 #if MXNET_USE_ONEDNN == 1
+  const QuantizeV2Param& param = nnvm::get<QuantizeV2Param>(attrs.parsed);
+  const auto out_type          = GetQuantizeOutputType(param);
   if (dev_mask == mshadow::cpu::kDevMask) {
-    *dispatch_mode = DispatchMode::kFComputeEx;
+    *dispatch_mode =
+        SupportDNNLQuantize(out_type) ? DispatchMode::kFComputeEx : DispatchMode::kFCompute;
   }
 #endif
   (*out_attrs)[0] = kDefaultStorage;
@@ -57,7 +60,13 @@ static OpStatePtr CreateQuantizeV2State(const nnvm::NodeAttrs& attrs,
     state = OpStatePtr::Create<QuantizeV2Operator<gpu>>(attrs);
   } else {
 #if MXNET_USE_ONEDNN == 1
-    state = OpStatePtr::Create<SgDNNLQuantizeOperator>(attrs);
+    const QuantizeV2Param& param = nnvm::get<QuantizeV2Param>(attrs.parsed);
+    const auto out_type          = GetQuantizeOutputType(param);
+    if (SupportDNNLQuantize(out_type)) {
+      state = OpStatePtr::Create<SgDNNLQuantizeOperator>(attrs);
+    } else {
+      state = OpStatePtr::Create<QuantizeV2Operator<cpu>>(attrs);
+    }
 #else
     state = OpStatePtr::Create<QuantizeV2Operator<cpu>>(attrs);
 #endif

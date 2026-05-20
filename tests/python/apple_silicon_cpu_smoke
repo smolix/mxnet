@@ -7,5 +7,12 @@ tests/python/unittest/test_engine.py::test_bulk
 tests/python/unittest/test_engine_shutdown.py
 tests/python/unittest/test_inplace_dtype.py
 tests/python/unittest/test_numpy_default_dtype.py
+tests/python/unittest/test_numpy_ndarray.py::test_dlpack_from_nonzero_byte_offset
 tests/python/unittest/test_smoke.py
+tests/python/unittest/test_gluon_data.py::test_multi_worker_iterator_close_recreates_pool
+tests/python/unittest/test_gluon_data.py::test_multi_worker_timeout_releases_pool
+tests/python/unittest/test_gluon_data.py::test_mx_data_loader_nopython_early_close_resets
+tests/python/array-api/test_data_interchange.py::test_dlpack_numpy_mxnet_cpu
+tests/python/array-api/test_data_interchange.py::test_dlpack_mxnet_numpy_cpu
 tests/python/dnnl/test_dnnl.py::test_dnnl_ndarray_slice
+tests/python/unittest/test_apple_silicon_onednn_fallback.py

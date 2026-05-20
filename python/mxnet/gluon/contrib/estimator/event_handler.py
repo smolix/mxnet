@@ -242,7 +242,7 @@ class LoggingHandler(TrainBegin, TrainEnd, EpochBegin, EpochEnd, BatchBegin, Bat
         log_interval=integer k: display metrics every interval of k batches
     metrics : list of EvalMetrics
         Metrics to be logged, logged at batch end, epoch end, train end.
-    priority : scalar, default np.Inf
+    priority : scalar, default np.inf
         Priority level of the LoggingHandler. Priority level is sorted in
         ascending order. The lower the number is, the higher priority level the
         handler is.
@@ -250,7 +250,7 @@ class LoggingHandler(TrainBegin, TrainEnd, EpochBegin, EpochEnd, BatchBegin, Bat
 
     def __init__(self, log_interval='epoch',
                  metrics=None,
-                 priority=np.Inf):
+                 priority=np.inf):
         super(LoggingHandler, self).__init__()
         if not isinstance(log_interval, int) and log_interval != 'epoch':
             raise ValueError("log_interval must be either an integer or string 'epoch'")
@@ -418,10 +418,10 @@ class CheckpointHandler(TrainBegin, BatchEnd, EpochEnd):
 
             if mode == 'min':
                 self.monitor_op = np.less
-                self.best = np.Inf
+                self.best = np.inf
             elif mode == 'max':
                 self.monitor_op = np.greater
-                self.best = -np.Inf
+                self.best = -np.inf
             else:
                 # use greater for accuracy and f1 and less otherwise
                 if _greater_is_better(self.monitor.get()[0]):
@@ -442,7 +442,7 @@ class CheckpointHandler(TrainBegin, BatchEnd, EpochEnd):
         self.current_epoch = 0
         self.current_batch = 0
         if self.save_best:
-            self.best = np.Inf if self.monitor_op == np.less else -np.Inf  # pylint: disable=comparison-with-callable
+            self.best = np.inf if self.monitor_op == np.less else -np.inf  # pylint: disable=comparison-with-callable
         if self.resume_from_checkpoint:
             error_msg = "To use resume from checkpoint, you must only specify " \
                         "the same type of period you used for training." \
@@ -695,7 +695,7 @@ class EarlyStoppingHandler(TrainBegin, EpochEnd, TrainEnd):
         if self.baseline is not None:
             self.best = self.baseline
         else:
-            self.best = np.Inf if self.monitor_op == np.less else -np.Inf  # pylint: disable=comparison-with-callable
+            self.best = np.inf if self.monitor_op == np.less else -np.inf  # pylint: disable=comparison-with-callable
 
     def epoch_end(self, estimator, *args, **kwargs):
         monitor_name, monitor_value = self.monitor.get()

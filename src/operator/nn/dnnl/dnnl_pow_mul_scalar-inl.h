@@ -61,6 +61,14 @@ using eltwise_fwd_pd_t = dnnl::eltwise_forward::primitive_desc;
 
 typedef ParamOpSign<DNNLPowMulScalarParam> DNNLPowMulScalarSignature;
 
+inline bool SupportDNNLPowMulScalar() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  return false;
+#else
+  return true;
+#endif
+}
+
 class DNNLPowMulScalarFwd {
  public:
   static DNNLPowMulScalarFwd& GetCached(const DNNLPowMulScalarParam& param,

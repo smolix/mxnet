@@ -692,7 +692,15 @@ def test_binomial_generator():
         trials_num = 10000
         success_prob = 0.25
 
-        buckets, probs = gen_buckets_probs_with_ppf(lambda x: ss.binom.ppf(x, trials_num, success_prob), 10)
+        buckets, _ = gen_buckets_probs_with_ppf(lambda x: ss.binom.ppf(x, trials_num, success_prob), 10)
+        support = np.arange(trials_num + 1)
+        bucket_edges = np.empty(len(buckets) * 2, dtype=np.float32)
+        for i, bucket in enumerate(buckets):
+            bucket_edges[i * 2] = bucket[0]
+            bucket_edges[i * 2 + 1] = bucket[1]
+        bucket_ids = np.searchsorted(bucket_edges, support.astype(dtype), side='right') // 2
+        probs = [ss.binom.pmf(support[bucket_ids == i], trials_num, success_prob).sum()
+                 for i in range(len(buckets))]
         generator_mx = lambda x: mx.nd.random.binomial(trials_num, success_prob,
                                                                 shape=x, ctx=ctx, dtype=dtype).asnumpy()
         nsamples = 1000

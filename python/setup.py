@@ -24,9 +24,8 @@ import sys
 from setuptools import find_packages # This must precede distutils
 
 BASE_INSTALL_REQUIRES = [
-    # numpy 2.x removed np.PZERO / np.NZERO; mxnet/numpy/utils.py
-    # still uses them and would need a port (issues.md item #44).
-    # Cap at <2 for now.
+    # NumPy 2.x compatibility is being restored incrementally; keep the
+    # package metadata conservative until the full NumPy 2 test sweep passes.
     'numpy>=1.17,<2',
     'requests>=2.20.0,<3',
     'graphviz<0.9.0,>=0.8.1',
@@ -98,6 +97,46 @@ def _env_flag(name):
     if value is None:
         return None
     return value.strip().lower() not in ('0', 'false', 'off', 'no')
+
+
+def _find_mxnet_packages():
+    """Find Python packages, optionally omitting ONNX-only integration code."""
+    excludes = []
+    if _env_flag('MXNET_SETUP_EXCLUDE_ONNX'):
+        excludes.extend([
+            'mxnet.onnx',
+            'mxnet.onnx.*',
+            'mxnet.contrib.onnx',
+            'mxnet.contrib.onnx.*',
+        ])
+    return find_packages(exclude=excludes)
+
+
+def _package_data():
+    """Return package data bundled into the mxnet package."""
+    return {'mxnet': [
+        'libmxnet.so',
+        'libmxnet.dylib',
+        'lib/*.so',
+        'lib/*.so.*',
+        'lib/*.dylib',
+    ] + bundled_libs}
+
+
+def _exclude_package_data():
+    """Return package data exclusions for optional integrations."""
+    if not _env_flag('MXNET_SETUP_EXCLUDE_ONNX'):
+        return {}
+    return {
+        'mxnet': [
+            'onnx/*',
+            'onnx/**/*',
+        ],
+        'mxnet.contrib': [
+            'onnx/*',
+            'onnx/**/*',
+        ],
+    }
 
 
 def _cuda_enabled_from_cmake_cache():
@@ -239,12 +278,13 @@ def config_cython():
 setup(name='mxnet',
       version=__version__,
       description=open(os.path.join(CURRENT_DIR, 'README.md')).read(),
-      packages=find_packages(),
-      # Bundle libmxnet.{so,dylib} plus any discovered runtime libs (CUDA/cuDNN/NCCL)
-      # inside the package so libinfo.find_lib_path() can find them under
-      # mxnet/ at install time. data_files goes to <sysprefix>/mxnet/ which
-      # find_lib_path() doesn't search.
-      package_data={'mxnet': ['libmxnet.so', 'libmxnet.dylib'] + bundled_libs},
+      packages=_find_mxnet_packages(),
+      # Bundle libmxnet.{so,dylib} plus staged runtime libraries inside the
+      # package so libinfo.find_lib_path() can find libmxnet under mxnet/ at
+      # install time. data_files goes to <sysprefix>/mxnet/ which find_lib_path()
+      # doesn't search.
+      package_data=_package_data(),
+      exclude_package_data=_exclude_package_data(),
       include_package_data=True,
       url='https://github.com/apache/mxnet',
       ext_modules=config_cython(),

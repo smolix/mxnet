@@ -23,6 +23,9 @@
 #include <mxnet/op_attr_types.h>
 #include "../nn/activation-inl.h"
 #include "../elemwise_op_common.h"
+#if MXNET_USE_ONEDNN == 1
+#include "operator/nn/dnnl/dnnl_base-inl.h"
+#endif
 
 namespace mxnet {
 namespace op {
@@ -70,7 +73,8 @@ inline static bool QuantizedActivationStorageType(const nnvm::NodeAttrs& attrs,
   *dispatch_mode = DispatchMode::kFCompute;
 #if MXNET_USE_ONEDNN == 1
   const ActivationParam& param = nnvm::get<ActivationParam>(attrs.parsed);
-  if (dev_mask == mshadow::cpu::kDevMask && param.act_type == activation::kReLU) {
+  if (dev_mask == mshadow::cpu::kDevMask && SupportDNNLQuantizedOps() &&
+      param.act_type == activation::kReLU) {
     *dispatch_mode = DispatchMode::kFComputeEx;
   }
 #else

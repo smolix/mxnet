@@ -20,6 +20,7 @@ from __future__ import absolute_import
 from __future__ import division
 import itertools
 import os
+import ctypes
 import pytest
 import operator
 import numpy as _np
@@ -1247,7 +1248,6 @@ def test_boolean_index_tuple():
 @pytest.mark.skipif(not is_op_runnable(), reason="Comparison ops can only run on either CPU instances, or GPU instances with"
                                                  " compute capability >= 53 if MXNet is built with USE_TVM_OP=ON")
 @use_np
-@pytest.mark.xfail(reason='Flaky boolean index assign. See #18334')
 def test_boolean_index_assign():
     # test boolean indexing assign
     shape = (3, 2, 3)
@@ -1370,6 +1370,47 @@ def test_dlpack(dtype, size):
     same(a_np+1, b)
     same(a_np+2, c)
     same(a_np+2, a_copy)
+
+
+@use_np
+def test_dlpack_from_nonzero_byte_offset():
+    from mxnet.dlpack import (  # pylint: disable=import-outside-toplevel
+        DLContext,
+        DLDataType,
+        DLDeviceType,
+        DLManagedTensor,
+        DeleterFunc,
+        _c_str_dltensor,
+    )
+
+    class OffsetDLPack:
+        def __init__(self):
+            self.base = _np.array([10.0, 20.0, 30.0], dtype=_np.float32)
+            self.shape = (ctypes.c_int64 * 1)(2)
+            self.deleter = DeleterFunc(lambda handle: None)
+            self.tensor = DLManagedTensor()
+            self.tensor.dl_tensor.data = self.base.ctypes.data_as(ctypes.c_void_p)
+            self.tensor.dl_tensor.ctx = DLContext(DLDeviceType.DLCPU, 0)
+            self.tensor.dl_tensor.ndim = 1
+            self.tensor.dl_tensor.dtype = DLDataType(*DLDataType.TYPE_MAP["float32"])
+            self.tensor.dl_tensor.shape = self.shape
+            self.tensor.dl_tensor.strides = None
+            self.tensor.dl_tensor.byte_offset = self.base.dtype.itemsize
+            self.tensor.manager_ctx = None
+            self.tensor.deleter = self.deleter
+
+        def __dlpack_device__(self):
+            return (DLDeviceType.DLCPU, 0)
+
+        def __dlpack__(self, stream=None):
+            assert stream is None
+            ptr = ctypes.cast(ctypes.pointer(self.tensor), ctypes.c_void_p)
+            return ctypes.pythonapi.PyCapsule_New(ptr, _c_str_dltensor, None)
+
+    producer = OffsetDLPack()
+    arr = mx.np.from_dlpack(producer)
+    assert_almost_equal(arr.asnumpy(), _np.array([20.0, 30.0], dtype=_np.float32))
+
 
 @use_np
 @pytest.mark.parametrize('np_array', [

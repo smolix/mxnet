@@ -43,9 +43,10 @@ namespace mxnet {
 namespace op {
 
 bool SupportDNNLAct(const ActivationParam& param) {
-  return param.act_type == activation::kReLU || param.act_type == activation::kSigmoid ||
-         param.act_type == activation::kLogSigmoid || param.act_type == activation::kMish ||
-         param.act_type == activation::kSoftReLU || param.act_type == activation::kTanh;
+  return SupportDNNLAArch64JITPrimitives() &&
+         (param.act_type == activation::kReLU || param.act_type == activation::kSigmoid ||
+          param.act_type == activation::kLogSigmoid || param.act_type == activation::kMish ||
+          param.act_type == activation::kSoftReLU || param.act_type == activation::kTanh);
 }
 
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_eltwise.html
@@ -54,8 +55,9 @@ bool SupportDNNLAct(const ActivationParam& param, const NDArray& input) {
 }
 
 bool SupportDNNLLeakyRelu(const LeakyReLUParam& param) {
-  return param.act_type == leakyrelu::kLeakyReLU || param.act_type == leakyrelu::kELU ||
-         param.act_type == leakyrelu::kGELU_ERF || param.act_type == leakyrelu::kGELU_TANH;
+  return SupportDNNLAArch64JITPrimitives() &&
+         (param.act_type == leakyrelu::kLeakyReLU || param.act_type == leakyrelu::kELU ||
+          param.act_type == leakyrelu::kGELU_ERF || param.act_type == leakyrelu::kGELU_TANH);
 }
 
 // Support for https://oneapi-src.github.io/oneDNN/v3/dev_guide_eltwise.html

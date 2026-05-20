@@ -41,7 +41,8 @@ DMLC_REGISTER_PARAMETER(DNNLConvParam);
 bool SupportDNNLConv(const ConvolutionParam& params, const NDArray& input) {
   if (params.kernel.ndim() > 3 || params.kernel.ndim() == 0)
     return false;
-  return SupportDNNL<3, 5, DNNLTypeMode::AllTypes>(input);
+  return SupportDNNLAArch64JITPrimitives() &&
+         SupportDNNL<3, 5, DNNLTypeMode::AllTypes>(input);
 }
 
 std::shared_ptr<dnnl::convolution_forward::primitive_desc> GetConvFwdImpl(

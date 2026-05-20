@@ -314,7 +314,7 @@ def _add_workload_concatenate(array_pool):
     a2 = res[..., 6:]
     OpArgMngr.add_workload('concatenate', (a0, a1, a2), axis=2)
     OpArgMngr.add_workload('concatenate', (a0, a1, a2), axis=-1)
-    OpArgMngr.add_workload('concatenate', (a0.T, a1.T, a2.T), axis=0)
+    OpArgMngr.add_workload('concatenate', (a0.transpose(), a1.transpose(), a2.transpose()), axis=0)
     out = np.empty(4, dtype=np.float32)
     OpArgMngr.add_workload('concatenate', (np.array([1, 2]), np.array([3, 4])), out=out)
     OpArgMngr.add_workload('concatenate', [array_pool['4x1'], array_pool['4x1']], axis=None)
@@ -951,12 +951,12 @@ def _add_workload_round_():
 def _add_workload_argsort():
     for dtype in [np.int32, np.float32]:
         a = np.arange(101, dtype=dtype)
-        OpArgMngr.add_workload('argsort', a)
-    OpArgMngr.add_workload('argsort', np.array([[3, 2], [1, 0]]), 1)
-    OpArgMngr.add_workload('argsort', np.array([[3, 2], [1, 0]]), 0)
+        OpArgMngr.add_workload('argsort', a, kind='quicksort')
+    OpArgMngr.add_workload('argsort', np.array([[3, 2], [1, 0]]), 1, kind='quicksort')
+    OpArgMngr.add_workload('argsort', np.array([[3, 2], [1, 0]]), 0, kind='quicksort')
     a = np.ones((3, 2, 1, 0))
     for axis in range(-a.ndim, a.ndim):
-        OpArgMngr.add_workload('argsort', a, axis)
+        OpArgMngr.add_workload('argsort', a, axis, kind='quicksort')
 
 
 def _add_workload_sort():
@@ -1379,12 +1379,12 @@ def _add_workload_add(array_pool):
 
 def _add_workload_arctan2():
     OpArgMngr.add_workload('arctan2', np.array([1, -1, 1]), np.array([1, 1, -1]))
-    OpArgMngr.add_workload('arctan2', np.array([np.PZERO, np.NZERO]), np.array([np.NZERO, np.NZERO]))
-    OpArgMngr.add_workload('arctan2', np.array([np.PZERO, np.NZERO]), np.array([np.PZERO, np.PZERO]))
-    OpArgMngr.add_workload('arctan2', np.array([np.PZERO, np.NZERO]), np.array([-1, -1]))
-    OpArgMngr.add_workload('arctan2', np.array([np.PZERO, np.NZERO]), np.array([1, 1]))
-    OpArgMngr.add_workload('arctan2', np.array([-1, -1]), np.array([np.PZERO, np.NZERO]))
-    OpArgMngr.add_workload('arctan2', np.array([1, 1]), np.array([np.PZERO, np.NZERO]))
+    OpArgMngr.add_workload('arctan2', np.array([0.0, -0.0]), np.array([-0.0, -0.0]))
+    OpArgMngr.add_workload('arctan2', np.array([0.0, -0.0]), np.array([0.0, 0.0]))
+    OpArgMngr.add_workload('arctan2', np.array([0.0, -0.0]), np.array([-1, -1]))
+    OpArgMngr.add_workload('arctan2', np.array([0.0, -0.0]), np.array([1, 1]))
+    OpArgMngr.add_workload('arctan2', np.array([-1, -1]), np.array([0.0, -0.0]))
+    OpArgMngr.add_workload('arctan2', np.array([1, 1]), np.array([0.0, -0.0]))
     OpArgMngr.add_workload('arctan2', np.array([1, -1, 1, -1]), np.array([-_np.inf, -_np.inf, _np.inf, _np.inf]))
     OpArgMngr.add_workload('arctan2', np.array([_np.inf, -_np.inf]), np.array([1, 1]))
     OpArgMngr.add_workload('arctan2', np.array([_np.inf, -_np.inf]), np.array([-_np.inf, -_np.inf]))
@@ -1754,7 +1754,7 @@ def _add_workload_log10(array_pool):
 
 
 def _add_workload_sqrt():
-    OpArgMngr.add_workload('sqrt', np.array([1, np.PZERO, np.NZERO, _np.inf, _np.nan]))
+    OpArgMngr.add_workload('sqrt', np.array([1, 0.0, -0.0, _np.inf, _np.nan]))
 
 
 def _add_workload_square():
@@ -2947,7 +2947,7 @@ def _add_workload_size():
 
 def _add_workload_take_along_axis():
     a = np.array([[10, 30, 20], [60, 40, 50]])
-    ai = np.argsort(a, axis=1)
+    ai = np.argsort(a, axis=1, stable=False)
     OpArgMngr.add_workload('take_along_axis', a, ai, axis=1)
 
 
@@ -3389,6 +3389,9 @@ def test_np_memory_array_function():
 @use_np
 @with_array_function_protocol
 @pytest.mark.serial
+@pytest.mark.filterwarnings('ignore:Mean of empty slice.:RuntimeWarning')
+@pytest.mark.filterwarnings('ignore:invalid value encountered in divide:RuntimeWarning')
+@pytest.mark.filterwarnings('ignore:overflow encountered in reduce:RuntimeWarning')
 def test_np_array_function_protocol():
     check_interoperability(_NUMPY_ARRAY_FUNCTION_LIST)
 
@@ -3396,6 +3399,7 @@ def test_np_array_function_protocol():
 @use_np
 @with_array_ufunc_protocol
 @pytest.mark.serial
+@pytest.mark.filterwarnings('ignore:divide by zero encountered in reciprocal:RuntimeWarning')
 def test_np_array_ufunc_protocol():
     prev_state = util.set_flush_denorms(False)
     try:

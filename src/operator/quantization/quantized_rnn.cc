@@ -163,7 +163,8 @@ bool QuantizedRnnStorageType(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(out_attrs->size(), num_outputs);
 
 #if MXNET_USE_ONEDNN == 1
-  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
+  return DNNLStorageType(
+      attrs, dev_mask, SupportDNNLQuantizedOps(), dispatch_mode, in_attrs, out_attrs);
 #else
   *dispatch_mode = DispatchMode::kFCompute;
 
@@ -213,7 +214,8 @@ OpStatePtr CreateQuantizedRnnState(const nnvm::NodeAttrs& attrs,
 #if MXNET_USE_ONEDNN == 1
   const int data_type   = in_types[quantized_rnn::kData];
   const int weight_type = in_types[quantized_rnn::kParams];
-  if (data_type == mshadow::kUint8 && weight_type == mshadow::kFloat32) {
+  if (SupportDNNLQuantizedOps() && data_type == mshadow::kUint8 &&
+      weight_type == mshadow::kFloat32) {
     const mxnet::TShape& data_shape = in_shapes[quantized_rnn::kData];
     state =
         OpStatePtr::Create<DNNLQuantizedRnnOp>(attrs, data_shape[0], data_shape[1], data_shape[2]);
@@ -282,7 +284,9 @@ static std::vector<ResourceRequest> QuantizedRnnResourceEx(const NodeAttrs& attr
 #endif
   } else {
 #if MXNET_USE_ONEDNN == 1
-    request.emplace_back(ResourceRequest::kTempSpace);
+    if (SupportDNNLQuantizedOps()) {
+      request.emplace_back(ResourceRequest::kTempSpace);
+    }
 #endif
   }
   return request;
@@ -328,6 +332,10 @@ NNVM_REGISTER_OP(RNN)
     .set_attr<FQuantizable>("FQuantizable",
                             [](const NodeAttrs& attrs) {
 #if MXNET_USE_ONEDNN == 1
+                              if (!SupportDNNLQuantizedOps()) {
+                                LOG(INFO) << "Quantized RNN is disabled for this CPU backend.";
+                                return QuantizeType::kNone;
+                              }
                               const RNNParam& param = nnvm::get<RNNParam>(attrs.parsed);
                               if (param.mode != rnn_enum::kLstm)
                                 LOG(INFO) << "Quantized RNN only supports LSTM mode.";

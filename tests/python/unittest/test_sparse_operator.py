@@ -1838,6 +1838,8 @@ def test_sparse_broadcast_mul_div():
             check_broadcast_mul(mx_lhs, mx_rhs, np_lhs, np_rhs, np.float32)
             check_broadcast_div(mx_lhs, mx_rhs, np_lhs, np_rhs, np.float32)
 
+@pytest.mark.filterwarnings(
+    'ignore:Assigning non-NDArray object to RowSparseNDArray is not efficient:RuntimeWarning')
 def test_batchnorm_fallback():
     # same test as test_operator.test_batchnorm_training, but tests fallback logic of batchnorm
     stype = 'row_sparse'
@@ -2004,8 +2006,8 @@ def test_sparse_nd_where():
         y_grad_init = np.random.randint(40, 50, np.prod(shape)).reshape(shape)
         where_exe_add = where_sym._bind(ctx=default_device(), args=args,
                                        args_grad=args_grad, grad_req='add')
-        where_exe_add.grad_dict['x'][:] = x_grad_init
-        where_exe_add.grad_dict['y'][:] = y_grad_init
+        where_exe_add.grad_dict['x'][:] = mx.nd.array(x_grad_init)
+        where_exe_add.grad_dict['y'][:] = mx.nd.array(y_grad_init)
         # test forward req='add'
         outputs = where_exe_add.forward(is_train=True)
         assert same(outputs[0].asnumpy(), out_expected)

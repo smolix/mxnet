@@ -166,6 +166,10 @@ and installs under a platform/architecture-specific `.deps/` prefix.
 ```bash
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
   uv run --python .venv/bin/python --with cmake --with ninja \
+    python tools/dependencies/build_libturbojpeg.py
+
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --python .venv/bin/python --with cmake --with ninja \
     python tools/dependencies/build_opencv.py
 
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
@@ -181,6 +185,8 @@ UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
   -DUSE_OPENCV=ON \
   -DOPENCV_ROOT="$(pwd)/.deps/opencv-4.9.0-macos-arm64" \
   -DOpenCV_DIR="$(pwd)/.deps/opencv-4.9.0-macos-arm64/lib/cmake/opencv4" \
+  -DUSE_LIBJPEG_TURBO=ON \
+  -DTURBOJPEG_ROOT="$(pwd)/.deps/libjpeg-turbo-3.0.4-macos-arm64" \
   -DUSE_BLAS=apple \
   -DUSE_LAPACK=ON \
   -DUSE_DIST_KVSTORE=OFF \
@@ -195,12 +201,14 @@ UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
 export MXNET_LIBRARY_PATH="$(pwd)/build-macos-arm64-opencv/libmxnet.dylib"
 ```
 
-The helper builds OpenCV 4.9.0 under `.deps/` with bundled image codec
-dependencies. On macOS it uses Apple SDK zlib to avoid SDK conflicts; on Linux
-it builds zlib with OpenCV. It ignores `/opt/local` and `/usr/local` during
-OpenCV configuration so MacPorts, Homebrew, and ad hoc local installs do not
-bleed into the dependency tree. MXNet CMake is pointed at the resulting prefix
-via `OPENCV_ROOT`.
+The helpers build libjpeg-turbo 3.0.4 and OpenCV 4.9.0 under `.deps/`. OpenCV
+is configured with bundled image codec dependencies; MXNet also links directly
+against libjpeg-turbo for the JPEG RecordIO fast path. On macOS OpenCV uses
+Apple SDK zlib to avoid SDK conflicts; on Linux it builds zlib with OpenCV. It
+ignores `/opt/local` and `/usr/local` during OpenCV configuration so MacPorts,
+Homebrew, and ad hoc local installs do not bleed into the dependency tree.
+MXNet CMake is pointed at the resulting prefixes via `OPENCV_ROOT` and
+`TURBOJPEG_ROOT`.
 
 If the checkout path contains shell-special characters such as spaces or
 parentheses, the helper re-enters through a stable `/private/tmp/mxnet-opencv-*`

@@ -249,6 +249,24 @@ To opt into OpenMP on Apple Silicon, add `-DUSE_OPENMP=ON` and
 `-DOPENMP_ROOT="$(pwd)/.deps/openmp-22.1.5-macos-arm64"` to the CMake
 configure command.
 
+To opt into the vision/data pipeline profile without Homebrew or MacPorts,
+build repo-local libjpeg-turbo and OpenCV through UV, then add the OpenCV and
+libjpeg-turbo prefixes to the CMake configure command:
+
+```bash
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --with cmake --with ninja python tools/dependencies/build_libturbojpeg.py
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \
+  uv run --with cmake --with ninja python tools/dependencies/build_opencv.py
+```
+
+Add `-DUSE_OPENCV=ON`,
+`-DOPENCV_ROOT="$(pwd)/.deps/opencv-4.9.0-macos-arm64"`,
+`-DOpenCV_DIR="$(pwd)/.deps/opencv-4.9.0-macos-arm64/lib/cmake/opencv4"`,
+`-DUSE_LIBJPEG_TURBO=ON`, and
+`-DTURBOJPEG_ROOT="$(pwd)/.deps/libjpeg-turbo-3.0.4-macos-arm64"` to the CMake
+configure command.
+
 After installing the Python binding, run the focused Apple Silicon CPU smoke
 subset:
 

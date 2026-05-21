@@ -290,6 +290,34 @@ def test_attach_grad():
         check_attach_grad(x)
 
 
+def test_attach_grad_add_accumulates_existing_grad():
+    x = mx.nd.ones((2, 3), dtype='float32')
+    x.attach_grad(grad_req='add')
+    x.grad[:] = 5
+
+    with record():
+        y = (x * 3).sum()
+    y.backward()
+
+    assert x.grad.dtype == np.float32
+    assert_almost_equal(x.grad.asnumpy(), np.full((2, 3), 8, dtype='float32'))
+
+
+@use_np
+def test_np_attach_grad_add_accumulates_existing_grad_and_preserves_dtype():
+    x = mx.np.ones((2, 3), dtype='float16')
+    x.attach_grad(grad_req='add')
+    x.grad[:] = mx.np.full((2, 3), 5, dtype='float16')
+
+    with record():
+        y = (x * mx.np.array(3, dtype='float16')).sum()
+    y.backward()
+
+    assert isinstance(x.grad, mx.np.ndarray)
+    assert x.grad.dtype == np.float16
+    assert_almost_equal(x.grad.asnumpy(), np.full((2, 3), 8, dtype='float16'))
+
+
 def test_is_train():
     x = mx.nd.ones((10, 10))
     x.attach_grad()

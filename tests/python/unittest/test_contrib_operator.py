@@ -335,6 +335,48 @@ def test_multibox_prior_op():
     boxes = Y.reshape((h, w, 5, 4))
     assert_allclose(boxes.asnumpy()[250, 250, 0, :], np.array([-0.948249,  0.362671,  1.636436,  0.530377]), atol=1e-5, rtol=1e-5)
 
+def _multibox_prior_expected(height, width, sizes, ratios, steps, offsets, clip=False):
+    boxes = []
+    for r in range(height):
+        center_y = (r + offsets[0]) * steps[0]
+        for c in range(width):
+            center_x = (c + offsets[1]) * steps[1]
+            ratio = np.sqrt(ratios[0])
+            for size in sizes:
+                half_w = size * height / width * ratio / 2
+                half_h = size / ratio / 2
+                boxes.append([center_x - half_w, center_y - half_h,
+                              center_x + half_w, center_y + half_h])
+            for ratio in ratios[1:]:
+                ratio = np.sqrt(ratio)
+                half_w = sizes[0] * height / width * ratio / 2
+                half_h = sizes[0] / ratio / 2
+                boxes.append([center_x - half_w, center_y - half_h,
+                              center_x + half_w, center_y + half_h])
+    expected = np.array(boxes, dtype=np.float32).reshape((1, -1, 4))
+    if clip:
+        expected = np.clip(expected, 0, 1)
+    return expected
+
+def test_multibox_prior_explicit_steps_offsets_clip_and_symbolic():
+    data_shape = (1, 3, 2, 3)
+    sizes = [0.4, 0.8]
+    ratios = [1.0, 2.0, 0.5]
+    steps = [0.3, 0.2]
+    offsets = [0.0, 1.0]
+    data_np = np.zeros(data_shape, dtype=np.float32)
+    expected = _multibox_prior_expected(
+        data_shape[2], data_shape[3], sizes, ratios, steps, offsets, clip=True)
+
+    out = mx.contrib.nd.MultiBoxPrior(mx.nd.array(data_np), sizes=sizes, ratios=ratios,
+                                      steps=steps, offsets=offsets, clip=True)
+    assert_allclose(out.asnumpy(), expected, atol=1e-6, rtol=1e-6)
+
+    data = mx.sym.Variable('data')
+    sym = mx.contrib.sym.MultiBoxPrior(data, sizes=sizes, ratios=ratios,
+                                       steps=steps, offsets=offsets, clip=True)
+    check_symbolic_forward(sym, [data_np], [expected], atol=1e-6, rtol=1e-6)
+
 def test_box_encode_op():
     anchors = mx.nd.array([[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]]).reshape((1, -1, 4))
     refs = mx.nd.array([[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]]).reshape((1, -1, 4))

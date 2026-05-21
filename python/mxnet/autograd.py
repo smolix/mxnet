@@ -28,7 +28,6 @@ from .base import NDArrayHandle, c_array, c_handle_array, c_array_buf, MXCallbac
 from .ndarray import NDArray, _ndarray_cls
 from .ndarray import _GRAD_REQ_MAP
 from .symbol import Symbol
-from .util import is_np_array
 
 
 def set_recording(is_recording): #pylint: disable=redefined-outer-name
@@ -457,31 +456,43 @@ class Function(object):
             outputs = (outputs,)
 
         key = Function._registry.inc()
-        if is_np_array():
-            from .numpy import ndarray
-            array_cls = ndarray
-        else:
-            array_cls = NDArray
+        from .numpy import ndarray as _np_ndarray  # pylint: disable=import-outside-toplevel
+
+        def _array_cls(arr):
+            return _np_ndarray if isinstance(arr, _np_ndarray) else NDArray
+
+        def _matches_array_cls(arr, cls):
+            if cls is NDArray:
+                return isinstance(arr, NDArray) and not isinstance(arr, _np_ndarray)
+            return isinstance(arr, cls)
+
+        output_classes = [_array_cls(i) for i in outputs]
+        input_classes = [_array_cls(i) for i in inputs]
 
         def backward_entry(num_ograds, num_igrads, ptrs, reqs, is_train, _):
             """entry point for backward."""
             # pylint: disable=W0613
             try:
-                output_grads = [array_cls(ctypes.cast(i, NDArrayHandle), writable=False) \
-                                for i in ptrs[:num_ograds]]
-                input_grads = [array_cls(ctypes.cast(i, NDArrayHandle), writable=True) \
-                               for i in ptrs[num_ograds:num_ograds+num_igrads]]
+                output_grads = [
+                    cls(ctypes.cast(i, NDArrayHandle), writable=False)
+                    for cls, i in zip(output_classes, ptrs[:num_ograds])
+                ]
+                input_grads = [
+                    cls(ctypes.cast(i, NDArrayHandle), writable=True)
+                    for cls, i in zip(input_classes, ptrs[num_ograds:num_ograds+num_igrads])
+                ]
                 reqs = [reqs[i] for i in range(num_igrads)]
                 rets = self.backward(*output_grads)
-                if isinstance(rets, array_cls):
+                if isinstance(rets, NDArray):
                     rets = (rets,)
                 assert len(rets) == len(input_grads), \
                     f"{self.__class__.name}.backward must return exactly the same number " \
                     "of NDArrays as the number of NDArrays arguments to forward." \
                     f"Expecting {len(input_grads)} got {len(rets)}"
-                for igrad, ret, req in zip(input_grads, rets, reqs):
-                    assert isinstance(ret, array_cls), \
-                        f"autograd.Function.backward must return NDArrays, not {type(ret)}"
+                for igrad, ret, req, input_cls in zip(input_grads, rets, reqs, input_classes):
+                    assert _matches_array_cls(ret, input_cls), \
+                        "autograd.Function.backward must return gradients matching the " \
+                        f"corresponding input array class, not {type(ret)}"
                     if req == 0:  # null
                         continue
                     elif req in (1, 2):  # write or inplace

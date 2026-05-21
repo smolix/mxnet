@@ -412,6 +412,33 @@ def test_function_backward_null_grad_req_does_not_skip_later_inputs():
     assert_almost_equal(y.grad.asnumpy(), np.full((2, 3), 6, dtype='float32'))
 
 
+@use_np
+def test_function_backward_preserves_legacy_ndarray_class_under_np_semantics():
+    seen_legacy_grad = []
+
+    class Scale(mx.autograd.Function):
+        def forward(self, x):
+            return x * 2
+
+        def backward(self, dy):
+            seen_legacy_grad.append(
+                isinstance(dy, mx.nd.NDArray) and not isinstance(dy, mx.np.ndarray))
+            return mx.nd.ones_like(dy) * 2
+
+    x = mx.nd.ones((2, 3), dtype='float32')
+    x.attach_grad()
+
+    with record():
+        y = Scale()(x).sum()
+    y.backward()
+    mx.nd.waitall()
+
+    assert seen_legacy_grad == [True]
+    assert isinstance(x.grad, mx.nd.NDArray)
+    assert not isinstance(x.grad, mx.np.ndarray)
+    assert_almost_equal(x.grad.asnumpy(), np.full((2, 3), 2, dtype='float32'))
+
+
 def test_is_train():
     x = mx.nd.ones((10, 10))
     x.attach_grad()

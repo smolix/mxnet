@@ -37,7 +37,12 @@ def _repo_root():
     return Path(__file__).resolve().parents[3]
 
 
-def _setup_install_requires(monkeypatch, tmp_path, cmake_cache):
+def _libinfo_version():
+    libinfo = runpy.run_path(str(_repo_root() / "python" / "mxnet" / "libinfo.py"))
+    return libinfo["__version__"]
+
+
+def _setup_metadata(monkeypatch, tmp_path, cmake_cache, package_version=None):
     repo_root = _repo_root()
     python_dir = repo_root / "python"
     fake_build = tmp_path / "build"
@@ -69,6 +74,10 @@ def _setup_install_requires(monkeypatch, tmp_path, cmake_cache):
     monkeypatch.setenv("MXNET_LIBRARY_PATH", str(fake_libmxnet))
     monkeypatch.setenv("MXNET_SETUP_SKIP_AUTOCOMPLETE", "1")
     monkeypatch.setenv("MXNET_SETUP_ENABLE_CUDA_DEPS", "0")
+    if package_version is None:
+        monkeypatch.delenv("MXNET_PACKAGE_VERSION", raising=False)
+    else:
+        monkeypatch.setenv("MXNET_PACKAGE_VERSION", package_version)
     monkeypatch.delenv("MXNET_SETUP_ENABLE_OPENCV_DEPS", raising=False)
     monkeypatch.setitem(sys.modules, "setuptools", fake_setuptools)
     monkeypatch.setitem(sys.modules, "setuptools.extension", fake_extension)
@@ -81,7 +90,11 @@ def _setup_install_requires(monkeypatch, tmp_path, cmake_cache):
         sys.path[:] = original_path
 
     assert "install_requires" in captured
-    return captured["install_requires"]
+    return captured
+
+
+def _setup_install_requires(monkeypatch, tmp_path, cmake_cache):
+    return _setup_metadata(monkeypatch, tmp_path, cmake_cache)["install_requires"]
 
 
 def test_setup_metadata_declares_opencv_python_dependency_when_enabled(monkeypatch, tmp_path):
@@ -104,6 +117,38 @@ def test_setup_metadata_omits_opencv_python_dependency_when_disabled(monkeypatch
     assert not any(req.startswith("opencv-python") for req in install_requires)
 
 
+def test_setup_metadata_uses_explicit_package_version(monkeypatch, tmp_path):
+    metadata = _setup_metadata(
+        monkeypatch,
+        tmp_path,
+        "USE_CUDA:BOOL=OFF\nUSE_OPENCV:BOOL=OFF\n",
+        package_version="2.0.0+o11.override",
+    )
+
+    assert metadata["version"] == "2.0.0+o11.override"
+
+
+def test_setup_metadata_falls_back_to_libinfo_version(monkeypatch, tmp_path):
+    metadata = _setup_metadata(
+        monkeypatch,
+        tmp_path,
+        "USE_CUDA:BOOL=OFF\nUSE_OPENCV:BOOL=OFF\n",
+    )
+
+    assert metadata["version"] == _libinfo_version()
+
+
+def test_setup_metadata_empty_package_version_falls_back_to_libinfo(monkeypatch, tmp_path):
+    metadata = _setup_metadata(
+        monkeypatch,
+        tmp_path,
+        "USE_CUDA:BOOL=OFF\nUSE_OPENCV:BOOL=OFF\n",
+        package_version="  ",
+    )
+
+    assert metadata["version"] == _libinfo_version()
+
+
 def test_release_wheel_build_disables_opencv_explicitly():
     workflow = (
         _repo_root() / ".github" / "workflows" / "release-wheel.yml"
@@ -124,6 +169,14 @@ def test_legacy_pip_setup_handles_opencv_runtime_policy():
     assert "MXNET_SETUP_ALLOW_SYSTEM_OPENCV" in setup_py
     assert "_copy_opencv_libraries" in setup_py
     assert "libopencv_" in setup_py
+
+
+def test_legacy_pip_setup_supports_package_version_override():
+    setup_py = (_repo_root() / "tools" / "pip" / "setup.py").read_text()
+
+    assert "MXNET_PACKAGE_VERSION" in setup_py
+    assert "_package_version(libinfo['__version__'])" in setup_py
+    assert "package_version_overridden" in setup_py
 
 
 def test_opencv_policy_rejects_silent_system_dependency():

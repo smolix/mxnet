@@ -42,8 +42,15 @@ libinfo_py = os.path.join(CURRENT_DIR, 'mxnet-build/python/mxnet/libinfo.py')
 libinfo = {'__file__': libinfo_py}
 exec(compile(open(libinfo_py, "rb").read(), libinfo_py, 'exec'), libinfo, libinfo)
 
+
+def _package_version(default_version):
+    """Return the explicit package version override, or the default version."""
+    return os.environ.get('MXNET_PACKAGE_VERSION', '').strip() or default_version
+
+
 LIB_PATH = libinfo['find_lib_path']()
-__version__ = libinfo['__version__']
+__version__ = _package_version(libinfo['__version__'])
+package_version_overridden = bool(os.environ.get('MXNET_PACKAGE_VERSION', '').strip())
 
 # set by the CD pipeline
 is_release = os.environ.get("RELEASE_BUILD", "False").strip().lower() in ['true', '1']
@@ -52,11 +59,11 @@ is_release = os.environ.get("RELEASE_BUILD", "False").strip().lower() in ['true'
 travis_tag = os.environ.get("TRAVIS_TAG", "").strip()
 
 # nightly build tag
-if not travis_tag and not is_release:
+if not package_version_overridden and not travis_tag and not is_release:
     __version__ += 'b{0}'.format(datetime.today().strftime('%Y%m%d'))
 
 # patch build tag
-elif travis_tag.startswith('patch-'):
+elif not package_version_overridden and travis_tag.startswith('patch-'):
     __version__ = os.environ['TRAVIS_TAG'].split('-')[1]
 
 DEPENDENCIES = [

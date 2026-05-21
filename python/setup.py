@@ -91,8 +91,14 @@ libinfo_py = os.path.join(CURRENT_DIR, 'mxnet/libinfo.py')
 libinfo = {'__file__': libinfo_py}
 exec(compile(open(libinfo_py, "rb").read(), libinfo_py, 'exec'), libinfo, libinfo)
 
+
+def _package_version(default_version):
+    """Return the explicit package version override, or the default version."""
+    return os.environ.get('MXNET_PACKAGE_VERSION', '').strip() or default_version
+
+
 LIB_PATH = libinfo['find_lib_path']()
-__version__ = libinfo['__version__']
+__version__ = _package_version(libinfo['__version__'])
 
 sys.path.insert(0, CURRENT_DIR)
 

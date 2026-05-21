@@ -5,8 +5,10 @@ This document describes the actual recipe used to produce the
 MXNet on Blackwell, install the wheel from the GitHub release instead —
 see [`README.md`](README.md).
 
-The recipe targets a single GPU architecture (`sm_120`). Multi-arch
-fatbin support is tracked in [`issues.md`](issues.md) item 31.
+The recipe targets an explicit multi-arch CUDA fatbin: `sm_80`, `sm_86`,
+`sm_89`, `sm_90`, and `sm_120` SASS, plus `compute_120` PTX fallback.
+This is the release-wheel matrix used to keep Ampere, Ada, Hopper, and
+Blackwell coverage explicit.
 
 ## Tested host
 
@@ -78,18 +80,18 @@ cmake .. -G Ninja \
   -DUSE_OPENCV=OFF \
   -DUSE_LAPACK=ON \
   -DUSE_BLAS=open \
-  -DMXNET_CUDA_ARCH="12.0" \
-  -DCMAKE_CUDA_ARCHITECTURES="120" \
+  -DMXNET_CUDA_ARCH="8.0;8.6;8.9;9.0;12.0+PTX" \
   -DCMAKE_INSTALL_PREFIX=/opt/mxnet
 ```
 
 Key flags:
 
-- `MXNET_CUDA_ARCH="12.0"` and `CMAKE_CUDA_ARCHITECTURES="120"` together
-  pin the build to Blackwell only. To add Ampere / Ada / Hopper, expand
-  to `"8.0;8.6;8.9;9.0;12.0"` and `"80;86;89;90;120"` respectively. The
-  release wheel intentionally stays single-arch to keep the artefact
-  size manageable.
+- `MXNET_CUDA_ARCH="8.0;8.6;8.9;9.0;12.0+PTX"` is the release matrix:
+  `sm_80`, `sm_86`, `sm_89`, `sm_90`, and `sm_120` SASS, plus
+  `compute_120` PTX fallback. Leave `CMAKE_CUDA_ARCHITECTURES` unset; the
+  top-level CMake config sets it to `OFF` so MXNet's
+  `CUDA_SELECT_NVCC_ARCH_FLAGS` emits the fatbin matrix from
+  `MXNET_CUDA_ARCH`.
 - `USE_F16C=ON` enables the F16C intrinsics path for fp16 (de)serialization.
 - `USE_ONEDNN=ON` picks up the vendored v3.11 submodule.
 - `USE_DIST_KVSTORE=OFF` skips ps-lite; not needed for single-host
@@ -288,12 +290,10 @@ expected — see [`issues.md`](issues.md).
    If your distro defaults to GCC 14, set `CXX=g++-13 CC=gcc-13` before
    cmake or NVCC will reject host headers.
 
-3. **`sm_120` PTX-only JIT stall.** The current build emits only
-   `compute_120` PTX (no SASS). The first kernel launch per process
-   pays a JIT compile penalty that can be hundreds of milliseconds.
-   To pre-compile SASS, add
-   `-gencode arch=compute_120,code=[compute_120,sm_120]` to the CUDA
-   flags. Tracked in [`issues.md`](issues.md) item 20.
+3. **Avoid `sm_120` PTX-only builds.** The release matrix entry
+   `12.0+PTX` emits both `sm_120` SASS and `compute_120` PTX. A
+   PTX-only Blackwell build pays a first-launch JIT compile penalty that
+   can be hundreds of milliseconds per process.
 
 4. **bf16 on AMD Zen 2 / older Intel.** oneDNN v3 still supports bf16
    primitives, but on CPUs without AVX-512-BF16 it silently emulates

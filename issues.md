@@ -186,8 +186,9 @@ post-fix GPU or DNNL core full-run summary is recorded here yet.
       deferred-compute plus GPU reducer shard passed `33 passed` in 5.22s on
       2026-05-21, adding a fresh direct-pytest GPU smoke after the latest
       commits.
-- [ ] C++ gtest: rerun the two BatchNorm mixed GPU/CPU filters directly before
-      scheduling another broad `mxnet_unit_tests` pass.
+- [x] C++ gtest: reran the BatchNorm mixed GPU/CPU filter
+      `BATCH_NORM.Test2DBackwardMixed*_gpu_cpu*`; all six focused cases passed
+      on 2026-05-21 before another broad `mxnet_unit_tests` pass.
 
 ---
 

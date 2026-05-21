@@ -71,6 +71,31 @@ class _Formatter(logging.Formatter):
         self._style._fmt = fmt # pylint: disable= no-member
         return super(_Formatter, self).format(record)
 
+class _CloseOnEmitFileHandler(logging.FileHandler):
+    """File handler that does not keep the log file open between records."""
+
+    def __init__(self, filename, mode):
+        super(_CloseOnEmitFileHandler, self).__init__(filename, mode, delay=True)
+        if self.mode and self.mode[0] in ('w', 'x'):
+            stream = self._open()
+            stream.close()
+            self.mode = 'a'
+
+    def emit(self, record):
+        try:
+            if self.stream is None:
+                self.stream = self._open()
+            logging.StreamHandler.emit(self, record)
+        finally:
+            self._close_stream()
+
+    def _close_stream(self):
+        if self.stream:
+            stream = self.stream
+            self.stream = None
+            stream.flush()
+            stream.close()
+
 def getLogger(name=None, filename=None, filemode=None, level=WARNING):
     """Gets a customized logger.
 
@@ -124,16 +149,21 @@ def get_logger(name=None, filename=None, filemode=None, level=WARNING):
     """
     logger = logging.getLogger(name)
     if name is not None and not getattr(logger, '_init_done', None):
-        logger._init_done = True
+        hdlr = None
         if filename:
             mode = filemode if filemode else 'a'
-            hdlr = logging.FileHandler(filename, mode)
+            hdlr = _CloseOnEmitFileHandler(filename, mode)
         else:
             hdlr = logging.StreamHandler() # pylint: disable=redefined-variable-type
             # the `_Formatter` contain some escape character to
             # represent color, which is not suitable for FileHandler,
             # (TODO) maybe we can add another Formatter for FileHandler.
             hdlr.setFormatter(_Formatter())
-        logger.addHandler(hdlr)
-        logger.setLevel(level)
+        try:
+            logger.addHandler(hdlr)
+            logger.setLevel(level)
+        except Exception:
+            hdlr.close()
+            raise
+        logger._init_done = True
     return logger

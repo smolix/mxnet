@@ -38,8 +38,12 @@ MXNET_REGISTER_API("_npi.svd").set_body([](runtime::MXNetArgs args, runtime::MXN
   // outputs
   int num_outputs = 0;
   auto ndoutputs  = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
-  *ret            = ADT(
-      0, {NDArrayHandle(ndoutputs[0]), NDArrayHandle(ndoutputs[1]), NDArrayHandle(ndoutputs[2])});
+  std::vector<NDArrayHandle> ndarray_handles;
+  ndarray_handles.reserve(num_outputs);
+  for (int i = 0; i < num_outputs; ++i) {
+    ndarray_handles.emplace_back(ndoutputs[i]);
+  }
+  *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
 });
 
 }  // namespace mxnet

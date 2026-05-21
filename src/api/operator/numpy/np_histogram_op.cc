@@ -73,7 +73,12 @@ MXNET_REGISTER_API("_npi.histogram")
       NDArray** out   = nullptr;
       int num_outputs = 0;
       auto ndoutputs  = Invoke(op, &attrs, num_inputs, inputs_vec.data(), &num_outputs, out);
-      *ret            = ADT(0, {NDArrayHandle(ndoutputs[0]), NDArrayHandle(ndoutputs[1])});
+      std::vector<NDArrayHandle> ndarray_handles;
+      ndarray_handles.reserve(num_outputs);
+      for (int i = 0; i < num_outputs; ++i) {
+        ndarray_handles.emplace_back(ndoutputs[i]);
+      }
+      *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
     });
 
 }  // namespace mxnet

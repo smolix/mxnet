@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 import random
 import string
+import warnings
 
 def test_recordio(tmpdir):
     frec = tmpdir.join('rec')
@@ -118,13 +119,15 @@ def test_indexed_recordio_closes_handles_when_index_load_fails(monkeypatch):
 def test_recordio_pack_label():
     N = 255
 
-    for i in range(1, N):
-        for j in range(N):
-            content = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(j))
-            content = content.encode('utf-8')
-            label = np.random.uniform(size=i).astype(np.float32)
-            header = (0, label, 0, 0)
-            s = mx.recordio.pack(header, content)
-            rheader, rcontent = mx.recordio.unpack(s)
-            assert (label == rheader.label).all()
-            assert content == rcontent
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        for i in range(1, N):
+            for j in range(N):
+                content = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(j))
+                content = content.encode('utf-8')
+                label = np.random.uniform(size=i).astype(np.float32)
+                header = (0, label, 0, 0)
+                s = mx.recordio.pack(header, content)
+                rheader, rcontent = mx.recordio.unpack(s)
+                assert (label == rheader.label).all()
+                assert content == rcontent

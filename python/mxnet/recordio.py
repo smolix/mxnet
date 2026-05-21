@@ -398,7 +398,7 @@ def pack(header, s):
     else:
         label = np.asarray(header.label, dtype=np.float32)
         header = header._replace(flag=label.size, label=0)
-        s = label.tostring() + s
+        s = label.tobytes() + s
     s = struct.pack(_IR_FORMAT, *header) + s
     return s
 
@@ -514,4 +514,4 @@ def pack_img(header, img, quality=95, img_fmt='.jpg'):
 
     ret, buf = cv2.imencode(img_fmt, img, encode_params)
     assert ret, 'failed to encode image'
-    return pack(header, buf.tostring())
+    return pack(header, buf.tobytes())

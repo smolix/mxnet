@@ -206,7 +206,7 @@ class RandomRotation(Block):
 
     def forward(self, x, *args):
         if onp.random.random() > self._rotate_with_proba:
-            return x
+            return _append_return(x, *args)
         if onp.dtype(x.dtype) is not onp.dtype(onp.float32):
             raise TypeError("This transformation only supports float32. "
                             "Consider calling it after ToTensor")

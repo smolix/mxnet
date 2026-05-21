@@ -330,6 +330,16 @@ def test_random_rotation():
 
 
 @use_np
+def test_random_rotation_skip_preserves_extra_args():
+    transformer = transforms.RandomRotation([-100., 100.], rotate_with_proba=0.0)
+    data = mx.np.random.normal(size=(3, 30, 60))
+    label = mx.np.array([1])
+    out_data, out_label = transformer(data, label)
+    assert_almost_equal(data.asnumpy(), out_data.asnumpy())
+    assert_almost_equal(label.asnumpy(), out_label.asnumpy())
+
+
+@use_np
 def test_random_transforms():
     from mxnet.gluon.data.vision import transforms
 

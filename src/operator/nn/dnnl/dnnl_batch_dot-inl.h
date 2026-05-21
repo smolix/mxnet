@@ -71,7 +71,8 @@ struct DNNLDotParam : public dmlc::Parameter<DNNLDotParam> {
   bool operator==(const DNNLDotParam& other) const {
     return this->transpose_a == other.transpose_a && this->transpose_b == other.transpose_b &&
            this->quantized == other.quantized && this->min_calib_range == other.min_calib_range &&
-           this->max_calib_range == other.max_calib_range;
+           this->max_calib_range == other.max_calib_range &&
+           this->enabled_float_output == other.enabled_float_output;
   }
 };
 

@@ -82,25 +82,17 @@ header:
     # `*_bump.md`, `*_pr_*.md` — agent writeup naming we've used in
     # this fork. Also the top-level READMEs we maintain ourselves.
     - 'issues.md'
-    - 'bugreport.md'
-    - 'bugreport_gluon_data.md'
     - 'cublaslt_scope.md'
     - 'cublaslt_pr_a.md'
-    - 'tf32_audit.md'
     - 'cudnn_bump.md'
     - 'cudnn_autotune_v9.md'
     - 'amp_subgraph_fix.md'
-    - 'a15_reshape_followup.md'
-    - 'apache_issues_review.md'
-    - 'int8_concat_investigation.md'
     - 'nccl_status.md'
     - 'quantized_backward_status.md'
     - 'singleton_thread_safety.md'
     - 'BUILDING.md'
     - 'CHANGELOG.md'
     - 'PERFORMANCE_NOTES.md'
-    - 'FOLLOW_UPS.md'
-    - 'handover.md'
     # Blackwell-port fork-local benchmark / reproducer scripts
     # (kept in tree for future re-running; not shipped in the wheel).
     - 'bench_tf32_conv.py'
@@ -120,7 +112,6 @@ header:
     - 'fp16_perf_bench.md'
     - 'sparse_thrust3_bench.md'
     - 'storage_pool_bench.md'
-    - 'tf32_audit_2026-05-18.md'
     # Investigations directory (patches, repros, notes — not shipped).
     - '.investigations/**'
     # Fork-local regression tests (GPU pool / dtype tests added during port).

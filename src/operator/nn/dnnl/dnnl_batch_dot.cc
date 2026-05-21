@@ -101,31 +101,62 @@ dnnl::primitive_attr GetQuantizationAttributes(const DNNLDotParam& param,
   return attr;
 }
 
+namespace {
+
+dnnl::memory::dim GetBatchDotBatchDim(const mxnet::TShape& shape) {
+  dnnl::memory::dim big_dim = shape[0];
+  for (size_t i = 1; i < shape.ndim() - 2; ++i) {
+    big_dim *= shape[i];
+  }
+  return big_dim;
+}
+
+dnnl::memory::desc GetBatchDotMemoryDesc(const NDArray& tensor,
+                                         const bool transpose,
+                                         const bool allow_any) {
+  const auto shape  = tensor.shape();
+  const auto ndim   = shape.ndim();
+  const auto bigDim = GetBatchDotBatchDim(shape);
+  if (transpose) {
+    return dnnl::memory::desc(dnnl::memory::dims{bigDim, shape[ndim - 1], shape[ndim - 2]},
+                              get_dnnl_type(tensor.dtype()),
+                              dnnl::memory::format_tag::acb);
+  }
+  return dnnl::memory::desc(dnnl::memory::dims{bigDim, shape[ndim - 2], shape[ndim - 1]},
+                            get_dnnl_type(tensor.dtype()),
+                            allow_any ? dnnl::memory::format_tag::any
+                                      : dnnl::memory::format_tag::abc);
+}
+
+dnnl::memory GetBatchDotInputMemory(const NDArray& tensor,
+                                    const bool transpose,
+                                    const dnnl::memory::desc& target_desc) {
+  auto engine = mxnet::CpuEngine::Get()->get_engine();
+  auto mem    = dnnl::memory(GetBatchDotMemoryDesc(tensor, transpose, false),
+                             engine,
+                             reinterpret_cast<void*>(tensor.data().dptr_));
+  if (mem.get_desc() == target_desc) {
+    return mem;
+  }
+
+  auto target_mem = TmpMemMgr::Get()->Alloc(target_desc);
+  DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(mem, *target_mem),
+                                      {{DNNL_ARG_FROM, mem}, {DNNL_ARG_TO, *target_mem}});
+  return *target_mem;
+}
+
+}  // namespace
+
 DNNLBatchDotFwd::DNNLBatchDotFwd(const DNNLDotParam& param,
                                  const std::vector<NDArray>& inputs,
                                  const std::vector<NDArray>& outputs) {
   auto lhs_shape = inputs[DotIn::lhs].shape();
-  auto ndim      = lhs_shape.ndim();
-  auto bigDim    = lhs_shape[0];
-  for (size_t i = 1; i < ndim - 2; ++i) {
-    bigDim *= lhs_shape[i];
-  }
+  auto bigDim    = GetBatchDotBatchDim(lhs_shape);
 
-  auto GetMemoryDesc = [&ndim, &bigDim](const NDArray& tensor, const bool transpose) {
-    auto shape = tensor.shape();
-    if (transpose) {
-      return dnnl::memory::desc(dnnl::memory::dims{bigDim, shape[ndim - 1], shape[ndim - 2]},
-                                get_dnnl_type(tensor.dtype()),
-                                dnnl::memory::format_tag::acb);
-    } else {
-      return dnnl::memory::desc(dnnl::memory::dims{bigDim, shape[ndim - 2], shape[ndim - 1]},
-                                get_dnnl_type(tensor.dtype()),
-                                dnnl::memory::format_tag::any);
-    }
-  };
-
-  dnnl::memory::desc data_md    = GetMemoryDesc(inputs[DotIn::lhs], param.transpose_a);
-  dnnl::memory::desc weights_md = GetMemoryDesc(inputs[DotIn::rhs], param.transpose_b);
+  dnnl::memory::desc data_md    = GetBatchDotMemoryDesc(
+      inputs[DotIn::lhs], param.transpose_a, !param.transpose_a);
+  dnnl::memory::desc weights_md = GetBatchDotMemoryDesc(
+      inputs[DotIn::rhs], param.transpose_b, !param.transpose_b);
   dnnl::memory::desc out_md(
       dnnl::memory::dims{bigDim, data_md.get_dims()[1], weights_md.get_dims()[2]},
       get_dnnl_type(outputs[DotOut::out].dtype()),
@@ -159,19 +190,18 @@ void DNNLBatchDotFwd::Execute(const OpContext& ctx,
                               const std::vector<NDArray>& inputs,
                               const std::vector<OpReqType>& req,
                               const std::vector<NDArray>& outputs) {
-  auto engine = mxnet::CpuEngine::Get()->get_engine();
-  auto lhs    = inputs[DotIn::lhs];
-  auto rhs    = inputs[DotIn::rhs];
+  auto lhs = inputs[DotIn::lhs];
+  auto rhs = inputs[DotIn::rhs];
   // Created primitive descriptor assumes that both inputs are in default format
   if (lhs.IsDNNLData())
     lhs = lhs.Reorder2Default();
   if (rhs.IsDNNLData())
     rhs = rhs.Reorder2Default();
 
-  auto lhs_mem =
-      dnnl::memory(fwd_pd->src_desc(), engine, reinterpret_cast<void*>(lhs.data().dptr_));
-  auto rhs_mem =
-      dnnl::memory(fwd_pd->weights_desc(), engine, reinterpret_cast<void*>(rhs.data().dptr_));
+  TmpMemMgr::Get()->Init(ctx.requested[0]);
+
+  auto lhs_mem = GetBatchDotInputMemory(lhs, param.transpose_a, fwd_pd->src_desc());
+  auto rhs_mem = GetBatchDotInputMemory(rhs, param.transpose_b, fwd_pd->weights_desc());
   dnnl_output_t out_mem = CreateDNNLMem(
       outputs[DotOut::out], fwd_pd->dst_desc(), req[DotOut::out], &inputs[DotIn::lhs]);
 
@@ -238,6 +268,9 @@ struct hash<mxnet::op::DNNLDotParam> {
     ret        = dmlc::HashCombine(ret, val.transpose_a);
     ret        = dmlc::HashCombine(ret, val.transpose_b);
     ret        = dmlc::HashCombine(ret, val.quantized);
+    ret        = dmlc::HashCombine(ret, val.min_calib_range);
+    ret        = dmlc::HashCombine(ret, val.max_calib_range);
+    ret        = dmlc::HashCombine(ret, val.enabled_float_output);
     return ret;
   }
 };

@@ -1,30 +1,136 @@
 # MXNet Port Issues
 
 Updated: 2026-05-20
-Current branch: `followup/full-sweep-macos-wheel`
-Code baseline when reorganized: `e04b407507`; current follow-up base: `862669419`
-Current branch head: `85351c546`
+Current branch: `master`
+Current head: `bfec1a677` (`origin/master`)
+Apple Silicon follow-up merge: PR #28 from `followup/full-sweep-macos-wheel`
+Linux validation host: 4x RTX 4090 Ada (`sm_89`), CUDA 13.0, cuDNN/NCCL
+host dependencies and submodules installed; CUDA `sm_89` build configured; first
+`mxnet` build was interrupted after a >25 minute `operator_tune.cc` compile.
+Validation build with `USE_OPERATOR_TUNING=OFF` linked `build/libmxnet.so`;
+editable `.venv-mxnet` imports the local CUDA/oneDNN/NCCL/cuDNN library and
+reports all 4 GPUs. A oneDNN `batch_dot` descriptor bug found by the d2l
+transformer repro is fixed locally and covered by a focused regression test.
 Local release tag: `macos-arm64-slim-wheel-20260520`
 
 This file is a status index, not a changelog. Historical details live in git
-commits, `handover.md`, and the linked investigation notes. Items are grouped
-by what a maintainer needs to decide next.
+commits and the retained investigation notes. Items are grouped by what a
+maintainer needs to decide next.
 
 Status labels:
 
 - **Open**: known issue; no verified fix on the current branch.
 - **In progress**: local work exists but is not committed and verified yet.
-- **Deferred**: cannot be verified on this Apple Silicon machine, or is not on
-  the current Apple Silicon path.
+- **Deferred**: cannot be verified on the current machine or is deliberately out
+  of scope for the current validation pass.
+- **External**: owned by D2L, notebook infrastructure, or another project unless
+  a current MXNet runtime failure is reproduced.
+- **Informational**: retained context; not a work item.
 - **Resolved**: fix is committed or otherwise verified; retained here only when
   it is useful context for future work.
 
 ---
 
+## Immediate Linux/CUDA Execution Queue
+
+This is the ordered queue for the current Linux/Ada host. Blackwell-specific
+performance claims still need a later dedicated Blackwell run, but Linux/CUDA
+correctness and cuDNN/CUDA 13 behavior can be validated here.
+
+| ID | Status | Area | Issue | Next action |
+|---|---|---|---|---|
+| L0 | Resolved | Build setup | Host toolchain/runtime packages are installed, submodules are initialized, and a CUDA 13 `sm_89` validation build with `USE_OPERATOR_TUNING=OFF` linked `build/libmxnet.so`. `.venv-mxnet` imports the local library and reports CUDA, cuDNN, NCCL, oneDNN, and 4 visible GPUs. The full-feature build still has a >25 minute `operator_tune.cc` compile issue tracked by CN1. | Use this validation build for focused Linux/Ada tests; decide release-build operator tuning behavior separately under CN1. |
+| L1 | Open | Apple fixes on x86 | Apple Silicon fixes for lifecycle, DataLoader, DLPack, quantization fallbacks, oneDNN test harnesses, and NumPy drift need validation on Linux x86 with oneDNN enabled. | Build CPU+oneDNN and run the focused lifecycle/DataLoader/DLPack/quantization/C++ oneDNN subsets before calling those fixes platform-complete. |
+| L2 | Resolved | CUDA smoke | The d2l diagnostics were produced from a pre-Apple-port wheel that lacked Ada kernels. After rebuilding for `sm_89`, the standalone d2l GPU probes are OK across the 4-GPU host. | Treat the old no-kernel-image failures as stale for this host; move on to transformer/native-crash and notebook rerun gates. |
+| L3 | Open | CUDA regression batch | Run targeted CUDA tests before expensive sweeps: cuDNN/TF32 deconv, cuBLASLt env-gated GEMM, fp16 batch-dot, linalg temp storage, NCCL single-process, and KVStore single-machine. | Use `CUDA_VISIBLE_DEVICES=0,1,2,3` where tests can use all GPUs; throttle notebook-like jobs to avoid OOM when another process is resident. |
+| L4 | Open | D2L rerun gate | The rebuilt `sm_89` runtime clears the standalone GPU probe gate, and the transformer standalone repro now passes after the oneDNN `batch_dot` descriptor fix. The old d2l notebook failures still need to be re-clustered against the current library. | Rerun the notebook clusters whose standalone runtime dependencies now pass, starting with transformer and the prior dead-kernel notebooks; audit outputs rather than trusting stamps alone. |
+| L5 | Resolved | Tracker cleanup | Duplicate issue trackers and stale markdown reports have been imported here or removed from the repo. | Keep `issues.md` as the processing queue; retain only active investigation notes and executable d2l repro tools. |
+| L6 | In progress | Compiler noise | GCC 13/NVCC CUDA 13 builds emit enough warning noise to hide real failures, and one large translation unit currently dominates build latency. A successful `USE_OPERATOR_TUNING=OFF` rebuild captured the warning stream in `build/mxnet-build.log`. | Deduplicate warning counts by the compiler-noise clusters below, fix cheap/local warnings first, and suppress only third-party or proven false-positive families at clear boundaries. |
+
+---
+
+## Compiler Noise Triage
+
+These clusters came from the first Linux CUDA 13 `sm_89` build attempts on GCC
+13/NVCC 13. A logged validation build with `USE_OPERATOR_TUNING=OFF` completed
+and linked `build/libmxnet.so`; the warning stream is in `build/mxnet-build.log`.
+The goal is to reduce warning volume without papering over real CUDA or numeric
+bugs.
+
+| ID | Status | Area | Cluster | Triage action |
+|---|---|---|---|---|
+| CN1 | Open | Build throughput | `src/operator/operator_tune.cc` can spend more than 25 minutes in a single GCC 13 `-O3` compile. Disabling `USE_OPERATOR_TUNING` allowed the local CUDA validation build to link. | Test whether splitting the file, lowering optimization for that TU, or keeping operator tuning disabled only for local validation gives a safe compile-time win without changing release behavior unintentionally. |
+| CN2 | Open | Tuple/runtime allocation | Repeated GCC uninitialized and array-bounds warnings flow through `include/mxnet/tuple.h`, `include/mxnet/ndarray.h`, `include/mxnet/tensor_blob.h`, `include/nnvm/node.h`, and `include/mxnet/runtime/memory.h` ADT object allocation. | Audit initialization and object-size invariants first because `-Warray-bounds` may indicate real layout assumptions; prefer a small source rewrite if real, otherwise isolate a narrow compiler diagnostic workaround. |
+| CN3 | Open | dmlc optional | `include/dmlc/optional.h` emits uninitialized warnings around `optional<T>().swap(*this)`, stream extraction, nullopt assignment, and scalar specializations. | Check whether the helper leaves storage logically initialized; rewrite the noisy paths if straightforward. |
+| CN4 | Open | Reductions | Half/bfloat broadcast-reduce kernels warn about possibly uninitialized residual/value pairs in `broadcast_reduce-inl.h`; boolean product/nanprod warns about `dst *= src`. | Audit the numeric kernels first because these touch user-visible reductions; specialize boolean accumulation with logical operations if applicable. |
+| CN5 | Open | CUDA type guards | NVCC warns on unsigned comparisons against zero in dtype-generic kernels such as bincount, delete, nan-to-num, and random location/scale paths. | Replace value checks with type-trait guards or signed temporaries where behavior is intentional. |
+| CN6 | Open | Sentinel conversions | CUDA/C++ warnings include `size_t` vectors initialized with `-1` in `np_cross` and `np_matmul`, plus queue offsets assigned `-1` in bundled dmlc concurrent queue code. | Fix local sentinel types; suppress bundled third-party headers only if the vendored code is otherwise untouched. |
+| CN7 | Open | Half param packing | Fused optimizer parameter packing uses `memcpy` into `mshadow::half::half_t` arrays in AdamW/AdaBelief-style code, triggering `-Wclass-memaccess`. | Replace local half copies with typed copy/assignment helpers and run focused fused optimizer tests. |
+| CN8 | Open | Local cleanup | Cheap warnings include unused variables in CUDA resize/transformer code, always-true runtime handle checks, KVStore hidden overloads/unused buffers, and mshadow packet allocation warnings. | Patch obvious unused/always-true cases after confirming no behavior change; leave higher-risk mshadow changes behind focused tests. |
+| CN9 | Open | Third-party/link boundaries | Bundled CTC/moderngpu emits deprecated `std::binary_function` warnings, and the final link warns that `ittptmark64.S.o` lacks a non-executable-stack note. | Do not churn vendored code during runtime validation; route through system-header/linker-boundary treatment or targeted upstreamable fixes. |
+
+---
+
+## D2L Diagnostics Import
+
+These items were imported from the prior d2l diagnostics reports and logs. They
+were observed with MXNet `2.0.0+cu13.bw.20260517` before the Apple Silicon merge
+and before an Ada-specific rebuild. They should be revalidated, not assumed
+still present.
+
+| ID | Status | Area | Issue | Next action |
+|---|---|---|---|---|
+| D1 | Open | Runtime deps | The prior MXNet wheel linked against system OpenCV 4.6 runtime libraries but did not include dependency metadata or bundled libraries, causing import-time `libopencv_imgcodecs.so.406` failures on clean hosts. | Resolve the Linux wheel dependency policy: bundle OpenCV, disable OpenCV for the wheel, or declare/document the required system packages; check with `d2l-diagnostics/tools/check_runtime_deps.py` after wheel build. |
+| D2 | Resolved | CUDA arch coverage | The dominant d2l failure was `cudaErrorNoKernelImageForDevice` on RTX 4090 because the tested wheel did not include `sm_89` kernels. The local `sm_89` rebuild clears the standalone GPU probe gate on this Ada host. | Keep release-wheel architecture coverage open under O2/C4; no local Ada runtime action remains for the old wheel failure. |
+| D3 | Resolved | GPU scalar host sync | Six d2l RNN/optimization notebooks reported `MXNetError: could not execute a primitive` when converting GPU scalar results to host/Python. The rebuilt standalone `gpu-scalar-to-host` and `gpu-gru-scalar-to-host` probes are OK. | If the full notebooks still fail, debug notebook-specific shapes or native crashes rather than this standalone scalar path. |
+| D4 | Resolved | Transformer native crash | The crash narrowed to oneDNN `batch_dot` using packed primitive descriptors to wrap MXNet default-layout buffers. Reordering inputs into the primitive-selected descriptors fixes the attention-shaped repro; `transformer-decoder-standalone` now passes with oneDNN enabled. The matching `_sg_onednn_batch_dot` path also needed a temp-space request for those reorders, and the existing subgraph batch-dot matrix now passes. | Keep `tests/python/dnnl/test_batch_dot_attention_regression.py` and `tests/python/dnnl/subgraphs/test_matmul_subgraph.py::test_batch_dot` in the oneDNN subset; use notebook reruns, not this standalone repro, for any remaining transformer failures. |
+| D5 | External | Dead notebook kernels | `transformer.ipynb`, `natural-language-inference-bert.ipynb`, and `sentiment-analysis-rnn.ipynb` ended as `DeadKernelError` without useful Python traceback in the old diagnostics. The MXNet standalone transformer crash is fixed; rerunning those notebooks belongs to the D2L/notebook execution system. | Wait for current notebook-run artifacts from that system; reopen under MXNet only if a current runtime failure reproduces outside notebook infrastructure. |
+| D6 | External | Notebook quality gate | `chapter_builders-guide/use-gpu.ipynb` had a passing stamp while stored outputs still contained MXNet GPU errors. This is an output-audit/notebook-runner correctness issue unless current outputs show a fresh MXNet runtime failure. | Let the notebook/output audit system validate stamps against stored outputs; use any fresh MXNet errors it finds as concrete repro inputs. |
+| D7 | External | D2L import-time GPU probing | In restricted environments, `d2l.mxnet` can query GPUs at import time through default arguments such as `devices=d2l.try_all_gpus()`. | Track as a d2l-side lazy-default fix; not an MXNet runtime bug unless MXNet itself crashes outside sandbox constraints. |
+| D8 | Informational | Cross-framework quality | Completed MXNet notebooks mostly had sane outputs; the main issue was missing GPU runtime coverage, not bad convergence in completed notebooks. | Use rerun coverage and output audit as the quality signal after runtime fixes. |
+
+---
+
+## GitHub Delta Import
+
+These rows were imported from the prior GitHub delta crawl so the main queue can
+be processed without switching files constantly.
+
+| ID | Status | Area | Issue | Next action |
+|---|---|---|---|---|
+| GH1 | Open | Security/tooling | Open upstream security/tooling hardening includes unsafe extraction, command injection risk in notebook conversion, insecure links, and stale docs/CD dependencies. | Audit local scripts before using them on untrusted inputs; patch targeted risks rather than merging old PRs wholesale. |
+| GH2 | Open | C/C++ inference API | C Predict and C++ inference/subgraph APIs have unresolved correctness gaps: duplicate input names, executor binding locking, deleted subgraph nodes, and API parity. | Schedule a CPU-reproducible inference API audit with regression tests. |
+| GH3 | Open | Autograd/Gluon semantics | Unresolved gradient/export semantics include `grad_req='add'`, non-leaf `attach_grad`, `autograd.grad`, `block.export`, mixed binary backward, and dtype propagation. | Start with CPU tests, then add CUDA parity only after the runtime build is stable. |
+| GH4 | Open | Resource hygiene | Logger/file-handle lifetime and repeated `Extract()` leaks are separate from the engine/DataLoader lifecycle work. | Add leak/file-handle regression tests around the affected utility paths. |
+| GH5 | Open | Operator correctness | Stale operator PRs cover deformable-conv `slice_axis`, `linspace`, fp16 `argsort`, GroupNorm, NumPy inf reductions, and randomized ReLU. | Triage as focused CPU/GPU operator tests after the CUDA smoke batch. |
+| GH6 | Open | Data/datasets | Dataset/RecordIO issues remain: multithreaded RecordIO file-id switching, ImageFolderDataset classes, transform handling, and MultiboxPrior coverage. | Fold into the data/image sweep after runtime stability is established. |
+| GH7 | Deferred | Distributed training | Horovod KVStore lacks a barrier API, distinct from ps-lite/NCCL backlog. | Defer unless Horovod support is explicitly in scope. |
+| GH8 | Deferred | Linux CPU performance | FlexiBLAS detection, transparent huge pages, and `parallel_for` grain tuning need Linux benchmarking. | Revisit after correctness and benchmark harnesses are in place. |
+| GH9 | Deferred | TensorRT | TensorRT upgrade/build work is stale and separate from core CUDA validation. | Defer until CUDA CI exists. |
+
+---
+
+## Tracker Reconciliation Notes
+
+These notes resolve stale or duplicate historical tracker entries against the
+current source tree. `issues.md` is canonical for processing order.
+
+| Source | Current interpretation |
+|---|---|
+| Removed `FOLLOW_UPS.md` FU-1 | The AVX2 int8 conv+relu tail gate is implemented and covered by `tests/python/dnnl/test_fu1_int8_ic_lt8_gate.py`; keep B1/B2 for broader Linux oneDNN INT8 validation. |
+| Removed `FOLLOW_UPS.md` FU-2 / removed `github-issues.md` G10 | Mixed fp16/int8 quantization remains open, but B3 is the canonical row. |
+| Removed `FOLLOW_UPS.md` FU-4 | Fork-safe oneDNN/DataLoader behavior is implemented; Linux validation belongs under L1/T11, not a fresh FU-4 investigation. |
+| Removed `FOLLOW_UPS.md` FU-6 | QAT subgraph backward bodies are not present on current `master`; B4 is canonical and requires a branch/PR decision. |
+| Removed `FOLLOW_UPS.md` FU-8 | Its legacy A6/A7 labels refer to old engine-deadlock audit IDs, not current A6/A7 rows; lifecycle work is tracked by T11. |
+| Removed `FOLLOW_UPS.md` FU-11 | Wide oneDNN stack/concat fallback is implemented and covered by `tests/python/dnnl/test_fu11_large_stack_concat.py`; d2l reruns are tracked under D3-D5/L4. |
+| `issues.md` T12-T14 | These are resolved Apple/local oneDNN test-harness and fallback entries; the remaining work is Linux x86 oneDNN validation under L1/T11. |
+
+---
+
 ## Active Apple Silicon / CPU Queue
 
-These are the remaining non-CUDA findings from the Apple Silicon bring-up audit.
-They can be fixed or at least partially verified on this Mac.
+These Apple Silicon findings are locally resolved, but the relevant shared
+paths still need Linux x86/CUDA confirmation.
 
 | ID | Status | Area | Issue | Next action |
 |---|---|---|---|---|
@@ -75,21 +181,21 @@ They can be fixed or at least partially verified on this Mac.
 
 ---
 
-## Deferred CUDA / Linux Validation
+## Linux/CUDA Validation Backlog
 
-These are real findings, but this Mac cannot validate CUDA behavior. Do not
-change them blindly on Apple Silicon unless the fix is clearly shared CPU code.
+These are real findings that need validation on the current Linux/CUDA host.
+Use targeted repros before launching full GPU sweeps.
 
-| ID | Status | Area | Issue |
-|---|---|---|---|
-| C1 | Deferred | Histogram CUDA | Mirror or validate the CPU histogram fixes in CUDA kernels. |
-| C2 | Deferred | Proposal CUDA | Audit CUDA `Proposal` / `MultiProposal` for the same overflow and narrowing risks fixed on CPU. |
-| C3 | Deferred | cuBLASLt | Shared workspace lifetime/race risk needs Linux/CUDA stress testing. |
-| C4 | Deferred | CUDA build matrix | CUDA architecture defaults and older CUDA 12.x compatibility need CI coverage. |
-| C5 | Deferred | cuDNN frontend | No-plan frontend autotune paths should fall back instead of aborting. |
-| C6 | Deferred | cuDNN streams | The skipped multi-stream regression still needs CUDA validation. |
-| C7 | Deferred | CUDA kernels | Zero-block launches and GPU split edge cases need targeted CUDA tests. |
-| C8 | Deferred | TF32 deconvolution | `cudnn_deconvolution-inl.h` does not mirror the convolution TF32 guard. Patch exists in `.investigations/n23_tf32_patch.patch`. |
+| ID | Status | Area | Issue | Next action |
+|---|---|---|---|---|
+| C1 | Open | Histogram CUDA | CPU histogram validation fixes need CUDA parity. | Run focused histogram CUDA tests and inspect CUDA kernels for the same bin-count/right-edge guards. |
+| C2 | Open | Proposal CUDA | CUDA `Proposal` / `MultiProposal` may share the overflow and narrowing risks fixed on CPU. | Audit CUDA proposal code and add/port overflow regression tests. |
+| C3 | Open | cuBLASLt | Shared workspace lifetime/race risk needs Linux/CUDA stress testing. | Run cuBLASLt GEMM/FC/dtype tests with `MXNET_USE_CUBLASLT=1` under multi-threaded and multi-GPU load. |
+| C4 | Open | CUDA build matrix | Ada/Hopper/Blackwell architecture coverage and older CUDA 12.x compatibility need CI coverage. | Validate `sm_89` here; leave CUDA 12.x and dedicated Blackwell to later runners. |
+| C5 | Open | cuDNN frontend | No-plan frontend autotune paths should fall back instead of aborting. | Force frontend autotune on representative conv/deconv shapes and verify no-plan cases degrade cleanly. |
+| C6 | Open | cuDNN streams | The skipped multi-stream regression still needs CUDA validation. | Re-enable or run the skipped multi-stream test with all 4 GPUs visible after basic smoke passes. |
+| C7 | Open | CUDA kernels | Zero-block launches and GPU split edge cases need targeted CUDA tests. | Run focused operator tests around empty tensors, split, reshape, and reductions on GPU. |
+| C8 | Open | TF32 deconvolution | Tracker was stale: `cudnn_deconvolution-inl.h` now mirrors the convolution TF32 guard and `tests/python/gpu/test_deconv_tf32.py` exists. | Run the TF32 deconv test on this Ada host; resolve if correctness and timing pass. |
 
 ---
 
@@ -100,7 +206,7 @@ current Apple Silicon task, but they still matter for the fork.
 
 | ID | Status | Area | Issue | Next action |
 |---|---|---|---|---|
-| B1 | Partial | oneDNN INT8 subgraphs | `test_self_attention[*]`, `test_batch_dot[*]`, and `test_self_attention_negative` showed pervasive INT8 numerical blow-up or crashes in DNNL matmul/batch-dot paths. | Scale fixes landed locally and AArch64 falls back instead of crashing; re-test real oneDNN INT8 on Linux x86 before closing. |
+| B1 | Partial | oneDNN INT8 subgraphs | `test_self_attention[*]`, `test_batch_dot[*]`, and `test_self_attention_negative` showed pervasive INT8 numerical blow-up or crashes in DNNL matmul/batch-dot paths. The float `_sg_onednn_batch_dot` matrix now passes after the direct descriptor fix plus subgraph temp-space request, but this does not close the broader INT8 self-attention coverage. | Re-test real oneDNN INT8 self-attention on Linux x86 before closing; do not infer the whole row from the fixed float batch-dot matrix. |
 | B2 | Partial | Quantized Gluon | `test_quantize_gluon_with_forward` segfaulted under the DNNL subgraph backend after 18 earlier quantization tests passed. | AArch64 oneDNN quantized backend is disabled and native CPU quantization passes; Linux x86 oneDNN quantized Gluon still needs validation. |
 | B3 | Open | Mixed dtype quantization | fp16 input/output is structurally absent in `quantize_v2`, `dequantize`, and DNNL quantize-v2 code. | Either add fp16 support or document AMP+quantize as unsupported and require fp32 casts. |
 | B4 | Partial | QAT backward | STE for `quantize_v2` and QAT parameter `grad_req` fixes landed; DNNL subgraph backward exists only on a local branch and has scale-magnitude caveats. | Decide whether to push/PR the gated `_backward_sg_onednn_*` implementation after more validation. |
@@ -116,7 +222,7 @@ quality of a public fork.
 | ID | Status | Area | Issue |
 |---|---|---|---|
 | P1 | Deferred | cuBLASLt | fp32/fp16/bf16/fp64 env-gated cuBLASLt paths landed, but default-on, stride-aware, and INT8 follow-ups remain. |
-| P2 | Deferred | TF32 | FP32 deconvolution misses the TF32 enable block used by convolution. |
+| P2 | Resolved | TF32 | Duplicate of C8; keep the actionable CUDA validation under C8 and do not track a second TF32 deconvolution row here. |
 | P3 | Deferred | Sparse/topk | `topk(k=10/100/1000)` is K-independent because MXNet sorts full rows then slices. |
 | P4 | Deferred | Small ops | Softmax, LayerNorm, and small elementwise ops are slower than PyTorch due to multi-pass kernels and dispatch overhead. |
 | P5 | Hardware | bf16 CPU | The tested Zen 2 host lacks AVX-512 BF16; oneDNN falls back to fp32 emulation. Validate on BF16-capable CPUs. |
@@ -169,7 +275,7 @@ the rest of the build matrix:
 | ID | Status | Area | Issue |
 |---|---|---|---|
 | O1 | Open | Wheel packaging | Linux wheel does not bundle CUDA/cuDNN/NCCL runtimes; users need system packages. |
-| O2 | Open | CUDA arch matrix | Current Blackwell wheel is sm_120-only; useful public wheels need sm_80/sm_86/sm_89/sm_90 as well. |
+| O2 | Open | CUDA arch matrix | The old public Blackwell wheel was effectively sm_120-only; useful public wheels need sm_80/sm_86/sm_89/sm_90/sm_120 coverage. The source CMake default now lists these, but release builds still need verification. |
 | O3 | Open | CI | `smolix/mxnet` still lacks CI. Even a small build plus DNNL subset would catch regressions. |
 | O4 | Open | Release | GitHub Release and wheel publication are not automated. |
 | O5 | Open | Changelog | No clear release notes for CUDA 13, cuDNN 9, oneDNN v3, quantization, and Apple Silicon changes. |
@@ -212,23 +318,26 @@ They stay here as context, not as active work.
 
 ## Suggested Triage Order
 
-Before calling the Apple Silicon CPU port good enough for broader testing:
+Current Linux/Ada host:
 
-1. Treat Apple Silicon CPU correctness as locally complete for the current scope, excluding ONNX and GPU/MPS.
-2. Install the generated macOS wheel on a clean Apple Silicon host if possible.
-3. Move to Linux x86/CUDA validation for lifecycle, oneDNN parity, and CUDA-specific deferred items.
+1. Use the completed L0/L2 evidence as the current validation baseline.
+2. Complete L1 and L3: validate shared Apple Silicon fixes on Linux x86, then
+   run targeted CUDA regressions across all 4 GPUs where useful.
+3. Rerun the d2l notebook clusters now that the standalone GPU and transformer
+   runtime probes are clean; audit notebook outputs rather than trusting stamps
+   alone.
+4. Work through C1-C8, B1-B5, and T11 using focused tests before full sweeps.
 
 Before shipping another public Linux/CUDA preview wheel:
 
 1. Re-test B1/B2 on the newest master.
 2. Run T1 full GPU operator sweep.
-3. Resolve or document C1-C8.
-4. Add at least minimal CI.
-5. Update README, dependency docs, release notes, and wheel packaging notes.
+3. Resolve or document C1-C8 and D1-D6.
+4. Add at least minimal CI, including a GPU job once a runner is available.
+5. Update README, dependency docs, release notes, and wheel/versioning policy.
 
 Pointers:
 
-- `handover.md` has the 2026-05-18 to 2026-05-19 PR/session handoff.
-- `nccl_status.md`, `cudnn_autotune_v9.md`, `tf32_audit_2026-05-18.md`,
-  `sparse_thrust3_bench.md`, `storage_pool_bench.md`, and
-  `fp16_perf_bench.md` contain deeper historical analysis.
+- `nccl_status.md`, `cudnn_autotune_v9.md`, `sparse_thrust3_bench.md`,
+  `storage_pool_bench.md`, and `fp16_perf_bench.md` contain deeper historical
+  analysis.

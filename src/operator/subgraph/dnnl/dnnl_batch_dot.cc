@@ -49,7 +49,9 @@ bool DNNLBatchDotShape(const nnvm::NodeAttrs& attrs,
   for (int i = 0; i < base_num_inputs; ++i) {
     base_in_shapes.push_back(in_shapes->at(i));
   }
-  BatchDotShape<DNNLDotParam>(attrs, &base_in_shapes, &base_out_shapes);
+  if (!BatchDotShape<DNNLDotParam>(attrs, &base_in_shapes, &base_out_shapes)) {
+    return false;
+  }
 
   for (size_t i = 0; i < in_shapes->size(); ++i) {
     if (i < base_in_shapes.size()) {
@@ -170,6 +172,10 @@ NNVM_REGISTER_OP(_sg_onednn_batch_dot)
     .set_attr<mxnet::FInferShape>("FInferShape", DNNLBatchDotShape)
     .set_attr<nnvm::FInferType>("FInferType", DNNLBatchDotType)
     .set_attr<FInferStorageType>("FInferStorageType", DNNLBatchDotStorageType)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& attrs) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
     .set_attr<FComputeEx>("FComputeEx<cpu>", DNNLBatchDotForward<true>)
     .set_attr<bool>("TIsDNNL", true)
     .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)

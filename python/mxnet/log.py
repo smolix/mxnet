@@ -163,6 +163,7 @@ def get_logger(name=None, filename=None, filemode=None, level=WARNING):
             logger.addHandler(hdlr)
             logger.setLevel(level)
         except Exception:
+            logger.removeHandler(hdlr)
             hdlr.close()
             raise
         logger._init_done = True

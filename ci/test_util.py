@@ -26,9 +26,10 @@ from ci import util
 
 
 class FakeResponse:
-    def __init__(self, status_code, chunks=()):
+    def __init__(self, status_code, chunks=(), content=b""):
         self.status_code = status_code
         self._chunks = chunks
+        self.content = content
 
     def iter_content(self, chunk_size):
         return iter(self._chunks)
@@ -96,3 +97,34 @@ def test_download_file_preserves_existing_file_on_stream_error(monkeypatch, tmp_
 
     assert existing.read_bytes() == b"trusted"
     assert not (tmp_path / "archive.zip.tmp").exists()
+
+
+def test_ec2_instance_info_skips_metadata_probe_outside_ci(monkeypatch):
+    get = Mock(side_effect=AssertionError("metadata service should not be queried"))
+    monkeypatch.delenv("JOB_NAME", raising=False)
+    monkeypatch.setattr(util.requests, "get", get)
+
+    assert util.ec2_instance_info() == ""
+
+
+def test_ec2_instance_info_uses_metadata_timeout_under_ci(monkeypatch):
+    get = Mock(side_effect=[
+        FakeResponse(200, content=b"m5.2xlarge"),
+        FakeResponse(200, content=b"i-123"),
+        FakeResponse(200, content=b"ec2.example"),
+        FakeResponse(200, content=b"ami-456"),
+    ])
+    monkeypatch.setenv("JOB_NAME", "mxnet-ci")
+    monkeypatch.setattr(util.requests, "get", get)
+
+    assert util.ec2_instance_info() == "m5.2xlarge i-123 ec2.example ami-456"
+    for call in get.call_args_list:
+        assert call.kwargs["timeout"] == util.EC2_METADATA_TIMEOUT_SECONDS
+
+
+def test_ec2_instance_info_returns_unknown_on_request_error(monkeypatch):
+    get = Mock(side_effect=util.requests.exceptions.ConnectionError("metadata unavailable"))
+    monkeypatch.setenv("JOB_NAME", "mxnet-ci")
+    monkeypatch.setattr(util.requests, "get", get)
+
+    assert util.ec2_instance_info() == "?"

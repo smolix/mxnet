@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 import requests
 
 DOWNLOAD_TIMEOUT_SECONDS = 30
+EC2_METADATA_TIMEOUT_SECONDS = 1
 
 
 def get_mxnet_root() -> str:
@@ -98,7 +99,6 @@ def under_ci() -> bool:
 
 
 def ec2_instance_info() -> str:
-    import requests
     urls = [
             "http://instance-data/latest/meta-data/instance-type",
             "http://instance-data/latest/meta-data/instance-id",
@@ -109,11 +109,11 @@ def ec2_instance_info() -> str:
         result = []
         try:
             for url in urls:
-                r = requests.get(url)
+                r = requests.get(url, timeout=EC2_METADATA_TIMEOUT_SECONDS)
                 if r.status_code == 200:
                     result.append(r.content.decode())
             return ' '.join(result)
-        except ConnectionError:
+        except requests.RequestException:
             pass
         return '?'
     else:

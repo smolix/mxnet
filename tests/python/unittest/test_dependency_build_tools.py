@@ -19,6 +19,8 @@ import importlib.util
 import hashlib
 import io
 import inspect
+import os
+import subprocess
 import tarfile
 import zipfile
 from pathlib import Path
@@ -43,6 +45,83 @@ def _download_kwargs(module, expected_sha256):
     if "retries" in inspect.signature(module.download).parameters:
         kwargs["retries"] = 1
     return kwargs
+
+
+def _legacy_shell_download_function():
+    script = (_repo_root() / "tools" / "dependencies" / "make_shared_dependencies.sh").read_text()
+    start = script.index("download () {")
+    end = script.index("\n\nif [[", start)
+    return script[start:end]
+
+
+def _fake_curl_function():
+    return """curl () {
+set -e
+printf '%s\n' "$@" > "${CURL_ARGS_FILE}"
+out_file=""
+while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "-o" ]]; then
+        out_file="$2"
+        shift 2
+        continue
+    fi
+    shift
+done
+if [[ -n "${out_file}" ]]; then
+    printf '%s' "${CURL_BODY}" > "${out_file}"
+fi
+return "${CURL_EXIT_CODE:-0}"
+}
+"""
+
+
+def test_legacy_shell_download_quotes_url_and_output_path(tmp_path):
+    out_file = tmp_path / "downloads with spaces" / "archive file.zip"
+    args_file = tmp_path / "curl-args.txt"
+    env = os.environ.copy()
+    env.update({
+        "CURL_ARGS_FILE": str(args_file),
+        "CURL_BODY": "archive payload",
+        "OUT_FILE": str(out_file),
+    })
+    script = (
+        "set -e\n"
+        f"{_fake_curl_function()}\n"
+        f"{_legacy_shell_download_function()}\n"
+        "mkdir -p \"$(dirname \"${OUT_FILE}\")\"\n"
+        "download \"https://example.test/archive file.zip?token=a b\" \"${OUT_FILE}\"\n"
+    )
+
+    subprocess.run(["bash", "-c", script], env=env, check=True)
+
+    assert out_file.read_text() == "archive payload"
+    curl_args = args_file.read_text().splitlines()
+    assert "--fail" in curl_args
+    assert "https://example.test/archive file.zip?token=a b" in curl_args
+    assert str(out_file) in curl_args
+
+
+def test_legacy_shell_download_rejects_failed_curl_and_removes_partial(tmp_path):
+    out_file = tmp_path / "archive.zip"
+    args_file = tmp_path / "curl-args.txt"
+    env = os.environ.copy()
+    env.update({
+        "CURL_ARGS_FILE": str(args_file),
+        "CURL_BODY": "error page",
+        "CURL_EXIT_CODE": "22",
+        "OUT_FILE": str(out_file),
+    })
+    script = (
+        "set -e\n"
+        f"{_fake_curl_function()}\n"
+        f"{_legacy_shell_download_function()}\n"
+        "download \"https://example.test/missing.zip\" \"${OUT_FILE}\"\n"
+    )
+
+    result = subprocess.run(["bash", "-c", script], env=env, check=False)
+
+    assert result.returncode == 1
+    assert not out_file.exists()
 
 
 @pytest.mark.parametrize(

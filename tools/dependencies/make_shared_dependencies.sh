@@ -34,13 +34,21 @@ download () {
     fi
 
     echo "Downloading ${URL} ..."
-    local CURL_OPTIONS="--connect-timeout 60 \
-              --max-time 300 \
-              --retry-delay 30 \
-              --retry 5 \
-              --location \
-              --silent"
-    curl ${CURL_OPTIONS} ${URL} -o ${OUT_FILE}
+    local CURL_OPTIONS=(
+        --connect-timeout 60
+        --max-time 300
+        --retry-delay 30
+        --retry 5
+        --location
+        --silent
+        --show-error
+        --fail
+    )
+    if ! curl "${CURL_OPTIONS[@]}" "${URL}" -o "${OUT_FILE}"; then
+        rm -f "${OUT_FILE}"
+        echo "File ${URL} couldn't be downloaded!"
+        exit 1
+    fi
 
     if [[ ! -f "${OUT_FILE}" ]]; then
         echo "File ${URL} couldn't be downloaded!"
@@ -49,23 +57,23 @@ download () {
 }
 
 if [[ ! $PLATFORM == 'darwin' ]] && [[ ! $BLAS == 'mkl' ]]; then
-    source ${DIR}/openblas.sh
+    source "${DIR}/openblas.sh"
 fi
-source $DIR/libz.sh
-source $DIR/libturbojpeg.sh
-source $DIR/libpng.sh
-source $DIR/libtiff.sh
-source $DIR/openssl.sh
-source $DIR/curl.sh
-source $DIR/eigen.sh
-source $DIR/opencv.sh
-source $DIR/protobuf.sh
-source $DIR/cityhash.sh
-source $DIR/zmq.sh
-source $DIR/lz4.sh
+source "${DIR}/libz.sh"
+source "${DIR}/libturbojpeg.sh"
+source "${DIR}/libpng.sh"
+source "${DIR}/libtiff.sh"
+source "${DIR}/openssl.sh"
+source "${DIR}/curl.sh"
+source "${DIR}/eigen.sh"
+source "${DIR}/opencv.sh"
+source "${DIR}/protobuf.sh"
+source "${DIR}/cityhash.sh"
+source "${DIR}/zmq.sh"
+source "${DIR}/lz4.sh"
 if [[ $BLAS == 'mkl' ]]; then
-    source ${DIR}/mkl.sh
-    source ${DIR}/numpy_mkl.sh
+    source "${DIR}/mkl.sh"
+    source "${DIR}/numpy_mkl.sh"
     if [[ $PLATFORM == 'darwin' ]]; then
         # export this path to find iomp5 needed by MKL according to Intel Link Line Advisor
         export DYLD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/intel/oneapi/compiler/${INTEL_MKL}/mac/compiler

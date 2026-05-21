@@ -168,15 +168,21 @@ post-fix GPU or DNNL core full-run summary is recorded here yet.
       `tests/python/dnnl/subgraphs/test_conv_subgraph.py::test_channelwise_quantize_model_skips_onednn_conv_with_sum`,
       and
       `tests/python/dnnl/test_quantization_dnnl.py::test_quantize_gluon_with_forward`.
-- [ ] DNNL quantization subset: rerun the Gluon quantization and oneDNN
+- [x] DNNL quantization subset: rerun the Gluon quantization and oneDNN
       quantization files that exercise `_sg_onednn_conv`,
-      `quantized_sg_onednn_conv`, and residual/add fusions.
+      `quantized_sg_onednn_conv`, and residual/add fusions. Combined
+      `tests/python/dnnl/test_quantization_dnnl.py` plus
+      `tests/python/quantization/test_quantization.py` passed `52 passed,
+      2682 warnings` in 27.49s on 2026-05-21.
 - [ ] CPU unittest smoke: keep `tests/python/unittest/test_extensions.py` and
       the two prior Gluon GPU-memory-pressure nodes as focused checks before
       trusting another full `tests/python/unittest` summary.
-- [ ] GPU smoke: keep the fork-safety DataLoader, cuBLASLt FC, TF32 deconv,
+- [x] GPU smoke: keep the fork-safety DataLoader, cuBLASLt FC, TF32 deconv,
       cuDNN stream/workspace, deferred-compute GPU, extension GPU, and NCCL
-      metric checks ahead of any monolithic `tests/python/gpu` rerun.
+      metric checks ahead of any monolithic `tests/python/gpu` rerun. The
+      deferred-compute plus GPU reducer shard passed `33 passed` in 5.22s on
+      2026-05-21, adding a fresh direct-pytest GPU smoke after the latest
+      commits.
 - [ ] C++ gtest: rerun the two BatchNorm mixed GPU/CPU filters directly before
       scheduling another broad `mxnet_unit_tests` pass.
 

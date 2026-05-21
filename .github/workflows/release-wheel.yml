@@ -79,16 +79,20 @@ jobs:
       - name: Resolve tag / version
         id: ver
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "push" ]; then
             tag="${GITHUB_REF#refs/tags/}"
           else
             tag="${{ github.event.inputs.tag }}"
           fi
           if [ -z "$tag" ]; then
-            tag="v0.0.0-dev-${GITHUB_SHA::8}"
+            tag="dev-${GITHUB_SHA::8}"
+            version="0.0.0.dev0+g${GITHUB_SHA::8}"
+          else
+            # Strip leading "v" to form a PEP-440 version.
+            version="${tag#v}"
           fi
-          # Strip leading "v" to form a PEP-440 version.
-          version="${tag#v}"
+          version="$(python -c 'from packaging.version import Version; import sys; print(Version(sys.argv[1]))' "$version")"
           echo "tag=$tag"     >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 

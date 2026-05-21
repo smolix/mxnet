@@ -128,6 +128,27 @@ def test_setup_metadata_uses_explicit_package_version(monkeypatch, tmp_path):
     assert metadata["version"] == "2.0.0+o11.override"
 
 
+def test_setup_metadata_normalizes_explicit_package_version(monkeypatch, tmp_path):
+    metadata = _setup_metadata(
+        monkeypatch,
+        tmp_path,
+        "USE_CUDA:BOOL=OFF\nUSE_OPENCV:BOOL=OFF\n",
+        package_version="v2.0.0-rc1",
+    )
+
+    assert metadata["version"] == "2.0.0rc1"
+
+
+def test_setup_metadata_rejects_invalid_package_version(monkeypatch, tmp_path):
+    with pytest.raises(RuntimeError, match="MXNET_PACKAGE_VERSION.*PEP 440"):
+        _setup_metadata(
+            monkeypatch,
+            tmp_path,
+            "USE_CUDA:BOOL=OFF\nUSE_OPENCV:BOOL=OFF\n",
+            package_version="refs/tags/v2.0.0",
+        )
+
+
 def test_setup_metadata_falls_back_to_libinfo_version(monkeypatch, tmp_path):
     metadata = _setup_metadata(
         monkeypatch,
@@ -159,6 +180,8 @@ def test_release_wheel_build_disables_opencv_explicitly():
     assert "-DUSE_OPENCV=ON" not in workflow
     assert 'MXNET_SETUP_ENABLE_OPENCV_DEPS: "0"' in workflow
     assert "MXNET_PACKAGE_VERSION: ${{ steps.ver.outputs.version }}" in workflow
+    assert "0.0.0.dev0+g${GITHUB_SHA::8}" in workflow
+    assert "from packaging.version import Version" in workflow
     assert 'cp -v "$libpath" python/mxnet/libmxnet.so' in workflow
 
 

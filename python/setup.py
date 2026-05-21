@@ -94,7 +94,29 @@ exec(compile(open(libinfo_py, "rb").read(), libinfo_py, 'exec'), libinfo, libinf
 
 def _package_version(default_version):
     """Return the explicit package version override, or the default version."""
-    return os.environ.get('MXNET_PACKAGE_VERSION', '').strip() or default_version
+    override = os.environ.get('MXNET_PACKAGE_VERSION', '').strip()
+    if override:
+        return _validate_package_version(override, 'MXNET_PACKAGE_VERSION')
+    return _validate_package_version(default_version, 'mxnet/libinfo.py __version__')
+
+
+def _validate_package_version(version, source):
+    """Reject invalid wheel metadata versions before build artifacts are named."""
+    try:
+        from packaging.version import InvalidVersion, Version
+    except ImportError:
+        try:
+            from setuptools._vendor.packaging.version import InvalidVersion, Version
+        except ImportError:
+            return version
+
+    try:
+        parsed_version = Version(version)
+    except InvalidVersion as err:
+        raise RuntimeError(
+            '{} must be a valid PEP 440 version, got {!r}'.format(source, version)
+        ) from err
+    return str(parsed_version)
 
 
 LIB_PATH = libinfo['find_lib_path']()

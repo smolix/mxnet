@@ -64,6 +64,22 @@ def check_half_bfloat_min_max(ctx):
                                     onp.ones((64,), dtype='float32'))
 
 
+def check_numpy_inf_min_max(ctx):
+    for dtype in ('float16', 'float32', 'float64'):
+        neg_inf = mxnp.array([[-onp.inf, -onp.inf]], ctx=ctx, dtype=dtype)
+        pos_inf = mxnp.array([[onp.inf, onp.inf]], ctx=ctx, dtype=dtype)
+        mixed_inf = mxnp.array([[-onp.inf], [onp.inf]], ctx=ctx, dtype=dtype)
+
+        for data in (neg_inf, pos_inf, mixed_inf):
+            expected = data.asnumpy()
+            onp.testing.assert_array_equal(mxnp.max(data, axis=0).asnumpy(),
+                                           onp.max(expected, axis=0))
+            onp.testing.assert_array_equal(mxnp.min(data, axis=0).asnumpy(),
+                                           onp.min(expected, axis=0))
+            onp.testing.assert_array_equal(mxnp.max(data).asnumpy(), onp.max(expected))
+            onp.testing.assert_array_equal(mxnp.min(data).asnumpy(), onp.min(expected))
+
+
 def test_bool_all_cpu_product_reducer():
     check_bool_all(mx.cpu())
 
@@ -74,3 +90,7 @@ def test_half_prod_nanprod_cpu_residual_init():
 
 def test_half_bfloat_min_max_cpu_residual_init():
     check_half_bfloat_min_max(mx.cpu())
+
+
+def test_numpy_inf_min_max_cpu():
+    check_numpy_inf_min_max(mx.cpu())

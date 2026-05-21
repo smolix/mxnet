@@ -318,6 +318,49 @@ def test_np_attach_grad_add_accumulates_existing_grad_and_preserves_dtype():
     assert_almost_equal(x.grad.asnumpy(), np.full((2, 3), 8, dtype='float16'))
 
 
+def test_function_backward_add_accumulates_existing_grad():
+    class Scale(mx.autograd.Function):
+        def forward(self, x):
+            return x * 3
+
+        def backward(self, dy):
+            return dy * 3
+
+    x = mx.nd.ones((2, 3), dtype='float32')
+    x.attach_grad(grad_req='add')
+    x.grad[:] = 5
+
+    with record():
+        y = Scale()(x).sum()
+    y.backward()
+
+    assert_almost_equal(x.grad.asnumpy(), np.full((2, 3), 8, dtype='float32'))
+
+
+def test_function_backward_null_grad_req_does_not_skip_later_inputs():
+    class Mul(mx.autograd.Function):
+        def forward(self, x, y):
+            self.save_for_backward(x, y)
+            return x * y
+
+        def backward(self, dy):
+            x, y = self.saved_tensors
+            return dy * y, dy * x
+
+    x = mx.nd.ones((2, 3), dtype='float32')
+    y = mx.nd.ones((2, 3), dtype='float32')
+    x.attach_grad(grad_req='null')
+    y.attach_grad(grad_req='add')
+    y.grad[:] = 5
+
+    with record():
+        z = Mul()(x, y).sum()
+    z.backward()
+
+    assert x.grad is None
+    assert_almost_equal(y.grad.asnumpy(), np.full((2, 3), 6, dtype='float32'))
+
+
 def test_is_train():
     x = mx.nd.ones((10, 10))
     x.attach_grad()

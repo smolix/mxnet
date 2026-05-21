@@ -15,8 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import ctypes
 import mxnet as mx
 from numpy.testing import assert_equal
+from mxnet import base
 from mxnet.base import data_dir
 from mxnet.test_utils import environment
 from mxnet.util import getenv
@@ -107,3 +109,54 @@ def test_data_dir():
         assert_equal(data_dir(), '/tmp/mxnet_data')
     # Test that this test has not disturbed the MXNET_HOME value existing before the test
     assert_equal(data_dir(), prev_data_dir)
+
+
+def test_generate_op_module_signature_closes_files_on_codegen_failure(monkeypatch):
+    opened_files = []
+
+    class FakeLib:
+        def __init__(self):
+            self._op_names = (ctypes.c_char_p * 1)(b'broken_op')
+
+        def MXListAllOpNames(self, size, plist):
+            ctypes.cast(size, ctypes.POINTER(ctypes.c_uint))[0] = 1
+            ctypes.cast(plist, ctypes.POINTER(ctypes.POINTER(ctypes.c_char_p)))[0] = (
+                ctypes.cast(self._op_names, ctypes.POINTER(ctypes.c_char_p)))
+            return 0
+
+        def NNGetOpHandle(self, name, handle):
+            return 0
+
+    class FakeFile:
+        def __init__(self, path):
+            self.path = path
+            self.closed = False
+            self.writes = []
+
+        def write(self, data):
+            assert not self.closed
+            self.writes.append(data)
+
+        def close(self):
+            assert not self.closed
+            self.closed = True
+
+    def fake_open(path, mode, encoding=None):
+        assert mode == 'w'
+        assert encoding == 'utf-8'
+        opened_file = FakeFile(path)
+        opened_files.append(opened_file)
+        return opened_file
+
+    def raise_codegen_error(handle, name, func_name, signature_only):
+        raise RuntimeError('codegen failed')
+
+    monkeypatch.setattr(base, '_LIB', FakeLib())
+    monkeypatch.setattr(base, 'check_call', lambda ret: None)
+    monkeypatch.setattr(base, 'open', fake_open, raising=False)
+
+    with pytest.raises(RuntimeError, match='codegen failed'):
+        base._generate_op_module_signature('mxnet', 'ndarray', raise_codegen_error)
+
+    assert opened_files
+    assert all(opened_file.closed for opened_file in opened_files)

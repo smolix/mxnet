@@ -483,10 +483,10 @@ class Function(object):
                     assert isinstance(ret, array_cls), \
                         f"autograd.Function.backward must return NDArrays, not {type(ret)}"
                     if req == 0:  # null
-                        return True
+                        continue
                     elif req in (1, 2):  # write or inplace
                         igrad[:] = ret
-                    elif req == 'add':
+                    elif req == 3:  # add
                         igrad[:] += ret
             except Exception:  # pylint: disable=broad-except
                 print(f'Error in Function.backward: {traceback.format_exc()}')

@@ -28,6 +28,7 @@ import unittest
 import pytest
 curr_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))
 sys.path.insert(0, os.path.join(curr_path, '../unittest'))
+from common import requires_opencv
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -39,6 +40,7 @@ def download_data():
 
 @mx.util.use_np
 @pytest.mark.serial
+@requires_opencv
 # TODO(vcherepanov): mobilenet0.25 fails this test
 @pytest.mark.parametrize('model_name', ['resnet50_v1', 'vgg19_bn', 'alexnet', 'densenet201', 'squeezenet1.0'])
 def test_inference(model_name):
@@ -102,6 +104,7 @@ def get_nn_model(name):
 # based on non-deterministic algo selection.
 @mx.util.use_np
 @pytest.mark.serial
+@requires_opencv
 def test_training():
     # We use network models without dropout for testing.
     # TODO(zhengda) mobilenet can't pass this test even without oneDNN.
@@ -177,4 +180,3 @@ def test_training():
                 cpu_param = cpu_params.get(k)
                 gpu_param = gpu_params.get(k)
                 assert_almost_equal(cpu_param.data(), gpu_param.data(), rtol=1e-3, atol=1e-3)
-

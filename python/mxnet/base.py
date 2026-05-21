@@ -779,37 +779,40 @@ def _generate_op_module_signature(root_namespace, module_name, op_code_gen_func)
     module_internal_file = get_module_file(f"{root_namespace}.{module_name}._internal")
     module_internal_all = []
     submodule_dict = {}
-    for op_name_prefix in _OP_NAME_PREFIX_LIST:
-        submodule_dict[op_name_prefix] =\
-            (get_module_file(f"{root_namespace}.{module_name}.{op_name_prefix[1:-1]}"), [])
-    for name in op_names:
-        hdl = OpHandle()
-        check_call(_LIB.NNGetOpHandle(c_str(name), ctypes.byref(hdl)))
-        op_name_prefix = _get_op_name_prefix(name)
-        if len(op_name_prefix) > 0:
-            func_name = name[len(op_name_prefix):]
-            cur_module_file, cur_module_all = submodule_dict[op_name_prefix]
-        elif name.startswith('_'):
-            func_name = name
-            cur_module_file = module_internal_file
-            cur_module_all = module_internal_all
-        else:
-            func_name = name
-            cur_module_file = module_op_file
-            cur_module_all = module_op_all
+    try:
+        for op_name_prefix in _OP_NAME_PREFIX_LIST:
+            submodule_dict[op_name_prefix] =\
+                (get_module_file(f"{root_namespace}.{module_name}.{op_name_prefix[1:-1]}"), [])
+        for name in op_names:
+            hdl = OpHandle()
+            check_call(_LIB.NNGetOpHandle(c_str(name), ctypes.byref(hdl)))
+            op_name_prefix = _get_op_name_prefix(name)
+            if len(op_name_prefix) > 0:
+                func_name = name[len(op_name_prefix):]
+                cur_module_file, cur_module_all = submodule_dict[op_name_prefix]
+            elif name.startswith('_'):
+                func_name = name
+                cur_module_file = module_internal_file
+                cur_module_all = module_internal_all
+            else:
+                func_name = name
+                cur_module_file = module_op_file
+                cur_module_all = module_op_all
 
-        code, _ = op_code_gen_func(hdl, name, func_name, True)
-        cur_module_file.write(os.linesep)
-        cur_module_file.write(code)
-        cur_module_all.append(func_name)
+            code, _ = op_code_gen_func(hdl, name, func_name, True)
+            cur_module_file.write(os.linesep)
+            cur_module_file.write(code)
+            cur_module_all.append(func_name)
 
-    for (submodule_f, submodule_all) in submodule_dict.values():
-        write_all_str(submodule_f, submodule_all)
-        submodule_f.close()
-    write_all_str(module_op_file, module_op_all)
-    module_op_file.close()
-    write_all_str(module_internal_file, module_internal_all)
-    module_internal_file.close()
+        for (submodule_f, submodule_all) in submodule_dict.values():
+            write_all_str(submodule_f, submodule_all)
+        write_all_str(module_op_file, module_op_all)
+        write_all_str(module_internal_file, module_internal_all)
+    finally:
+        for submodule_f, _ in submodule_dict.values():
+            submodule_f.close()
+        module_op_file.close()
+        module_internal_file.close()
 
 ctypes.pythonapi.PyCapsule_New.restype = ctypes.py_object
 ctypes.pythonapi.PyCapsule_GetPointer.restype = ctypes.c_void_p

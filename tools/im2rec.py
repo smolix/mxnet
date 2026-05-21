@@ -241,26 +241,29 @@ def write_worker(q_out, fname, working_dir):
     fname_idx = os.path.splitext(fname)[0] + '.idx'
     record = mx.recordio.MXIndexedRecordIO(os.path.join(working_dir, fname_idx),
                                            os.path.join(working_dir, fname_rec), 'w')
-    buf = {}
-    more = True
-    while more:
-        deq = q_out.get()
-        if deq is not None:
-            i, s, item = deq
-            buf[i] = (s, item)
-        else:
-            more = False
-        while count in buf:
-            s, item = buf[count]
-            del buf[count]
-            if s is not None:
-                record.write_idx(item[0], s)
+    try:
+        buf = {}
+        more = True
+        while more:
+            deq = q_out.get()
+            if deq is not None:
+                i, s, item = deq
+                buf[i] = (s, item)
+            else:
+                more = False
+            while count in buf:
+                s, item = buf[count]
+                del buf[count]
+                if s is not None:
+                    record.write_idx(item[0], s)
 
-            if count % 1000 == 0:
-                cur_time = time.time()
-                print('time:', cur_time - pre_time, ' count:', count)
-                pre_time = cur_time
-            count += 1
+                if count % 1000 == 0:
+                    cur_time = time.time()
+                    print('time:', cur_time - pre_time, ' count:', count)
+                    pre_time = cur_time
+                count += 1
+    finally:
+        record.close()
 
 def parse_args():
     """Defines all arguments.
@@ -376,18 +379,21 @@ if __name__ == '__main__':
                     fname_idx = os.path.splitext(fname)[0] + '.idx'
                     record = mx.recordio.MXIndexedRecordIO(os.path.join(working_dir, fname_idx),
                                                            os.path.join(working_dir, fname_rec), 'w')
-                    cnt = 0
-                    pre_time = time.time()
-                    for i, item in enumerate(image_list):
-                        image_encode(args, i, item, q_out)
-                        if q_out.empty():
-                            continue
-                        _, s, _ = q_out.get()
-                        record.write_idx(item[0], s)
-                        if cnt % 1000 == 0:
-                            cur_time = time.time()
-                            print('time:', cur_time - pre_time, ' count:', cnt)
-                            pre_time = cur_time
-                        cnt += 1
+                    try:
+                        cnt = 0
+                        pre_time = time.time()
+                        for i, item in enumerate(image_list):
+                            image_encode(args, i, item, q_out)
+                            if q_out.empty():
+                                continue
+                            _, s, _ = q_out.get()
+                            record.write_idx(item[0], s)
+                            if cnt % 1000 == 0:
+                                cur_time = time.time()
+                                print('time:', cur_time - pre_time, ' count:', cnt)
+                                pre_time = cur_time
+                            cnt += 1
+                    finally:
+                        record.close()
         if not count:
             print(f'Did not find and list file with prefix {args.prefix}')

@@ -61,6 +61,25 @@ def test_report_compute_capabilities(capsys):
         sys.stdout.write('= {} '.format(
             [get_cuda_compute_capability(mx.gpu(i)) for i in range(mx.device.num_gpus())] ))
 
+
+def test_histogram_gpu_edge_and_invalid_bins():
+    x = mx.nd.array([0.0, 1.0, 2.0, 3.0], ctx=mx.gpu(0), dtype=np.float64)
+
+    histo, bins = mx.nd.histogram(x, bins=mx.nd.array([0.0, 1.0, 2.0, 3.0],
+                                                      ctx=mx.gpu(0),
+                                                      dtype=np.float64))
+    assert_almost_equal(histo.asnumpy(), np.array([1, 1, 2]))
+    assert_almost_equal(bins.asnumpy(), np.array([0.0, 1.0, 2.0, 3.0]))
+
+    histo, bins = mx.nd.histogram(x, bins=3, range=(0.0, 3.0))
+    assert_almost_equal(histo.asnumpy(), np.array([1, 1, 2]))
+    assert_almost_equal(bins.asnumpy(), np.array([0.0, 1.0, 2.0, 3.0]))
+
+    for bin_cnt in (0, -1):
+        with pytest.raises(MXNetError, match="bin_cnt"):
+            mx.nd.histogram(x, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
+
+
 def check_countsketch(in_dim,out_dim,n):
     data = mx.sym.Variable("data")
     h = mx.sym.Variable("h")
@@ -656,12 +675,12 @@ def _conv_with_num_streams(seed):
 
 
 @pytest.mark.skip(reason=(
-    "cuDNN-9 on Blackwell (sm_120) non-deterministically selects different conv backward "
-    "algorithms across NaiveEngine/ThreadedEngine/ThreadedEnginePerDevice, producing "
-    "backward grad errors up to ~14% relative — genuine workspace/stream non-determinism, "
-    "not a test tolerance issue. Loosening atol/rtol to 0.05 is insufficient; 0.20 would be "
-    "needed to silence it, which defeats the purpose of the workspace-corruption probe. "
-    "Track at apache/incubator-mxnet#18564."
+    "cuDNN 9 on modern NVIDIA architectures can select convolution backward algorithms whose "
+    "results differ from this test's non-cuDNN reference beyond the historical 1e-2 tolerance. "
+    "Treat that first as a limitation in MXNet's old golden-copy probe or wrapper assumptions, "
+    "not as evidence that cuDNN is wrong. On Ada sm_89 the first NaiveEngine/1-stream spawned "
+    "case failed with max error ~1.57; on Blackwell sm_120 the same probe was previously "
+    "non-deterministic with grad errors up to ~14% relative. Tracked under C6."
 ))
 def test_convolution_multiple_streams():
     for num_streams in ['1', '2']:

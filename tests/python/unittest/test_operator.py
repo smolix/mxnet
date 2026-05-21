@@ -541,6 +541,28 @@ def test_leaky_relu():
                 check_symbolic_backward(y, [xa], [np.ones(shape, dtype=dtype)], [ga], rtol=rtol, atol=atol, dtype=dtype)
 
 
+def test_rrelu_training_forward_uses_sampled_mask():
+    x = mx.sym.Variable("x")
+    lower_bound = 0.1
+    upper_bound = 0.2
+    data = np.array([[-2.0, -1.0, 0.0, 1.0, 2.0]], dtype=np.float32)
+    y = mx.sym.LeakyReLU(data=x, act_type='rrelu',
+                         lower_bound=lower_bound, upper_bound=upper_bound)
+    exe = y._simple_bind(ctx=mx.cpu(), x=data.shape, type_dict={'x': data.dtype})
+    exe.arg_dict['x'][:] = data
+
+    exe.forward(is_train=True)
+    out = exe.outputs[0].asnumpy()
+    mask = exe.outputs[1].asnumpy()
+
+    assert np.all(mask >= lower_bound)
+    assert np.all(mask < upper_bound)
+    expected = data.copy()
+    neg_indices = data < 0
+    expected[neg_indices] = data[neg_indices] * mask[neg_indices]
+    assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
+
+
 # NOTE(haojin2): Skipping the numeric check tests for float16 data type due to precision issues,
 # the analytical checks are still performed on each and every data type to verify the correctness.
 def test_prelu():

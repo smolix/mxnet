@@ -233,6 +233,17 @@ The following modified ReLU Activation functions are supported:
                                     [](const NodeAttrs& attrs) {
                                       return std::vector<std::pair<int, int> >{{0, 0}};
                                     })
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& attrs) {
+                                  const LeakyReLUParam& param =
+                                      nnvm::get<LeakyReLUParam>(attrs.parsed);
+                                  if (param.act_type == leakyrelu::kRReLU) {
+                                    return std::vector<ResourceRequest>{
+                                        ResourceRequest::kParallelRandom,
+                                        ResourceRequest::kTempSpace};
+                                  }
+                                  return std::vector<ResourceRequest>();
+                                })
     .add_argument("data", "NDArray-or-Symbol", "Input data to activation function.")
     .add_argument("gamma", "NDArray-or-Symbol", "Input data to activation function.")
     .add_arguments(LeakyReLUParam::__FIELDS__())

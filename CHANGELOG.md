@@ -13,6 +13,55 @@ Version string format: `<upstream>+cu<cuda-major>.bw.<YYYYMMDD>`.
 
 ---
 
+## Unreleased — O5 release-note baseline
+
+These notes describe current `master` after the public
+`v2.0.0+cu13.bw.20260518.2` GitHub wheel. No replacement CUDA/Linux wheel has
+been cut from this source yet, so treat the bullets below as source-tree release
+notes rather than artifact provenance.
+
+### Port and dependency coverage
+
+- **CUDA 13** — the active fork target remains CUDA 13 with Blackwell `sm_120`
+  support and a broader release-build arch policy of sm\_80 / sm\_86 / sm\_89 /
+  sm\_90 / sm\_120 when artifact size allows. Linux validation is currently on
+  Ada `sm_89` hardware with CUDA 13.0; Blackwell performance claims still need
+  a dedicated `sm_120` rerun before a new public release.
+- **cuDNN 9** — the port uses cuDNN 9 APIs, including the v8 RNN path and TF32
+  by default for FP32 convolution. cuDNN 9.22 remains the recommended runtime
+  because earlier 9.x builds have weaker `sm_120` heuristic coverage; frontend
+  autotune is still env-gated.
+- **oneDNN v3** — oneDNN v3.11 is the CPU backend baseline. The release notes
+  now call out the v3 INT8 scale-direction change, batch-norm coverage, BF16
+  fallback on hosts without AVX-512-BF16, and AArch64 fallback guards for
+  oneDNN paths that are not reliable on Apple Silicon.
+- **Quantization and QAT** — post-training INT8 inference paths remain the
+  supported path. `quantize_v2` has an STE backward and
+  `quantize_net(..., qat=True)` preserves trainable parameter gradients, but
+  full QAT through oneDNN subgraph ops is not implemented: `_sg_onednn_conv`
+  and `_sg_onednn_fully_connected` still need real backward bodies before QAT
+  training-through-quantized-graph can be advertised.
+
+### Validation and release caveats
+
+- **Apple Silicon** — native macOS arm64 CPU-only builds are validated as a
+  separate, non-CUDA profile. The optimized C++ suite passed 89/89, a broad
+  Python sweep reached 14,045 pass / 67 skip with one known DataLoader failure
+  before the final fallback, targeted post-fix DataLoader checks passed, and a
+  slim `2.0.0+macos.arm64.20260520` wheel smoke imported successfully.
+- **Linux x86 / CUDA** — the current CUDA 13 validation build imports with
+  CUDA, cuDNN, NCCL, oneDNN, and four RTX 4090 GPUs visible. Focused CUDA,
+  oneDNN, packaging, lifecycle, quantization, and GPU regression checks have
+  passed locally, but the broad GPU/operator rerun is still incomplete.
+- **Packaging provenance** — the public `20260518.2` wheel predates later
+  source fixes and must not be cited as current-source provenance. New release
+  artifacts should be rebuilt from a clean tree with an explicit
+  `MXNET_PACKAGE_VERSION`, recorded commit/submodule/build options, OpenCV-off
+  CUDA wheel policy unless all OpenCV shared libraries are bundled, and a clear
+  distinction between raw `linux_x86_64` wheels and any future manylinux claim.
+
+---
+
 ## 2.0.0+cu13.bw.20260518 — 2026-05-18
 
 Second Blackwell release. Builds on `20260517`; adds upstream bug-fixes, a

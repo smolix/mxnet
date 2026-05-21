@@ -650,38 +650,103 @@ def test_conv_deconv_guards():
                 raise
 
 
+def _conv2d_forward_backward_numpy(data, weight, bias, out_grad, pad, stride):
+    n, c, h, w = data.shape
+    f, _, kh, kw = weight.shape
+    ph, pw = pad
+    sh, sw = stride
+    oh = (h + 2 * ph - kh) // sh + 1
+    ow = (w + 2 * pw - kw) // sw + 1
+    out = np.zeros((n, f, oh, ow), dtype=np.float64)
+    data_grad = np.zeros_like(data, dtype=np.float64)
+    weight_grad = np.zeros_like(weight, dtype=np.float64)
+    bias_grad = out_grad.sum(axis=(0, 2, 3), dtype=np.float64)
+    data64 = data.astype(np.float64)
+    weight64 = weight.astype(np.float64)
+    out_grad64 = out_grad.astype(np.float64)
+
+    for ni in range(n):
+        for fi in range(f):
+            for ohi in range(oh):
+                ih_base = ohi * sh - ph
+                for owi in range(ow):
+                    iw_base = owi * sw - pw
+                    total = bias[fi]
+                    grad = out_grad64[ni, fi, ohi, owi]
+                    for ci in range(c):
+                        for khi in range(kh):
+                            ih = ih_base + khi
+                            if ih < 0 or ih >= h:
+                                continue
+                            for kwi in range(kw):
+                                iw = iw_base + kwi
+                                if iw < 0 or iw >= w:
+                                    continue
+                                x = data64[ni, ci, ih, iw]
+                                wgt = weight64[fi, ci, khi, kwi]
+                                total += x * wgt
+                                data_grad[ni, ci, ih, iw] += grad * wgt
+                                weight_grad[fi, ci, khi, kwi] += grad * x
+                    out[ni, fi, ohi, owi] = total
+
+    return out, data_grad, weight_grad, bias_grad
+
+
 def _conv_with_num_streams(seed):
     with random_seed(seed):
-        # Try to expose timing-dependent improper workspace sharing by parallel dgrad and wgrad
-        num_trials = 20
-        for _ in range(num_trials):
-            size = np.random.randint(32, 128)
-            # The cudnn conv operator runs dgrad and wgrad in separate streams if enabled, with possible
-            # kernel overlap.  The non-cudnn conv op doesn't do this so is used as the 'golden copy'.
-            ctx = {'ctx': mx.gpu(0), 'conv_data': (2, 2, size, size),
-                   'type_dict': {'conv_data': np.float32}}
-            # Adding 'flip' here isolates the model from the input node (which can't use inplace store)
-            flipped = mx.sym.flip(axis=0, name='conv')
-            sym = mx.sym.Convolution(data=flipped, num_filter=3, kernel=(3,3), pad=(1,1), name='conv')
-            flipped_no_cudnn = mx.sym.flip(axis=0, name='conv')
-            sym_no_cudnn = mx.sym.Convolution(data=flipped_no_cudnn, num_filter=3, kernel=(3,3), pad=(1,1),
-                                              cudnn_off=True, name='conv')
+        ctx = mx.gpu(0)
+        cases = [
+            ((2, 2, 8, 9), (3, 2, 3, 3), (1, 1), (1, 1)),
+            ((1, 3, 7, 6), (4, 3, 1, 1), (0, 0), (1, 1)),
+        ]
+        for data_shape, weight_shape, pad, stride in cases:
+            sym = mx.sym.Convolution(num_filter=weight_shape[0],
+                                     kernel=weight_shape[2:],
+                                     pad=pad,
+                                     stride=stride,
+                                     name='conv')
+            type_dict = {'conv_data': np.float32,
+                         'conv_weight': np.float32,
+                         'conv_bias': np.float32}
+            exe = sym._simple_bind(ctx=ctx,
+                                   grad_req={'conv_data': 'write',
+                                             'conv_weight': 'write',
+                                             'conv_bias': 'write'},
+                                   type_dict=type_dict,
+                                   conv_data=data_shape)
+
+            data = ((np.arange(np.prod(data_shape)).reshape(data_shape) % 17) - 8).astype(np.float32) / 16
+            weight = ((np.arange(np.prod(weight_shape)).reshape(weight_shape) % 11) - 5).astype(np.float32) / 32
+            bias = (np.arange(weight_shape[0]).astype(np.float32) - 1) / 10
+            out_h = (data_shape[2] + 2 * pad[0] - weight_shape[2]) // stride[0] + 1
+            out_w = (data_shape[3] + 2 * pad[1] - weight_shape[3]) // stride[1] + 1
+            out_shape = (data_shape[0], weight_shape[0], out_h, out_w)
+            out_grad = ((np.arange(np.prod(out_shape)).reshape(out_shape) % 13) - 6).astype(np.float32) / 16
+            expected = _conv2d_forward_backward_numpy(data, weight, bias, out_grad, pad, stride)
+
+            exe.arg_dict['conv_data'][:] = data
+            exe.arg_dict['conv_weight'][:] = weight
+            exe.arg_dict['conv_bias'][:] = bias
+            out = exe.forward(is_train=True)[0]
+            exe.backward([mx.nd.array(out_grad, ctx=ctx)])
+            mx.nd.waitall()
+
             try:
-                # tol can be pretty high- we're looking for a large diff due to garbaged workspace
-                check_consistency([sym, sym_no_cudnn], [ctx, ctx], rtol=1e-2, atol=1e-2)
+                assert_almost_equal(out.asnumpy(), expected[0], rtol=1e-5, atol=1e-5)
+                assert_almost_equal(exe.grad_dict['conv_data'].asnumpy(), expected[1],
+                                    rtol=1e-5, atol=1e-5)
+                assert_almost_equal(exe.grad_dict['conv_weight'].asnumpy(), expected[2],
+                                    rtol=1e-5, atol=1e-5)
+                assert_almost_equal(exe.grad_dict['conv_bias'].asnumpy(), expected[3],
+                                    rtol=1e-5, atol=1e-5)
             except:
-                print('Failing conv size = {}'.format(size))
+                print('Failing conv case data={} weight={} pad={} stride={}'.format(
+                    data_shape, weight_shape, pad, stride))
                 raise
 
 
-@pytest.mark.skip(reason=(
-    "cuDNN 9 on modern NVIDIA architectures can select convolution backward algorithms whose "
-    "results differ from this test's non-cuDNN reference beyond the historical 1e-2 tolerance. "
-    "Treat that first as a limitation in MXNet's old golden-copy probe or wrapper assumptions, "
-    "not as evidence that cuDNN is wrong. On Ada sm_89 the first NaiveEngine/1-stream spawned "
-    "case failed with max error ~1.57; on Blackwell sm_120 the same probe was previously "
-    "non-deterministic with grad errors up to ~14% relative. Tracked under C6."
-))
+@pytest.mark.skipif(not mx.runtime.Features().is_enabled('CUDNN'),
+                    reason="MXNet was built without cuDNN")
 def test_convolution_multiple_streams():
     for num_streams in ['1', '2']:
         for engine in ['NaiveEngine', 'ThreadedEngine', 'ThreadedEnginePerDevice']:

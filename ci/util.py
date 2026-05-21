@@ -21,8 +21,11 @@ import logging.config
 import os
 import subprocess
 import sys
+from urllib.parse import urlparse
 
 import requests
+
+DOWNLOAD_TIMEOUT_SECONDS = 30
 
 
 def get_mxnet_root() -> str:
@@ -139,16 +142,18 @@ def config_logging():
     logging.getLogger("requests").setLevel(logging.WARNING)
 
 
-# Takes url and downloads it to the dest_path directory on Windows.
+# Takes url and downloads it to the dest_path directory.
 def download_file(url, dest_path):
-    file_name = url.split('/')[-1]
-    full_path = "{}\\{}".format(dest_path, file_name)
+    file_name = os.path.basename(urlparse(url).path)
+    if not file_name:
+        raise RuntimeError("Could not determine destination file name from {}".format(url))
+    full_path = os.path.join(dest_path, file_name)
     logging.info("Downloading: {}".format(full_path))
-    r = requests.get(url, stream=True)
+    r = requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT_SECONDS)
     if r.status_code == 404:
         return r.status_code
     elif r.status_code != 200:
-        logging.error("{} returned status code {}".format(url, r.status_code))
+        raise RuntimeError("{} returned status code {}".format(url, r.status_code))
     with open(full_path, 'wb') as f:
         for chunk in r.iter_content(chunk_size=1024):
             if chunk: # filter out keep-alive new chunks

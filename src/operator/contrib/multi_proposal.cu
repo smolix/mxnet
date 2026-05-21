@@ -14,6 +14,10 @@
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <map>
 #include <vector>
 #include <string>
@@ -33,6 +37,58 @@
     cudaError_t error = condition;                                    \
     CHECK_EQ(error, cudaSuccess) << " " << cudaGetErrorString(error); \
   } while (0)
+
+namespace {
+
+inline int64_t CheckedMul(int64_t lhs, int64_t rhs, const char* what) {
+  CHECK_GE(lhs, 0);
+  CHECK_GE(rhs, 0);
+  CHECK(rhs == 0 || lhs <= std::numeric_limits<int64_t>::max() / rhs)
+      << what << " exceeds int64_t range: " << lhs << " * " << rhs;
+  return lhs * rhs;
+}
+
+inline int64_t CheckedMul3(int64_t a, int64_t b, int64_t c, const char* what) {
+  return CheckedMul(CheckedMul(a, b, what), c, what);
+}
+
+inline mshadow::index_t CheckedIndexT(int64_t value, const char* what) {
+  CHECK_GE(value, 0);
+  CHECK_LE(value, static_cast<int64_t>(std::numeric_limits<mshadow::index_t>::max()))
+      << what << " exceeds mshadow index_t range: " << value;
+  return static_cast<mshadow::index_t>(value);
+}
+
+inline int CheckedInt(int64_t value, const char* what) {
+  CHECK_GE(value, 0);
+  CHECK_LE(value, static_cast<int64_t>(std::numeric_limits<int>::max()))
+      << what << " exceeds int range: " << value;
+  return static_cast<int>(value);
+}
+
+inline size_t CheckedSizeT(int64_t value, const char* what) {
+  CHECK_GE(value, 0);
+  CHECK_LE(static_cast<uint64_t>(value), static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
+      << what << " exceeds size_t range: " << value;
+  return static_cast<size_t>(value);
+}
+
+inline size_t CheckedBytes(int64_t elements, size_t element_size, const char* what) {
+  CHECK_GE(elements, 0);
+  CHECK_LE(static_cast<uint64_t>(elements),
+           static_cast<uint64_t>(std::numeric_limits<size_t>::max() / element_size))
+      << what << " exceeds size_t allocation range: " << elements << " * " << element_size;
+  return static_cast<size_t>(elements) * element_size;
+}
+
+inline dim3 LaunchGrid1D(int64_t count, const char* what) {
+  CHECK_GT(count, 0) << what << " launch count must be positive";
+  const int64_t blocks = (count + mshadow::cuda_impl::kMaxThreadsPerBlock - 1) /
+                         mshadow::cuda_impl::kMaxThreadsPerBlock;
+  return dim3(static_cast<unsigned>(std::min<int64_t>(blocks, mshadow::cuda_impl::kMaxGridDim)));
+}
+
+}  // namespace
 
 namespace mshadow {
 namespace cuda_impl {
@@ -302,31 +358,45 @@ void _nms(mshadow::Stream<gpu>* s,
           int* keep,
           int* num_out) {
   const int threadsPerBlock = sizeof(uint64_t) * 8;
-  const int boxes_num       = boxes.size(0);
-  const int boxes_dim       = boxes.size(1);
+  const int64_t boxes_num64 = boxes.size(0);
+  const int64_t boxes_dim64 = boxes.size(1);
+  const int boxes_num       = CheckedInt(boxes_num64, "multi_proposal nms box count");
+  const int boxes_dim       = CheckedInt(boxes_dim64, "multi_proposal nms box dimension");
+  CHECK_EQ(boxes_dim, 5);
+  CHECK_GT(boxes_num, 0) << "multi_proposal nms requires at least one box";
+  CHECK_GT(rpn_post_nms_top_n, 0) << "multi_proposal nms requires positive post-NMS top_n";
 
   float* boxes_dev   = boxes.dptr_;
   uint64_t* mask_dev = nullptr;
 
-  const int col_blocks = DIVUP(boxes_num, threadsPerBlock);
-  FRCNN_CUDA_CHECK(cudaMalloc(&mask_dev, boxes_num * col_blocks * sizeof(uint64_t)));
+  const int64_t col_blocks64 = (boxes_num64 + threadsPerBlock - 1) / threadsPerBlock;
+  const int col_blocks       = CheckedInt(col_blocks64, "multi_proposal nms block count");
+  const int64_t mask_elements64 =
+      CheckedMul(boxes_num64, col_blocks64, "multi_proposal nms mask size");
+  CheckedInt(mask_elements64, "multi_proposal nms mask offset");
+  const size_t mask_bytes =
+      CheckedBytes(mask_elements64, sizeof(uint64_t), "multi_proposal nms mask");
+  FRCNN_CUDA_CHECK(cudaMalloc(&mask_dev, mask_bytes));
 
-  dim3 blocks(DIVUP(boxes_num, threadsPerBlock), DIVUP(boxes_num, threadsPerBlock));
+  dim3 blocks(col_blocks, col_blocks);
   dim3 threads(threadsPerBlock);
+  CheckLaunchParam(blocks, threads, "nms_kernel");
   nms_kernel<<<blocks, threads>>>(boxes_num, nms_overlap_thresh, boxes_dev, mask_dev);
   FRCNN_CUDA_CHECK(cudaGetLastError());
-  std::vector<uint64_t> mask_host(boxes_num * col_blocks);
+  std::vector<uint64_t> mask_host(CheckedSizeT(mask_elements64, "multi_proposal nms mask"));
 
   cudaStream_t stream = mshadow::Stream<gpu>::GetStream(s);
   FRCNN_CUDA_CHECK(cudaMemcpyAsync(&mask_host[0],
                                    mask_dev,
-                                   sizeof(uint64_t) * boxes_num * col_blocks,
+                                   mask_bytes,
                                    cudaMemcpyDeviceToHost,
                                    stream));
   FRCNN_CUDA_CHECK(cudaStreamSynchronize(stream));
 
-  std::vector<uint64_t> remv(col_blocks);
-  memset(&remv[0], 0, sizeof(uint64_t) * col_blocks);
+  std::vector<uint64_t> remv(CheckedSizeT(col_blocks64, "multi_proposal nms block count"));
+  memset(&remv[0],
+         0,
+         CheckedBytes(col_blocks64, sizeof(uint64_t), "multi_proposal nms block mask"));
 
   int num_to_keep = 0;
   for (int i = 0; i < boxes_num; i++) {
@@ -337,7 +407,7 @@ void _nms(mshadow::Stream<gpu>* s,
       keep[num_to_keep++] = i;
       if (num_to_keep >= rpn_post_nms_top_n)
         break;
-      uint64_t* p = &mask_host[0] + i * col_blocks;
+      uint64_t* p = &mask_host[0] + static_cast<size_t>(i) * col_blocks;
       for (int j = nblock; j < col_blocks; j++) {
         remv[j] |= p[j];
       }
@@ -409,24 +479,53 @@ class MultiProposalGPUOp : public Operator {
 
     Stream<xpu>* s = ctx.get_stream<xpu>();
 
+    const mxnet::TShape& cls_shape = in_data[proposal::kClsProb].shape_;
+    const index_t num_images_index = CheckedIndexT(cls_shape[0], "multi_proposal batch size");
+    const index_t num_score_channels =
+        CheckedIndexT(cls_shape[1], "multi_proposal score channel count");
+    const index_t num_anchors_index = num_score_channels / 2;
+    const index_t height_index      = CheckedIndexT(cls_shape[2], "multi_proposal height");
+    const index_t width_index       = CheckedIndexT(cls_shape[3], "multi_proposal width");
+    const int64_t count_anchors64   = CheckedMul3(static_cast<int64_t>(num_anchors_index),
+                                                static_cast<int64_t>(height_index),
+                                                static_cast<int64_t>(width_index),
+                                                "multi_proposal anchor count");
+    const int64_t count64           = CheckedMul(static_cast<int64_t>(num_images_index),
+                                       count_anchors64,
+                                       "multi_proposal image anchor count");
+    CHECK_GT(count_anchors64, 0) << "multi_proposal requires at least one anchor location";
+    CHECK_GT(count64, 0) << "multi_proposal requires at least one image anchor";
+    const int num_images            = CheckedInt(num_images_index, "multi_proposal batch size");
+    const int num_anchors           = CheckedInt(num_anchors_index, "multi_proposal anchor count");
+    const int height                = CheckedInt(height_index, "multi_proposal height");
+    const int width                 = CheckedInt(width_index, "multi_proposal width");
+    const int count_anchors         = CheckedInt(count_anchors64, "multi_proposal anchor count");
+    const int count                 = CheckedInt(count64, "multi_proposal image anchor count");
+    // set to -1 for max
+    int64_t rpn_pre_nms_top_n64 =
+        (param_.rpn_pre_nms_top_n > 0) ? param_.rpn_pre_nms_top_n : count_anchors64;
+    rpn_pre_nms_top_n64 = std::min(rpn_pre_nms_top_n64, count_anchors64);
+    const int rpn_pre_nms_top_n =
+        CheckedInt(rpn_pre_nms_top_n64, "multi_proposal pre-NMS top_n");
+    const int64_t rpn_post_nms_top_n64 =
+        std::min(static_cast<int64_t>(param_.rpn_post_nms_top_n), rpn_pre_nms_top_n64);
+    const int rpn_post_nms_top_n =
+        CheckedInt(rpn_post_nms_top_n64, "multi_proposal post-NMS top_n");
+    const int output_count = CheckedInt(param_.rpn_post_nms_top_n, "multi_proposal output size");
+    CHECK_GT(output_count, 0) << "multi_proposal requires positive post-NMS top_n";
+    CHECK_GT(rpn_pre_nms_top_n, 0) << "multi_proposal requires positive pre-NMS top_n";
+    CHECK_GT(rpn_post_nms_top_n, 0)
+        << "multi_proposal requires positive effective post-NMS top_n";
+    const int64_t output_stride64 = static_cast<int64_t>(output_count);
+    CheckedInt(CheckedMul(output_stride64, 5, "multi_proposal output offset"),
+               "multi_proposal output offset");
+
     Tensor<xpu, 4> scores      = in_data[proposal::kClsProb].get<xpu, 4, real_t>(s);
     Tensor<xpu, 4> bbox_deltas = in_data[proposal::kBBoxPred].get<xpu, 4, real_t>(s);
     Tensor<xpu, 2> im_info     = in_data[proposal::kImInfo].get<xpu, 2, real_t>(s);
 
     Tensor<xpu, 2> out       = out_data[proposal::kOut].get<xpu, 2, real_t>(s);
     Tensor<xpu, 2> out_score = out_data[proposal::kScore].get<xpu, 2, real_t>(s);
-
-    int num_images    = scores.size(0);
-    int num_anchors   = scores.size(1) / 2;
-    int height        = scores.size(2);
-    int width         = scores.size(3);
-    int count_anchors = num_anchors * height * width;  // count of total anchors
-    int count         = num_images * count_anchors;
-    // set to -1 for max
-    int rpn_pre_nms_top_n =
-        (param_.rpn_pre_nms_top_n > 0) ? param_.rpn_pre_nms_top_n : count_anchors;
-    rpn_pre_nms_top_n      = std::min(rpn_pre_nms_top_n, count_anchors);
-    int rpn_post_nms_top_n = std::min(param_.rpn_post_nms_top_n, rpn_pre_nms_top_n);
 
     // Generate first anchors based on base anchor
     std::vector<float> base_anchor(4);
@@ -440,21 +539,31 @@ class MultiProposalGPUOp : public Operator {
 
     // Copy generated anchors to GPU
     float* workspace_proposals_ptr = nullptr;
-    FRCNN_CUDA_CHECK(
-        cudaMalloc(&workspace_proposals_ptr, sizeof(float) * num_images * count_anchors * 5));
+    const int64_t workspace_proposals_elements64 =
+        CheckedMul(count64, 5, "multi_proposal workspace proposals size");
+    CheckedInt(workspace_proposals_elements64, "multi_proposal workspace proposals offset");
+    FRCNN_CUDA_CHECK(cudaMalloc(&workspace_proposals_ptr,
+                                CheckedBytes(workspace_proposals_elements64,
+                                             sizeof(float),
+                                             "multi_proposal workspace proposals")));
     Tensor<xpu, 3> workspace_proposals(workspace_proposals_ptr,
-                                       Shape3(num_images, count_anchors, 5));
+                                       Shape3(num_images_index,
+                                              CheckedIndexT(count_anchors64,
+                                                            "multi_proposal anchor count"),
+                                              5));
 
     cudaStream_t stream = mshadow::Stream<gpu>::GetStream(s);
 
     FRCNN_CUDA_CHECK(cudaMemcpyAsync(workspace_proposals.dptr_,
                                      &anchors[0],
-                                     sizeof(float) * anchors.size(),
+                                     CheckedBytes(anchors.size(),
+                                                  sizeof(float),
+                                                  "multi_proposal anchors"),
                                      cudaMemcpyHostToDevice,
                                      stream));
 
     // Copy proposals to a mesh grid
-    dim3 dimGrid((count + kMaxThreadsPerBlock - 1) / kMaxThreadsPerBlock);
+    dim3 dimGrid = LaunchGrid1D(count64, "ProposalGrid");
     dim3 dimBlock(kMaxThreadsPerBlock);
     CheckLaunchParam(dimGrid, dimBlock, "ProposalGrid");
     ProposalGridKernel<<<dimGrid, dimBlock>>>(count,
@@ -497,29 +606,54 @@ class MultiProposalGPUOp : public Operator {
         count, count_anchors, param_.rpn_min_size, im_info.dptr_, workspace_proposals.dptr_);
     FRCNN_CUDA_CHECK(cudaGetLastError());
 
-    dimGrid  = dim3((count_anchors + kMaxThreadsPerBlock - 1) / kMaxThreadsPerBlock);
+    dimGrid  = LaunchGrid1D(count_anchors64, "CopyScore");
     dimBlock = dim3(kMaxThreadsPerBlock);
     // Copy score to a continuous memory
     float* score_ptr = nullptr;
-    FRCNN_CUDA_CHECK(cudaMalloc(&score_ptr, sizeof(float) * count_anchors));
-    Tensor<xpu, 1> score(score_ptr, Shape1(count_anchors));
+    FRCNN_CUDA_CHECK(cudaMalloc(&score_ptr,
+                                CheckedBytes(count_anchors64,
+                                             sizeof(float),
+                                             "multi_proposal score")));
+    Tensor<xpu, 1> score(score_ptr,
+                         Shape1(CheckedIndexT(count_anchors64, "multi_proposal score")));
     int* order_ptr = nullptr;
-    FRCNN_CUDA_CHECK(cudaMalloc(&order_ptr, sizeof(int) * count_anchors));
-    Tensor<xpu, 1, int> order(order_ptr, Shape1(count_anchors));
+    FRCNN_CUDA_CHECK(cudaMalloc(&order_ptr,
+                                CheckedBytes(count_anchors64,
+                                             sizeof(int),
+                                             "multi_proposal order")));
+    Tensor<xpu, 1, int> order(order_ptr,
+                              Shape1(CheckedIndexT(count_anchors64, "multi_proposal order")));
 
     float* workspace_ordered_proposals_ptr = nullptr;
-    FRCNN_CUDA_CHECK(
-        cudaMalloc(&workspace_ordered_proposals_ptr, sizeof(float) * rpn_pre_nms_top_n * 5));
+    const int64_t workspace_ordered_proposals_elements64 =
+        CheckedMul(rpn_pre_nms_top_n64, 5, "multi_proposal ordered proposals size");
+    CheckedInt(workspace_ordered_proposals_elements64,
+               "multi_proposal ordered proposals offset");
+    FRCNN_CUDA_CHECK(cudaMalloc(&workspace_ordered_proposals_ptr,
+                                CheckedBytes(workspace_ordered_proposals_elements64,
+                                             sizeof(float),
+                                             "multi_proposal ordered proposals")));
     Tensor<xpu, 2> workspace_ordered_proposals(workspace_ordered_proposals_ptr,
-                                               Shape2(rpn_pre_nms_top_n, 5));
+                                               Shape2(CheckedIndexT(rpn_pre_nms_top_n64,
+                                                                    "multi_proposal pre-NMS top_n"),
+                                                      5));
 
     int* keep;
-    FRCNN_CUDA_CHECK(cudaMalloc(&keep, sizeof(int) * rpn_pre_nms_top_n));
+    const size_t keep_bytes =
+        CheckedBytes(rpn_pre_nms_top_n64, sizeof(int), "multi_proposal keep");
+    FRCNN_CUDA_CHECK(cudaMalloc(&keep, keep_bytes));
 
     for (int b = 0; b < num_images; b++) {
       CheckLaunchParam(dimGrid, dimBlock, "CopyScore");
       CopyScoreKernel<<<dimGrid, dimBlock>>>(count_anchors,
-                                             workspace_proposals.dptr_ + b * count_anchors * 5,
+                                             workspace_proposals.dptr_ +
+                                                 CheckedIndexT(CheckedMul(
+                                                     CheckedMul(static_cast<int64_t>(b),
+                                                                count_anchors64,
+                                                                "multi_proposal proposal offset"),
+                                                     5,
+                                                     "multi_proposal proposal offset"),
+                                                               "multi_proposal proposal offset"),
                                              score.dptr_,
                                              order.dptr_);
       FRCNN_CUDA_CHECK(cudaGetLastError());
@@ -534,17 +668,23 @@ class MultiProposalGPUOp : public Operator {
 
       // Reorder proposals according to order
 
-      dimGrid.x = (rpn_pre_nms_top_n + kMaxThreadsPerBlock - 1) / kMaxThreadsPerBlock;
+      dimGrid = LaunchGrid1D(rpn_pre_nms_top_n64, "ReorderProposals");
       CheckLaunchParam(dimGrid, dimBlock, "ReorderProposals");
       ReorderProposalsKernel<<<dimGrid, dimBlock>>>(
           rpn_pre_nms_top_n,
-          workspace_proposals.dptr_ + b * count_anchors * 5,
+          workspace_proposals.dptr_ +
+              CheckedIndexT(CheckedMul(CheckedMul(static_cast<int64_t>(b),
+                                                  count_anchors64,
+                                                  "multi_proposal proposal offset"),
+                                        5,
+                                        "multi_proposal proposal offset"),
+                            "multi_proposal proposal offset"),
           order.dptr_,
           workspace_ordered_proposals.dptr_);
       FRCNN_CUDA_CHECK(cudaGetLastError());
 
       // perform nms
-      std::vector<int> _keep(workspace_ordered_proposals.size(0));
+      std::vector<int> _keep(CheckedSizeT(rpn_pre_nms_top_n64, "multi_proposal keep"));
       int out_size = 0;
       _nms(s,
            workspace_ordered_proposals,
@@ -555,18 +695,29 @@ class MultiProposalGPUOp : public Operator {
 
       // copy nms result to gpu
       FRCNN_CUDA_CHECK(cudaMemcpyAsync(
-          keep, &_keep[0], sizeof(int) * _keep.size(), cudaMemcpyHostToDevice, stream));
+          keep, &_keep[0], keep_bytes, cudaMemcpyHostToDevice, stream));
 
       // copy results after nms
-      dimGrid.x = (param_.rpn_post_nms_top_n + kMaxThreadsPerBlock - 1) / kMaxThreadsPerBlock;
+      dimGrid = LaunchGrid1D(output_count, "PrepareOutput");
       CheckLaunchParam(dimGrid, dimBlock, "PrepareOutput");
-      PrepareOutput<<<dimGrid, dimBlock>>>(param_.rpn_post_nms_top_n,
+      PrepareOutput<<<dimGrid, dimBlock>>>(output_count,
                                            workspace_ordered_proposals.dptr_,
                                            keep,
                                            out_size,
                                            b,
-                                           out.dptr_ + b * param_.rpn_post_nms_top_n * 5,
-                                           out_score.dptr_ + b * param_.rpn_post_nms_top_n);
+                                           out.dptr_ +
+                                               CheckedIndexT(CheckedMul(
+                                                   CheckedMul(static_cast<int64_t>(b),
+                                                              output_stride64,
+                                                              "multi_proposal output offset"),
+                                                   5,
+                                                   "multi_proposal output offset"),
+                                                             "multi_proposal output offset"),
+                                           out_score.dptr_ +
+                                               CheckedIndexT(CheckedMul(static_cast<int64_t>(b),
+                                                                        output_stride64,
+                                                                        "multi_proposal score offset"),
+                                                             "multi_proposal score offset"));
       FRCNN_CUDA_CHECK(cudaGetLastError());
     }
     // free temporary memory

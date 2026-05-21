@@ -19,6 +19,10 @@
 
 #include <gtest/gtest.h>
 #include <mxnet/base.h>
+#include <mxnet/runtime/container.h>
+
+#include <limits>
+#include <vector>
 
 using namespace mxnet;
 using namespace std;
@@ -43,4 +47,21 @@ TEST(ContextHashTest, ContextHashUnique) {
   double collision = collision_count / static_cast<double>(total);
   cout << "mxnet::Context std::hash collision ratio: " << collision << endl;
   EXPECT_LE(collision, 0.04);
+}
+
+TEST(RuntimeContainer, ADTRoundTrip) {
+  runtime::ADT adt(7, std::vector<runtime::ObjectRef>{});
+  EXPECT_EQ(adt.tag(), 7U);
+  EXPECT_EQ(adt.size(), 0U);
+}
+
+TEST(RuntimeContainer, InplaceArrayAllocationOverflow) {
+  const size_t max_size = std::numeric_limits<size_t>::max();
+  const size_t too_many =
+      (max_size - sizeof(runtime::ADTObj)) / sizeof(runtime::ObjectRef) + 1;
+  const auto allocate_too_many = [too_many]() {
+    auto ptr = runtime::make_inplace_array_object<runtime::ADTObj, runtime::ObjectRef>(too_many);
+    static_cast<void>(ptr);
+  };
+  EXPECT_THROW(allocate_too_many(), dmlc::Error);
 }

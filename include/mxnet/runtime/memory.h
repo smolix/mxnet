@@ -25,6 +25,7 @@
 #define MXNET_RUNTIME_MEMORY_H_
 
 #include <cstdlib>
+#include <limits>
 #include <utility>
 #include <type_traits>
 #include "object.h"
@@ -166,10 +167,16 @@ class SimpleObjAllocator : public ObjAllocatorBase<SimpleObjAllocator> {
       // class with non-virtual destructor.
       // We are fine here as we captured the right deleter during construction.
       // This is also the right way to get storage type for an object pool.
-      size_t unit              = sizeof(StorageType);
-      size_t requested_size    = num_elems * sizeof(ElemType) + sizeof(ArrayType);
-      size_t num_storage_slots = (requested_size + unit - 1) / unit;
-      StorageType* data        = new StorageType[num_storage_slots];
+      const size_t unit     = sizeof(StorageType);
+      const size_t max_size = std::numeric_limits<size_t>::max();
+      CHECK_LE(num_elems, (max_size - sizeof(ArrayType)) / sizeof(ElemType))
+          << "Inplace array allocation size overflow";
+      const size_t requested_size = sizeof(ArrayType) + num_elems * sizeof(ElemType);
+      const size_t num_storage_slots =
+          requested_size / unit + (requested_size % unit != 0);
+      CHECK_LE(num_storage_slots, max_size / unit)
+          << "Inplace array allocation slot count overflow";
+      StorageType* data = new StorageType[num_storage_slots];
       new (data) ArrayType(std::forward<Args>(args)...);
       return reinterpret_cast<ArrayType*>(data);
     }

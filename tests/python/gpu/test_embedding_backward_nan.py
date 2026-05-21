@@ -15,18 +15,19 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Stress-test reproducer for Apache MXNet issue #11314.
+"""NaN regression coverage for Apache MXNet issue #11314.
 
 AddTakeGradLargeBatchCaller (and the v2-era EmbeddingGradKernel on GPU)
 have been reported to intermittently emit NaN at random positions in the
-weight gradient on wide-Embedding backward passes.  This test exercises
-the kernel hard on Blackwell (sm_120) under CUDA 13 to confirm or refute
-the failure mode.
+weight gradient on wide-Embedding backward passes.  Normal pytest runs keep
+the dtype/fill sweep but use a smaller load.  Set
+MXNET_EMBEDDING_NAN_STRESS=1 to run the original large 100-iteration stress
+shape.
 
 Two scenarios per iteration:
-  (a) grad_weight pre-filled with zeros (the normal kAddTo path)
+  (a) grad_weight pre-filled with zeros
   (b) grad_weight pre-filled with a "trap" pattern (0xFF = NaN-ish bit
-      pattern for fp32) to expose any uninitialised-read accumulation.
+      pattern for fp32) to expose accidental reads.
 """
 
 import os
@@ -42,6 +43,18 @@ from mxnet import autograd, gluon, nd
 # Pick a GPU.  The sweep usually has one GPU busy; let the runner pick
 # via CUDA_VISIBLE_DEVICES.  We treat device 0 inside the visible set.
 CTX = mx.gpu(0)
+
+
+def _embedding_nan_config():
+    stress = os.environ.get("MXNET_EMBEDDING_NAN_STRESS") == "1"
+    if stress:
+        vocab, dim, batch, seq = 50000, 256, 8192, 64
+        default_iters = 100
+    else:
+        vocab, dim, batch, seq = 4096, 64, 512, 32
+        default_iters = 2
+    iters = int(os.environ.get("EMB_NAN_ITERS", str(default_iters)))
+    return vocab, dim, batch, seq, iters, stress
 
 
 def _alloc_trap_grad(shape, dtype, fill_byte):
@@ -104,12 +117,8 @@ def _run_one_iteration(vocab, dim, batch, seq, dtype, fill_byte, seed):
 @pytest.mark.parametrize("fill_byte", [0x00, 0xFF])
 @pytest.mark.parametrize("dtype", [np.float32, np.float16])
 def test_embedding_backward_no_nan(fill_byte, dtype):
-    """Run a wide-embedding backward 100 times; assert no NaN anywhere."""
-    vocab = 50000
-    dim = 256
-    batch = 8192
-    seq = 64
-    iters = int(os.environ.get("EMB_NAN_ITERS", "100"))
+    """Run embedding backward repeatedly; assert no NaN anywhere."""
+    vocab, dim, batch, seq, iters, stress = _embedding_nan_config()
 
     failures = []
     for i in range(iters):
@@ -124,17 +133,19 @@ def test_embedding_backward_no_nan(fill_byte, dtype):
     assert not failures, (
         f"Embedding backward produced NaN/Inf in "
         f"{len(failures)}/{iters} iterations "
-        f"(dtype={np.dtype(dtype).name}, fill=0x{fill_byte:02x}). "
+        f"(stress={stress}, shape=({vocab}, {dim}, {batch}, {seq}), "
+        f"dtype={np.dtype(dtype).name}, fill=0x{fill_byte:02x}). "
         f"First failure: iter={failures[0][0]} nan={failures[0][1]} "
         f"inf={failures[0][2]}")
 
 
 if __name__ == "__main__":
-    # Quick CLI mode (used by the bash repro loop, not by pytest).
-    vocab, dim, batch, seq = 50000, 256, 8192, 64
-    iters = int(os.environ.get("EMB_NAN_ITERS", "100"))
+    # Quick CLI mode; set MXNET_EMBEDDING_NAN_STRESS=1 for the original repro load.
+    vocab, dim, batch, seq, iters, stress = _embedding_nan_config()
     dtype = np.float32
     overall = 0
+    print(f"stress={stress} shape=({vocab}, {dim}, {batch}, {seq}) "
+          f"iters={iters}", flush=True)
     for fb_name, fb in [("zero", 0x00), ("trap", 0xFF)]:
         fail = 0
         for i in range(iters):

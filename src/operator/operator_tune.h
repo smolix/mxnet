@@ -256,7 +256,13 @@ struct tuned_op : public Operation {
    * \param args Variable arguments passed
    * \return true if OMP parallelism is recommended
    */
+#ifdef MXNET_USE_OPERATOR_TUNING
   static bool UseOMP(size_t N, size_t thread_count);
+#else
+  static MSHADOW_CINLINE bool UseOMP(size_t, size_t) {
+    return true;
+  }
+#endif  // MXNET_USE_OPERATOR_TUNING
 };
 
 /*!

@@ -734,6 +734,10 @@ endif()
 FILE(GLOB_RECURSE SOURCE "src/*.cc" "src/*.h" "include/*.h")
 FILE(GLOB_RECURSE CUDA "src/*.cu" "src/*.cuh")
 
+if(NOT (USE_OPERATOR_TUNING AND USE_OPENMP))
+  list(REMOVE_ITEM SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/operator/operator_tune.cc")
+endif()
+
 if(MSVC)
   FILE(GLOB_RECURSE TVM_BRIDGE_SOURCE "src/*/tvm_bridge.cc")
   list(REMOVE_ITEM SOURCE ${TVM_BRIDGE_SOURCE})

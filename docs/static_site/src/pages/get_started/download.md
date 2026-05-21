@@ -25,6 +25,11 @@ permalink: /get_started/download
 
 # Source Download
 
+> **Fork note:** this page lists historical official Apache MXNet source
+> releases. Apache MXNet upstream was archived on 2023-11-17. Current
+> `smolix/mxnet` fork wheels and source snapshots are not Apache releases; use
+> the fork README and GitHub releases for CUDA 13 / Blackwell packages.
+
 The source archives listed on this page are official Apache MXNet releases following
 the [Apache Software Foundation Release
 Policy](http://www.apache.org/legal/release-policy.html).

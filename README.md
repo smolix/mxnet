@@ -86,13 +86,18 @@ System requirements
 
 * Linux x86_64 (tested on Ubuntu 22.04 / 24.04).
 * NVIDIA driver supporting CUDA 13 (R570+).
-* CUDA 13.0 toolkit.
+* CUDA 13.0 toolkit installed at `/usr/local/cuda/`; the Linux CUDA wheel uses
+  it for toolkit runtime libraries that are not yet available as real
+  `nvidia-*-cu13` wheels.
 * cuDNN **9.22+** (cuDNN 9.22 has the best `sm_120` heuristic coverage;
   earlier 9.x works but routes more conv shapes through generic fallback
   engines — notably depthwise 3×3 is ~7× faster on 9.22 vs 9.14). The
-  release wheel bundles 9.22 under `mxnet/lib/`.
-* NCCL 2.28.3.
-* Python 3.10+ (3.11 / 3.12 / 3.13 are CI-tested).
+  release wheel depends on `nvidia-cudnn-cu13>=9.22,<10` and loads it via
+  `RUNPATH`; it does not bundle cuDNN inside the wheel payload.
+* NCCL 2.28+; the release wheel depends on `nvidia-nccl-cu13>=2.28,<3`.
+  Source builds still need `libnccl-dev` installed before CMake configuration.
+* Python 3.10+ for source builds (3.11 / 3.12 / 3.13 are CI-tested). The
+  current Linux CUDA wheel is built for CPython 3.11.
 * For Apple Silicon CPU-only builds: macOS arm64, Xcode Command Line Tools,
   Homebrew `cmake`, `ninja`, `ccache`, and `uv`, and Python 3.11+. Use the
   Accelerate BLAS/LAPACK path and keep CUDA, cuDNN, NCCL, OpenMP, oneDNN,
@@ -113,7 +118,17 @@ remaining CUDA 13 toolkit libs (`libcudart.so.13`, `libcublas.so.13`,
 `/usr/local/cuda/` — NVIDIA has not yet published `cu13` wheels for
 those on PyPI (the rest of the `nvidia-*-cu13` packages are placeholder
 stubs at version `0.0.1` as of 2026-05-17). `libmxnet.so`'s `RUNPATH`
-covers both locations.
+covers the wheel-local `mxnet/lib`, pip-installed NVIDIA package
+directories, and `/usr/local/cuda/lib64`.
+
+The Linux CUDA wheel is built with `USE_OPENCV=OFF` and reports
+`OPENCV=False` in `mx.runtime.feature_list()`. It has no
+`opencv-python` metadata, does not link system `libopencv_*` libraries,
+and does not require `libopencv-dev` on clean hosts. MXNet native
+image-decode and RecordIO image helpers that require OpenCV are therefore
+unavailable in this wheel; build from source with `USE_OPENCV=ON` only if
+you need that path, and then bundle or document the native OpenCV shared
+libraries explicitly.
 
 Requires Python 3.11, Linux x86_64, NVIDIA driver R570+, and the CUDA
 13 toolkit installed at `/usr/local/cuda/` (e.g. `apt install cuda-13`).

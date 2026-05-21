@@ -25,6 +25,12 @@ permalink: /get_started/build_from_source
 
 # Build Apache MXNet from Source
 
+> **Fork note:** this page started as the Apache MXNet build guide. For this
+> fork's Linux CUDA release-wheel profile, OpenCV is intentionally optional and
+> disabled (`USE_OPENCV=OFF`) so clean installs do not depend on system
+> `libopencv_*` libraries. Use the top-level `BUILDING.md` for the current
+> Blackwell / CUDA 13 release recipe.
+
 Building and installing Apache MXNet from source is a three-step process. First, build
 the shared `libmxnet` which provides the MXNet backend, then install your
 preferred language binding and finally validate that MXNet was installed
@@ -66,8 +72,11 @@ dependencies of MXNet.
 ### Debian Linux derivatives (Debian, Ubuntu, ...)
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential git ninja-build ccache libopenblas-dev libopencv-dev cmake
+sudo apt-get install -y build-essential git ninja-build ccache libopenblas-dev cmake
 ```
+
+Install `libopencv-dev` only for an OpenCV-enabled source build; the Linux CUDA
+release-wheel profile keeps OpenCV off.
 
 ### Red Hat Enterprise Linux derivatives (RHEL, CentOS, Fedora, ...)
 ```bash

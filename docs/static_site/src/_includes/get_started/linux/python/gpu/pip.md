@@ -1,3 +1,27 @@
+**Current fork note:** Apache MXNet upstream was archived on 2023-11-17. The
+historical `mxnet-cu*` commands below describe Apache-era packages, not the
+current `smolix/mxnet` CUDA 13 preview wheel.
+
+For this fork's Linux x86_64 CPython 3.11 CUDA 13 wheel, install from the
+GitHub release:
+
+{% highlight bash %}
+pip install https://github.com/smolix/mxnet/releases/download/v2.0.0.cu13.bw.20260517-beta/mxnet-2.0.0+cu13.bw.20260517-cp311-cp311-linux_x86_64.whl
+{% endhighlight %}
+
+This wheel requires an NVIDIA driver supporting CUDA 13 (R570+) and a CUDA
+13 toolkit at `/usr/local/cuda`. `pip` installs `nvidia-cudnn-cu13` and
+`nvidia-nccl-cu13`; `libcudart`, `libcublas`, `libcufft`, `libcusolver`,
+`libcurand`, and `libnvrtc` come from the system CUDA toolkit because NVIDIA's
+other `nvidia-*-cu13` packages are still placeholder stubs.
+
+The wheel is built with `USE_OPENCV=OFF`: it has no `opencv-python` dependency,
+does not link `libopencv_*`, and does not require `libopencv-dev`. Native MXNet
+image-decode and RecordIO image helpers that need OpenCV require a source build
+with `USE_OPENCV=ON`.
+
+Historical Apache MXNet package guidance follows.
+
 **WARNING**: the following PyPI package names are provided for your convenience but
 they point to packages that are *not* provided nor endorsed by the Apache
 Software Foundation. As such, they might contain software components with more

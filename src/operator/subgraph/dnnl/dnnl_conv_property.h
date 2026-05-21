@@ -294,8 +294,13 @@ class SgDNNLConvProperty : public SubgraphProperty {
 
   SubgraphSelectorPtr CreateSubgraphSelector() const override {
     bool quantize = HasAttr("quantize") ? GetAttr<bool>("quantize") : false;
+    // The quantization pipeline calibrates and repartitions the graph after
+    // this pass. Carrying residual conv+sum fusions through that flow can leave
+    // DNNL metadata larger than the backing NDArray storage and later crash
+    // CachedOp construction, especially for channel-wise quantization.
+    const bool disable_conv_sum = disable_conv_sum_ || quantize;
     auto selector = std::make_shared<SgDNNLConvSelector>(
-        disable_all_, disable_conv_bn_, disable_conv_act_, disable_conv_sum_, quantize);
+        disable_all_, disable_conv_bn_, disable_conv_act_, disable_conv_sum, quantize);
     return selector;
   }
 

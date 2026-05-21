@@ -1222,7 +1222,7 @@ class HybridBlock(Block):
                 else:
                     # The param is missing from the original params dictionary, which means the param must have
                     # been added by the Partition API backend
-                    if name in arg_dict or name:
+                    if name in arg_dict:
                         param_data = arg_dict[name]
                     elif name in aux_dict:
                         param_data = aux_dict[name]

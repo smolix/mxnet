@@ -16,9 +16,10 @@
 # under the License.
 
 import copy
+import json
 import mxnet as mx
 import pytest
-from subgraph_common import check_fusion, check_neg_fusion, check_quantize
+from subgraph_common import check_fusion, check_neg_fusion, check_quantize, check_qsym_calibrated
 from subgraph_common import CustomNormalInit, DATA_SHAPE, RELU6, TailNegBlock
 from subgraph_common import DATA_SHAPE, SG_PASS_NAME, QUANTIZE_SG_PASS_NAME
 from mxnet.contrib import quantization
@@ -37,6 +38,99 @@ def _legacy_nd_semantics():
     mx.npx.reset_np()
     yield
     mx.npx.set_np(shape=_prev_shp, array=_prev_arr)
+
+
+def _check_quantized_conv_sum_separate(net_original, data_shapes, expected_attrs,
+                                       out_types=['uint8', 'int8', 'auto'],
+                                       quantize_granularities=('tensor-wise',)):
+  one_shape = isinstance(data_shapes, tuple)
+  if one_shape:
+    data_shapes = [data_shapes]
+
+  class TestDataLoader(mx.gluon.data.DataLoader):
+    def __init__(self, data):
+      self.data = data
+      self.finish = False
+
+    def __iter__(self):
+      self.finish = False
+      return self
+
+    def __next__(self):
+      if self.finish:
+        raise StopIteration
+      self.finish = True
+      return self.data
+
+    def __del__(self):
+      pass
+
+  for granularity in quantize_granularities:
+    for out_type in out_types:
+      if out_type == 'uint8':
+        init = CustomNormalInit(sigma=0.5, bounded=True)
+        min_value = 0
+      else:
+        init = mx.init.Normal(0.5)
+        min_value = -1
+
+      net_original.initialize(init=init, force_reinit=True)
+      data = []
+      for shape in data_shapes:
+        data.append(mx.np.random.uniform(min_value, 1.0, size=shape,
+                                         dtype='float32', device=mx.cpu()))
+
+      ref_out = net_original(*data)
+      one_output = not isinstance(ref_out, list)
+      if one_output:
+        ref_out = [ref_out]
+      for output in ref_out:
+        output.wait_to_read()
+
+      qnet = quantization.quantize_net(net_original,
+                                       device=mx.cpu(),
+                                       exclude_layers=None,
+                                       exclude_operators=None,
+                                       quantized_dtype=out_type,
+                                       calib_mode='naive',
+                                       calib_data=TestDataLoader(data),
+                                       num_calib_batches=1,
+                                       quantize_mode='full',
+                                       quantize_granularity=granularity)
+      qsym, _ = qnet.export(None)
+      check_qsym_calibrated(qsym, out_type, name='sg_onednn_conv')
+
+      conv_attrs = {
+          name: node_attrs
+          for name, node_attrs in qsym.attr_dict().items()
+          if 'quantized_sg_onednn_conv' in name
+      }
+      assert conv_attrs
+      for name, node_attrs in conv_attrs.items():
+        assert 'with_sum' not in node_attrs, name + " shouldn't contain with_sum"
+
+      for name, attrs in expected_attrs.items():
+        assert name in conv_attrs
+        for attr_name, attr_value in attrs.items():
+          assert conv_attrs[name][attr_name].lower() == attr_value.lower()
+
+      add_ops = {'_contrib_quantized_npi_add', '_contrib_quantized_elemwise_add',
+                 '_contrib_quantized_broadcast_add', '_npi_add',
+                 'elemwise_add', 'broadcast_add'}
+      nodes = json.loads(qsym.tojson())['nodes']
+      assert any(node['op'] in add_ops for node in nodes)
+
+      quantized_out = qnet(*data)
+      if one_output:
+        quantized_out = [quantized_out]
+      for i in range(len(ref_out)):
+        min_range = mx.np.min(ref_out[i]).item()
+        max_range = mx.np.max(ref_out[i]).item()
+        atol = 0.1 * max(abs(min_range), abs(max_range))
+        assert_almost_equal_with_err(quantized_out[i].asnumpy(), ref_out[i].asnumpy(),
+                                     rtol=0.1, atol=atol, etol=0.2)
+
+
 @mx.util.use_np
 def test_float64_fallback():
   class ConvWithDtype(nn.HybridBlock):
@@ -193,6 +287,12 @@ def test_pos_conv_add3(no_bias, data_shape, out_type):
 
   net = ConvAdd(use_bias=True)
   check_quantize(net, data_shape, out_type)
+  if out_type == 'int8':
+    _check_quantized_conv_sum_separate(
+        net, data_shape,
+        {'quantized_sg_onednn_conv_0': {}},
+        out_types=['int8'],
+        quantize_granularities=('tensor-wise', 'channel-wise'))
 
 
 @mx.util.use_np
@@ -213,6 +313,56 @@ def test_pos_conv_add4(no_bias, data_shape, out_type):
 
   net = ConvAdd(use_bias=True)
   check_quantize(net, data_shape, out_type)
+
+
+@mx.util.use_np
+def test_channelwise_quantize_model_skips_onednn_conv_with_sum():
+  data_shape = (1, 8, 8, 8)
+
+  class ConvAdd(nn.HybridBlock):
+    def __init__(self, **kwargs):
+      super(ConvAdd, self).__init__(**kwargs)
+      self.conv0 = nn.Conv2D(channels=data_shape[1], kernel_size=(1, 1), use_bias=True)
+
+    def forward(self, x):
+      return x + self.conv0(x)
+
+  data = mx.np.random.uniform(-1.0, 1.0, size=data_shape, device=mx.cpu())
+  net = ConvAdd()
+  net.initialize(init=mx.init.Normal(0.1), device=mx.cpu())
+  net.hybridize(static_alloc=False, static_shape=False)
+  net(data).wait_to_read()
+
+  sym, params = net.export(None)
+  arg_params = {k[4:]: v for k, v in params.items() if k.startswith('arg:')}
+  aux_params = {k[4:]: v for k, v in params.items() if k.startswith('aux:')}
+
+  sym_sg = sym.optimize_for(SG_PASS_NAME, dedup_subgraph=True, skip_infer=True)
+  sg_conv_attrs = {
+      name: attrs
+      for name, attrs in sym_sg.attr_dict().items()
+      if 'sg_onednn_conv' in name
+  }
+  assert any(attrs.get('with_sum') == 'true' for attrs in sg_conv_attrs.values())
+
+  qsym, _, _ = quantization.quantize_model(
+      sym=sym_sg,
+      arg_params=arg_params,
+      aux_params=aux_params,
+      device=mx.cpu(),
+      quantized_dtype='int8',
+      calib_mode='none',
+      quantize_mode='full',
+      quantize_granularity='channel-wise')
+
+  q_conv_attrs = {
+      name: attrs
+      for name, attrs in qsym.attr_dict().items()
+      if 'sg_onednn_conv' in name
+  }
+  assert not any(
+      'quantized_sg_onednn_conv' in name and 'with_sum' in attrs
+      for name, attrs in q_conv_attrs.items())
 
 
 @mx.util.use_np
@@ -257,7 +407,11 @@ def test_pos_conv_act_add(data_shape, alg, quantize, use_bias):
            'sg_onednn_conv_add_1': {'with_sum': 'true'}}
 
   net = ConvActAdd(use_bias, alg)
-  check_fusion(net, data_shape, attrs, check_quantization=quantize)
+  check_fusion(net, data_shape, attrs, check_quantization=False)
+  if quantize:
+    _check_quantized_conv_sum_separate(
+        net, data_shape,
+        {'quantized_sg_onednn_conv_act_0': {'with_act': 'true'}})
 
 
 @mx.util.use_np
@@ -507,10 +661,14 @@ class ConvBNSum(nn.HybridBlock):
 @pytest.mark.parametrize('reverse_sum_order', [True, False])
 @pytest.mark.parametrize('dedup_subgraph', [True, False])
 def test_conv_bn_sum(data_shape, reverse_sum_order, dedup_subgraph):
-  attr = {'sg_onednn_conv_bn_add_0' : {'with_bn': 'true'}}
+  attr = {'sg_onednn_conv_bn_add_0' : {'with_bn': 'true', 'with_sum': 'true'}}
   # channels after conv+bn should be same as input channels
   net = ConvBNSum(channels=data_shape[1] ,reverse_sum_order=reverse_sum_order)
-  check_fusion(net, data_shape, attr, out_types=['int8', 'auto'], dedup_subgraph=dedup_subgraph)
+  check_fusion(net, data_shape, attr, check_quantization=False, dedup_subgraph=dedup_subgraph)
+  _check_quantized_conv_sum_separate(
+      net, data_shape,
+      {'quantized_sg_onednn_conv_bn_0': {'with_bn': 'true'}},
+      out_types=['int8', 'auto'])
 
 
 # used in multiple tests

@@ -154,6 +154,10 @@ inline QuantizeType NeedQuantize(ObjectPtr node,
   const auto& op                = node->op();
   bool need                     = false;
   if (op && quantized_op_map.count(op)) {
+    if (quantize_granularity == "channel-wise" && op->name == "_sg_onednn_conv" &&
+        node->attrs.dict.count("with_sum")) {
+      return QuantizeType::kNone;
+    }
     need = true;
     // If the quantized node is not registered with a computation function, the node
     // will be excluded automatically.

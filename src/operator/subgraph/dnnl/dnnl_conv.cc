@@ -744,7 +744,7 @@ static bool SgDNNLConvInferType(const nnvm::NodeAttrs& attrs,
     // uint8.
     int orig_data    = base_in_types[0];
     base_in_types[0] = mshadow::kFloat32;
-    int orig_sum     = base_in_types[0];
+    int orig_sum     = -1;
     auto& dnnl_param = param.full_conv_param.dnnl_param;
     if (param.full_conv_param.dnnl_param.with_sum && !dnnl_param.dedup_sum) {
       auto sum_index           = GetInSumIndex(param);

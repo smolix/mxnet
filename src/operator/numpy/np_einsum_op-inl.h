@@ -665,7 +665,7 @@ inline void NumpyEinsumProcess(const std::vector<TBlob>& inputs,
     }
     const TBlob& out_data = outputs[0];
     MXNET_ACC_TYPE_SWITCH(out_data.type_flag_, DType, AType, {
-      mxnet::common::StaticArray<DType*, NPY_MAXARGS> op;
+      mxnet::common::StaticArray<DType*, NPY_MAXARGS> op(nullptr);
       for (iop = 0; iop < nop; ++iop) {
         op[iop] = inputs[iop].dptr<DType>();
       }
@@ -730,7 +730,7 @@ inline void NumpyEinsumProcess(const std::vector<TBlob>& inputs,
         }
       }
       MXNET_ACC_TYPE_SWITCH(out_data.type_flag_, DType, AType, {
-        mxnet::common::StaticArray<DType*, NPY_MAXARGS> op;
+        mxnet::common::StaticArray<DType*, NPY_MAXARGS> op(nullptr);
         for (iop = 0; iop < nop; ++iop) {
           op[iop] = inputs[iop + back].dptr<DType>();
         }

@@ -89,7 +89,7 @@ inline void pool_max_1d_ncw_cpu(const DType* in_data,
                                 const mxnet::TShape& pad,
                                 const mxnet::TShape& stride,
                                 DType* out_data) {
-  using mshadow::red::limits::MinValue;
+  using mshadow::red::limits::NegInfValue;
   const int width               = ishape[2];
   const int pooled_width        = oshape[2];
   const int kernel_w            = kernel[0];
@@ -103,7 +103,7 @@ inline void pool_max_1d_ncw_cpu(const DType* in_data,
         int wstart    = pw * stride_w - pad_w;
         int wend      = std::min(wstart + kernel_w, width);
         wstart        = std::max(wstart, 0);
-        DType max_val = -std::numeric_limits<DType>::infinity();
+        DType max_val = NegInfValue<DType>();
         for (int w = wstart; w < wend; ++w) {
           if (in_data[w] > max_val) {
             max_val = in_data[w];
@@ -129,7 +129,7 @@ inline void pool_max_1d_nwc_cpu(const DType* in_data,
                                 const mxnet::TShape& pad,
                                 const mxnet::TShape& stride,
                                 DType* out_data) {
-  using mshadow::red::limits::MinValue;
+  using mshadow::red::limits::NegInfValue;
   const int width               = ishape[1];
   const int pooled_width        = oshape[1];
   const int kernel_w            = kernel[0];
@@ -144,7 +144,7 @@ inline void pool_max_1d_nwc_cpu(const DType* in_data,
       int wstart = pw * stride_w - pad_w;
       int wend   = std::min(wstart + kernel_w, width);
       wstart     = std::max(wstart, 0);
-      std::fill(max_vals.begin(), max_vals.end(), -std::numeric_limits<DType>::infinity());
+      std::fill(max_vals.begin(), max_vals.end(), NegInfValue<DType>());
       for (int w = wstart; w < wend; ++w) {
         for (index_t c = 0; c < features; ++c) {
           if (in_data[w * features + c] > max_vals[c]) {
@@ -172,7 +172,7 @@ inline void pool_max_2d_nchw_cpu(const DType* in_data,
                                  const mxnet::TShape& pad,
                                  const mxnet::TShape& stride,
                                  DType* out_data) {
-  using mshadow::red::limits::MinValue;
+  using mshadow::red::limits::NegInfValue;
   const int height = ishape[2], width = ishape[3];
   const int pooled_height = oshape[2], pooled_width = oshape[3];
   const int kernel_h = kernel[0], kernel_w = kernel[1];
@@ -191,7 +191,7 @@ inline void pool_max_2d_nchw_cpu(const DType* in_data,
           hstart               = std::max(hstart, 0);
           wstart               = std::max(wstart, 0);
           const int pool_index = ph * pooled_width + pw;
-          DType max_val        = -std::numeric_limits<DType>::infinity();
+          DType max_val        = NegInfValue<DType>();
           for (int h = hstart; h < hend; ++h) {
             for (int w = wstart; w < wend; ++w) {
               const int in_index = h * width + w;
@@ -221,7 +221,7 @@ inline void pool_max_2d_nhwc_cpu(const DType* in_data,
                                  const mxnet::TShape& pad,
                                  const mxnet::TShape& stride,
                                  DType* out_data) {
-  using mshadow::red::limits::MinValue;
+  using mshadow::red::limits::NegInfValue;
   const int height = ishape[1], width = ishape[2];
   const int pooled_height = oshape[1], pooled_width = oshape[2];
   const int kernel_h = kernel[0], kernel_w = kernel[1];
@@ -241,7 +241,7 @@ inline void pool_max_2d_nhwc_cpu(const DType* in_data,
         hstart               = std::max(hstart, 0);
         wstart               = std::max(wstart, 0);
         const int pool_index = ph * pooled_width + pw;
-        std::fill(max_vals.begin(), max_vals.end(), -std::numeric_limits<DType>::infinity());
+        std::fill(max_vals.begin(), max_vals.end(), NegInfValue<DType>());
         for (int h = hstart; h < hend; ++h) {
           for (int w = wstart; w < wend; ++w) {
             const int in_index = h * width + w;
@@ -273,7 +273,7 @@ inline void pool_max_3d_ncdhw_cpu(const DType* in_data,
                                   const mxnet::TShape& pad,
                                   const mxnet::TShape& stride,
                                   DType* out_data) {
-  using mshadow::red::limits::MinValue;
+  using mshadow::red::limits::NegInfValue;
   const int depth = ishape[2], height = ishape[3], width = ishape[4];
   const int pooled_depth = oshape[2], pooled_height = oshape[3], pooled_width = oshape[4];
   const int kernel_d = kernel[0], kernel_h = kernel[1], kernel_w = kernel[2];
@@ -296,7 +296,7 @@ inline void pool_max_3d_ncdhw_cpu(const DType* in_data,
             hstart               = std::max(hstart, 0);
             wstart               = std::max(wstart, 0);
             const int pool_index = (pd * pooled_height + ph) * pooled_width + pw;
-            DType max_val        = -std::numeric_limits<DType>::infinity();
+            DType max_val        = NegInfValue<DType>();
             for (int d = dstart; d < dend; ++d) {
               for (int h = hstart; h < hend; ++h) {
                 for (int w = wstart; w < wend; ++w) {
@@ -329,7 +329,7 @@ inline void pool_max_3d_ndhwc_cpu(const DType* in_data,
                                   const mxnet::TShape& pad,
                                   const mxnet::TShape& stride,
                                   DType* out_data) {
-  using mshadow::red::limits::MinValue;
+  using mshadow::red::limits::NegInfValue;
   const int depth = ishape[1], height = ishape[2], width = ishape[3];
   const int pooled_depth = oshape[1], pooled_height = oshape[2], pooled_width = oshape[3];
   const int kernel_d = kernel[0], kernel_h = kernel[1], kernel_w = kernel[2];
@@ -353,7 +353,7 @@ inline void pool_max_3d_ndhwc_cpu(const DType* in_data,
           hstart               = std::max(hstart, 0);
           wstart               = std::max(wstart, 0);
           const int pool_index = (pd * pooled_height + ph) * pooled_width + pw;
-          std::fill(max_vals.begin(), max_vals.end(), -std::numeric_limits<DType>::infinity());
+          std::fill(max_vals.begin(), max_vals.end(), NegInfValue<DType>());
           for (int d = dstart; d < dend; ++d) {
             for (int h = hstart; h < hend; ++h) {
               for (int w = wstart; w < wend; ++w) {

@@ -85,7 +85,7 @@ inline void* AlignedMallocPitch(size_t *out_pitch,
 #ifdef _MSC_VER
   void *res = _aligned_malloc(pitch * num_line, 1 << bits);
 #else
-  void *res;
+  void *res = nullptr;
   int ret = posix_memalign(&res, 1 << bits, pitch * num_line);
   CHECK_EQ(ret, 0) << "AlignedMallocPitch failed";
 #endif

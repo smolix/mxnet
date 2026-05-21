@@ -309,16 +309,13 @@ inline std::vector<std::vector<int> > _greedy_path(const SetVector* input_sets,
     }
 
     // Sort based on first index
-    int64_t best_cost[2];
-    int idx = -1, size = static_cast<int>(known_contractions.size());
-    for (int i = 0; i < size; ++i) {
+    int idx          = 0;
+    int size         = static_cast<int>(known_contractions.size());
+    int64_t best_cost[2] = {known_contractions[idx].cost[0], known_contractions[idx].cost[1]};
+    for (int i = 1; i < size; ++i) {
       auto x = known_contractions[i];
-      if (idx == -1) {
-        best_cost[0] = x.cost[0];
-        best_cost[1] = x.cost[1];
-        idx          = i;
-      } else if (x.cost[0] < best_cost[0] ||
-                 (x.cost[0] == best_cost[0] && x.cost[1] < best_cost[1])) {
+      if (x.cost[0] < best_cost[0] ||
+          (x.cost[0] == best_cost[0] && x.cost[1] < best_cost[1])) {
         best_cost[0] = x.cost[0];
         best_cost[1] = x.cost[1];
         idx          = i;

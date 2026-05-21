@@ -436,9 +436,11 @@ void FillMultiKernelParam(const nnvm::NodeAttrs& attrs,
 
     pParam->out_data[i] = outputs[i].FlatTo2D<xpu, DType>(s).dptr_;
   }
-  memcpy(pParam->etas, p.etas.begin(), pParam->count * sizeof(p.etas[0]));
-  memcpy(pParam->lrs, p.lrs.begin(), pParam->count * sizeof(p.lrs[0]));
-  memcpy(pParam->wds, p.wds.begin(), pParam->count * sizeof(p.wds[0]));
+  for (int i = 0; i < pParam->count; ++i) {
+    pParam->etas[i] = static_cast<MPDType>(p.etas[i]);
+    pParam->lrs[i]  = static_cast<MPDType>(p.lrs[i]);
+    pParam->wds[i]  = static_cast<MPDType>(p.wds[i]);
+  }
 }
 
 template <typename xpu, template <typename> class MPTypeChooser, int input_stride>

@@ -62,7 +62,6 @@ void CublasStridedBatchedGemm(mshadow::Stream<gpu>* s,
       << "Must init CuBLAS handle in stream";
 
   cublasHandle_t blas_handle = mshadow::Stream<gpu>::GetBlasHandle(s);
-  auto err                   = CUBLAS_STATUS_SUCCESS;
   using TrueFP16Type         = DType;
   using PseudoFP16Type       = typename CublasType<DType>::ScaleType;
   // Set up alpha and beta values in the possible formats needed (only different when dtype == half)

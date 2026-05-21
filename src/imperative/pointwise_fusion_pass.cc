@@ -201,7 +201,7 @@ Graph CopyAndReplaceSubgraphs(const Graph& g,
           node_copy->inputs.emplace_back(new_nodes[input.node_id], input.index, input.version);
         } else {
           int input_num;
-          int output_num;
+          int output_num = 0;
           if (their_subgraph == -1) {
             input_num = SetInsert({static_cast<int>(input.node_id), static_cast<int>(input.index)},
                                   &(info.inputs));

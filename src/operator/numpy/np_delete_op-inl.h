@@ -28,6 +28,7 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <type_traits>
 #include "../../common/utils.h"
 #include "../tensor/sort_op.h"
 #include "../tensor/init_op.h"
@@ -102,6 +103,20 @@ struct SliceToIndices {
   }
 };
 
+template <typename IType, bool is_unsigned = std::is_unsigned<IType>::value>
+struct DeleteIndexIsValid {
+  MSHADOW_XINLINE static bool Check(IType index, int N) {
+    return index >= 0 && index < N;
+  }
+};
+
+template <typename IType>
+struct DeleteIndexIsValid<IType, true> {
+  MSHADOW_XINLINE static bool Check(IType index, int N) {
+    return index < static_cast<IType>(N);
+  }
+};
+
 struct IsDeleteCal {
   /*!
    * \brief indicate which indices need to be deleted in input
@@ -112,7 +127,7 @@ struct IsDeleteCal {
    */
   template <typename IType>
   MSHADOW_XINLINE static void Map(index_t i, int N, bool* is_delete, const IType* indices) {
-    if ((indices[i] >= 0) && (indices[i] < N)) {
+    if (DeleteIndexIsValid<IType>::Check(indices[i], N)) {
       is_delete[static_cast<index_t>(indices[i])] = true;
     }
   }

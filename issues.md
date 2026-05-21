@@ -21,11 +21,13 @@ isolation. The DNNL adaptive-pooling numeric-gradient matrix has been reduced
 after the row-sparse timeout, and the focused adaptive-pooling check now passes.
 Local DNNL quantized conv+sum mitigation work is present and rebuilt, and its
 focused regression now passes. A post-rebuild GPU shard did not reach MXNet
-operator logic because the host entered an NVIDIA driver/userspace mismatch
-state (`580.126.20` kernel module with `580.159.03` CUDA/NVML libraries) while
-`dpkg`/`unattended-upgrades` were configuring NVIDIA packages;
-`/var/run/reboot-required` is present. The broad CPU/DNNL reruns are still pending, and GPU
-reruns are blocked until the host driver stack is consistent again.
+operator logic because `/usr/bin/unattended-upgrade` started at
+2026-05-21 06:47:53 and upgraded the NVIDIA 580 server-open userspace stack
+from `580.126.20` to `580.159.03` while the loaded kernel module remained
+`580.126.20`; `/var/run/reboot-required` is present. The broad CPU/DNNL reruns
+are still pending. GPU reruns and CPU tests that enter MXNet autograd backward
+or initialize KVStore are blocked until the host driver stack is consistent
+again.
 Local release tag: `macos-arm64-slim-wheel-20260520`
 
 This file is a status index, not a changelog. Historical details live in git
@@ -60,10 +62,10 @@ correctness and cuDNN/CUDA 13 behavior can be validated here.
 | L3 | In progress | CUDA regression batch | Targeted CUDA tests have cleared cuDNN/TF32 deconv, cuBLASLt FC parity, deferred-compute GPU, and the NCCL single-process bandwidth check after converting the hard bandwidth gate into a metric. Extension GPU tests now skip when optional shared libraries were not built. | Continue with fp16 batch-dot, linalg temp storage, KVStore single-machine, and a full GPU rerun after the fork-safety crash fix. |
 | L4 | External | D2L artifact intake | The rebuilt `sm_89` runtime clears the standalone GPU probe gate, and the transformer standalone repro now passes after the oneDNN `batch_dot` descriptor fix. The old d2l notebook failures came from stale artifacts and should not reopen MXNet work by themselves. | Consume current D2L notebook-run/output-audit artifacts when available; reopen MXNet work only for concrete fresh runtime repros, not stale stamps or dead-kernel summaries. |
 | L5 | Resolved | Tracker cleanup | Duplicate issue trackers and stale markdown reports have been imported here or removed from the repo. | Keep `issues.md` as the processing queue; retain only active investigation notes and executable d2l repro tools. |
-| L6 | In progress | Compiler noise | GCC 13/NVCC CUDA 13 builds emit enough warning noise to hide real failures, and one large translation unit currently dominates build latency. The dmlc optional cluster is fixed locally, the product/nanprod reduction cluster is reduced, and local MXNet tuple stack-initialization plus runtime-handle cleanups are committed. | Continue with the remaining high-volume clusters, especially the parallel NNVM tuple cache initialization, CN5 unsigned CUDA type guards, CN6 sentinel conversions, and the unfixed half/bfloat min/max residual warnings within CN4. |
+| L6 | In progress | Compiler noise | GCC 13/NVCC CUDA 13 builds emit enough warning noise to hide real failures, and one large translation unit currently dominates build latency. The dmlc optional cluster, product/nanprod reduction cleanup, local MXNet tuple stack-initialization, runtime-handle cleanup, CN4 min/max residual initialization, CN5 unsigned CUDA guards, CN6 local sentinel conversions, CN7 half parameter packing, and CN8 cheap cleanup noise are now reduced locally. | Continue with the remaining high-volume clusters, especially the parallel NNVM tuple cache initialization, einsum uninitialized warnings, CTC/moderngpu include-boundary warnings, bundled dmlc queue offsets, and higher-risk mshadow packet allocation warnings. |
 | L7 | In progress | Test scheduling | Parallel full-suite lanes can overload the host if CPU xdist, C++ gtest, oneDNN numeric-gradient tests, and GPU operator sweeps overlap. The target load envelope for this machine is about 48-64 runnable tasks. | Keep one heavy CPU lane active at a time, add GPU shards when memory is idle, and pause/resume long DNNL work instead of killing it when load spikes. |
-| L8 | In progress | Build freshness | Local DNNL quantized conv+sum and compiler-noise edits rebuilt successfully; `build/libmxnet.so` was modified at 2026-05-21 06:37:04 UTC, and focused post-rebuild checks passed. No post-rebuild full-test summary is recorded here yet, and CMake still embeds the older `MXNET_COMMIT_HASH` value from `b881a9c5a` because the build was not reconfigured. | Run broad reruns on this rebuilt library; reconfigure before packaging or publishing artifacts so embedded metadata and wheel tags match the release commit. |
-| L9 | Deferred | Host GPU driver state | Post-rebuild GPU shards for fp16 batch-dot, linalg temp storage, and KVStore single-machine failed during setup with CUDA error 304 / invalid GPU context. `nvidia-smi` also fails because the loaded NVIDIA kernel module is `580.126.20` while userspace CUDA/NVML libraries are `580.159.03`; NVIDIA package configuration was still in progress and `/var/run/reboot-required` exists. | Do not treat these as MXNet failures. Resume GPU testing only after `dpkg` finishes and the host is rebooted or the driver/userspace versions are otherwise aligned. |
+| L8 | In progress | Build freshness | Local DNNL quantized conv+sum and compiler-noise edits rebuilt successfully; `build/libmxnet.so` was modified at 2026-05-21 07:47:21 UTC, and focused post-rebuild checks passed where they do not enter autograd. No post-rebuild full-test summary is recorded here yet, and CMake still embeds the older `MXNET_COMMIT_HASH` value from `b881a9c5a` because the build was not reconfigured. | Run broad reruns on this rebuilt library after L9 is cleared; reconfigure before packaging or publishing artifacts so embedded metadata and wheel tags match the release commit. |
+| L9 | Deferred | Host GPU driver state | Post-rebuild GPU shards for fp16 batch-dot, linalg temp storage, and KVStore single-machine failed during setup with CUDA error 304 / invalid GPU context. `nvidia-smi` also fails because `/usr/bin/unattended-upgrade` started at 2026-05-21 06:47:53 and upgraded the NVIDIA 580 server-open userspace packages, including `nvidia-driver-580-server-open`, from `580.126.20` to `580.159.03` while the loaded NVIDIA kernel module remained `580.126.20`; `/var/run/reboot-required` exists. Even CPU arrays fail when MXNet enters autograd backward, and local KVStore creation fails, because the CUDA runtime returns error 304/804 from this host state. | Do not treat these as MXNet failures. Resume GPU, KVStore, and autograd-covered CPU testing only after the host is rebooted or the driver/userspace versions are otherwise aligned. |
 
 ---
 
@@ -78,13 +80,13 @@ bugs.
 | ID | Status | Area | Cluster | Triage action |
 |---|---|---|---|---|
 | CN1 | Open | Build throughput | `src/operator/operator_tune.cc` can spend more than 25 minutes in a single GCC 13 `-O3` compile. Disabling `USE_OPERATOR_TUNING` allowed the local CUDA validation build to link. | Test whether splitting the file, lowering optimization for that TU, or keeping operator tuning disabled only for local validation gives a safe compile-time win without changing release behavior unintentionally. |
-| CN2 | Open | Tuple/runtime allocation | Repeated GCC uninitialized and array-bounds warnings flow through tuple/ADT allocation paths. The MXNet `Tuple::data_stack_` warning is fixed; remaining likely sources include the parallel NNVM tuple cache and ADT object-size paths through `include/mxnet/ndarray.h`, `include/mxnet/tensor_blob.h`, `include/nnvm/node.h`, and `include/mxnet/runtime/memory.h`. | Add the NNVM tuple cache initializer if focused rebuild confirms the same pattern; audit object-size invariants separately because `-Warray-bounds` may indicate real layout assumptions. |
+| CN2 | Open | Tuple/runtime allocation | Repeated GCC uninitialized and array-bounds warnings flow through tuple/ADT allocation paths. The MXNet `Tuple::data_stack_` warning is fixed. The parallel NNVM tuple cache likely needs the same `data_stack_` initializer pattern, but that code lives in the vendored TVM submodule and should not be carried as an unpushed detached submodule edit. Remaining ADT object-size paths run through `include/mxnet/ndarray.h`, `include/mxnet/tensor_blob.h`, `include/nnvm/node.h`, and `include/mxnet/runtime/memory.h`. | Add the NNVM tuple cache initializer only via a reachable TVM submodule commit or explicit third-party patch policy; audit object-size invariants separately because `-Warray-bounds` may indicate real layout assumptions. |
 | CN3 | Resolved | dmlc optional | `include/dmlc/optional.h` emitted uninitialized warnings around `optional<T>().swap(*this)`, stream extraction, nullopt assignment, and scalar specializations. | Fixed in dmlc-core commit `d610d79` by using lifetime-aware assignment/reset/swap and by assigning parsed values only after successful extraction; standalone optional smoke passed. |
-| CN4 | Partial | Reductions | Half/bfloat broadcast-reduce kernels warn about possibly uninitialized residual/value pairs in `broadcast_reduce-inl.h`; boolean product/nanprod warned about `dst *= src`. | Product/nanprod now initialize the unused residual and use logical AND for bool reductions on CPU and RTC GPU paths. Remaining CN4 work: min/max half/bfloat residual warnings still appear and need separate triage. |
-| CN5 | Open | CUDA type guards | NVCC warns on unsigned comparisons against zero in dtype-generic kernels such as bincount, delete, nan-to-num, and random location/scale paths. | Replace value checks with type-trait guards or signed temporaries where behavior is intentional. |
-| CN6 | Open | Sentinel conversions | CUDA/C++ warnings include `size_t` vectors initialized with `-1` in `np_cross` and `np_matmul`, plus queue offsets assigned `-1` in bundled dmlc concurrent queue code. | Fix local sentinel types; suppress bundled third-party headers only if the vendored code is otherwise untouched. |
+| CN4 | Resolved | Reductions | Half/bfloat broadcast-reduce residual initialization now initializes `val` and `residual` independently before reducer-specific setup, and boolean product/nanprod initializes unused residual storage and uses logical AND for bool reductions on CPU and RTC GPU paths. | Clean rebuild no longer shows the CN4 residual cluster; focused CPU reducer regressions passed. GPU/autograd-covered follow-up waits for L9. |
+| CN5 | Resolved | CUDA type guards | Unsigned comparison warnings are reduced with type-trait negative checks in bincount, delete, nan-to-num, and NumPy random normal/location-scale validation paths. | Clean rebuild no longer shows the local CN5 unsigned-comparison cluster. Forward-only `bincount`, `delete`, `np_random`, and `np_randn` checks passed; autograd-covered random/nan-to-num checks wait for L9. |
+| CN6 | Resolved | Sentinel conversions | Local MXNet `size_t` sentinel initialization warnings in `np_cross` and `np_matmul` are fixed by value-initializing vectors instead of filling them with `-1`. Bundled dmlc queue offset warnings are third-party boundary work, not local CN6 blockers. | Clean rebuild no longer shows local `np_cross`/`np_matmul` sentinel warnings. `test_np_matmul_error` passed; autograd-covered `np_cross`/`np_matmul` follow-up waits for L9. |
 | CN7 | Open | Half param packing | Fused optimizer parameter packing uses `memcpy` into `mshadow::half::half_t` arrays in AdamW/AdaBelief-style code, triggering `-Wclass-memaccess`. | Replace local half copies with typed copy/assignment helpers and run focused fused optimizer tests. |
-| CN8 | In progress | Local cleanup | Cheap warnings include unused variables in CUDA resize/transformer code, KVStore hidden overloads/unused buffers, and mshadow packet allocation warnings. The always-true runtime-handle warning has a local cleanup and passed incremental rebuild plus focused container smoke. | Continue with remaining cheap local warnings; leave higher-risk mshadow changes behind focused tests. |
+| CN8 | Partial | Local cleanup | Cheap local warnings are reduced: CUDA resize/transformer unused variables are removed, KVStore NCCL hidden-overload/buffer noise is cleaned up, pointwise fusion initializes the crossing-subgraph output slot, CN7 half parameter packing uses typed assignment, and the always-true runtime-handle cleanup is validated. | Leave higher-risk mshadow packet allocation warnings, einsum uninitialized warnings, CTC/moderngpu include-boundary warnings, and bundled/linker boundary warnings for the next pass. |
 | CN9 | Open | Third-party/link boundaries | Bundled CTC/moderngpu emits deprecated `std::binary_function` warnings, and the final link warns that `ittptmark64.S.o` lacks a non-executable-stack note. | Do not churn vendored code during runtime validation; route through system-header/linker-boundary treatment or targeted upstreamable fixes. |
 
 ### Compiler Noise TODO Clusters
@@ -92,18 +94,16 @@ bugs.
 - [ ] CN2 tuple/ADT allocation: MXNet `Tuple::data_stack_` initialization is
       committed; add the parallel NNVM tuple cache initializer and validate
       shape/tuple, NDArray, and symbolic construction tests before broad sweeps.
-- [ ] CN4 reductions: keep the product/nanprod cleanup separate from the
-      remaining half/bfloat min/max residual warnings; run reducer regressions on
-      CPU and GPU after each cluster.
-- [ ] CN5 unsigned CUDA guards: group dtype-generic checks in bincount, delete,
-      nan-to-num, and NumPy random location/scale paths; prefer type-trait
-      branches over suppressions.
-- [ ] CN6 sentinel conversions: split local `np_cross`/`np_matmul` sentinel
-      types from bundled dmlc concurrent queue offsets, so third-party churn does
-      not block local fixes.
-- [ ] CN7/CN8 local cleanup: keep the runtime-handle cleanup as validated, then
-      batch half parameter packing, unused variables, and KVStore overload noise
-      behind focused optimizer, CUDA resize/transformer, and KVStore tests.
+- [x] CN4 reductions: product/nanprod and min/max residual initialization are
+      reduced locally; clean rebuild confirms no remaining CN4 residual cluster.
+- [x] CN5 unsigned CUDA guards: bincount, delete, nan-to-num, and NumPy random
+      normal/location-scale checks are reduced with type-trait guards.
+- [x] CN6 sentinel conversions: local `np_cross`/`np_matmul` sentinel
+      initialization is fixed locally; leave bundled dmlc concurrent queue
+      offsets to CN9 third-party boundary handling.
+- [x] CN7/CN8 local cleanup: cheap unused-variable, KVStore NCCL, pointwise
+      fusion, half parameter packing, and runtime-handle cleanup are reduced
+      locally; keep mshadow packet allocation behind focused tests.
 - [ ] CN1/CN9 build-boundary work: treat `operator_tune.cc` compile latency and
       vendored/linker warnings as release-build policy items, not runtime
       correctness blockers.
@@ -202,6 +202,7 @@ current source tree. `issues.md` is canonical for processing order.
 | Removed `FOLLOW_UPS.md` FU-6 | QAT subgraph backward bodies are not present on current `master`; B4 is canonical and requires a branch/PR decision. |
 | Removed `FOLLOW_UPS.md` FU-8 | Its legacy A6/A7 labels refer to old engine-deadlock audit IDs, not current A6/A7 rows; lifecycle work is tracked by T11. |
 | Removed `FOLLOW_UPS.md` FU-11 | Wide oneDNN stack/concat fallback is implemented and covered by `tests/python/dnnl/test_fu11_large_stack_concat.py`; D2L notebook-run/output-audit artifact intake is tracked under D3-D5/L4. |
+| Removed root CUDA tracker markdown | `nccl_status.md`, `cudnn_autotune_v9.md`, `fp16_perf_bench.md`, `sparse_thrust3_bench.md`, `storage_pool_bench.md`, and `quantized_backward_status.md` were historical reports. Their active work is canonical under FS4/T3, C5/C6, C4, sparse/storage follow-up rows, and B4. |
 | `issues.md` T12-T14 | These are resolved Apple/local oneDNN test-harness and fallback entries; the remaining work is Linux x86 oneDNN validation under L1/T11. |
 
 ---
@@ -267,6 +268,7 @@ paths still need Linux x86/CUDA confirmation.
 | R44 | DNNL adaptive-pooling timeout | The expensive adaptive-pooling numeric-gradient test no longer runs the full row-sparse/default cross product; it keeps one small row-sparse case and a small default-storage matrix. Commit `119002dc9`. | `tests/python/dnnl/test_dnnl.py::test_adaptive_pooling` passed `5 passed`. |
 | R45 | dmlc optional lifetime | `dmlc::optional` no longer swaps inactive raw storage or assigns failed stream extractions. dmlc-core commit `d610d79`; main submodule pointer recorded in `7816eb2e4`. | Standalone dmlc optional smoke compiled and ran; the configured dmlc CTest target currently reports no registered tests. |
 | R46 | Product reducer warning cleanup | Product/nanprod reducers now initialize unused residual storage and use logical AND for bool reductions on CPU and CUDA RTC paths. Commit `7816eb2e4`. | Rebuilt `mxnet` with no pending work; `test_reducer_regressions.py` passed on CPU and GPU, and `test_np_prod` plus `test_device_pushpull` passed. |
+| R47 | Compiler warning cleanup batch | Current local batch addresses CN4/CN5/CN6/CN7/CN8 warning clusters across reducer residuals, unsigned negative checks, local sentinel vectors, half parameter packing, KVStore NCCL naming, pointwise fusion initialization, and unused variables. | `build/libmxnet.so` rebuilt at 2026-05-21 07:47:21 UTC. Focused reducer, packaging, optimizer, DNNL conv/sum, and forward-only NumPy checks passed; GPU/KVStore/autograd-covered checks are deferred under L9. |
 
 ---
 
@@ -428,6 +430,5 @@ Before shipping another public Linux/CUDA preview wheel:
 
 Pointers:
 
-- `nccl_status.md`, `cudnn_autotune_v9.md`, `sparse_thrust3_bench.md`,
-  `storage_pool_bench.md`, and `fp16_perf_bench.md` contain deeper historical
-  analysis.
+- `issues.md` is the canonical tracker. Stale root CUDA tracker markdown has
+  been removed after import; use git history for historical report details.

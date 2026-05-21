@@ -225,7 +225,6 @@ __global__ void caffe_gpu_interp2_kernel(
   const bool align_corners,
   const Dtype* __restrict__ idata,
   Dtype* __restrict__ odata) {
-  const size_t i_numel = nc * width1 * height1;
   const size_t o_numel = nc * width2 * height2;
   for (size_t index = blockDim.x * blockIdx.x + threadIdx.x; index < o_numel;
     index += blockDim.x * gridDim.x) {

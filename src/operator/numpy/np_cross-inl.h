@@ -164,7 +164,7 @@ inline mxnet::TShape GetMoveaxisShape(const Tuple<int>& moveaxis_index,
     return mxnet::TShape(0, 0);
   }
   CHECK_EQ(moveaxis_index.ndim(), org_shape.ndim()) << "moveaxis index dismatch original shape.";
-  std::vector<size_t> moveaxis_shape_vec(ndim, -1);
+  std::vector<size_t> moveaxis_shape_vec(ndim);
   for (int i = 0; i < ndim; ++i) {
     moveaxis_shape_vec[i] = org_shape[moveaxis_index[i]];
   }

@@ -25,11 +25,26 @@
 #include "./np_bincount_op-inl.h"
 #include <thrust/device_ptr.h>
 #include <thrust/extrema.h>
+#include <type_traits>
 #include "../tensor/util/tensor_util-inl.cuh"
 #include "../tensor/util/tensor_util-inl.h"
 
 namespace mxnet {
 namespace op {
+
+template <typename DType, bool is_unsigned = std::is_unsigned<DType>::value>
+struct BincountValueIsNegative {
+  MSHADOW_XINLINE static bool Check(DType value) {
+    return value < 0;
+  }
+};
+
+template <typename DType>
+struct BincountValueIsNegative<DType, true> {
+  MSHADOW_XINLINE static bool Check(DType) {
+    return false;
+  }
+};
 
 struct BincountFusedKernel {
   template <typename DType, typename OType>
@@ -48,7 +63,7 @@ struct BincountFusedKernel {
 struct is_valid_check {
   template <typename DType>
   MSHADOW_XINLINE static void Map(int i, char* invalid_ptr, const DType* data) {
-    if (data[i] < 0)
+    if (BincountValueIsNegative<DType>::Check(data[i]))
       *invalid_ptr = 1;
   }
 };

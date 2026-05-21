@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include "../../../api/operator/op_utils.h"
 #include "../../../common/utils.h"
@@ -97,6 +98,21 @@ inline bool NumpyNormalOpType(const nnvm::NodeAttrs& attrs,
 }
 
 namespace mxnet_op {
+
+template <typename DType, bool is_unsigned = std::is_unsigned<DType>::value>
+struct NormalScaleIsNegative {
+  MSHADOW_XINLINE static bool Check(DType value) {
+    return value < 0;
+  }
+};
+
+template <typename DType>
+struct NormalScaleIsNegative<DType, true> {
+  MSHADOW_XINLINE static bool Check(DType) {
+    return false;
+  }
+};
+
 template <int ndim, typename IType, typename OType>
 struct normal_kernel {
   MSHADOW_XINLINE static void Map(index_t i,
@@ -151,7 +167,7 @@ struct normal_two_scalar_kernel {
 template <typename IType>
 struct check_legal_scale_kernel {
   MSHADOW_XINLINE static void Map(index_t i, IType* scalar, float* flag) {
-    if (scalar[i] < 0) {
+    if (NormalScaleIsNegative<IType>::Check(scalar[i])) {
       *flag = -1.0;
     }
   }

@@ -42,9 +42,35 @@ def check_half_prod_nanprod(ctx):
                                 onp.array([2.0, 3.0], dtype='float16'))
 
 
+def check_half_bfloat_min_max(ctx):
+    for dtype in ('float16', 'bfloat16'):
+        neg = mx.nd.array([[-8.0, -4.0, -2.0], [-7.0, -3.0, -1.0]],
+                          ctx=ctx).astype(dtype)
+        pos = mx.nd.array([[8.0, 4.0, 2.0], [7.0, 3.0, 1.0]],
+                          ctx=ctx).astype(dtype)
+
+        onp.testing.assert_allclose(mx.nd.max(neg).astype('float32').asnumpy(),
+                                    onp.array([-1.0], dtype='float32'))
+        onp.testing.assert_allclose(mx.nd.min(pos).astype('float32').asnumpy(),
+                                    onp.array([1.0], dtype='float32'))
+
+        wide_neg = mx.nd.array(-onp.ones((64, 3), dtype='float32'),
+                               ctx=ctx).astype(dtype)
+        wide_pos = mx.nd.array(onp.ones((64, 3), dtype='float32'),
+                               ctx=ctx).astype(dtype)
+        onp.testing.assert_allclose(mx.nd.max(wide_neg, axis=1).astype('float32').asnumpy(),
+                                    -onp.ones((64,), dtype='float32'))
+        onp.testing.assert_allclose(mx.nd.min(wide_pos, axis=1).astype('float32').asnumpy(),
+                                    onp.ones((64,), dtype='float32'))
+
+
 def test_bool_all_cpu_product_reducer():
     check_bool_all(mx.cpu())
 
 
 def test_half_prod_nanprod_cpu_residual_init():
     check_half_prod_nanprod(mx.cpu())
+
+
+def test_half_bfloat_min_max_cpu_residual_init():
+    check_half_bfloat_min_max(mx.cpu())

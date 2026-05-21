@@ -164,7 +164,7 @@ class KVStoreNCCL : public KVStoreLocal {
       }
     }
 
-    Broadcast(uniq_keys, locals, grouped_vals, priority);
+    BroadcastNCCL(uniq_keys, locals, grouped_vals, priority);
     // Sync after all broadcasts in a group
     if (nccl_called) {
       const std::vector<const NDArray*> values_copy(values.begin(), values.end());
@@ -318,10 +318,10 @@ class KVStoreNCCL : public KVStoreLocal {
         "KVStoreReduce");
   }
 
-  virtual void Broadcast(const std::vector<int> keys,
-                         const std::vector<NDArray>& srcs,
-                         const std::vector<std::vector<NDArray*>>& dsts,
-                         int priority) {
+  virtual void BroadcastNCCL(const std::vector<int> keys,
+                             const std::vector<NDArray>& srcs,
+                             const std::vector<std::vector<NDArray*>>& dsts,
+                             int priority) {
     std::vector<size_t> root_ids(keys.size());
     std::vector<Engine::VarHandle> const_vars;
     std::vector<Engine::VarHandle> mutable_vars;
@@ -344,6 +344,7 @@ class KVStoreNCCL : public KVStoreLocal {
       } else {
         auto& buf = merge_buf_[key];
         int root  = src.ctx().dev_id;
+        static_cast<void>(buf);
         assert(root == buf.merged.ctx().dev_id);
         root_id = FindRootId(dst, root);
 

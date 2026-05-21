@@ -421,8 +421,8 @@ void NumpyMatmulBackward(const nnvm::NodeAttrs& attrs,
     newshape[ndim - 1] = 1;
     out_shape.assign(newshape.begin(), newshape.end());
   }
-  std::vector<size_t> vec_grad_a_shape(ndim, -1);
-  std::vector<size_t> vec_grad_b_shape(ndim, -1);
+  std::vector<size_t> vec_grad_a_shape(ndim);
+  std::vector<size_t> vec_grad_b_shape(ndim);
   for (unsigned int i = 0; i < ndim - 2; ++i) {
     vec_grad_a_shape[i] = out_shape[i];
     vec_grad_b_shape[i] = out_shape[i];

@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include <cmath>
 #include <unordered_map>
@@ -80,6 +81,20 @@ inline bool NumpyLocationScaleOpType(const nnvm::NodeAttrs& attrs,
 
 namespace mxnet_op {
 
+template <typename DType, bool is_unsigned = std::is_unsigned<DType>::value>
+struct LocationScaleIsNegative {
+  MSHADOW_XINLINE static bool Check(DType value) {
+    return value < 0;
+  }
+};
+
+template <typename DType>
+struct LocationScaleIsNegative<DType, true> {
+  MSHADOW_XINLINE static bool Check(DType) {
+    return false;
+  }
+};
+
 struct logistic_two_scalar_kernel {
   template <typename DType>
   MSHADOW_XINLINE static void Map(index_t i, float loc, float scale, float* noise, DType* out) {
@@ -99,7 +114,7 @@ struct gumbel_two_scalar_kernel {
 template <typename IType>
 struct check_legal_scale_kernel {
   MSHADOW_XINLINE static void Map(index_t i, IType* scalar, float* flag) {
-    if (scalar[i] < 0) {
+    if (LocationScaleIsNegative<IType>::Check(scalar[i])) {
       *flag = -1.0;
     }
   }

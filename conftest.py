@@ -236,7 +236,7 @@ def function_scope_seed(request):
         rep_call = getattr(request.node, 'rep_call', None)
 
         if rep_setup is not None and rep_setup.failed:
-            logging.error("Setting up a test failed: {}", request.node.nodeid)
+            logging.error("Setting up a test failed: %s", request.node.nodeid)
         elif rep_call is not None and rep_call.outcome == 'failed':
             # Either request.node.rep_setup.failed or request.node.rep_setup.passed should be True
             assert rep_setup is not None and rep_setup.passed

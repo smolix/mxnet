@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <climits>
 #include <string>
+#include <type_traits>
 #include "./cast_storage-inl.h"
 #include "../mshadow_op.h"
 #include "../mxnet_op.h"
@@ -820,6 +821,20 @@ struct NumpyNanToNumParam : public dmlc::Parameter<NumpyNanToNumParam> {
   }
 };
 
+template <typename DType, bool is_unsigned = std::is_unsigned<DType>::value>
+struct NanToNumIsNegative {
+  MSHADOW_XINLINE static bool Check(DType value) {
+    return value < 0;
+  }
+};
+
+template <typename DType>
+struct NanToNumIsNegative<DType, true> {
+  MSHADOW_XINLINE static bool Check(DType) {
+    return false;
+  }
+};
+
 template <int req>
 struct nan_to_num_forward {
   template <typename DType>
@@ -834,7 +849,7 @@ struct nan_to_num_forward {
       val = nan;
     if (val > 0 && mshadow_op::IsInf(val))
       val = posinf;
-    if (val < 0 && mshadow_op::IsInf(val))
+    if (NanToNumIsNegative<DType>::Check(val) && mshadow_op::IsInf(val))
       val = neginf;
     KERNEL_ASSIGN(out_data[i], req, val);
   }
@@ -901,7 +916,7 @@ struct nan_to_num_backward {
       val = 0;
     if (val > 0 && mshadow_op::IsInf(in_data[i]))
       val = 0;
-    if (val < 0 && mshadow_op::IsInf(in_data[i]))
+    if (NanToNumIsNegative<DType>::Check(val) && mshadow_op::IsInf(in_data[i]))
       val = 0;
     KERNEL_ASSIGN(in_grad[i], req, val);
   }

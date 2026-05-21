@@ -44,6 +44,32 @@ s3 = boto3.client('s3')
 logger = logging.getLogger(__name__)
 
 
+def _get_artifact_download_path(destination: str, s3_key_prefix: str, key: str) -> str:
+    """
+    Returns the local path for a downloaded artifact key.
+    """
+    if not key.startswith(s3_key_prefix):
+        raise RuntimeError('S3 key {} does not match prefix {}'.format(key, s3_key_prefix))
+
+    relative_path = key[len(s3_key_prefix):].lstrip('/\\')
+    normalized_path = os.path.normpath(relative_path.replace('\\', os.sep))
+    if (not relative_path or normalized_path == os.curdir or
+            normalized_path.startswith(os.pardir + os.sep) or
+            normalized_path == os.pardir or
+            os.path.isabs(normalized_path) or
+            re.match(r'^[A-Za-z]:', normalized_path)):
+        raise RuntimeError('Unsafe S3 artifact key {}'.format(key))
+
+    base_path = os.path.abspath(destination or os.curdir)
+    output_path = os.path.abspath(os.path.join(base_path, normalized_path))
+    if os.path.commonpath([base_path, output_path]) != base_path:
+        raise RuntimeError('Unsafe S3 artifact key {}'.format(key))
+
+    if destination:
+        return os.path.join(destination, normalized_path)
+    return normalized_path
+
+
 def config_logging():
     """
     Configures default logging settings
@@ -114,8 +140,7 @@ def try_s3_download(bucket, s3_key_prefix, destination) -> bool:
     for obj in response.get('Contents'):
         key = obj['Key']
 
-        # extract file path with any subdirectories and remove the leading file separator
-        output_path = os.path.join(destination, key[len(s3_key_prefix):].lstrip(os.sep))
+        output_path = _get_artifact_download_path(destination, s3_key_prefix, key)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         logger.info('Downloading {}'.format(output_path))
         logger.debug("Downloading s3://{}/{} to {}".format(bucket, key, output_path))

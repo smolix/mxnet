@@ -32,6 +32,15 @@ except ImportError:  # standalone repro mode
 
 def _pick_free_gpu():
     """Pick the GPU with the most free memory."""
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    visible_ordinals = None
+    if visible:
+        try:
+            visible_ordinals = {int(dev): ordinal
+                                for ordinal, dev in enumerate(visible.split(","))
+                                if dev.strip() != ""}
+        except ValueError:
+            visible_ordinals = None
     try:
         out = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=index,memory.free",
@@ -43,6 +52,10 @@ def _pick_free_gpu():
     best = (0, -1)
     for line in out.strip().splitlines():
         idx, free_mib = [int(x.strip()) for x in line.split(",")]
+        if visible_ordinals is not None:
+            if idx not in visible_ordinals:
+                continue
+            idx = visible_ordinals[idx]
         if free_mib > best[1]:
             best = (idx, free_mib)
     return best[0]

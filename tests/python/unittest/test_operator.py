@@ -1769,6 +1769,28 @@ def test_groupnorm():
                                 atol=5e-2 if dtype == np.float16 else 1e-4, dtype=dtype)
 
 
+def test_gluon_groupnorm_ignores_disabled_affine_params():
+    x = mx.np.arange(24, dtype='float32').reshape(2, 3, 4)
+    gamma = mx.np.array([2.0, 3.0, 4.0])
+    beta = mx.np.array([5.0, 6.0, 7.0])
+
+    disabled_center = mx.gluon.nn.GroupNorm(center=False, scale=True, in_channels=3)
+    disabled_center.initialize()
+    disabled_center.gamma.set_data(gamma)
+    disabled_center.beta.set_data(beta)
+    assert_almost_equal(
+        disabled_center(x).asnumpy(),
+        mx.npx.group_norm(x, gamma=gamma, beta=mx.np.zeros(3), eps=1e-5).asnumpy())
+
+    disabled_scale = mx.gluon.nn.GroupNorm(center=True, scale=False, in_channels=3)
+    disabled_scale.initialize()
+    disabled_scale.gamma.set_data(gamma)
+    disabled_scale.beta.set_data(beta)
+    assert_almost_equal(
+        disabled_scale(x).asnumpy(),
+        mx.npx.group_norm(x, gamma=mx.np.ones(3), beta=beta, eps=1e-5).asnumpy())
+
+
 @pytest.mark.serial
 def test_convolution_grouping():
     for dim in [1, 2, 3]:

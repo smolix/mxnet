@@ -318,6 +318,24 @@ def test_np_attach_grad_add_accumulates_existing_grad_and_preserves_dtype():
     assert_almost_equal(x.grad.asnumpy(), np.full((2, 3), 8, dtype='float16'))
 
 
+@use_np
+def test_np_mixed_binary_backward_preserves_input_grad_dtypes():
+    lhs = mx.np.array([[1], [2]], dtype='float16')
+    rhs = mx.np.array([[3, 4, 5]], dtype='float32')
+    lhs.attach_grad()
+    rhs.attach_grad()
+
+    with record():
+        out = mx.np.multiply(lhs, rhs).sum()
+    out.backward()
+
+    assert out.dtype == np.float32
+    assert lhs.grad.dtype == np.float16
+    assert rhs.grad.dtype == np.float32
+    assert_almost_equal(lhs.grad.asnumpy(), np.full((2, 1), 12, dtype='float16'))
+    assert_almost_equal(rhs.grad.asnumpy(), np.full((1, 3), 3, dtype='float32'))
+
+
 def test_function_backward_add_accumulates_existing_grad():
     class Scale(mx.autograd.Function):
         def forward(self, x):

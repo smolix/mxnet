@@ -420,6 +420,40 @@ class TestArtifactRepositoryTool(unittest.TestCase):
             ])
 
     @patch('artifact_repository.s3')
+    def test_try_s3_download_rejects_path_traversal_key(self, mock_s3):
+        """
+        Tests S3 keys cannot write outside the requested destination.
+        """
+        key_prefix = 'some/key/prefix'
+        mock_s3.list_objects_v2.return_value = {
+            'Contents': [{'Key': '{}/../outside.txt'.format(key_prefix)}],
+            'KeyCount': 1
+        }
+
+        with self.assertRaises(RuntimeError) as ctx:
+            try_s3_download(bucket='bucket', s3_key_prefix=key_prefix, destination='dest')
+
+        self.assertIn('Unsafe S3 artifact key', str(ctx.exception))
+        mock_s3.download_fileobj.assert_not_called()
+
+    @patch('artifact_repository.s3')
+    def test_try_s3_download_rejects_key_outside_prefix(self, mock_s3):
+        """
+        Tests S3 keys must match the requested artifact prefix.
+        """
+        key_prefix = 'some/key/prefix'
+        mock_s3.list_objects_v2.return_value = {
+            'Contents': [{'Key': 'other/key/file.txt'}],
+            'KeyCount': 1
+        }
+
+        with self.assertRaises(RuntimeError) as ctx:
+            try_s3_download(bucket='bucket', s3_key_prefix=key_prefix, destination='dest')
+
+        self.assertIn('does not match prefix', str(ctx.exception))
+        mock_s3.download_fileobj.assert_not_called()
+
+    @patch('artifact_repository.s3')
     def test_s3_upload(self, mock_s3):
         """
         Tests files are uploaded using the supplied s3_key_prefix
@@ -500,7 +534,7 @@ class TestArtifactRepositoryTool(unittest.TestCase):
                                                                              libtype='stynamic')
             write_libmxnet_meta(args=fake_args, destination='dest')
             mock_fopen.assert_called_once_with(os.path.join('dest', 'libmxnet.meta'), 'w')
-            mock_fopen().write.called_with(
+            mock_fopen().write.assert_called_with(
                 'commit_id: abcd1234\ndependency_linking: stynamic\nos: lunix\nvariant: gpu\n')
 
     def test_push_artifact_throws_no_license_error(self):

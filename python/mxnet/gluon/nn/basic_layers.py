@@ -810,7 +810,13 @@ class GroupNorm(HybridBlock):
 
     def forward(self, data):
         device = data.device
-        norm_data = npx.group_norm(data, gamma=self.gamma.data(device), beta=self.beta.data(device),
+        gamma = self.gamma.data(device) if self._scale else np.ones((data.shape[1],),
+                                                                    dtype=data.dtype,
+                                                                    device=device)
+        beta = self.beta.data(device) if self._center else np.zeros((data.shape[1],),
+                                                                    dtype=data.dtype,
+                                                                    device=device)
+        norm_data = npx.group_norm(data, gamma=gamma, beta=beta,
                                    num_groups=self._num_groups, eps=self._epsilon)
         return norm_data
 

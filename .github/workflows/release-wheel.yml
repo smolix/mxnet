@@ -41,13 +41,12 @@ jobs:
             ccache \
             g++ \
             libopenblas-dev \
-            libopencv-dev \
             libomp-dev \
             patchelf \
             python3-dev
           python -m pip install --upgrade pip wheel setuptools build auditwheel
 
-      - name: Configure CMake (CPU + oneDNN)
+      - name: Configure CMake (CPU + oneDNN, no OpenCV)
         run: |
           cmake -S . -B "$CMAKE_BUILD_DIR" -G Ninja \
             -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
@@ -58,7 +57,7 @@ jobs:
             -DUSE_NCCL=OFF \
             -DUSE_ONEDNN=ON \
             -DUSE_OPENMP=ON \
-            -DUSE_OPENCV=ON \
+            -DUSE_OPENCV=OFF \
             -DUSE_BLAS=open \
             -DUSE_DIST_KVSTORE=OFF \
             -DBUILD_CPP_EXAMPLES=OFF
@@ -75,8 +74,7 @@ jobs:
             echo "libmxnet.so not produced" >&2
             exit 1
           fi
-          mkdir -p python/mxnet/lib
-          cp -v "$libpath" python/mxnet/lib/libmxnet.so
+          cp -v "$libpath" python/mxnet/libmxnet.so
 
       - name: Resolve tag / version
         id: ver
@@ -97,10 +95,11 @@ jobs:
       - name: Build wheel
         env:
           MXNET_VERSION: ${{ steps.ver.outputs.version }}
+          MXNET_SETUP_ENABLE_OPENCV_DEPS: "0"
         run: |
           set -e
           cd python
-          # setup.py auto-detects libmxnet.so under mxnet/lib/.
+          # setup.py auto-detects libmxnet.so under mxnet/.
           python -m build --wheel --outdir ../dist
           ls -lh ../dist
 

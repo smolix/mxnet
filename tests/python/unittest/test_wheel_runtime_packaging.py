@@ -33,8 +33,12 @@ def _load_bundle_runtime_libs():
     return module
 
 
+def _repo_root():
+    return Path(__file__).resolve().parents[3]
+
+
 def _setup_install_requires(monkeypatch, tmp_path, cmake_cache):
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = _repo_root()
     python_dir = repo_root / "python"
     fake_build = tmp_path / "build"
     fake_build.mkdir()
@@ -98,6 +102,18 @@ def test_setup_metadata_omits_opencv_python_dependency_when_disabled(monkeypatch
     )
 
     assert not any(req.startswith("opencv-python") for req in install_requires)
+
+
+def test_release_wheel_build_disables_opencv_explicitly():
+    workflow = (
+        _repo_root() / ".github" / "workflows" / "release-wheel.yml"
+    ).read_text()
+
+    assert "libopencv-dev" not in workflow
+    assert "-DUSE_OPENCV=OFF" in workflow
+    assert "-DUSE_OPENCV=ON" not in workflow
+    assert 'MXNET_SETUP_ENABLE_OPENCV_DEPS: "0"' in workflow
+    assert 'cp -v "$libpath" python/mxnet/libmxnet.so' in workflow
 
 
 def test_opencv_policy_rejects_silent_system_dependency():

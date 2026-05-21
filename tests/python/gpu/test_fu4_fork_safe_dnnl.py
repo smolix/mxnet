@@ -67,7 +67,8 @@ def _make_loader(num_workers, batch_size=8, n_samples=64):
     data = np.random.uniform(size=(n_samples, 8)).astype('float32')
     labels = np.arange(n_samples, dtype='float32')
     ds = ArrayDataset(data, labels)
-    return DataLoader(ds, batch_size=batch_size, num_workers=num_workers, shuffle=False)
+    return DataLoader(ds, batch_size=batch_size, num_workers=num_workers,
+                      shuffle=False, try_nopython=False)
 
 
 # ---------------------------------------------------------------------------

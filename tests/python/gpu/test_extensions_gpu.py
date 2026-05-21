@@ -31,26 +31,28 @@ base_path = os.path.join(os.path.dirname(__file__), "../../..")
 def check_platform(supported_platforms=['x86_64', 'AMD64']):
     return platform.machine() not in supported_platforms
 
+def find_optional_library(lib, paths):
+    for path in paths:
+        if os.path.exists(path):
+            return os.path.abspath(path)
+    pytest.skip(f"optional extension library {lib} not built")
+
 @pytest.mark.skipif(check_platform(), reason="not all machine types supported")
 @pytest.mark.skipif(is_cd_run(), reason="continuous delivery run - ignoring test")
 def test_custom_op_gpu():
     # possible places to find library file
     if (os.name=='posix'):
         lib = 'libcustomop_gpu_lib.so'
-        if os.path.exists(lib):
-            fname = lib
-        elif os.path.exists(os.path.join(base_path, 'build/'+lib)):
-            fname = os.path.join(base_path, 'build/'+lib)
-        else:
-            raise MXNetError(f"library {lib} not found ")
+        fname = find_optional_library(lib, [
+            lib,
+            os.path.join(base_path, 'build', lib),
+        ])
     elif (os.name=='nt'):
         lib = 'libcustomop_gpu_lib.dll'
-        if os.path.exists('windows_package\\lib\\'+lib):
-            fname = 'windows_package\\lib\\'+lib
-        else:
-            raise MXNetError(f"library {lib} not found ")
+        fname = find_optional_library(lib, [
+            'windows_package\\lib\\' + lib,
+        ])
 
-    fname = os.path.abspath(fname)
     # load the library containing gemm custom operators
     mx.library.load(fname)
 
@@ -98,11 +100,10 @@ def test_external_op():
         raise MXNetError('Operator already loaded')
 
     lib = 'libexternal_lib.so'
-    fname = os.path.join(base_path,'example/extensions/lib_external_ops/build/'+lib)
-    if not os.path.exists(fname):
-        raise MXNetError(f"library {lib} not found ")
-
-    fname = os.path.abspath(fname)
+    fname = find_optional_library(lib, [
+        os.path.join(base_path, 'build', lib),
+        os.path.join(base_path, 'example', 'extensions', 'lib_external_ops', 'build', lib),
+    ])
     mx.library.load(fname, False)
 
     # execute operator

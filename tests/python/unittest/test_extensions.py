@@ -32,6 +32,12 @@ base_path = os.path.join(os.path.dirname(__file__), "../../..")
 def check_platform(supported_platforms=['x86_64', 'AMD64']):
     return platform.machine() not in supported_platforms
 
+def find_optional_library(lib, paths):
+    for path in paths:
+        if os.path.exists(path):
+            return os.path.abspath(path)
+    pytest.skip(f"optional extension library {lib} not built")
+
 def test_library_load_accepts_dylib_extension(tmp_path, monkeypatch):
     lib_path = tmp_path / 'libcustomop_lib.dylib'
     lib_path.write_bytes(b'')
@@ -84,20 +90,16 @@ def test_custom_op():
     # possible places to find library file
     if (os.name=='posix'):
         lib = 'libcustomop_lib.so'
-        if os.path.exists(lib):
-            fname = lib
-        elif os.path.exists(os.path.join(base_path,'build/'+lib)):
-            fname = os.path.join(base_path,'build/'+lib)
-        else:
-            raise MXNetError(f"library {lib} not found ")
+        fname = find_optional_library(lib, [
+            lib,
+            os.path.join(base_path, 'build', lib),
+        ])
     elif (os.name=='nt'):
         lib = 'libcustomop_lib.dll'
-        if os.path.exists('windows_package\\lib\\'+lib):
-            fname = 'windows_package\\lib\\'+lib
-        else:
-            raise MXNetError(f"library {lib} not found ")
+        fname = find_optional_library(lib, [
+            'windows_package\\lib\\' + lib,
+        ])
 
-    fname = os.path.abspath(fname)
     # load the library containing gemm custom operators
     mx.library.load(fname)
 
@@ -149,24 +151,19 @@ def test_subgraph():
     # possible places to find library file
     if (os.name=='posix'):
         lib = 'libsubgraph_lib.so'
-        if os.path.exists(lib):
+        fname = find_optional_library(lib, [
             # plain make build, when run in the CI
-            fname = lib
-        elif os.path.exists(os.path.join(base_path, 'build/'+lib)):
+            lib,
             # plain cmake build when run in the CI
-            fname = os.path.join(base_path, 'build/'+lib)
-        else:
-            raise MXNetError(f"library {lib} not found ")
+            os.path.join(base_path, 'build', lib),
+        ])
     elif (os.name=='nt'):
         lib = 'libsubgraph_lib.dll'
-        if os.path.exists('windows_package\\lib\\'+lib):
+        fname = find_optional_library(lib, [
             # plain make build, when run in the CI
-            fname = 'windows_package\\lib\\'+lib
-        else:
-            # plain cmake build when run in the CI
-            raise MXNetError(f"library {lib} not found ")
+            'windows_package\\lib\\' + lib,
+        ])
 
-    fname = os.path.abspath(fname)
     mx.library.load(fname)
 
     # test simple graph with add, exp and log operators, library supports exp/log
@@ -249,11 +246,10 @@ def test_external_op():
         raise MXNetError('Operator already loaded')
 
     lib = 'libexternal_lib.so'
-    fname = os.path.join(base_path,'example/extensions/lib_external_ops/build/'+lib)
-    if not os.path.exists(fname):
-        raise MXNetError(f"library {lib} not found ")
-
-    fname = os.path.abspath(fname)
+    fname = find_optional_library(lib, [
+        os.path.join(base_path, 'build', lib),
+        os.path.join(base_path, 'example', 'extensions', 'lib_external_ops', 'build', lib),
+    ])
     mx.library.load(fname, False)
 
     # execute operator

@@ -393,7 +393,7 @@ class Tuple {
   /*! \brief number of cells allocated in data_heap_ */
   int num_heap_allocated_{0};
   /*! \brief in stack space used to store shape when it is small */
-  ValueType data_stack_[kStackCache];
+  ValueType data_stack_[kStackCache]{};
   /*! \brief space to store shape when dimension is big*/
   ValueType* data_heap_{nullptr};
   // internal function to change the dimension

@@ -43,10 +43,13 @@ TEST(OMPBehaviour, after_fork) {
   if (pid == 0) {
     EXPECT_FALSE(openmp->enabled());
     EXPECT_EQ(openmp->GetRecommendedOMPThreadCount(), 1);
+    _exit(::testing::Test::HasFailure() ? 1 : 0);
   } else if (pid > 0) {
     int status;
     int ret = waitpid(pid, &status, 0);
     CHECK_EQ(ret, pid) << "waitpid failed";
+    ASSERT_TRUE(WIFEXITED(status));
+    EXPECT_EQ(WEXITSTATUS(status), 0);
   } else {
     CHECK(false) << "fork failed";
   }

@@ -465,8 +465,14 @@ std::vector<Descriptor> MakeFallbackPlans(
       LOG(WARNING) << "Unexpected cuDNN status: " << err << ": " << cudnnGetErrorString(err);
       continue;
     }
-    auto cfg =
-        MakeFinalized(CUDNN_BACKEND_ENGINECFG_DESCRIPTOR, CUDNN_ATTR_ENGINECFG_ENGINE, engine);
+    auto cfg = Make(CUDNN_BACKEND_ENGINECFG_DESCRIPTOR, CUDNN_ATTR_ENGINECFG_ENGINE, engine);
+    err      = cudnnBackendFinalize(cfg.get());
+    if (err == CUDNN_STATUS_NOT_SUPPORTED || err == CUDNN_STATUS_ARCH_MISMATCH)
+      continue;
+    if (err != CUDNN_STATUS_SUCCESS) {
+      LOG(WARNING) << "Unexpected cuDNN status: " << err << ": " << cudnnGetErrorString(err);
+      continue;
+    }
     auto plan = Make(CUDNN_BACKEND_EXECUTION_PLAN_DESCRIPTOR,
                      CUDNN_ATTR_EXECUTION_PLAN_HANDLE,
                      handle,
@@ -593,6 +599,10 @@ bool UseFrontendAutotune() {
 #endif
 }
 
+bool ForceNoHeuristicPlans() {
+  return dmlc::GetEnv("MXNET_CUDNN_FORCE_NO_HEURISTIC_PLANS", false);
+}
+
 std::string ConvParamStr(const ConvParam& param) {
   std::ostringstream ss;
   ss << mshadow::toString(static_cast<mshadow::LayoutFlag>(param.layout.value()));
@@ -708,6 +718,12 @@ Descriptor SelectPlan(const OpContext& ctx,
                    ExcludeNumerics(),
                    verbose > 1);
 #endif  // CUDNN_VERSION >= 8100
+  if (ForceNoHeuristicPlans()) {
+    if (verbose > 0)
+      LOG(INFO) << " MXNET_CUDNN_FORCE_NO_HEURISTIC_PLANS=1: clearing heuristic plan list";
+    plans.clear();
+    workspace_size = 0;
+  }
   Storage::Handle out_space;
   auto ptrs = tensor_ptrs;
   if (tune != conv::kOff && param.add_to) {

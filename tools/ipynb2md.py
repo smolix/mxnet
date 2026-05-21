@@ -27,9 +27,10 @@ It is heavily adapted from https://gist.github.com/decabyte/0ed87372774cf5d34d7e
 from __future__ import print_function
 
 import sys
-import io
 import os
 import argparse
+import subprocess
+import tempfile
 import nbformat
 
 
@@ -50,6 +51,25 @@ def clear_notebook(old_ipynb, new_ipynb):
         nbformat.write(nb, f, nbformat.NO_CONVERT)
 
 
+def convert_notebook(old_ipynb, md_file):
+    tmp_file = tempfile.NamedTemporaryFile(suffix='.ipynb', delete=False)
+    tmp_file.close()
+    new_ipynb = tmp_file.name
+
+    try:
+        clear_notebook(old_ipynb, new_ipynb)
+        subprocess.run(
+            ['jupyter', 'nbconvert', new_ipynb, '--to', 'markdown', '--output', md_file],
+            check=True)
+        with open(md_file, 'a') as f:
+            f.write('<!-- INSERT SOURCE DOWNLOAD BUTTONS -->')
+    finally:
+        try:
+            os.unlink(new_ipynb)
+        except FileNotFoundError:
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Jupyter Notebooks to markdown"
@@ -60,18 +80,13 @@ def main():
     args = parser.parse_args()
 
     old_ipynb = args.notebook[0]
-    new_ipynb = 'tmp.ipynb'
     md_file = args.output
     print(md_file)
     if not md_file:
         md_file = os.path.splitext(old_ipynb)[0] + '.md'
 
 
-    clear_notebook(old_ipynb, new_ipynb)
-    os.system('jupyter nbconvert ' + new_ipynb + ' --to markdown --output ' + md_file)
-    with open(md_file, 'a') as f:
-        f.write('<!-- INSERT SOURCE DOWNLOAD BUTTONS -->')
-    os.system('rm ' + new_ipynb)
+    convert_notebook(old_ipynb, md_file)
 
 if __name__ == '__main__':
     main()

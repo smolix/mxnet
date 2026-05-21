@@ -519,6 +519,17 @@ def test_gradient():
     dx.backward()
     assert abs(x.grad.asscalar() - 2.71828175) < 1e-7
 
+def test_gradient_single_variable_returns_ndarray():
+    x = mx.nd.ones((1,))
+    x.attach_grad()
+
+    with mx.autograd.record():
+        y = x * 2
+    dx = mx.autograd.grad(y, x)
+
+    assert isinstance(dx, mx.nd.NDArray)
+    assert abs(dx.asscalar() - 2) < 1e-7
+
 def test_retain_grad_drop_grad():
     x = nd.array([1,2,3,4])
     x.attach_grad()

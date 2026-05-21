@@ -97,12 +97,23 @@ def download(url: str, dest: Path) -> None:
     tmp.replace(dest)
 
 
+def _validate_zip_members(zf: zipfile.ZipFile, dest: Path) -> None:
+    dest = dest.resolve()
+    for member in zf.infolist():
+        target = (dest / member.filename).resolve()
+        try:
+            target.relative_to(dest)
+        except ValueError:
+            raise SystemExit(f"Unsafe archive member path: {member.filename}")
+
+
 def extract(archive: Path, source_dir: Path) -> None:
     if source_dir.exists():
         return
     source_dir.parent.mkdir(parents=True, exist_ok=True)
     print(f"Extracting {archive} -> {source_dir.parent}", flush=True)
     with zipfile.ZipFile(archive) as zf:
+        _validate_zip_members(zf, source_dir.parent)
         zf.extractall(source_dir.parent)
 
 

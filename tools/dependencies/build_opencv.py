@@ -35,6 +35,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -91,19 +92,34 @@ def run(argv: list[str], *, cwd: Path | None = None, env: dict[str, str] | None 
     subprocess.run(argv, cwd=cwd, env=env, check=True)
 
 
-def download(url: str, dest: Path, *, expected_sha256: str | None = None) -> None:
+def download(
+    url: str,
+    dest: Path,
+    *,
+    expected_sha256: str | None = None,
+    retries: int = 5,
+    timeout: int = 60,
+) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
-    print(f"Downloading {url} -> {dest}", flush=True)
-    with urllib.request.urlopen(url) as response, tmp.open("wb") as out:
-        shutil.copyfileobj(response, out)
-    if expected_sha256:
+    for attempt in range(1, retries + 1):
         try:
-            verify_sha256(tmp, expected_sha256, url)
-        except SystemExit:
+            print(f"Downloading {url} -> {dest} (attempt {attempt}/{retries})", flush=True)
+            with urllib.request.urlopen(url, timeout=timeout) as response, tmp.open("wb") as out:
+                shutil.copyfileobj(response, out)
+            if expected_sha256:
+                try:
+                    verify_sha256(tmp, expected_sha256, url)
+                except SystemExit:
+                    tmp.unlink(missing_ok=True)
+                    raise
+            tmp.replace(dest)
+            return
+        except Exception:
             tmp.unlink(missing_ok=True)
-            raise
-    tmp.replace(dest)
+            if attempt == retries:
+                raise
+            time.sleep(min(2 ** attempt, 30))
 
 
 def _validate_zip_members(zf: zipfile.ZipFile, dest: Path) -> None:

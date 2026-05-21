@@ -96,6 +96,42 @@ def test_download_rejects_sha256_mismatch(script_name, monkeypatch, tmp_path):
     assert not archive.with_suffix(archive.suffix + ".tmp").exists()
 
 
+@pytest.mark.parametrize(
+    "script_name",
+    ["build_openmp.py", "build_opencv.py", "build_libturbojpeg.py"],
+)
+def test_download_cleans_partial_temp_file_on_stream_error(script_name, monkeypatch, tmp_path):
+    module = _load_tool(script_name)
+    archive = tmp_path / "archive.bin"
+
+    class BrokenResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, size=-1):
+            raise OSError("stream interrupted")
+
+    monkeypatch.setattr(
+        module.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: BrokenResponse(),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda delay: None, raising=False)
+
+    with pytest.raises(OSError, match="stream interrupted"):
+        module.download(
+            "https://example.test/archive.bin",
+            archive,
+            **_download_kwargs(module, "0" * 64),
+        )
+
+    assert not archive.exists()
+    assert not archive.with_suffix(archive.suffix + ".tmp").exists()
+
+
 def test_manifest_pins_default_dependency_urls():
     expected_urls = {
         "build_openmp.py": (

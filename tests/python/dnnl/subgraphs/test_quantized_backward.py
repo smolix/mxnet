@@ -36,7 +36,9 @@ STATUS (2026-05-18, partial fix):
   Step 2 DONE — qat kwarg for quantize_net:
     `quantize_net(..., qat=True)` keeps `grad_req='write'` on all parameters
     (instead of forcing `grad_req='null'`), allowing gradient accumulation and
-    parameter updates during QAT training loops.
+    parameter updates during QAT training loops.  This file now has a passing
+    guard test for that infrastructure while full subgraph backward remains
+    xfailed below.
 
   Step 3 BLOCKED — weight/data backward for _sg_onednn_fully_connected/_sg_onednn_conv:
     These fused subgraph ops still have `FGradient = MakeZeroGradNodes`.  An
@@ -128,7 +130,8 @@ def _make_calib_loader(data):
 
 
 @mx.util.use_np
-def _quantize(net, data, quantized_dtype='int8', calib_mode='naive', quantize_mode='full'):
+def _quantize(net, data, quantized_dtype='int8', calib_mode='naive', quantize_mode='full',
+              qat=False):
     """Hybridize *net*, run a forward pass, then return quantize_net(net)."""
     # Shape-trace the original network first (required for hybridization)
     net.hybridize(static_alloc=False, static_shape=False)
@@ -144,6 +147,7 @@ def _quantize(net, data, quantized_dtype='int8', calib_mode='naive', quantize_mo
         calib_data=calib_loader,
         num_calib_batches=1,
         quantize_mode=quantize_mode,
+        qat=qat,
     )
     return qnet
 
@@ -278,11 +282,7 @@ def test_fc_quantized_weight_grad_nonzero():
 
     @mx.util.use_np
     def _run():
-        qnet = _quantize(net, data)
-        # Force grad computation on weight params
-        for k, v in qnet.collect_params().items():
-            if 'weight' in k and 'min' not in k and 'max' not in k:
-                v.grad_req = 'write'
+        qnet = _quantize(net, data, qat=True)
 
         x = mx.np.random.uniform(-1, 1, size=FC_DATA_SHAPE, dtype='float32', device=mx.cpu())
         with mx.autograd.record():
@@ -772,12 +772,10 @@ def test_fc_quantized_output_changes_with_input():
 
 @pytest.mark.timeout(300)
 def test_quantized_grad_req_all_null():
-    """Quantize_net sets grad_req='null' on all params — document this behavior.
+    """quantize_net defaults to grad_req='null' on all params.
 
-    This is the mechanism that prevents parameter update in optimizers.  An
-    optimizer loop calling trainer.step() after loss.backward() would silently
-    do nothing because no gradient buffers are allocated.  This test documents
-    the current behavior so a future fix can be validated against it.
+    This preserves inference-only behavior.  QAT callers must opt in with
+    qat=True; see test_qat_quantized_grad_req_write.
     """
     net = _SimpleFCNet()
     net.initialize(mx.init.Normal(0.5))
@@ -791,6 +789,29 @@ def test_quantized_grad_req_all_null():
                 f"Expected grad_req='null' for quantized param {k!r}, "
                 f"got {v.grad_req!r}. If this assertion fails, quantize_net "
                 f"behavior has changed — update this test and re-check gradient flow."
+            )
+
+    _run()
+
+
+@pytest.mark.timeout(300)
+def test_qat_quantized_grad_req_write():
+    """QAT mode keeps trainable parameter grad buffers allocated."""
+    net = _SimpleFCNet()
+    net.initialize(mx.init.Normal(0.5))
+    data = mx.np.random.uniform(-1, 1, size=FC_DATA_SHAPE, dtype='float32', device=mx.cpu())
+
+    @mx.util.use_np
+    def _run():
+        qnet = _quantize(net, data, qat=True)
+        trainable_params = {
+            k: v for k, v in qnet.collect_params().items()
+            if 'min' not in k and 'max' not in k
+        }
+        assert trainable_params, "Expected quantized QAT network to expose trainable params"
+        for k, v in trainable_params.items():
+            assert v.grad_req == 'write', (
+                f"Expected grad_req='write' for QAT param {k!r}, got {v.grad_req!r}"
             )
 
     _run()

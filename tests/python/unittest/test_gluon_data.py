@@ -253,6 +253,16 @@ def test_image_folder_dataset_handle(prepare_record):
     assert (hd[1][0] == dataset[1][0]).asnumpy().all()
     assert hd[5][1] == dataset[5][1]
 
+def test_image_folder_dataset_handle_with_separator_in_path(tmpdir):
+    root = tmpdir.mkdir('image|folder')
+    _touch_image(root.mkdir('cls').join('x.jpg'))
+
+    dataset = gluon.data.vision.ImageFolderDataset(str(root))
+    hd = dataset.__mx_handle__()
+
+    assert len(dataset) == 1
+    assert len(hd) == 1
+
 def test_image_list_dataset(prepare_record):
     root = os.path.join(os.path.dirname(prepare_record), 'test_images')
     imlist = os.listdir(root)
@@ -275,6 +285,16 @@ def test_image_list_dataset(prepare_record):
         img, label = dataset[0]
         assert len(img.shape) == 3
         assert label == 0
+
+def test_image_list_dataset_handle_with_separator_in_path(tmpdir):
+    root = tmpdir.mkdir('image|list')
+    _touch_image(root.join('x.jpg'))
+
+    dataset = gluon.data.vision.ImageListDataset(root=str(root), imglist=[(0, 'x.jpg')])
+    hd = dataset.__mx_handle__()
+
+    assert len(dataset) == 1
+    assert len(hd) == 1
 
 def test_image_list_dataset_handle(prepare_record):
     root = os.path.join(os.path.dirname(prepare_record), 'test_images')

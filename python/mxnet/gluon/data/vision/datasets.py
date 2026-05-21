@@ -35,6 +35,18 @@ from .... import numpy as _mx_np  # pylint: disable=reimported
 from ....util import is_np_array, default_array
 from ....base import numeric_types
 
+_MX_HANDLE_PATH_SEPARATORS = ('|',) + tuple(
+    chr(i) for i in range(1, 32) if chr(i) not in '\t\n\r\v\f')
+
+
+def _encode_paths_for_mx_handle(paths):
+    """Join image paths with a separator absent from every path."""
+    paths = list(paths)
+    for path_sep in _MX_HANDLE_PATH_SEPARATORS:
+        if all(path_sep not in path for path in paths):
+            return path_sep, path_sep.join(paths)
+    raise ValueError('image paths contain every supported C++ handle separator')
+
 
 class MNIST(dataset._DownloadedDataset):
     """MNIST handwritten digits dataset from http://yann.lecun.com/exdb/mnist
@@ -375,8 +387,7 @@ class ImageFolderDataset(dataset.Dataset):
     def __mx_handle__(self):
         if self._handle is None:
             from .._internal import ImageSequenceDataset, NDArrayDataset, GroupDataset
-            path_sep = '|'
-            im_names = path_sep.join([x[0] for x in self.items])
+            path_sep, im_names = _encode_paths_for_mx_handle(x[0] for x in self.items)
             label = default_array([x[1] for x in self.items])
             self._handle = GroupDataset(datasets=(
                 ImageSequenceDataset(img_list=im_names, path_sep=path_sep, flag=self._flag),
@@ -468,8 +479,8 @@ class ImageListDataset(dataset.Dataset):
     def __mx_handle__(self):
         if self._handle is None:
             from .._internal import ImageSequenceDataset, NDArrayDataset, GroupDataset
-            path_sep = '|'
-            im_names = path_sep.join([self._imglist[x][1] for x in self._imgkeys])
+            path_sep, im_names = _encode_paths_for_mx_handle(
+                self._imglist[x][1] for x in self._imgkeys)
             label = default_array(np.array([self._imglist[x][0].asnumpy() for x in self._imgkeys]))
             self._handle = GroupDataset(datasets=(
                 ImageSequenceDataset(img_list=im_names, path_sep=path_sep, flag=self._flag),

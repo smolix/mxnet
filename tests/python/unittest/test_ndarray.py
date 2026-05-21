@@ -892,6 +892,23 @@ def test_linspace():
         assert_almost_equal(pred, gt)
 
 
+def test_argsort_float16_cpu():
+    data = np.array([[3.0, -1.5, 2.25, 0.0],
+                     [4.0, -3.0, 1.5, 8.0]], dtype=np.float16)
+    x = mx.nd.array(data, ctx=mx.cpu(), dtype='float16')
+
+    for axis in [0, 1, None]:
+        expected = np.argsort(data, axis=axis).astype(np.int32)
+        actual = mx.nd.argsort(x, axis=axis, is_ascend=True, dtype='int32').asnumpy()
+        assert actual.dtype == np.int32
+        assert_almost_equal(actual, expected)
+
+    expected = np.argsort(-data, axis=1).astype(np.int64)
+    actual = mx.nd.argsort(x, axis=1, is_ascend=False, dtype='int64').asnumpy()
+    assert actual.dtype == np.int64
+    assert_almost_equal(actual, expected)
+
+
 @pytest.mark.serial
 def test_order():
     ctx = default_device()

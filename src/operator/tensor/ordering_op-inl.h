@@ -962,7 +962,7 @@ void ArgSort(const nnvm::NodeAttrs& attrs,
   topk_param.k         = 0;
   topk_param.dtype     = param.dtype;
   topk_param.ret_typ   = topk_enum::kReturnIndices;
-  MXNET_NO_FLOAT16_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, DType, {
     MSHADOW_TYPE_SWITCH(param.dtype, IDType, {
       if (inputs[0].Size() >= INT_MAX) {
         TopKImpl<xpu, DType, IDType, index_t>(

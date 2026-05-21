@@ -99,6 +99,9 @@ struct product {
   __device__ inline static void Reduce(volatile DType& dst, volatile DType2 src) {
     dst = op::mul(dst, src);
   }
+  __device__ inline static void Reduce(volatile bool& dst, volatile bool src) {
+    dst = dst && src;
+  }
   /*! \brief do reduction into dst */
   template<typename DType, typename DType2>
   __device__ inline static void Reduce(volatile DType& dst, volatile DType2 src,
@@ -135,6 +138,7 @@ struct product {
   template<typename DType>
   __device__ inline static void SetInitValue(DType &initv, DType &none) {
     SetInitValue(initv);
+    none = 0;
   }
 };
 
@@ -200,6 +204,9 @@ struct nanprod {
     if (util::isnan(src)) return;
     dst = op::mul(dst, src);
   }
+  __device__ inline static void Reduce(volatile bool& dst, volatile bool src) {
+    dst = dst && src;
+  }
   /*! \brief do reduction into dst */
   template<typename DType>
   __device__ inline static void Reduce(volatile DType& dst, volatile DType src,
@@ -236,6 +243,7 @@ struct nanprod {
   template<typename DType>
   __device__ inline static void SetInitValue(DType &initv, DType &none) {
     SetInitValue(initv);
+    none = 0;
   }
 };
 

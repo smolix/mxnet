@@ -1479,6 +1479,9 @@ struct product {
   MSHADOW_XINLINE static void Reduce(volatile DType& dst, volatile DType src) {  // NOLINT(*)
     dst *= src;
   }
+  MSHADOW_XINLINE static void Reduce(volatile bool& dst, volatile bool src) {  // NOLINT(*)
+    dst = dst && src;
+  }
   /*! \brief do reduction into dst */
   template <typename DType>
   MSHADOW_XINLINE static void Reduce(volatile DType& dst,  // NOLINT(*)
@@ -1527,6 +1530,7 @@ struct product {
   template <typename DType>
   MSHADOW_XINLINE static void SetInitValue(DType& initv, DType& none) {  // NOLINT(*)
     SetInitValue(initv);
+    none = 0;
   }
 };
 
@@ -1684,6 +1688,9 @@ struct nanprod {
       return;
     dst *= src;
   }
+  MSHADOW_XINLINE static void Reduce(volatile bool& dst, volatile bool src) {  // NOLINT(*)
+    dst = dst && src;
+  }
   /*! \brief do reduction into dst */
   template <typename DType>
   MSHADOW_XINLINE static void Reduce(volatile DType& dst,     // NOLINT(*)
@@ -1725,6 +1732,7 @@ struct nanprod {
   template <typename DType>
   MSHADOW_XINLINE static void SetInitValue(DType& initv, DType& none) {  // NOLINT(*)
     SetInitValue(initv);
+    none = 0;
   }
 };
 

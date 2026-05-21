@@ -105,6 +105,32 @@ def download(url: str, dest: Path, *, retries: int = 5, timeout: int = 120) -> N
             time.sleep(min(2 ** attempt, 30))
 
 
+def _ensure_relative_to(path: Path, dest: Path, member_name: str) -> None:
+    try:
+        path.relative_to(dest)
+    except ValueError:
+        raise SystemExit(f"Unsafe archive member path: {member_name}")
+
+
+def _validate_tar_members(tf: tarfile.TarFile, dest: Path) -> list[tarfile.TarInfo]:
+    dest = dest.resolve()
+    members = tf.getmembers()
+    for member in members:
+        target = (dest / member.name).resolve()
+        _ensure_relative_to(target, dest, member.name)
+
+        if member.islnk():
+            link_target = (dest / member.linkname).resolve()
+            _ensure_relative_to(link_target, dest, member.name)
+        elif member.issym():
+            link_target = (target.parent / member.linkname).resolve()
+            _ensure_relative_to(link_target, dest, member.name)
+        elif not (member.isdir() or member.isreg()):
+            raise SystemExit(f"Unsafe archive member type: {member.name}")
+
+    return members
+
+
 def extract(archive: Path, source_dir: Path) -> None:
     if source_dir.exists():
         return
@@ -114,7 +140,7 @@ def extract(archive: Path, source_dir: Path) -> None:
         try:
             tf.extractall(source_dir.parent, filter="data")
         except TypeError:
-            tf.extractall(source_dir.parent)
+            tf.extractall(source_dir.parent, members=_validate_tar_members(tf, source_dir.parent))
 
 
 def main() -> int:

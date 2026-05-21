@@ -231,13 +231,17 @@ def function_scope_seed(request):
 
     yield  # run the test
 
-    if request.node.rep_setup.failed:
-        logging.error("Setting up a test failed: {}", request.node.nodeid)
-    elif request.node.rep_call.outcome == 'failed':
-        # Either request.node.rep_setup.failed or request.node.rep_setup.passed should be True
-        assert request.node.rep_setup.passed
-        # On failure also log seed on WARNING log level
-        error_message = f'Error seen with seeded test, use MXNET_TEST_SEED={seed} to reproduce'
-        logging.warning(error_message)
+    try:
+        rep_setup = getattr(request.node, 'rep_setup', None)
+        rep_call = getattr(request.node, 'rep_call', None)
 
-    random.setstate(old_state)
+        if rep_setup is not None and rep_setup.failed:
+            logging.error("Setting up a test failed: {}", request.node.nodeid)
+        elif rep_call is not None and rep_call.outcome == 'failed':
+            # Either request.node.rep_setup.failed or request.node.rep_setup.passed should be True
+            assert rep_setup is not None and rep_setup.passed
+            # On failure also log seed on WARNING log level
+            error_message = f'Error seen with seeded test, use MXNET_TEST_SEED={seed} to reproduce'
+            logging.warning(error_message)
+    finally:
+        random.setstate(old_state)

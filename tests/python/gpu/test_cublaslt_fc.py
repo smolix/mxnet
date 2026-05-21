@@ -102,10 +102,10 @@ def _runner(use_lt: int, shape, dtype: str, allow_tf32: str):
         # Initialize from the same numpy weights for both subprocesses.
         dense.weight.initialize(ctx=mx.gpu(0))
         dense.bias.initialize(ctx=mx.gpu(0))
-        dense.weight.set_data(w)
-        dense.bias.set_data(b)
+        dense.weight.set_data(w.as_np_ndarray())
+        dense.bias.set_data(b.as_np_ndarray())
         try:
-            y = dense(x)
+            y = dense(x.as_np_ndarray())
             y.wait_to_read()
         except mx.MXNetError as e:
             # Some dtypes (notably bf16) may not be wired through FC on this

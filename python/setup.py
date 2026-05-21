@@ -50,6 +50,12 @@ CUDA_RUNTIME_INSTALL_REQUIRES = [
     'nvidia-nccl-cu13>=2.28,<3',
 ]
 
+# Python image/RecordIO helpers import cv2 when OpenCV support is enabled.
+# This is separate from native libopencv_*.so bundling policy.
+OPENCV_PYTHON_INSTALL_REQUIRES = [
+    'opencv-python>=4,<5',
+]
+
 # need to use distutils.core for correct placement of cython dll
 kwargs = {}
 if "--inplace" in sys.argv:
@@ -139,22 +145,33 @@ def _exclude_package_data():
     }
 
 
-def _cuda_enabled_from_cmake_cache():
-    """Read USE_CUDA from a nearby CMakeCache.txt when building from a tree."""
-    cache_paths = set()
-    for lib_path in LIB_PATH:
-        cache_paths.add(os.path.join(os.path.dirname(lib_path), 'CMakeCache.txt'))
-    cache_paths.add(os.path.abspath(os.path.join(CURRENT_DIR, '..', 'build', 'CMakeCache.txt')))
+def _feature_enabled_from_cmake_cache(feature_name):
+    """Read a USE_* feature flag from a nearby CMakeCache.txt."""
+    cache_paths = []
 
+    def add_cache_path(path):
+        if path not in cache_paths:
+            cache_paths.append(path)
+
+    for lib_path in LIB_PATH:
+        add_cache_path(os.path.join(os.path.dirname(lib_path), 'CMakeCache.txt'))
+    add_cache_path(os.path.abspath(os.path.join(CURRENT_DIR, '..', 'build', 'CMakeCache.txt')))
+
+    prefix = '{}:'.format(feature_name)
     for cache_path in cache_paths:
         if not os.path.exists(cache_path):
             continue
         with open(cache_path) as cache_file:
             for line in cache_file:
-                if line.startswith('USE_CUDA:'):
+                if line.startswith(prefix):
                     _, value = line.strip().split('=', 1)
                     return value.upper() in ('1', 'ON', 'TRUE', 'YES')
     return None
+
+
+def _cuda_enabled_from_cmake_cache():
+    """Read USE_CUDA from a nearby CMakeCache.txt when building from a tree."""
+    return _feature_enabled_from_cmake_cache('USE_CUDA')
 
 
 def _cuda_enabled_from_runtime():
@@ -186,8 +203,42 @@ def _include_cuda_runtime_deps():
     return True
 
 
+def _opencv_enabled_from_cmake_cache():
+    """Read USE_OPENCV from a nearby CMakeCache.txt when building from a tree."""
+    return _feature_enabled_from_cmake_cache('USE_OPENCV')
+
+
+def _opencv_enabled_from_runtime():
+    """Ask libmxnet for OpenCV support when its dependencies are loadable."""
+    try:
+        from mxnet.runtime import Features
+        return Features().is_enabled('OPENCV')
+    except Exception: # pylint: disable=broad-except
+        return None
+
+
+def _include_opencv_python_deps():
+    """Return whether this wheel should depend on Python OpenCV."""
+    override = _env_flag('MXNET_SETUP_ENABLE_OPENCV_DEPS')
+    if override is not None:
+        return override
+
+    detected = _opencv_enabled_from_cmake_cache()
+    if detected is not None:
+        return detected
+    detected = _opencv_enabled_from_runtime()
+    if detected is not None:
+        return detected
+
+    # OpenCV is optional, so do not force cv2 into metadata when the build
+    # feature cannot be probed.
+    return False
+
+
 if 'install_requires' in kwargs and _include_cuda_runtime_deps():
     kwargs['install_requires'].extend(CUDA_RUNTIME_INSTALL_REQUIRES)
+if 'install_requires' in kwargs and _include_opencv_python_deps():
+    kwargs['install_requires'].extend(OPENCV_PYTHON_INSTALL_REQUIRES)
 
 # NVIDIA runtime libs are NOT bundled — see install_requires above.
 # libmxnet.so's RUNPATH points at site-packages/nvidia/<pkg>/lib/ for them.

@@ -140,10 +140,10 @@ def validate_opencv_policy(
     libs = ", ".join(opencv_needed)
     raise RuntimeError(
         "libmxnet.so links to OpenCV ({libs}), but this wheel build would not "
-        "bundle those libraries and Python install_requires cannot express "
-        "system OpenCV SONAME dependencies. Rebuild with USE_OPENCV=OFF, pass "
-        "--bundle-opencv, or pass --allow-system-opencv and document the "
-        "required OS packages.".format(libs=libs)
+        "bundle those libraries. The opencv-python package only covers Python "
+        "cv2 imports; it does not satisfy libmxnet.so OpenCV SONAME dependencies. "
+        "Rebuild with USE_OPENCV=OFF, pass --bundle-opencv, or pass "
+        "--allow-system-opencv and document the required OS packages.".format(libs=libs)
     )
 
 

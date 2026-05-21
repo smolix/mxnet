@@ -303,6 +303,21 @@ def test_attach_grad_add_accumulates_existing_grad():
     assert_almost_equal(x.grad.asnumpy(), np.full((2, 3), 8, dtype='float32'))
 
 
+def test_attach_grad_on_non_leaf_preserves_upstream_gradient():
+    x = mx.nd.ones((2, 3), dtype='float32')
+    x.attach_grad()
+
+    with record():
+        y = x * 2
+        y.attach_grad()
+        z = (y * 3).sum()
+    z.backward()
+
+    assert y.grad.dtype == np.float32
+    assert_almost_equal(y.grad.asnumpy(), np.full((2, 3), 3, dtype='float32'))
+    assert_almost_equal(x.grad.asnumpy(), np.full((2, 3), 6, dtype='float32'))
+
+
 @use_np
 def test_np_attach_grad_add_accumulates_existing_grad_and_preserves_dtype():
     x = mx.np.ones((2, 3), dtype='float16')
@@ -316,6 +331,24 @@ def test_np_attach_grad_add_accumulates_existing_grad_and_preserves_dtype():
     assert isinstance(x.grad, mx.np.ndarray)
     assert x.grad.dtype == np.float16
     assert_almost_equal(x.grad.asnumpy(), np.full((2, 3), 8, dtype='float16'))
+
+
+@use_np
+def test_np_attach_grad_on_non_leaf_preserves_upstream_gradient_and_dtype():
+    x = mx.np.ones((2, 3), dtype='float16')
+    x.attach_grad()
+
+    with record():
+        y = x * mx.np.array(2, dtype='float16')
+        y.attach_grad()
+        z = (y * mx.np.array(3, dtype='float16')).sum()
+    z.backward()
+
+    assert isinstance(y.grad, mx.np.ndarray)
+    assert y.grad.dtype == np.float16
+    assert_almost_equal(y.grad.asnumpy(), np.full((2, 3), 3, dtype='float16'))
+    assert x.grad.dtype == np.float16
+    assert_almost_equal(x.grad.asnumpy(), np.full((2, 3), 6, dtype='float16'))
 
 
 @use_np

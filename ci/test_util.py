@@ -63,3 +63,36 @@ def test_download_file_keeps_legacy_404_return(monkeypatch, tmp_path):
 
     assert util.download_file("https://example.test/missing.zip", tmp_path) == 404
     assert not (tmp_path / "missing.zip").exists()
+
+
+def test_download_file_cleans_partial_temp_file_on_stream_error(monkeypatch, tmp_path):
+    def broken_chunks(self, chunk_size):
+        yield b"partial"
+        raise RuntimeError("stream failed")
+
+    monkeypatch.setattr(util.requests, "get", Mock(return_value=FakeResponse(200)))
+    monkeypatch.setattr(FakeResponse, "iter_content", broken_chunks)
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        util.download_file("https://example.test/archive.zip", tmp_path)
+
+    assert not (tmp_path / "archive.zip").exists()
+    assert not (tmp_path / "archive.zip.tmp").exists()
+
+
+def test_download_file_preserves_existing_file_on_stream_error(monkeypatch, tmp_path):
+    existing = tmp_path / "archive.zip"
+    existing.write_bytes(b"trusted")
+
+    def broken_chunks(self, chunk_size):
+        yield b"partial"
+        raise RuntimeError("stream failed")
+
+    monkeypatch.setattr(util.requests, "get", Mock(return_value=FakeResponse(200)))
+    monkeypatch.setattr(FakeResponse, "iter_content", broken_chunks)
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        util.download_file("https://example.test/archive.zip", tmp_path)
+
+    assert existing.read_bytes() == b"trusted"
+    assert not (tmp_path / "archive.zip.tmp").exists()

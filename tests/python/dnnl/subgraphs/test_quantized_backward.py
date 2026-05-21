@@ -47,10 +47,12 @@ STATUS (2026-05-18, partial fix):
     STE in quantize_v2 is therefore functionally correct but its gradient is
     blocked by the zero gradient from the FC/Conv subgraph ops upstream.
 
-  Net result: the four xfail tests below remain xfailed — input and weight
-  gradients are still identically zero through the full quantized graph.  The
-  STE will become effective once _sg_onednn_fully_connected/_sg_onednn_conv get
-  proper backward support.
+  Net result: the xfail tests below remain xfailed — input and weight gradients
+  are still identically zero through the full quantized graph.  The STE becomes
+  effective only after _sg_onednn_fully_connected/_sg_onednn_conv get proper
+  backward support.  Setting the historical MXNET_QAT_SUBGRAPH_BACKWARD=1 gate
+  does not change behavior in this checkout because no gated backward body is
+  present.
 
 ROOT-CAUSE NOTE (discovered 2026-05-17):
   MXNet's quantize_net inserts a `quantize_v2` node immediately before each
@@ -225,17 +227,16 @@ def test_fc_quantized_backward_no_crash():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "KNOWN BROKEN (issues.md #5): quantize_v2 at the graph input has no "
-        "backward registered — it returns all-zeros. The input gradient is "
-        "always zero for quantized networks.  To fix: implement straight-through "
-        "estimator (STE) for quantize_v2.  Remove this xfail once the norm > 0."
+        "KNOWN BROKEN (B4): quantize_v2 has STE, but the quantized FC subgraph "
+        "still uses MakeZeroGradNodes, so upstream input gradients are zero. "
+        "Remove this xfail once _sg_onednn_fully_connected backward works."
     ),
 )
 def test_fc_quantized_backward_nonzero_input_grad():
     """Quantized FC input gradient should be non-zero (like FP32 reference).
 
-    CURRENTLY XFAIL: the quantize_v2 node at the graph input blocks all
-    gradient flow, so x.grad is identically 0.
+    CURRENTLY XFAIL: the quantized FC subgraph blocks gradient flow, so x.grad
+    is identically 0 even though quantize_v2 has STE.
     """
     net = _SimpleFCNet()
     net.initialize(mx.init.Normal(0.5))
@@ -251,7 +252,7 @@ def test_fc_quantized_backward_nonzero_input_grad():
         # We want quantized gradient to be in the same ballpark (weak test)
         assert grad_norm > 0.0, (
             f"Quantized FC x.grad is zero (fp32_norm={fp32_norm:.4f}). "
-            f"The quantize_v2 input node kills gradient flow."
+            f"The quantized FC subgraph kills gradient flow."
         )
 
     _run()
@@ -261,16 +262,15 @@ def test_fc_quantized_backward_nonzero_input_grad():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "KNOWN BROKEN (issues.md #5): weight gradients are also zero because "
-        "quantized params have grad_req='null' and the quantized FC op has no "
-        "weight-gradient backward. Remove this xfail once weight grads work."
+        "KNOWN BROKEN (B4): quantized FC has no weight-gradient backward. "
+        "Remove this xfail once _sg_onednn_fully_connected weight grads work."
     ),
 )
 def test_fc_quantized_weight_grad_nonzero():
     """Quantized FC weight gradient should be non-zero for fine-tuning.
 
-    CURRENTLY XFAIL: all quantized params have grad_req='null' (set by
-    quantize_net), and even when forced to 'write' the backward yields 0.
+    CURRENTLY XFAIL: even when forced to grad_req='write', the quantized FC
+    subgraph backward yields 0.
     """
     net = _SimpleFCNet()
     net.initialize(mx.init.Normal(0.5))
@@ -359,15 +359,15 @@ def test_conv_quantized_backward_no_crash():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "KNOWN BROKEN (issues.md #5): same root cause as FC — quantize_v2 "
-        "at the conv input returns zero gradient. The input gradient is always "
-        "zero. Fix: STE for quantize_v2. Remove xfail once norm > 0."
+        "KNOWN BROKEN (B4): quantize_v2 has STE, but the quantized Conv "
+        "subgraph still uses MakeZeroGradNodes, so input gradients are zero. "
+        "Remove this xfail once _sg_onednn_conv backward works."
     ),
 )
 def test_conv_quantized_backward_nonzero_input_grad():
     """Quantized Conv input gradient should be non-zero.
 
-    CURRENTLY XFAIL: quantize_v2 at graph input kills gradient flow.
+    CURRENTLY XFAIL: the quantized Conv subgraph blocks gradient flow.
     """
     net = _SimpleConvNet()
     net.initialize(mx.init.Normal(0.1))
@@ -381,7 +381,69 @@ def test_conv_quantized_backward_nonzero_input_grad():
         assert fp32_norm > 1.0, f"FP32 Conv reference gradient is unexpectedly tiny: {fp32_norm}"
         assert grad_norm > 0.0, (
             f"Quantized Conv x.grad is zero (fp32_norm={fp32_norm:.4f}). "
-            f"The quantize_v2 input node kills gradient flow."
+            f"The quantized Conv subgraph kills gradient flow."
+        )
+
+    _run()
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN BROKEN (B4): MXNET_QAT_SUBGRAPH_BACKWARD=1 is only a historical "
+        "handover gate in this checkout; no gated FC backward body is present."
+    ),
+)
+def test_fc_qat_subgraph_backward_gate_nonzero_input_grad(monkeypatch):
+    """Historical QAT backward gate should eventually enable non-zero FC grads.
+
+    CURRENTLY XFAIL: setting the gate does not change the zero-gradient
+    MakeZeroGradNodes behavior of the quantized FC subgraph.
+    """
+    monkeypatch.setenv('MXNET_QAT_SUBGRAPH_BACKWARD', '1')
+    net = _SimpleFCNet()
+    net.initialize(mx.init.Normal(0.5))
+    data = mx.np.random.uniform(-1, 1, size=FC_DATA_SHAPE, dtype='float32', device=mx.cpu())
+
+    @mx.util.use_np
+    def _run():
+        qnet = _quantize(net, data)
+        grad_norm, _, _ = _quantized_input_grad(qnet, FC_DATA_SHAPE)
+        assert grad_norm > 0.0, (
+            f"Gated quantized FC x.grad is zero. "
+            f"MXNET_QAT_SUBGRAPH_BACKWARD=1 has no implemented effect."
+        )
+
+    _run()
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN BROKEN (B4): MXNET_QAT_SUBGRAPH_BACKWARD=1 is only a historical "
+        "handover gate in this checkout; no gated Conv backward body is present."
+    ),
+)
+def test_conv_qat_subgraph_backward_gate_nonzero_input_grad(monkeypatch):
+    """Historical QAT backward gate should eventually enable non-zero Conv grads.
+
+    CURRENTLY XFAIL: setting the gate does not change the zero-gradient
+    MakeZeroGradNodes behavior of the quantized Conv subgraph.
+    """
+    monkeypatch.setenv('MXNET_QAT_SUBGRAPH_BACKWARD', '1')
+    net = _SimpleConvNet()
+    net.initialize(mx.init.Normal(0.1))
+    data = mx.np.random.uniform(-1, 1, size=CONV_DATA_SHAPE, dtype='float32', device=mx.cpu())
+
+    @mx.util.use_np
+    def _run():
+        qnet = _quantize(net, data)
+        grad_norm, _, _ = _quantized_input_grad(qnet, CONV_DATA_SHAPE)
+        assert grad_norm > 0.0, (
+            f"Gated quantized Conv x.grad is zero. "
+            f"MXNET_QAT_SUBGRAPH_BACKWARD=1 has no implemented effect."
         )
 
     _run()
@@ -445,15 +507,15 @@ def test_composite_quantized_backward_no_crash():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "KNOWN BROKEN (issues.md #5): same root cause — quantize_v2 at "
-        "the first Conv input kills all gradient flow. Composite fusion does "
-        "not help. Fix: STE for quantize_v2. Remove xfail once norm > 0."
+        "KNOWN BROKEN (B4): the first quantized Conv subgraph kills all "
+        "gradient flow. Composite fusion does not help. Remove xfail once "
+        "_sg_onednn_conv backward works."
     ),
 )
 def test_composite_quantized_backward_nonzero_input_grad():
     """Quantized composite network input gradient should be non-zero.
 
-    CURRENTLY XFAIL: quantize_v2 at conv input kills gradient.
+    CURRENTLY XFAIL: the quantized Conv subgraph kills gradient.
     """
     net = _ConvReluDenseNet()
     net.initialize(mx.init.Normal(0.1))
@@ -469,7 +531,7 @@ def test_composite_quantized_backward_nonzero_input_grad():
         assert fp32_norm >= 0.0, f"FP32 composite gradient is negative norm: {fp32_norm}"
         assert grad_norm > 0.0, (
             f"Quantized composite x.grad is zero (fp32_norm={fp32_norm:.6f}). "
-            f"The quantize_v2 input node kills gradient flow."
+            f"The quantized Conv subgraph kills gradient flow."
         )
 
     _run()

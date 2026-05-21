@@ -40,21 +40,13 @@ namespace mxnet {
  * and create symbols for the input nodes. It returns the input symbols.
  */
 std::vector<nnvm::Symbol*> GetInputSymbols(const nnvm::Symbol& sym) {
-  nnvm::Graph g;
   std::vector<nnvm::Symbol*> input_syms;
-  g.outputs                     = sym.outputs;
-  const nnvm::IndexedGraph& idx = g.indexed_graph();
-  // Go through all nodes and return the ones representing variables.
-  for (size_t i = 0; i < idx.num_nodes(); i++) {
-    const nnvm::Node& n = *idx[i].source;
-    for (const nnvm::NodeEntry& e : n.inputs) {
-      auto p = e.node;
-      if (p->is_variable()) {
-        nnvm::Symbol* s = new nnvm::Symbol();
-        s->outputs.push_back(e);
-        input_syms.push_back(s);
-      }
-    }
+  const std::vector<nnvm::ObjectPtr> inputs = sym.ListInputs(nnvm::Symbol::kAll);
+  input_syms.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    nnvm::Symbol* s = new nnvm::Symbol();
+    s->outputs.emplace_back(input, 0, 0);
+    input_syms.push_back(s);
   }
   return input_syms;
 }

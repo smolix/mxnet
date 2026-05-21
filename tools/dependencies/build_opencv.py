@@ -39,6 +39,9 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from download_utils import expected_sha256_for_url, verify_archive_if_pinned, verify_sha256
+
 
 DEFAULT_VERSION = "4.9.0"
 DEFAULT_DEPLOYMENT_TARGET = "11.0"
@@ -88,12 +91,18 @@ def run(argv: list[str], *, cwd: Path | None = None, env: dict[str, str] | None 
     subprocess.run(argv, cwd=cwd, env=env, check=True)
 
 
-def download(url: str, dest: Path) -> None:
+def download(url: str, dest: Path, *, expected_sha256: str | None = None) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     print(f"Downloading {url} -> {dest}", flush=True)
     with urllib.request.urlopen(url) as response, tmp.open("wb") as out:
         shutil.copyfileobj(response, out)
+    if expected_sha256:
+        try:
+            verify_sha256(tmp, expected_sha256, url)
+        except SystemExit:
+            tmp.unlink(missing_ok=True)
+            raise
     tmp.replace(dest)
 
 
@@ -169,8 +178,11 @@ def main() -> int:
     if system == "Darwin" and args.arch not in {"arm64", "x86_64"}:
         raise SystemExit(f"Unsupported macOS architecture: {args.arch}")
 
-    if not archive.exists():
-        download(url, archive)
+    expected_sha256 = expected_sha256_for_url(url)
+    if archive.exists():
+        verify_archive_if_pinned(archive, url)
+    else:
+        download(url, archive, expected_sha256=expected_sha256)
     extract(archive, source_dir)
     patch_sources(source_dir)
 

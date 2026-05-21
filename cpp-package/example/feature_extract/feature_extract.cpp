@@ -22,6 +22,7 @@
 #include <iostream>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 #include "mxnet-cpp/MxNetCpp.h"
@@ -46,7 +47,7 @@ class FeatureExtractor {
   map<string, NDArray> args_map;
   map<string, NDArray> aux_map;
   Symbol net;
-  Executor *executor;
+  unique_ptr<Executor> executor;
   /*Get the feature layer we want to extract*/
   void GetFeatureSymbol() {
     /*
@@ -100,8 +101,8 @@ class FeatureExtractor {
     data.Slice(1, 2) -= mean_img;
     args_map["data"] = data;
     /*bind the executor*/
-    executor = net.SimpleBind(global_ctx, args_map, map<string, NDArray>(),
-                              map<string, OpReqType>(), aux_map);
+    executor.reset(net.SimpleBind(global_ctx, args_map, map<string, NDArray>(),
+                                  map<string, OpReqType>(), aux_map));
     executor->Forward(false);
     /*print out the features*/
     auto array = executor->outputs[0].Copy(Context(kCPU, 0));

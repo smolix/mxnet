@@ -1,0 +1,22 @@
+{
+  "archives": [
+    {
+      "name": "opencv",
+      "version": "4.9.0",
+      "url": "https://github.com/opencv/opencv/archive/refs/tags/4.9.0.zip",
+      "sha256": "9b5b64d50bf4a3ddeab430a9b13c5f9e023c9e67639ab50a74d0c298b5a61b74"
+    },
+    {
+      "name": "libjpeg-turbo",
+      "version": "3.0.4",
+      "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/3.0.4.zip",
+      "sha256": "0c58853494f31a65329e567569d8614f35a74c1251bdcca10bb3d01689b35035"
+    },
+    {
+      "name": "llvm-project",
+      "version": "22.1.5",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.5/llvm-project-22.1.5.src.tar.xz",
+      "sha256": "7972b87b705a003ce70ab55f9f0fb495d156887cba0eb296d284731139118e2c"
+    }
+  ]
+}

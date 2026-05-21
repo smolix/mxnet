@@ -16,7 +16,9 @@
 # under the License.
 
 import importlib.util
+import hashlib
 import io
+import inspect
 import tarfile
 import zipfile
 from pathlib import Path
@@ -34,6 +36,82 @@ def _load_tool(script_name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _download_kwargs(module, expected_sha256):
+    kwargs = {"expected_sha256": expected_sha256}
+    if "retries" in inspect.signature(module.download).parameters:
+        kwargs["retries"] = 1
+    return kwargs
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    ["build_openmp.py", "build_opencv.py", "build_libturbojpeg.py"],
+)
+def test_download_verifies_expected_sha256(script_name, monkeypatch, tmp_path):
+    module = _load_tool(script_name)
+    payload = b"known dependency archive"
+    expected_sha256 = hashlib.sha256(payload).hexdigest()
+    archive = tmp_path / "archive.bin"
+
+    monkeypatch.setattr(
+        module.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: io.BytesIO(payload),
+    )
+
+    module.download(
+        "https://example.test/archive.bin",
+        archive,
+        **_download_kwargs(module, expected_sha256),
+    )
+
+    assert archive.read_bytes() == payload
+    assert not archive.with_suffix(archive.suffix + ".tmp").exists()
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    ["build_openmp.py", "build_opencv.py", "build_libturbojpeg.py"],
+)
+def test_download_rejects_sha256_mismatch(script_name, monkeypatch, tmp_path):
+    module = _load_tool(script_name)
+    archive = tmp_path / "archive.bin"
+
+    monkeypatch.setattr(
+        module.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: io.BytesIO(b"tampered archive"),
+    )
+
+    with pytest.raises(SystemExit, match="SHA256 mismatch"):
+        module.download(
+            "https://example.test/archive.bin",
+            archive,
+            **_download_kwargs(module, "0" * 64),
+        )
+
+    assert not archive.exists()
+    assert not archive.with_suffix(archive.suffix + ".tmp").exists()
+
+
+def test_manifest_pins_default_dependency_urls():
+    expected_urls = {
+        "build_openmp.py": (
+            "https://github.com/llvm/llvm-project/releases/download/"
+            "llvmorg-22.1.5/llvm-project-22.1.5.src.tar.xz"
+        ),
+        "build_opencv.py": "https://github.com/opencv/opencv/archive/refs/tags/4.9.0.zip",
+        "build_libturbojpeg.py": (
+            "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/3.0.4.zip"
+        ),
+    }
+    for script_name, url in expected_urls.items():
+        module = _load_tool(script_name)
+        checksum = module.expected_sha256_for_url(url)
+        assert checksum is not None
+        assert len(checksum) == 64
 
 
 @pytest.mark.parametrize("script_name", ["build_opencv.py", "build_libturbojpeg.py"])

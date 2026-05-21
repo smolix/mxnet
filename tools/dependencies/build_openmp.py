@@ -39,6 +39,9 @@ import time
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from download_utils import expected_sha256_for_url, verify_archive_if_pinned, verify_sha256
+
 
 DEFAULT_VERSION = "22.1.5"
 DEFAULT_DEPLOYMENT_TARGET = "11.0"
@@ -88,7 +91,14 @@ def run(argv: list[str], *, cwd: Path | None = None, env: dict[str, str] | None 
     subprocess.run(argv, cwd=cwd, env=env, check=True)
 
 
-def download(url: str, dest: Path, *, retries: int = 5, timeout: int = 120) -> None:
+def download(
+    url: str,
+    dest: Path,
+    *,
+    expected_sha256: str | None = None,
+    retries: int = 5,
+    timeout: int = 120,
+) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     for attempt in range(1, retries + 1):
@@ -96,6 +106,12 @@ def download(url: str, dest: Path, *, retries: int = 5, timeout: int = 120) -> N
             print(f"Downloading {url} -> {dest} (attempt {attempt}/{retries})", flush=True)
             with urllib.request.urlopen(url, timeout=timeout) as response, tmp.open("wb") as out:
                 shutil.copyfileobj(response, out)
+            if expected_sha256:
+                try:
+                    verify_sha256(tmp, expected_sha256, url)
+                except SystemExit:
+                    tmp.unlink(missing_ok=True)
+                    raise
             tmp.replace(dest)
             return
         except Exception:
@@ -184,8 +200,11 @@ def main() -> int:
     if system == "Darwin" and args.arch not in {"arm64", "x86_64"}:
         raise SystemExit(f"Unsupported macOS architecture: {args.arch}")
 
-    if not archive.exists():
-        download(url, archive)
+    expected_sha256 = expected_sha256_for_url(url)
+    if archive.exists():
+        verify_archive_if_pinned(archive, url)
+    else:
+        download(url, archive, expected_sha256=expected_sha256)
     extract(archive, source_dir)
 
     openmp_source = source_dir / "openmp"

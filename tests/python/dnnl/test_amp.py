@@ -28,12 +28,37 @@ from mxnet.amp.lists.symbol_bf16 import (BF16_FUNCS, BF16_FP32_FUNCS, WIDEST_TYP
                                          CONDITIONAL_FP32_FUNCS)
 
 from op_cfg import get_op_cfg_generator, get_symblock_from_args_scenario, CFG_RTOL_ATOL
+from dnnl_test_utils import has_native_onednn_bf16, require_native_onednn_bf16
 
 
 ALL_BF16_OPS = BF16_FUNCS + BF16_FP32_FUNCS + WIDEST_TYPE_CASTS
 ALL_BF16_OPS += [op_name for op_name, attr_name, attr_vals in CONDITIONAL_FP32_FUNCS]
 
 AMP_DTYPE = 'bfloat16'
+
+NATIVE_ONEDNN_BF16_OPS = {
+    'Convolution',
+    'Deconvolution',
+    'Pooling',
+    'Activation',
+    'LeakyReLU',
+    'BatchNorm',
+    'LRN',
+    'softmax',
+    'log_softmax',
+    '_npi_exp',
+    '_npi_tanh',
+    '_npi_sqrt',
+    '_npi_square',
+    'dot',
+    'batch_dot',
+    '_npi_dot',
+    '_sg_onednn_batch_dot',
+    '_sg_onednn_batch_norm',
+}
+
+NATIVE_ONEDNN_BF16_SKIP_REASON = \
+    'oneDNN native BF16 primitives are unavailable on this CPU'
 
 
 def test_bf16_coverage():
@@ -47,6 +72,7 @@ def test_bf16_basic_use():
 
 @mx.util.use_np
 def test_bf16_offline_casting():
+    require_native_onednn_bf16()
     amp_common_tests.test_amp_offline_casting(AMP_DTYPE)
 
 
@@ -90,8 +116,18 @@ def get_test_name(param):
     raise TypeError('Op configuration should only consist of its name (str) and arg config (dict)')
 
 
+def get_bf16_op_cfg_generator():
+    native_bf16_available = has_native_onednn_bf16()
+    native_bf16_skip = pytest.mark.skip(reason=NATIVE_ONEDNN_BF16_SKIP_REASON)
+    for op_name, args_scenario in get_op_cfg_generator(ALL_BF16_OPS, AMP_DTYPE):
+        marks = []
+        if op_name in NATIVE_ONEDNN_BF16_OPS and not native_bf16_available:
+            marks.append(native_bf16_skip)
+        yield pytest.param(op_name, args_scenario, marks=marks)
+
+
 @pytest.mark.parametrize(argnames=('op_name', 'args_scenario'),
-                         argvalues=get_op_cfg_generator(ALL_BF16_OPS, AMP_DTYPE),
+                         argvalues=get_bf16_op_cfg_generator(),
                          ids=get_test_name)
 def test_bf16_op(op_name, args_scenario):
     symblock, bf16_symblock_input_data = get_symblock_from_args_scenario(op_name, args_scenario)

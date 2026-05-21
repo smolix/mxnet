@@ -25,6 +25,7 @@ from mxnet.test_utils import assert_almost_equal_with_err, rand_shape_nd
 curr_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))
 sys.path.insert(0, os.path.join(curr_path, '../unittest'))
 import pytest
+from dnnl_test_utils import require_native_onednn_bf16
 
 
 def check_operator_accuracy(sym_fp32, sym_bf16, data_shape, num_input_data=1, bf16_use_fp32_params=False, rtol=1e-1, atol=5e-1, etol=0):
@@ -109,6 +110,7 @@ def check_operator_accuracy(sym_fp32, sym_bf16, data_shape, num_input_data=1, bf
     assert_almost_equal_with_err(output_bf16_2_fp32, output_fp32, rtol=rtol, atol=atol, etol=etol)
 
 def test_bf16_bn():
+    require_native_onednn_bf16()
     data_sym_fp32 = mx.sym.Variable(name='data')
     data_sym_bf16 = mx.sym.Variable(name='data', dtype='bfloat16')
 
@@ -120,6 +122,7 @@ def test_bf16_bn():
     check_operator_accuracy(sym_fp32=bn_fp32, sym_bf16=bn_bf16, data_shape=(32, 16, 64, 64), bf16_use_fp32_params=True, etol=1e-2)
 
 def test_bf16_conv():
+    require_native_onednn_bf16()
     data_sym_fp32 = mx.sym.Variable(name='data')
     data_sym_bf16 = mx.sym.Variable(name='data', dtype='bfloat16')
 
@@ -150,6 +153,7 @@ def test_bf16_fc():
     check_operator_accuracy(fc_fp32, fc_bf16, data_shape=(3, 3, 16, 16), bf16_use_fp32_params=False)
 
 def test_bf16_pooling():
+    require_native_onednn_bf16()
     pool_params = {"kernel": (3, 3), "stride": (1, 1), "pad": (0, 0), "name": "pool"}
     data_shapes = [(3, 16, 28, 28), (3, 32, 7, 7)]
     pool_types = ["max", "avg"]
@@ -164,6 +168,7 @@ def test_bf16_pooling():
         check_operator_accuracy(pool_fp32, pool_bf16, data_shape=new_params[0], bf16_use_fp32_params=False)
 
 def test_bf16_activation():
+    require_native_onednn_bf16()
     data_sym_fp32 = mx.sym.Variable(name='data')
     data_sym_bf16 = mx.sym.Variable(name='data', dtype='bfloat16')
 
@@ -296,6 +301,7 @@ def test_bf16_square():
         check_operator_accuracy(sym_fp32, sym_bf16, data_shape, bf16_use_fp32_params=True)
 
 def test_bf16_flatten_slice_after_conv():
+    require_native_onednn_bf16()
     data_fp32 = mx.symbol.Variable('data')
     data_bf16 = mx.symbol.Variable('data', dtype='bfloat16')
 
@@ -311,6 +317,7 @@ def test_bf16_flatten_slice_after_conv():
     check_operator_accuracy(slice_fp32, slice_bf16, shape, bf16_use_fp32_params=False)
 
 def test_bf16_fallback():
+    require_native_onednn_bf16()
     data_sym_fp32 = mx.sym.Variable(name='data')
     data_sym_bf16=mx.sym.Variable(name='data', dtype='bfloat16')
 
@@ -323,4 +330,3 @@ def test_bf16_fallback():
     conv_fp32 = mx.sym.Convolution(data_sym_fp32, **conv_params)
     conv_bf16 = mx.sym.Convolution(data_sym_bf16, **conv_params)
     check_operator_accuracy(sym_fp32=conv_fp32, sym_bf16=conv_bf16, data_shape=(3, 32, 28, 28, 4), bf16_use_fp32_params=False)
-

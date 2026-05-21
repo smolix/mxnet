@@ -174,9 +174,12 @@ post-fix GPU or DNNL core full-run summary is recorded here yet.
       `tests/python/dnnl/test_quantization_dnnl.py` plus
       `tests/python/quantization/test_quantization.py` passed `52 passed,
       2682 warnings` in 27.49s on 2026-05-21.
-- [ ] CPU unittest smoke: keep `tests/python/unittest/test_extensions.py` and
+- [x] CPU unittest smoke: keep `tests/python/unittest/test_extensions.py` and
       the two prior Gluon GPU-memory-pressure nodes as focused checks before
-      trusting another full `tests/python/unittest` summary.
+      trusting another full `tests/python/unittest` summary. The extension
+      smoke passed `4 passed, 1 skipped` in 1.77s on 2026-05-21 after the
+      logger/resource-hygiene commits; the prior Gluon pressure nodes remain
+      covered in FS5 and FS1.
 - [x] GPU smoke: keep the fork-safety DataLoader, cuBLASLt FC, TF32 deconv,
       cuDNN stream/workspace, deferred-compute GPU, extension GPU, and NCCL
       metric checks ahead of any monolithic `tests/python/gpu` rerun. The

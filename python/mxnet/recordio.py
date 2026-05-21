@@ -245,23 +245,31 @@ class MXIndexedRecordIO(MXRecordIO):
 
     def open(self):
         super(MXIndexedRecordIO, self).open()
-        self.fidx = open(self.idx_path, self.flag)
-        if self.writable:
-            self.idx = {}
-            self.keys = []
-        elif not self.idx:
-            for line in iter(self.fidx.readline, ''):
-                line = line.strip().split('\t')
-                key = self.key_type(line[0])
-                self.idx[key] = int(line[1])
-                self.keys.append(key)
+        try:
+            self.fidx = open(self.idx_path, self.flag)
+            if self.writable:
+                self.idx = {}
+                self.keys = []
+            elif not self.idx:
+                for line in iter(self.fidx.readline, ''):
+                    line = line.strip().split('\t')
+                    key = self.key_type(line[0])
+                    self.idx[key] = int(line[1])
+                    self.keys.append(key)
+        except Exception:
+            self.close()
+            raise
 
     def close(self):
         """Closes the record file."""
         if not self.is_open:
             return
-        super(MXIndexedRecordIO, self).close()
-        self.fidx.close()
+        try:
+            super(MXIndexedRecordIO, self).close()
+        finally:
+            if self.fidx is not None:
+                self.fidx.close()
+                self.fidx = None
 
     def __getstate__(self):
         """Override pickling behavior."""

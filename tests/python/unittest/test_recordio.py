@@ -19,6 +19,7 @@
 import sys
 import mxnet as mx
 import numpy as np
+import pytest
 import random
 import string
 
@@ -53,6 +54,66 @@ def test_indexed_recordio(tmpdir):
     for i in keys:
         res = reader.read_idx(i)
         assert res == bytes(str(chr(i)), 'utf-8')
+
+def test_indexed_recordio_closes_handles_when_index_load_fails(monkeypatch):
+    events = []
+
+    class FakeLib:
+        def MXRecordIOReaderCreate(self, uri, handle):
+            events.append(('create', uri.value.decode('utf-8')))
+            handle._obj.value = 123
+            return 0
+
+        def MXRecordIOReaderFree(self, handle):
+            events.append(('free', handle.value))
+            return 0
+
+    class FakeIndexFile:
+        def __init__(self):
+            self.read = False
+
+        def readline(self):
+            if self.read:
+                return ''
+            self.read = True
+            events.append(('readline',))
+            return 'not-an-int\t0\n'
+
+        def close(self):
+            events.append(('close-index',))
+
+    def fake_open(path, flag):
+        events.append(('open', path, flag))
+        return FakeIndexFile()
+
+    monkeypatch.setattr(mx.recordio, '_LIB', FakeLib())
+    monkeypatch.setattr(mx.recordio, 'check_call', lambda ret: None)
+    monkeypatch.setattr(mx.recordio, 'open', fake_open, raising=False)
+
+    record = object.__new__(mx.recordio.MXIndexedRecordIO)
+    record.idx_path = 'broken.idx'
+    record.idx = {}
+    record.keys = []
+    record.key_type = int
+    record.fidx = None
+    record.uri = mx.recordio.c_str('data.rec')
+    record.handle = mx.recordio.RecordIOHandle()
+    record.flag = 'r'
+    record.pid = None
+    record.is_open = False
+
+    with pytest.raises(ValueError):
+        record.open()
+
+    assert events == [
+        ('create', 'data.rec'),
+        ('open', 'broken.idx', 'r'),
+        ('readline',),
+        ('free', 123),
+        ('close-index',),
+    ]
+    assert record.is_open is False
+    assert record.fidx is None
 
 def test_recordio_pack_label():
     N = 255

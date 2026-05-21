@@ -1063,6 +1063,27 @@ def test_import():
     assert lines[2] == ')'
 
 
+@use_np
+@pytest.mark.filterwarnings('ignore:Cannot decide type for the following arguments:UserWarning')
+def test_export_import_preserves_float64_parameter_dtype(tmpdir):
+    tmpfile = os.path.join(str(tmpdir), 'dense64')
+    net1 = gluon.nn.Dense(2, dtype='float64')
+    net1.initialize()
+    net1.hybridize()
+
+    data = mx.np.ones((3, 4), dtype='float64')
+    out1 = net1(data)
+    symbol_filename, params_filename = net1.export(tmpfile)
+
+    net2 = gluon.SymbolBlock.imports(symbol_filename, ['data'], params_filename)
+    out2 = net2(data)
+
+    assert out2.dtype == onp.float64
+    assert net2.collect_params()['weight'].dtype == onp.float64
+    assert net2.collect_params()['bias'].dtype == onp.float64
+    assert_almost_equal(out1.asnumpy(), out2.asnumpy())
+
+
 @pytest.mark.filterwarnings('ignore:Currently the model has been hybridized:UserWarning')
 @pytest.mark.filterwarnings("ignore:Parameter '(weight|bias)' is already initialized:UserWarning")
 def test_hybrid_stale_cache():
@@ -3051,6 +3072,20 @@ def test_ModulatedDeformableConvolution():
     x = mx.np.random.uniform(size=(8, 5, 30, 31), device=device)
     with mx.autograd.record():
         y = net(x)
+
+
+@pytest.mark.parametrize('hybridize', [True, False])
+def test_ModulatedDeformableConvolution_cpu_offset_split(hybridize):
+    net = nn.ModulatedDeformableConvolution(4, kernel_size=(1, 1), in_channels=3)
+    net.initialize(device=mx.cpu())
+    if hybridize:
+        net.hybridize()
+
+    x = mx.np.ones((1, 3, 5, 6), device=mx.cpu())
+    y = net(x)
+
+    assert y.shape == (1, 4, 5, 6)
+    y.wait_to_read()
 
 
 @use_np

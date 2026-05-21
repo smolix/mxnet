@@ -1647,8 +1647,14 @@ class ModulatedDeformableConvolution(HybridBlock):
             offset = npx.convolution(x, self.offset_weight.data(device),
                                      self.offset_bias.data(device), cudnn_off=True, **self._kwargs_offset)
 
-        offset_t = npx.slice_axis(offset, axis=1, begin=0, end=self.offset_split_index)
-        mask = npx.slice_axis(offset, axis=1, begin=self.offset_split_index, end=None)
+        channel_axis = self._layout.find('C')
+        begin = [None] * 4
+        end = [None] * 4
+        end[channel_axis] = self.offset_split_index
+        offset_t = npx.slice(offset, begin=tuple(begin), end=tuple(end))
+        begin[channel_axis] = self.offset_split_index
+        end[channel_axis] = None
+        mask = npx.slice(offset, begin=tuple(begin), end=tuple(end))
         mask = npx.sigmoid(mask) * 2
 
         if self.deformable_conv_bias is None:

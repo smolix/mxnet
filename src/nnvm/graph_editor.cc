@@ -27,6 +27,7 @@
 #include <nnvm/graph.h>
 #include <nnvm/node.h>
 
+#include <algorithm>
 #include <utility>
 
 namespace nnvm {
@@ -63,8 +64,8 @@ bool CutGraphInputs(const std::vector<nnvm::NodeEntry*>& input_entries,
   struct pred_entry {
     nnvm::NodeEntry e;
     explicit pred_entry(nnvm::NodeEntry _e) : e(std::move(_e)) {}
-    bool operator()(const nnvm::NodeEntry e1) {
-      return e.node == e1.node && e.index == e1.index;
+    bool operator()(const nnvm::NodeEntry& e1) {
+      return e.node == e1.node && e.index == e1.index && e.version == e1.version;
     }
   };
 
@@ -76,9 +77,9 @@ bool CutGraphInputs(const std::vector<nnvm::NodeEntry*>& input_entries,
     if (input_entry->node->is_variable() && skip_var)
       continue;
 
-    auto it    = std::find_if(orig_entries->begin(), orig_entries->end(), pred_entry(*input_entry));
-    bool exist = (it != orig_entries->end());
-    orig_entries->push_back(*input_entry);
+    const auto it =
+        std::find_if(orig_entries->begin(), orig_entries->end(), pred_entry(*input_entry));
+    const bool exist = (it != orig_entries->end());
     nnvm::ObjectPtr n;
     // If we haven't seen the entry before, we need to create a new var node
     // for the node entry.
@@ -86,13 +87,14 @@ bool CutGraphInputs(const std::vector<nnvm::NodeEntry*>& input_entries,
       nnvm::Symbol sym;
       sym.outputs.push_back(*input_entry);
       n = nnvm::CreateVariableNode(sym.ListOutputNames()[0]);
+      orig_entries->push_back(*input_entry);
+      var_nodes.push_back(n);
     } else {
       // Otherwise, we use the var node created before.
-      size_t idx = it - orig_entries->begin();
+      const size_t idx = it - orig_entries->begin();
       CHECK_LT(idx, var_nodes.size());
       n = var_nodes[idx];
     }
-    var_nodes.push_back(n);
     *input_entry = nnvm::NodeEntry{n, 0, 0};
   }
   return true;

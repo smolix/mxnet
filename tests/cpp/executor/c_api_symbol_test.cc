@@ -117,3 +117,33 @@ TEST(CAPISymbol, GetInputSymbolsDeduplicatesRepeatedVariableInput) {
   }
   MXSymbolFree(add);
 }
+
+TEST(CAPISymbol, CutSubgraphDeduplicatesRepeatedBoundaryInput) {
+  SymbolHandle add = CreateRepeatedInputAddSymbol();
+  ASSERT_NE(add, nullptr);
+  AssertMXSuccess(MXSymbolSetAttr(add, "__subgraph_name__", "sg"));
+
+  int cut_input_size = 0;
+  SymbolHandle* cut_inputs = nullptr;
+  AssertMXSuccess(MXSymbolCutSubgraph(add, &cut_inputs, &cut_input_size));
+  std::vector<SymbolHandle> cut_handles(cut_inputs, cut_inputs + cut_input_size);
+
+  int graph_input_size = 0;
+  SymbolHandle* graph_inputs = nullptr;
+  AssertMXSuccess(MXSymbolGetInputSymbols(add, &graph_inputs, &graph_input_size));
+  std::vector<SymbolHandle> graph_handles(graph_inputs, graph_inputs + graph_input_size);
+
+  ASSERT_EQ(graph_input_size, 1);
+  EXPECT_EQ(ListOutputNames(graph_handles[0]), std::vector<std::string>({"x"}));
+
+  ASSERT_EQ(cut_input_size, graph_input_size);
+  EXPECT_EQ(ListOutputNames(cut_handles[0]), ListOutputNames(graph_handles[0]));
+
+  for (SymbolHandle input : graph_handles) {
+    MXSymbolFree(input);
+  }
+  for (SymbolHandle input : cut_handles) {
+    MXSymbolFree(input);
+  }
+  MXSymbolFree(add);
+}

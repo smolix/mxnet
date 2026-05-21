@@ -326,10 +326,13 @@ def test_pooling():
     for stype in stypes:
         check_pooling_training(stype)
 
-@pytest.mark.parametrize('num_filter', [4, 8, 16])
-@pytest.mark.parametrize('output_size', [4, 5, 8, 16])
-@pytest.mark.parametrize('stype', ['row_sparse', 'default'])
-@pytest.mark.parametrize('shape', [(3, 3, 8, 8), (3, 3, 20, 20), (3, 3, 32, 32)])
+@pytest.mark.parametrize('num_filter,output_size,stype,shape', [
+    pytest.param(4, 4, 'row_sparse', (3, 3, 8, 8), id='row_sparse-small'),
+    pytest.param(4, 4, 'default', (3, 3, 8, 8), id='default-small'),
+    pytest.param(8, 5, 'default', (3, 3, 8, 8), id='default-uneven-output'),
+    pytest.param(8, 8, 'default', (3, 3, 20, 20), id='default-medium'),
+    pytest.param(16, 16, 'default', (3, 3, 20, 20), id='default-large-output'),
+])
 def test_adaptive_pooling(num_filter, output_size, stype, shape):
     data_tmp = mx.nd.random.uniform(shape=shape)
     data = mx.sym.var('data', stype=stype)

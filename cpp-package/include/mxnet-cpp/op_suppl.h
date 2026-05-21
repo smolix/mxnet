@@ -32,7 +32,6 @@
 #include "mxnet-cpp/base.h"
 #include "mxnet-cpp/shape.h"
 #include "mxnet-cpp/operator.h"
-#include "mxnet-cpp/MxNetCpp.h"
 
 namespace mxnet {
 namespace cpp {

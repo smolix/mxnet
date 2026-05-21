@@ -28,6 +28,7 @@
 
 #include <vector>
 #include <map>
+#include <set>
 #include <string>
 #include "mxnet-cpp/executor.h"
 #include "mxnet-cpp/optimizer.h"
@@ -54,20 +55,21 @@ inline Executor::Executor(const Symbol &symbol, Context context,
 
   CHECK_EQ(arg_arrays.size(), grad_arrays.size())
       << "Number of input arg_arrays is different from the number of input grad_arrays";
+  this->require_grad = false;
+  CHECK_EQ(arg_arrays.size(), grad_reqs.size())
+      << "Number of input arg_arrays is different from the number of input grad_reqs";
+  std::vector<mx_uint> grad_reqs_uint;
   for (int i = 0; i < arg_arrays.size(); i++) {
-    if (grad_arrays[i].GetShape().size() != 0) {
+    int storage_type = -1;
+    CHECK_EQ(MXNDArrayGetStorageType(grad_arrays[i].GetHandle(), &storage_type), 0);
+    if (storage_type != -1) {
       grad_handles.push_back(grad_arrays[i].GetHandle());
       arg_handles.push_back(arg_arrays[i].GetHandle());
+      grad_reqs_uint.push_back(grad_reqs[i]);
     }
-  }
-
-  this->require_grad = false;
-  std::vector<mx_uint> grad_reqs_uint;
-  for (auto s : grad_reqs) {
-    if (s != OpReqType::kNullOp) {
+    if (grad_reqs[i] != OpReqType::kNullOp) {
       this->require_grad = true;
     }
-    grad_reqs_uint.push_back(s);
   }
   CHECK_EQ(MXAutogradMarkVariables(arg_handles.size(), arg_handles.data(),
                                    grad_reqs_uint.data(), grad_handles.data()), 0);
@@ -76,8 +78,12 @@ inline Executor::Executor(const Symbol &symbol, Context context,
   std::map<std::string, NDArray> aux_map = aux_dict();
   const auto input_name_list = symbol_.ListInputs();
   std::vector<NDArray> combined_arrays;
+  std::set<std::string> seen_input_names;
   for (size_t i = 0; i < input_name_list.size(); ++i) {
     const auto &input_name = input_name_list[i];
+    if (!seen_input_names.insert(input_name).second) {
+      continue;
+    }
     auto iter_arg = arg_map.find(input_name);
     if (iter_arg != arg_map.end()) {
       combined_arrays.push_back(iter_arg->second);

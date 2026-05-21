@@ -40,6 +40,7 @@ if(GTEST_FOUND AND NOT MSVC)
 
   include_directories(${GTEST_INCLUDE_DIR})
   include_directories(cpp/include)
+  include_directories(${PROJECT_SOURCE_DIR}/cpp-package/include)
 
   if(NOT PRIVATE_RUNTIME_DIR)
    set(PRIVATE_RUNTIME_DIR ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
@@ -62,4 +63,3 @@ if(GTEST_FOUND AND NOT MSVC)
 else()
   message(STATUS "Google Test not found")
 endif()
-

@@ -2,7 +2,7 @@
 
 Updated: 2026-05-21
 Current branch: `master`
-Current head: `7816eb2e4` (local validation commits ahead of `origin/master`)
+Current head: local validation commits ahead of `origin/master` (see git log)
 Apple Silicon follow-up merge: PR #28 from `followup/full-sweep-macos-wheel`
 Linux validation host: 4x RTX 4090 Ada (`sm_89`), CUDA 13.0, cuDNN/NCCL
 host dependencies and submodules installed; CUDA `sm_89` build configured; first
@@ -12,13 +12,15 @@ editable `.venv-mxnet` imports the local CUDA/oneDNN/NCCL/cuDNN library and
 reports all 4 GPUs. A oneDNN `batch_dot` descriptor bug found by the d2l
 transformer repro is fixed locally and covered by a focused regression test.
 Broad CPU/GPU sweeps were restarted under tmux on 2026-05-21. The CPU unittest
-lane completed and its failures were reduced to optional extension artifacts and
-GPU-memory pressure in tests that pass in isolation. The full GPU lane aborted
+lane completed once and its failures were reduced to optional extension artifacts
+and GPU-memory pressure in tests that pass in isolation; a later lower-concurrency
+CPU rerun was stopped after the rebuilt binary changed. The full GPU lane aborted
 in the fork-safety DataLoader test before producing a complete summary; that
 focused crash is fixed, and the first failed GPU files pass or skip cleanly in
 isolation. The DNNL adaptive-pooling numeric-gradient matrix has been reduced
 after the row-sparse timeout, and the focused adaptive-pooling check now passes.
-The broad CPU/GPU/DNNL reruns are still pending after the latest rebuild.
+Local DNNL quantized conv+sum mitigation work is present and rebuilt, and its
+focused regression now passes. The broad CPU/GPU/DNNL reruns are still pending.
 Local release tag: `macos-arm64-slim-wheel-20260520`
 
 This file is a status index, not a changelog. Historical details live in git
@@ -48,14 +50,14 @@ correctness and cuDNN/CUDA 13 behavior can be validated here.
 | ID | Status | Area | Issue | Next action |
 |---|---|---|---|---|
 | L0 | Resolved | Build setup | Host toolchain/runtime packages are installed, submodules are initialized, and a CUDA 13 `sm_89` validation build with `USE_OPERATOR_TUNING=OFF` linked `build/libmxnet.so`. `.venv-mxnet` imports the local library and reports CUDA, cuDNN, NCCL, oneDNN, and 4 visible GPUs. The full-feature build still has a >25 minute `operator_tune.cc` compile issue tracked by CN1. | Use this validation build for focused Linux/Ada tests; decide release-build operator tuning behavior separately under CN1. |
-| L1 | In progress | Apple fixes on x86 | Apple Silicon fixes for lifecycle, DataLoader, DLPack, quantization fallbacks, oneDNN test harnesses, and NumPy drift need validation on Linux x86 with oneDNN enabled. DataLoader fork-safety, BF16 skip policy, DNNL batch-dot coverage, OpenMP fork handling, extension optional-artifact behavior, DNNL adaptive-pooling triage, and several focused GPU harness checks now pass locally. | Rerun the DNNL core shard and broad CPU/GPU lanes after the latest rebuild before calling the Linux x86 validation complete. |
-| L2 | Resolved | CUDA smoke | The d2l diagnostics were produced from a pre-Apple-port wheel that lacked Ada kernels. After rebuilding for `sm_89`, the standalone d2l GPU probes are OK across the 4-GPU host. | Treat the old no-kernel-image failures as stale for this host; move on to transformer/native-crash and notebook rerun gates. |
+| L1 | In progress | Apple fixes on x86 | Apple Silicon fixes for lifecycle, DataLoader, DLPack, quantization fallbacks, oneDNN test harnesses, and NumPy drift need validation on Linux x86 with oneDNN enabled. DataLoader fork-safety, BF16 skip policy, DNNL batch-dot coverage, OpenMP fork handling, extension optional-artifact behavior, DNNL adaptive-pooling triage, several focused GPU harness checks, and the DNNL quantized conv+sum regression now pass locally. | Rerun the DNNL core shard and broad CPU/GPU lanes before calling the Linux x86 validation complete. |
+| L2 | Resolved | CUDA smoke | The d2l diagnostics were produced from a pre-Apple-port wheel that lacked Ada kernels. After rebuilding for `sm_89`, the standalone d2l GPU probes are OK across the 4-GPU host. | Treat the old no-kernel-image failures as stale for this host; use current D2L notebook-run/output-audit artifacts under L4 for any notebook follow-up. |
 | L3 | In progress | CUDA regression batch | Targeted CUDA tests have cleared cuDNN/TF32 deconv, cuBLASLt FC parity, deferred-compute GPU, and the NCCL single-process bandwidth check after converting the hard bandwidth gate into a metric. Extension GPU tests now skip when optional shared libraries were not built. | Continue with fp16 batch-dot, linalg temp storage, KVStore single-machine, and a full GPU rerun after the fork-safety crash fix. |
-| L4 | Open | D2L rerun gate | The rebuilt `sm_89` runtime clears the standalone GPU probe gate, and the transformer standalone repro now passes after the oneDNN `batch_dot` descriptor fix. The old d2l notebook failures still need to be re-clustered against the current library. | Rerun the notebook clusters whose standalone runtime dependencies now pass, starting with transformer and the prior dead-kernel notebooks; audit outputs rather than trusting stamps alone. |
+| L4 | External | D2L artifact intake | The rebuilt `sm_89` runtime clears the standalone GPU probe gate, and the transformer standalone repro now passes after the oneDNN `batch_dot` descriptor fix. The old d2l notebook failures came from stale artifacts and should not reopen MXNet work by themselves. | Consume current D2L notebook-run/output-audit artifacts when available; reopen MXNet work only for concrete fresh runtime repros, not stale stamps or dead-kernel summaries. |
 | L5 | Resolved | Tracker cleanup | Duplicate issue trackers and stale markdown reports have been imported here or removed from the repo. | Keep `issues.md` as the processing queue; retain only active investigation notes and executable d2l repro tools. |
-| L6 | In progress | Compiler noise | GCC 13/NVCC CUDA 13 builds emit enough warning noise to hide real failures, and one large translation unit currently dominates build latency. The dmlc optional cluster is fixed locally, and the product/nanprod reduction cluster is reduced. | Continue with the remaining high-volume clusters, especially CN2 tuple move/swap warnings, CN5 unsigned CUDA type guards, CN6 sentinel conversions, and the unfixed half/bfloat min/max residual warnings within CN4. |
+| L6 | In progress | Compiler noise | GCC 13/NVCC CUDA 13 builds emit enough warning noise to hide real failures, and one large translation unit currently dominates build latency. The dmlc optional cluster is fixed locally, the product/nanprod reduction cluster is reduced, and local MXNet tuple stack-initialization plus runtime-handle cleanups are committed. | Continue with the remaining high-volume clusters, especially the parallel NNVM tuple cache initialization, CN5 unsigned CUDA type guards, CN6 sentinel conversions, and the unfixed half/bfloat min/max residual warnings within CN4. |
 | L7 | In progress | Test scheduling | Parallel full-suite lanes can overload the host if CPU xdist, C++ gtest, oneDNN numeric-gradient tests, and GPU operator sweeps overlap. The target load envelope for this machine is about 48-64 runnable tasks. | Keep one heavy CPU lane active at a time, add GPU shards when memory is idle, and pause/resume long DNNL work instead of killing it when load spikes. |
-| L8 | Resolved | Build freshness | A controlled rebuild after the DNNL and reducer fixes completed, and `cmake --build build --target mxnet -- -n` reports no work to do. `build/libmxnet.so` was modified at 2026-05-21 04:54:49 UTC. The compiled code is current, but CMake still embeds the older `MXNET_COMMIT_HASH` value from `b881a9c5a` because the build was not reconfigured. | Reconfigure before packaging or publishing artifacts so embedded metadata and wheel tags match the release commit; runtime validation can proceed on the current binary. |
+| L8 | In progress | Build freshness | Local DNNL quantized conv+sum and compiler-noise edits rebuilt successfully; `build/libmxnet.so` was modified at 2026-05-21 06:37:04 UTC, and focused post-rebuild checks passed. No post-rebuild full-test summary is recorded here yet, and CMake still embeds the older `MXNET_COMMIT_HASH` value from `b881a9c5a` because the build was not reconfigured. | Run broad reruns on this rebuilt library; reconfigure before packaging or publishing artifacts so embedded metadata and wheel tags match the release commit. |
 
 ---
 
@@ -76,8 +78,29 @@ bugs.
 | CN5 | Open | CUDA type guards | NVCC warns on unsigned comparisons against zero in dtype-generic kernels such as bincount, delete, nan-to-num, and random location/scale paths. | Replace value checks with type-trait guards or signed temporaries where behavior is intentional. |
 | CN6 | Open | Sentinel conversions | CUDA/C++ warnings include `size_t` vectors initialized with `-1` in `np_cross` and `np_matmul`, plus queue offsets assigned `-1` in bundled dmlc concurrent queue code. | Fix local sentinel types; suppress bundled third-party headers only if the vendored code is otherwise untouched. |
 | CN7 | Open | Half param packing | Fused optimizer parameter packing uses `memcpy` into `mshadow::half::half_t` arrays in AdamW/AdaBelief-style code, triggering `-Wclass-memaccess`. | Replace local half copies with typed copy/assignment helpers and run focused fused optimizer tests. |
-| CN8 | Open | Local cleanup | Cheap warnings include unused variables in CUDA resize/transformer code, always-true runtime handle checks, KVStore hidden overloads/unused buffers, and mshadow packet allocation warnings. | Patch obvious unused/always-true cases after confirming no behavior change; leave higher-risk mshadow changes behind focused tests. |
+| CN8 | In progress | Local cleanup | Cheap warnings include unused variables in CUDA resize/transformer code, KVStore hidden overloads/unused buffers, and mshadow packet allocation warnings. The always-true runtime-handle warning has a local cleanup and passed incremental rebuild plus focused container smoke. | Continue with remaining cheap local warnings; leave higher-risk mshadow changes behind focused tests. |
 | CN9 | Open | Third-party/link boundaries | Bundled CTC/moderngpu emits deprecated `std::binary_function` warnings, and the final link warns that `ittptmark64.S.o` lacks a non-executable-stack note. | Do not churn vendored code during runtime validation; route through system-header/linker-boundary treatment or targeted upstreamable fixes. |
+
+### Compiler Noise TODO Clusters
+
+- [ ] CN2 tuple/ADT allocation: MXNet `Tuple::data_stack_` initialization is
+      committed; add the parallel NNVM tuple cache initializer and validate
+      shape/tuple, NDArray, and symbolic construction tests before broad sweeps.
+- [ ] CN4 reductions: keep the product/nanprod cleanup separate from the
+      remaining half/bfloat min/max residual warnings; run reducer regressions on
+      CPU and GPU after each cluster.
+- [ ] CN5 unsigned CUDA guards: group dtype-generic checks in bincount, delete,
+      nan-to-num, and NumPy random location/scale paths; prefer type-trait
+      branches over suppressions.
+- [ ] CN6 sentinel conversions: split local `np_cross`/`np_matmul` sentinel
+      types from bundled dmlc concurrent queue offsets, so third-party churn does
+      not block local fixes.
+- [ ] CN7/CN8 local cleanup: keep the runtime-handle cleanup as validated, then
+      batch half parameter packing, unused variables, and KVStore overload noise
+      behind focused optimizer, CUDA resize/transformer, and KVStore tests.
+- [ ] CN1/CN9 build-boundary work: treat `operator_tune.cc` compile latency and
+      vendored/linker warnings as release-build policy items, not runtime
+      correctness blockers.
 
 ---
 
@@ -90,14 +113,14 @@ still present.
 
 | ID | Status | Area | Issue | Next action |
 |---|---|---|---|---|
-| D1 | In progress | Runtime deps | The prior MXNet wheel linked against system OpenCV 4.6 runtime libraries but did not include dependency metadata or bundled libraries, causing import-time `libopencv_imgcodecs.so.406` failures on clean hosts. Python wheel metadata cannot reliably express those system OpenCV SONAMEs, and the CUDA runtime helper could drop `mxnet/lib/` without checking OpenCV. | Local guard added: `python/tools/bundle_runtime_libs.py` now requires `--bundle-opencv`, existing bundled OpenCV libs, or explicit `--allow-system-opencv` when `libmxnet.so` needs OpenCV. Rebuild the wheel with `USE_OPENCV=OFF` or bundled OpenCV, then check with `d2l-diagnostics/tools/check_runtime_deps.py`; if `--allow-system-opencv` is used, document the required OS packages. |
+| D1 | In progress | Runtime deps | The prior MXNet wheel linked against system OpenCV 4.6 runtime libraries but did not include dependency metadata or bundled libraries, causing import-time `libopencv_imgcodecs.so.406` failures on clean hosts. Python wheel metadata cannot reliably express those system OpenCV SONAMEs. The packaging metadata/runtime-bundling fix is committed and focused packaging tests passed, but no rebuilt wheel artifact has been audited yet. | Rebuild the wheel with `USE_OPENCV=OFF` or bundled OpenCV, then perform an artifact-level runtime-dependency audit. Do not rely on the current hardcoded `d2l-diagnostics/tools/check_runtime_deps.py` alone until it is made artifact-aware; if `--allow-system-opencv` is used, document the required OS packages explicitly. Do not close D1 until the rebuilt artifact no longer silently depends on unstated host OpenCV libraries. |
 | D2 | Resolved | CUDA arch coverage | The dominant d2l failure was `cudaErrorNoKernelImageForDevice` on RTX 4090 because the tested wheel did not include `sm_89` kernels. The local `sm_89` rebuild clears the standalone GPU probe gate on this Ada host. | Keep release-wheel architecture coverage open under O2/C4; no local Ada runtime action remains for the old wheel failure. |
-| D3 | Resolved | GPU scalar host sync | Six d2l RNN/optimization notebooks reported `MXNetError: could not execute a primitive` when converting GPU scalar results to host/Python. The rebuilt standalone `gpu-scalar-to-host` and `gpu-gru-scalar-to-host` probes are OK. | If the full notebooks still fail, debug notebook-specific shapes or native crashes rather than this standalone scalar path. |
-| D4 | Resolved | Transformer native crash | The crash narrowed to oneDNN `batch_dot` using packed primitive descriptors to wrap MXNet default-layout buffers. Reordering inputs into the primitive-selected descriptors fixes the attention-shaped repro; `transformer-decoder-standalone` now passes with oneDNN enabled. The matching `_sg_onednn_batch_dot` path also needed a temp-space request for those reorders, and the existing subgraph batch-dot matrix now passes. | Keep `tests/python/dnnl/test_batch_dot_attention_regression.py` and `tests/python/dnnl/subgraphs/test_matmul_subgraph.py::test_batch_dot` in the oneDNN subset; use notebook reruns, not this standalone repro, for any remaining transformer failures. |
-| D5 | External | Dead notebook kernels | `transformer.ipynb`, `natural-language-inference-bert.ipynb`, and `sentiment-analysis-rnn.ipynb` ended as `DeadKernelError` without useful Python traceback in the old diagnostics. The MXNet standalone transformer crash is fixed; rerunning those notebooks belongs to the D2L/notebook execution system. | Wait for current notebook-run artifacts from that system; reopen under MXNet only if a current runtime failure reproduces outside notebook infrastructure. |
-| D6 | External | Notebook quality gate | `chapter_builders-guide/use-gpu.ipynb` had a passing stamp while stored outputs still contained MXNet GPU errors. This is an output-audit/notebook-runner correctness issue unless current outputs show a fresh MXNet runtime failure. | Let the notebook/output audit system validate stamps against stored outputs; use any fresh MXNet errors it finds as concrete repro inputs. |
+| D3 | Resolved | GPU scalar host sync | Six d2l RNN/optimization notebooks reported `MXNetError: could not execute a primitive` when converting GPU scalar results to host/Python. The rebuilt standalone `gpu-scalar-to-host` and `gpu-gru-scalar-to-host` probes are OK. | If current D2L notebook-run/output-audit artifacts still show full-notebook failures, require a fresh MXNet runtime repro before reopening this standalone scalar path. |
+| D4 | Resolved | Transformer native crash | The crash narrowed to oneDNN `batch_dot` using packed primitive descriptors to wrap MXNet default-layout buffers. Reordering inputs into the primitive-selected descriptors fixes the attention-shaped repro; `transformer-decoder-standalone` now passes with oneDNN enabled. The matching `_sg_onednn_batch_dot` path also needed a temp-space request for those reorders, and the existing subgraph batch-dot matrix now passes. | Keep `tests/python/dnnl/test_batch_dot_attention_regression.py` and `tests/python/dnnl/subgraphs/test_matmul_subgraph.py::test_batch_dot` in the oneDNN subset; reopen transformer work only if current D2L artifacts include a fresh MXNet runtime repro beyond the fixed standalone path. |
+| D5 | External | Dead notebook kernels | `transformer.ipynb`, `natural-language-inference-bert.ipynb`, and `sentiment-analysis-rnn.ipynb` ended as `DeadKernelError` without useful Python traceback in the old diagnostics. The MXNet standalone transformer crash is fixed; rerunning those notebooks is assigned to the D2L/notebook execution system. | Wait for current notebook-run/output-audit artifacts from that assigned system; reopen under MXNet only if a current runtime failure reproduces outside notebook infrastructure. |
+| D6 | External | Notebook quality gate | `chapter_builders-guide/use-gpu.ipynb` had a passing stamp while stored outputs still contained MXNet GPU errors. This is assigned to the D2L output-audit/notebook-runner system unless current outputs show a fresh MXNet runtime failure. | Let the assigned notebook-run/output-audit system validate stamps against stored outputs; use any fresh MXNet errors it finds as concrete repro inputs. |
 | D7 | External | D2L import-time GPU probing | In restricted environments, `d2l.mxnet` can query GPUs at import time through default arguments such as `devices=d2l.try_all_gpus()`. | Track as a d2l-side lazy-default fix; not an MXNet runtime bug unless MXNet itself crashes outside sandbox constraints. |
-| D8 | Informational | Cross-framework quality | Completed MXNet notebooks mostly had sane outputs; the main issue was missing GPU runtime coverage, not bad convergence in completed notebooks. | Use rerun coverage and output audit as the quality signal after runtime fixes. |
+| D8 | Informational | Cross-framework quality | Completed MXNet notebooks mostly had sane outputs; the main issue was missing GPU runtime coverage, not bad convergence in completed notebooks. | Use current notebook-run coverage and output-audit artifacts as the quality signal after runtime fixes. |
 
 ---
 
@@ -105,16 +128,38 @@ still present.
 
 These were observed on the 4x RTX 4090 Linux host on 2026-05-21. Treat
 failures from broad concurrent lanes as triage inputs, not final verdicts,
-because the host was under heavy CPU and GPU load.
+because the host was under heavy CPU and GPU load. A lower-concurrency CPU
+unittest rerun was stopped after the rebuilt binary changed, and no complete
+post-fix GPU or DNNL core full-run summary is recorded here yet.
 
 | ID | Status | Area | Finding | Next action |
 |---|---|---|---|---|
-| FS1 | In progress | CPU unittest | The broad `tests/python/unittest` xdist lane completed: `5 failed, 13868 passed, 83 skipped` in 38m35s. Three failures were missing optional extension libraries, now fixed by skipping absent optional artifacts; two Gluon failures were GPU OOM pressure and pass in isolation. | Rerun the broad CPU unittest lane at lower concurrency after the active DNNL shard finishes; keep `test_extensions.py` and the two Gluon nodes as focused smoke checks. |
-| FS2 | In progress | oneDNN Python | The DNNL subgraph/regression shard passed: `1005 passed, 16 skipped, 4 xfailed`. The DNNL core shard hit a 20-minute timeout in the large row-sparse adaptive-pooling numeric-gradient case, which was excessive fallback work rather than useful oneDNN coverage. The adaptive-pooling matrix is reduced and the focused check now passes `5 passed`. | Rerun the DNNL core shard against the rebuilt library and isolate any remaining failures. |
+| FS1 | In progress | CPU unittest | The broad `tests/python/unittest` xdist lane completed once: `5 failed, 13868 passed, 83 skipped` in 38m35s. Three failures were missing optional extension libraries, now fixed by skipping absent optional artifacts; two Gluon failures were GPU OOM pressure and pass in isolation. A later lower-concurrency `-n 4` CPU unittest process was stopped because it had imported an older `libmxnet.so` before the latest source edits. | Rerun the lower-concurrency CPU unittest lane after the active rebuild/test lane settles; keep `test_extensions.py` and the two Gluon nodes as focused smoke checks. |
+| FS2 | In progress | oneDNN Python | The DNNL subgraph/regression shard passed: `1005 passed, 16 skipped, 4 xfailed`. The DNNL core shard hit a 20-minute timeout in the large row-sparse adaptive-pooling numeric-gradient case, which was excessive fallback work rather than useful oneDNN coverage. The adaptive-pooling matrix is reduced and the focused check now passes `5 passed`; the local DNNL conv+sum quantization checks now pass. | Rerun the DNNL core shard against the rebuilt library and isolate any remaining failures. |
 | FS3 | In progress | C++ gtest | `OMPBehaviour.after_fork` now checks the child exit status and passes directly. Earlier broad C++ gtest saw `BATCH_NORM.Test2DBackwardMixed_gpu_cpu` and `BATCH_NORM.Test2DBackwardMixedComplex_gpu_cpu` fail before the run was stopped. | Rerun the two BatchNorm filters directly, then schedule a broader gtest pass when the Python DNNL lane is idle. |
 | FS4 | Resolved | NCCL/multi-GPU | The old hard NCCL bandwidth threshold was load-sensitive and failed while other jobs were resident. It is now reported as a metric instead of a correctness assertion; the focused `test_nccl_bandwidth[1]` rerun passed. | Keep bandwidth values in logs for performance triage; do not fail correctness on this threshold. |
 | FS5 | In progress | GPU miscellaneous | The full `tests/python/gpu` lane collected `13397` tests but aborted in `test_fu4_fork_safe_dnnl.py::test_dataloader_num_workers_4_no_primitive_failure`. That fork-path bug is fixed and the file now passes. Focused reruns for deconv TF32, deferred compute GPU, cublasLt FC, and extension GPU behavior now pass or skip cleanly. | Rerun the full GPU lane, then isolate any remaining Gluon convolution/RNN/model-zoo, CUDA graph, NumPy einsum, or leak-check failures. |
 | FS6 | Open | GPU operator | The earlier full `tests/python/gpu/test_operator_gpu.py` lane collected 12,983 items but was stopped at about 1% to reduce load; one early failure marker had appeared, but no summary was available. | Rerun in shards or targeted files rather than as a single monolithic process. |
+| FS7 | Resolved | DNNL quantized conv+sum | Local mitigation disables residual conv+sum fusion during quantization, avoids channel-wise quantizing `_sg_onednn_conv` nodes that still carry `with_sum`, and fixes sum-input type restoration in DNNL conv inference. Focused rebuilt-library checks passed: `test_pos_conv_add3`, `test_conv_bn_sum`, `test_channelwise_quantize_model_skips_onednn_conv_with_sum`, and `test_quantize_gluon_with_forward`. | Keep these in the DNNL quantization subset for broad reruns. |
+
+### Focused Test Gate Before Broad Reruns
+
+- [x] DNNL quantized conv+sum: run
+      `tests/python/dnnl/subgraphs/test_conv_subgraph.py::test_pos_conv_add3`,
+      `tests/python/dnnl/subgraphs/test_conv_subgraph.py::test_conv_bn_sum`,
+      and
+      `tests/python/dnnl/subgraphs/test_conv_subgraph.py::test_channelwise_quantize_model_skips_onednn_conv_with_sum`.
+- [ ] DNNL quantization subset: rerun the Gluon quantization and oneDNN
+      quantization files that exercise `_sg_onednn_conv`,
+      `quantized_sg_onednn_conv`, and residual/add fusions.
+- [ ] CPU unittest smoke: keep `tests/python/unittest/test_extensions.py` and
+      the two prior Gluon GPU-memory-pressure nodes as focused checks before
+      trusting another full `tests/python/unittest` summary.
+- [ ] GPU smoke: keep the fork-safety DataLoader, cuBLASLt FC, TF32 deconv,
+      deferred-compute GPU, extension GPU, and NCCL metric checks ahead of any
+      monolithic `tests/python/gpu` rerun.
+- [ ] C++ gtest: rerun the two BatchNorm mixed GPU/CPU filters directly before
+      scheduling another broad `mxnet_unit_tests` pass.
 
 ---
 
@@ -149,7 +194,7 @@ current source tree. `issues.md` is canonical for processing order.
 | Removed `FOLLOW_UPS.md` FU-4 | Fork-safe oneDNN/DataLoader behavior is implemented; Linux validation belongs under L1/T11, not a fresh FU-4 investigation. |
 | Removed `FOLLOW_UPS.md` FU-6 | QAT subgraph backward bodies are not present on current `master`; B4 is canonical and requires a branch/PR decision. |
 | Removed `FOLLOW_UPS.md` FU-8 | Its legacy A6/A7 labels refer to old engine-deadlock audit IDs, not current A6/A7 rows; lifecycle work is tracked by T11. |
-| Removed `FOLLOW_UPS.md` FU-11 | Wide oneDNN stack/concat fallback is implemented and covered by `tests/python/dnnl/test_fu11_large_stack_concat.py`; d2l reruns are tracked under D3-D5/L4. |
+| Removed `FOLLOW_UPS.md` FU-11 | Wide oneDNN stack/concat fallback is implemented and covered by `tests/python/dnnl/test_fu11_large_stack_concat.py`; D2L notebook-run/output-audit artifact intake is tracked under D3-D5/L4. |
 | `issues.md` T12-T14 | These are resolved Apple/local oneDNN test-harness and fallback entries; the remaining work is Linux x86 oneDNN validation under L1/T11. |
 
 ---
@@ -244,7 +289,7 @@ current Apple Silicon task, but they still matter for the fork.
 | ID | Status | Area | Issue | Next action |
 |---|---|---|---|---|
 | B1 | Partial | oneDNN INT8 subgraphs | `test_self_attention[*]`, `test_batch_dot[*]`, and `test_self_attention_negative` showed pervasive INT8 numerical blow-up or crashes in DNNL matmul/batch-dot paths. The float `_sg_onednn_batch_dot` matrix now passes after the direct descriptor fix plus subgraph temp-space request, but this does not close the broader INT8 self-attention coverage. | Re-test real oneDNN INT8 self-attention on Linux x86 before closing; do not infer the whole row from the fixed float batch-dot matrix. |
-| B2 | Partial | Quantized Gluon | `test_quantize_gluon_with_forward` segfaulted under the DNNL subgraph backend after 18 earlier quantization tests passed. | AArch64 oneDNN quantized backend is disabled and native CPU quantization passes; Linux x86 oneDNN quantized Gluon still needs validation. |
+| B2 | Partial | Quantized Gluon | `test_quantize_gluon_with_forward` segfaulted under the DNNL subgraph backend after 18 earlier quantization tests passed. The current Linux x86 focus is a related channel-wise `quantize_net` conv+residual-sum case tracked under FS7. | AArch64 oneDNN quantized backend is disabled and native CPU quantization passes; validate FS7 first, then rerun Linux x86 oneDNN quantized Gluon coverage before closing this row. |
 | B3 | Open | Mixed dtype quantization | fp16 input/output is structurally absent in `quantize_v2`, `dequantize`, and DNNL quantize-v2 code. | Either add fp16 support or document AMP+quantize as unsupported and require fp32 casts. |
 | B4 | Partial | QAT backward | STE for `quantize_v2` and QAT parameter `grad_req` fixes landed; DNNL subgraph backward exists only on a local branch and has scale-magnitude caveats. | Decide whether to push/PR the gated `_backward_sg_onednn_*` implementation after more validation. |
 | B5 | Open | Mixed dtype matrix coverage | fp16/fp32 AMP, int8/fp32 quantize, and int8/fp16 combinations are separate paths. | Build an explicit coverage matrix; do not infer one path from another. |
@@ -360,16 +405,17 @@ Current Linux/Ada host:
 1. Use the completed L0/L2 evidence as the current validation baseline.
 2. Complete L1 and L3: validate shared Apple Silicon fixes on Linux x86, then
    run targeted CUDA regressions across all 4 GPUs where useful.
-3. Rerun the d2l notebook clusters now that the standalone GPU and transformer
-   runtime probes are clean; audit notebook outputs rather than trusting stamps
-   alone.
+3. Consume current D2L notebook-run/output-audit artifacts now that the
+   standalone GPU and transformer runtime probes are clean; reopen MXNet work
+   only for fresh runtime repros.
 4. Work through C1-C8, B1-B5, and T11 using focused tests before full sweeps.
 
 Before shipping another public Linux/CUDA preview wheel:
 
 1. Re-test B1/B2 on the newest master.
 2. Run T1 full GPU operator sweep.
-3. Resolve or document C1-C8 and D1-D6.
+3. Resolve or document C1-C8 and D1-D4; keep D5-D6 assigned externally unless
+   fresh MXNet runtime repros arrive.
 4. Add at least minimal CI, including a GPU job once a runner is available.
 5. Update README, dependency docs, release notes, and wheel/versioning policy.
 

@@ -19,6 +19,7 @@
 
 #include <gtest/gtest.h>
 #include <mxnet/c_api.h>
+#include <mxnet/c_api_test.h>
 
 #include <cstring>
 #include <string>
@@ -76,6 +77,16 @@ std::vector<std::string> ListOutputNames(SymbolHandle symbol) {
   return result;
 }
 
+void AssertVectorShape(const int* ndim,
+                       const int** shape_data,
+                       uint32_t index,
+                       const std::vector<int>& expected) {
+  ASSERT_EQ(ndim[index], static_cast<int>(expected.size()));
+  for (size_t i = 0; i < expected.size(); ++i) {
+    EXPECT_EQ(shape_data[index][i], expected[i]);
+  }
+}
+
 }  // namespace
 
 TEST(CAPISymbol, GetInputSymbolsIncludesBareVariable) {
@@ -115,6 +126,69 @@ TEST(CAPISymbol, GetInputSymbolsDeduplicatesRepeatedVariableInput) {
   for (int i = 0; i < input_size; ++i) {
     MXSymbolFree(inputs[i]);
   }
+  MXSymbolFree(add);
+}
+
+TEST(CAPISymbol, DeletedSubgraphPreservesBoundaryInputsForInferenceAPIs) {
+  SymbolHandle add = CreateRepeatedInputAddSymbol();
+  ASSERT_NE(add, nullptr);
+
+  const char* op_names[] = {"elemwise_add"};
+  SymbolHandle partitioned = nullptr;
+  AssertMXSuccess(MXBuildSubgraphByOpNames(add, "default", 1, op_names, &partitioned));
+
+  uint32_t arg_size = 0;
+  const char** arg_names = nullptr;
+  AssertMXSuccess(MXSymbolListArguments(partitioned, &arg_size, &arg_names));
+  ASSERT_EQ(arg_size, 1U);
+  EXPECT_STREQ(arg_names[0], "x");
+
+  SymbolHandle inputs = nullptr;
+  AssertMXSuccess(MXSymbolGetInputs(partitioned, &inputs));
+  EXPECT_EQ(ListOutputNames(inputs), std::vector<std::string>({"x"}));
+
+  SymbolHandle children = nullptr;
+  AssertMXSuccess(MXSymbolGetChildren(partitioned, &children));
+  EXPECT_EQ(ListOutputNames(children), std::vector<std::string>({"x"}));
+
+  const char* shape_keys[] = {"x"};
+  const uint32_t shape_indptr[] = {0, 1};
+  const int shape_data[] = {2};
+  uint32_t in_shape_size = 0;
+  uint32_t out_shape_size = 0;
+  uint32_t aux_shape_size = 0;
+  const int* in_shape_ndim = nullptr;
+  const int* out_shape_ndim = nullptr;
+  const int* aux_shape_ndim = nullptr;
+  const int** in_shape_data = nullptr;
+  const int** out_shape_data = nullptr;
+  const int** aux_shape_data = nullptr;
+  int complete = 0;
+  AssertMXSuccess(MXSymbolInferShape(partitioned,
+                                     1,
+                                     shape_keys,
+                                     shape_indptr,
+                                     shape_data,
+                                     &in_shape_size,
+                                     &in_shape_ndim,
+                                     &in_shape_data,
+                                     &out_shape_size,
+                                     &out_shape_ndim,
+                                     &out_shape_data,
+                                     &aux_shape_size,
+                                     &aux_shape_ndim,
+                                     &aux_shape_data,
+                                     &complete));
+  EXPECT_EQ(complete, 1);
+  ASSERT_EQ(in_shape_size, 1U);
+  ASSERT_EQ(out_shape_size, 1U);
+  ASSERT_EQ(aux_shape_size, 0U);
+  AssertVectorShape(in_shape_ndim, in_shape_data, 0, {2});
+  AssertVectorShape(out_shape_ndim, out_shape_data, 0, {2});
+
+  MXSymbolFree(children);
+  MXSymbolFree(inputs);
+  MXSymbolFree(partitioned);
   MXSymbolFree(add);
 }
 

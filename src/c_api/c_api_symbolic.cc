@@ -189,7 +189,22 @@ int MXSymbolGetInternals(SymbolHandle symbol, SymbolHandle* out) {
 int MXSymbolGetChildren(SymbolHandle symbol, SymbolHandle* out) {
   nnvm::Symbol* s = new nnvm::Symbol();
   API_BEGIN();
-  *s   = static_cast<nnvm::Symbol*>(symbol)->GetChildren();
+  *s = static_cast<nnvm::Symbol*>(symbol)->GetChildren();
+  std::vector<nnvm::NodeEntry> unique_outputs;
+  unique_outputs.reserve(s->outputs.size());
+  for (const auto& output : s->outputs) {
+    const auto it = std::find_if(unique_outputs.begin(),
+                                 unique_outputs.end(),
+                                 [&output](const nnvm::NodeEntry& existing) {
+                                   return existing.node == output.node &&
+                                          existing.index == output.index &&
+                                          existing.version == output.version;
+                                 });
+    if (it == unique_outputs.end()) {
+      unique_outputs.push_back(output);
+    }
+  }
+  s->outputs.swap(unique_outputs);
   *out = s;
   API_END_HANDLE_ERROR(delete s);
 }

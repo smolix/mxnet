@@ -94,7 +94,7 @@ jobs:
 
       - name: Build wheel
         env:
-          MXNET_VERSION: ${{ steps.ver.outputs.version }}
+          MXNET_PACKAGE_VERSION: ${{ steps.ver.outputs.version }}
           MXNET_SETUP_ENABLE_OPENCV_DEPS: "0"
         run: |
           set -e

@@ -158,6 +158,7 @@ def test_release_wheel_build_disables_opencv_explicitly():
     assert "-DUSE_OPENCV=OFF" in workflow
     assert "-DUSE_OPENCV=ON" not in workflow
     assert 'MXNET_SETUP_ENABLE_OPENCV_DEPS: "0"' in workflow
+    assert "MXNET_PACKAGE_VERSION: ${{ steps.ver.outputs.version }}" in workflow
     assert 'cp -v "$libpath" python/mxnet/libmxnet.so' in workflow
 
 

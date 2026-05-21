@@ -491,16 +491,19 @@ std::vector<NDArray*> Imperative::Backward(const std::vector<NDArray*>& outputs,
   std::vector<NodeEntry> xs;
   std::vector<NDArray*> x_grads;
   std::vector<OpReqType> x_reqs;
+  std::unordered_set<const nnvm::Node*> requested_grad_nodes;
   if (variables.size()) {
     xs.reserve(variables.size());
     x_grads.reserve(variables.size());
     x_reqs.reserve(variables.size());
+    requested_grad_nodes.reserve(variables.size());
     for (size_t i = 0; i < variables.size(); ++i) {
       CHECK(!AGInfo::IsNone(*variables[i]) &&
             AGInfo::IsVariable(variables[i]->autograd_entry_.node))
           << "Cannot differentiate with respect to the " << i + 1 << "-th variable"
           << " because it does not require gradient.";
       xs.emplace_back(variables[i]->autograd_entry_);
+      requested_grad_nodes.insert(variables[i]->autograd_entry_.node.get());
       x_grads.push_back(new NDArray());
       x_reqs.push_back(kWriteTo);
     }
@@ -524,6 +527,8 @@ std::vector<NDArray*> Imperative::Backward(const std::vector<NDArray*>& outputs,
   std::vector<NodeEntry> us;
   us.reserve(nleaf_vars.size());
   for (const auto& i : nleaf_vars) {
+    if (requested_grad_nodes.count(i.get()) != 0)
+      continue;
     us.emplace_back(NodeEntry{i, 0, 0});
   }
 

@@ -339,8 +339,15 @@ def grad(heads, variables, head_grads=None, retain_graph=None, create_graph=Fals
         ctypes.byref(grad_vars),
         ctypes.byref(grad_stypes)))
 
-    ret = [_ndarray_cls(ctypes.cast(grad_vars[i], NDArrayHandle),
-                        stype=grad_stypes[i])
+    def _make_grad(var, handle, stype):
+        from .numpy import ndarray as _np_ndarray  # pylint: disable=import-outside-toplevel
+        from .numpy.multiarray import _np_ndarray_cls  # pylint: disable=import-outside-toplevel
+        handle = ctypes.cast(handle, NDArrayHandle)
+        if isinstance(var, _np_ndarray):
+            return _np_ndarray_cls(handle, stype=stype)
+        return _ndarray_cls(handle, stype=stype)
+
+    ret = [_make_grad(variables[i], grad_vars[i], grad_stypes[i])
            for i in range(len(var_handles))]
     if variable_is_ndarray:
         return ret[0]

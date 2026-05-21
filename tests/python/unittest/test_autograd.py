@@ -530,6 +530,18 @@ def test_gradient_single_variable_returns_ndarray():
     assert isinstance(dx, mx.nd.NDArray)
     assert abs(dx.asscalar() - 2) < 1e-7
 
+@use_np
+def test_np_gradient_returns_numpy_ndarray():
+    x = mx.np.ones((1,))
+    x.attach_grad()
+
+    with mx.autograd.record():
+        y = x * 2
+    dx = mx.autograd.grad(y, x)
+
+    assert isinstance(dx, mx.np.ndarray)
+    assert abs(dx.item() - 2) < 1e-7
+
 def test_retain_grad_drop_grad():
     x = nd.array([1,2,3,4])
     x.attach_grad()

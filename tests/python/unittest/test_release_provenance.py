@@ -1,0 +1,143 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+import importlib.util
+from pathlib import Path
+
+
+def _load_release_provenance():
+    repo_root = Path(__file__).resolve().parents[3]
+    module_path = repo_root / "tools" / "release_provenance.py"
+    spec = importlib.util.spec_from_file_location("release_provenance", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _write_minimal_repo(tmp_path, version):
+    libinfo = tmp_path / "python" / "mxnet" / "libinfo.py"
+    libinfo.parent.mkdir(parents=True)
+    libinfo.write_text('__version__ = "{}"\n'.format(version))
+    cache = tmp_path / "build" / "CMakeCache.txt"
+    cache.parent.mkdir()
+    cache.write_text("USE_CUDA:BOOL=ON\nUSE_OPENCV:BOOL=OFF\n")
+    return cache
+
+
+def test_collect_provenance_reports_release_staging_fields(monkeypatch, tmp_path):
+    release_provenance = _load_release_provenance()
+    version = "2.0.0+cu13.bw.20260518.1"
+    _write_minimal_repo(tmp_path, version)
+    wheel = tmp_path / "dist" / (
+        "mxnet-{}-cp312-cp312-linux_x86_64.whl".format(version)
+    )
+    wheel.parent.mkdir()
+    wheel.write_bytes(b"")
+
+    def fake_git_output(repo_root, args):
+        assert repo_root == tmp_path
+        if args == ["rev-parse", "HEAD"]:
+            return "0123456789abcdef0123456789abcdef01234567"
+        if args == ["status", "--porcelain", "--untracked-files=no"]:
+            return ""
+        if args == ["status", "--porcelain", "--untracked-files=normal"]:
+            return "?? dist/"
+        raise AssertionError("unexpected git args: {}".format(args))
+
+    monkeypatch.setattr(release_provenance, "_git_output", fake_git_output)
+
+    report = release_provenance.collect_provenance(
+        repo_root=tmp_path,
+        wheel_paths=[wheel],
+    )
+
+    assert report["git"]["commit"] == "0123456789abcdef0123456789abcdef01234567"
+    assert report["git"]["dirty"] is False
+    assert report["git"]["untracked_count"] == 1
+    assert report["package"] == {
+        "version": version,
+        "source": "python/mxnet/libinfo.py",
+    }
+    assert report["features"]["USE_CUDA"] == {"enabled": True, "raw": "ON"}
+    assert report["features"]["USE_OPENCV"] == {"enabled": False, "raw": "OFF"}
+    assert report["wheels"][0]["version_matches_package"] is True
+    assert report["wheels"][0]["distribution_matches_package"] is True
+    assert release_provenance.validate_provenance(report) == []
+
+
+def test_validate_provenance_rejects_dirty_tree_and_wheel_version_mismatch():
+    release_provenance = _load_release_provenance()
+    report = {
+        "expected_package_name": "mxnet",
+        "git": {
+            "commit": "fedcba9876543210fedcba9876543210fedcba98",
+            "short_commit": "fedcba987654",
+            "dirty": True,
+            "tracked_change_count": 2,
+            "untracked_count": 0,
+        },
+        "package": {"version": "2.0.0"},
+        "features": {
+            "cache_found": True,
+            "cache_path": "build/CMakeCache.txt",
+            "USE_CUDA": {"enabled": True, "raw": "ON"},
+            "USE_OPENCV": {"enabled": False, "raw": "OFF"},
+        },
+        "wheels": [
+            {
+                "filename": "mxnet-2.0.1-cp312-cp312-linux_x86_64.whl",
+                "path": "dist/mxnet-2.0.1-cp312-cp312-linux_x86_64.whl",
+                "exists": True,
+                "distribution": "mxnet",
+                "distribution_matches_package": True,
+                "version": "2.0.1",
+                "version_matches_package": False,
+            }
+        ],
+    }
+
+    errors = release_provenance.validate_provenance(report)
+
+    assert any("tracked working tree is dirty" in error for error in errors)
+    assert any("version 2.0.1 does not match package version 2.0.0" in error
+               for error in errors)
+
+
+def test_validate_provenance_checks_expected_feature_flags(monkeypatch, tmp_path):
+    release_provenance = _load_release_provenance()
+    version = "2.0.0"
+    _write_minimal_repo(tmp_path, version)
+
+    def fake_git_output(repo_root, args):
+        if args == ["rev-parse", "HEAD"]:
+            return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        return ""
+
+    monkeypatch.setattr(release_provenance, "_git_output", fake_git_output)
+    report = release_provenance.collect_provenance(
+        repo_root=tmp_path,
+        wheel_paths=[],
+    )
+
+    errors = release_provenance.validate_provenance(
+        report,
+        expect_cuda="off",
+        expect_opencv="off",
+    )
+
+    assert any("USE_CUDA expected OFF, found ON" in error for error in errors)
+    assert not any("USE_OPENCV expected OFF" in error for error in errors)

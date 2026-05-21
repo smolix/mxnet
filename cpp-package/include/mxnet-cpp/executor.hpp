@@ -49,6 +49,7 @@ inline Executor::Executor(const Symbol &symbol, Context context,
   this->symbol_ = symbol;
   this->device_type = context.GetDeviceType();
   this->device_id = context.GetDeviceId();
+  this->outputs_recorded = false;
 
   std::vector<NDArrayHandle> arg_handles;
   std::vector<NDArrayHandle> grad_handles;

@@ -54,6 +54,7 @@ class Executor {
            Executor* shared_exec                              = nullptr);
   explicit Executor(const CachedOpHandle& h) {
     handle_ = h;
+    outputs_recorded = false;
   }
   /*!
    * \brief Perform a Forward operation of Operator
@@ -66,7 +67,7 @@ class Executor {
     }
     int prev_is_record  = 0;
     int prev_train_mode = 0;
-    CHECK_EQ(MXAutogradSetIsRecording(1, &prev_is_record), 0);
+    CHECK_EQ(MXAutogradSetIsRecording(is_train, &prev_is_record), 0);
     if (is_train == true) {
       CHECK_EQ(MXAutogradSetIsTraining(1, &prev_train_mode), 0);
     }
@@ -91,6 +92,7 @@ class Executor {
     for (mx_uint i = 0; i < out_size; ++i) {
       outputs.push_back(NDArray(out_array[i]));
     }
+    outputs_recorded = is_train;
     int cur_train_mode = prev_train_mode;
     int cur_is_record  = prev_is_record;
     if (is_train == true) {
@@ -110,8 +112,8 @@ class Executor {
    */
   void Backward(const std::vector<NDArray>& head_grads = std::vector<NDArray>()) {
     if (require_grad == true) {
-      if (outputs.size() == 0) {
-        Forward(false);
+      if (outputs.size() == 0 || !outputs_recorded) {
+        Forward(true);
       }
       std::vector<NDArrayHandle> out_handles;
       for (const auto& array : outputs) {
@@ -171,6 +173,7 @@ class Executor {
   int device_type;
   int device_id;
   bool require_grad;
+  bool outputs_recorded;
   /*!
    * \brief arrays store the outputs of forward
    */

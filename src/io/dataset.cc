@@ -82,10 +82,13 @@ class RecordFileDataset final : public Dataset {
     auto& out = (*ret)[0];
     static thread_local std::unique_ptr<dmlc::Stream> stream;
     static thread_local std::unique_ptr<dmlc::RecordIOReader> reader;
-    if (!reader) {
+    static thread_local std::string reader_rec_file;
+    if (!reader || reader_rec_file != param_.rec_file) {
+      reader.reset();
       auto s = dmlc::Stream::Create(param_.rec_file.c_str(), "r");
       stream.reset(s);
       reader = std::make_unique<dmlc::RecordIOReader>(s);
+      reader_rec_file = param_.rec_file;
     }
     size_t pos = idx_[static_cast<size_t>(idx)];
     reader->Seek(pos);

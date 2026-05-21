@@ -877,19 +877,29 @@ def test_arange():
 
 
 def test_linspace():
+    ctxs = [mx.cpu()]
+    if default_device().device_type != 'cpu':
+        ctxs.append(default_device())
     for _ in range(5):
         start = np.random.rand() * 100
         stop = np.random.rand() * 100
         num = np.random.randint(20)
-        gt = np.linspace(start, stop, num)
-        pred = mx.nd.linspace(start, stop, num).asnumpy()
-        assert_almost_equal(pred, gt)
-        gt = np.linspace(start, stop, num, endpoint=False)
-        pred = mx.nd.linspace(start, stop, num, endpoint=False).asnumpy()
-        assert_almost_equal(pred, gt)
-        gt = np.linspace(start, stop, num, dtype="int32")
-        pred = mx.nd.linspace(start, stop, num, dtype="int32").asnumpy()
-        assert_almost_equal(pred, gt)
+        for ctx in ctxs:
+            gt = np.linspace(start, stop, num)
+            pred = mx.nd.linspace(start, stop, num, ctx=ctx).asnumpy()
+            assert_almost_equal(pred, gt)
+            gt = np.linspace(start, stop, num, endpoint=False)
+            pred = mx.nd.linspace(start, stop, num, endpoint=False, ctx=ctx).asnumpy()
+            assert_almost_equal(pred, gt)
+            gt = np.linspace(start, stop, num, dtype="int32")
+            pred = mx.nd.linspace(start, stop, num, dtype="int32", ctx=ctx).asnumpy()
+            assert_almost_equal(pred, gt)
+
+    for ctx in ctxs:
+        for start, stop, num in [(-1, 1, 4), (-5, 2, 4), (2, -5, 4), (-3, -1, 4)]:
+            gt = np.linspace(start, stop, num, dtype="int32")
+            pred = mx.nd.linspace(start, stop, num, dtype="int32", ctx=ctx).asnumpy()
+            assert_almost_equal(pred, gt)
 
 
 def test_argsort_float16_cpu():

@@ -33,7 +33,9 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <type_traits>
 #include "../../api/operator/op_utils.h"
 #include "../../common/utils.h"
 #include "../mshadow_op.h"
@@ -696,13 +698,24 @@ inline bool RangeShape(const nnvm::NodeAttrs& attrs,
 
 struct linspace_fwd {
   template <typename DType>
+  MSHADOW_XINLINE static DType cast_value(double v) {
+    if (std::is_integral<DType>::value) {
+      return static_cast<DType>(::floor(v));
+    }
+    return static_cast<DType>(v);
+  }
+
+  template <typename DType>
   MSHADOW_XINLINE static void Map(index_t i,
+                                  index_t size,
                                   double start,
                                   double stop,
+                                  bool endpoint,
                                   double step,
                                   int req,
                                   DType* out) {
-    KERNEL_ASSIGN(out[i], req, static_cast<DType>(start + step * i));
+    const double value = endpoint && i != 0 && i == size - 1 ? stop : start + step * i;
+    KERNEL_ASSIGN(out[i], req, cast_value<DType>(value));
   }
 };
 
@@ -718,8 +731,15 @@ void LinspaceCompute(const nnvm::NodeAttrs& attrs,
   MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(outputs[0].type_flag_, DType, {
     index_t step_num = param.endpoint ? param.num - 1 : param.num;
     double step      = step_num > 0 ? (param.stop - param.start) / step_num : 0.0f;
-    Kernel<linspace_fwd, xpu>::Launch(
-        s, outputs[0].Size(), param.start, param.stop, step, req[0], outputs[0].dptr<DType>());
+    Kernel<linspace_fwd, xpu>::Launch(s,
+                                      outputs[0].Size(),
+                                      outputs[0].Size(),
+                                      param.start,
+                                      param.stop,
+                                      param.endpoint,
+                                      step,
+                                      req[0],
+                                      outputs[0].dptr<DType>());
   });
 }
 

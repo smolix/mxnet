@@ -118,6 +118,29 @@ def test_recordimage_dataset_handle(prepare_record):
         assert x.shape[0] == 1 and x.shape[3] == 3
         assert y.item() == i
 
+def _write_indexed_record(tmpdir, name, payload):
+    recfile = str(tmpdir.join(name + '.rec'))
+    idxfile = str(tmpdir.join(name + '.idx'))
+    writer = mx.recordio.MXIndexedRecordIO(idxfile, recfile, 'w')
+    writer.write_idx(0, payload)
+    writer.close()
+    return recfile
+
+def _record_handle_bytes(record):
+    return bytes(record.asnumpy().astype(np.uint8).tolist())
+
+def test_record_file_dataset_handle_switches_between_record_files(tmpdir):
+    first_rec = _write_indexed_record(tmpdir, 'first', b'first-record')
+    second_rec = _write_indexed_record(tmpdir, 'second', b'second-record')
+
+    first = gluon.data.RecordFileDataset(first_rec).__mx_handle__()
+    second = gluon.data.RecordFileDataset(second_rec).__mx_handle__()
+
+    assert _record_handle_bytes(first[0]) == b'first-record'
+    assert _record_handle_bytes(second[0]) == b'second-record'
+    assert _record_handle_bytes(first[0]) == b'first-record'
+    assert _record_handle_bytes(second[0]) == b'second-record'
+
 def _dataset_transform_fn(x, y):
     """Named transform function since lambda function cannot be pickled."""
     return x, y
@@ -193,6 +216,35 @@ def test_image_folder_dataset(prepare_record):
     dataset = gluon.data.vision.ImageFolderDataset(os.path.dirname(prepare_record))
     assert dataset.synsets == ['test_images']
     assert len(dataset.items) == 16
+
+def _touch_image(path):
+    with open(str(path), 'wb') as out:
+        out.write(b'not decoded in this test')
+
+def test_image_folder_dataset_explicit_classes(tmpdir):
+    root = tmpdir.mkdir('image_folder')
+    _touch_image(root.mkdir('zebra').join('z.jpg'))
+    _touch_image(root.mkdir('ant').join('a.jpg'))
+
+    with pytest.warns(UserWarning, match='missing'):
+        dataset = gluon.data.vision.ImageFolderDataset(str(root), classes=['zebra', 'ant', 'missing'])
+
+    assert dataset.synsets == ['zebra', 'ant', 'missing']
+    assert [(os.path.basename(path), label) for path, label in dataset.items] == [
+        ('z.jpg', 0),
+        ('a.jpg', 1),
+    ]
+
+def test_image_folder_dataset_rejects_invalid_classes(tmpdir):
+    root = tmpdir.mkdir('image_folder')
+    root.mkdir('ant')
+
+    with pytest.raises(TypeError, match='not a string'):
+        gluon.data.vision.ImageFolderDataset(str(root), classes='ant')
+    with pytest.raises(TypeError, match='class names must be strings'):
+        gluon.data.vision.ImageFolderDataset(str(root), classes=['ant', 1])
+    with pytest.raises(ValueError, match='duplicate class names'):
+        gluon.data.vision.ImageFolderDataset(str(root), classes=['ant', 'ant'])
 
 def test_image_folder_dataset_handle(prepare_record):
     dataset = gluon.data.vision.ImageFolderDataset(os.path.dirname(prepare_record))

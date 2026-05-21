@@ -300,6 +300,9 @@ class ImageFolderDataset(dataset.Dataset):
         A function that takes data and label and transforms them::
 
             transform = lambda data, label: (data.astype(np.float32)/255, label)
+    classes : sequence of str, optional
+        Explicit class folder names. When provided, labels follow this order
+        instead of the alphabetical order of folders found under ``root``.
 
     Attributes
     ----------
@@ -308,7 +311,7 @@ class ImageFolderDataset(dataset.Dataset):
     items : list of tuples
         List of all images in (filename, label) pairs.
     """
-    def __init__(self, root, flag=1, transform=None):
+    def __init__(self, root, flag=1, transform=None, classes=None):
         self._root = os.path.expanduser(root)
         self._flag = flag
         if transform is not None:
@@ -317,17 +320,37 @@ class ImageFolderDataset(dataset.Dataset):
                 'Please use dataset.transform() or dataset.transform_first() instead...')
         self._transform = transform
         self._exts = ['.jpg', '.jpeg', '.png']
-        self._list_images(self._root)
+        self._list_images(self._root, classes)
         self._handle = None
 
-    def _list_images(self, root):
+    def _list_images(self, root, classes=None):
         self.synsets = []
         self.items = []
 
-        for folder in sorted(os.listdir(root)):
+        if classes is None:
+            folders = sorted(os.listdir(root))
+        else:
+            if isinstance(classes, str):
+                raise TypeError('classes must be a sequence of class names, not a string')
+            folders = list(classes)
+            seen = set()
+            duplicate_classes = set()
+            for folder in folders:
+                if not isinstance(folder, str):
+                    raise TypeError('class names must be strings, got {}'.format(type(folder)))
+                if folder in seen:
+                    duplicate_classes.add(folder)
+                seen.add(folder)
+            if duplicate_classes:
+                raise ValueError('classes contains duplicate class names: {}'.format(
+                    ', '.join(sorted(duplicate_classes))))
+
+        for folder in folders:
             path = os.path.join(root, folder)
             if not os.path.isdir(path):
                 warnings.warn(f'Ignoring {path}, which is not a directory.', stacklevel=3)
+                if classes is not None:
+                    self.synsets.append(folder)
                 continue
             label = len(self.synsets)
             self.synsets.append(folder)

@@ -23,6 +23,7 @@ import os
 import sys
 import shutil
 import platform
+import subprocess
 from setuptools import setup, find_packages
 
 if platform.system() == 'Linux':
@@ -64,6 +65,62 @@ DEPENDENCIES = [
     'graphviz<0.9.0,>=0.8.1',
     'contextvars;python_version<"3.7"'
 ]
+OPENCV_PYTHON_INSTALL_REQUIRES = [
+    'opencv-python>=4,<5',
+]
+OPENCV_LIBRARY_PREFIX = 'libopencv_'
+
+
+def _env_flag(name):
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    return value.strip().lower() not in ('0', 'false', 'off', 'no')
+
+
+def _resolved_library_paths(binary):
+    result = subprocess.run(
+        ['ldd', binary],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+
+    resolved = {}
+    missing = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if '=>' not in line:
+            continue
+        name, rest = line.split('=>', 1)
+        name = name.strip()
+        rest = rest.strip()
+        if rest.startswith('not found'):
+            missing.append(name)
+            continue
+        path = rest.split(None, 1)[0]
+        if path.startswith('/'):
+            resolved[name] = path
+    opencv_missing = [name for name in missing if name.startswith(OPENCV_LIBRARY_PREFIX)]
+    if opencv_missing:
+        raise RuntimeError(
+            'OpenCV libraries were not resolved by ldd: {}'.format(
+                ', '.join(sorted(opencv_missing))
+            )
+        )
+    return resolved
+
+
+def _copy_opencv_libraries(libmxnet, mxdir):
+    copied = []
+    for name, source in sorted(_resolved_library_paths(libmxnet).items()):
+        if not name.startswith(OPENCV_LIBRARY_PREFIX):
+            continue
+        shutil.copy(source, os.path.join(mxdir, name))
+        copied.append(name)
+    return copied
 
 shutil.rmtree(os.path.join(CURRENT_DIR, 'mxnet'), ignore_errors=True)
 shutil.rmtree(os.path.join(CURRENT_DIR, 'dmlc_tracker'), ignore_errors=True)
@@ -140,14 +197,19 @@ else:
         libraries.append('CUDA-10.1')
 
 from mxnet.runtime import Features
-if Features().is_enabled("ONEDNN"):
+features = Features()
+if features.is_enabled("ONEDNN"):
     libraries.append('oneDNN')
+if features.is_enabled("OPENCV"):
+    opencv_dep_override = _env_flag('MXNET_SETUP_ENABLE_OPENCV_DEPS')
+    if opencv_dep_override is not False:
+        DEPENDENCIES.extend(OPENCV_PYTHON_INSTALL_REQUIRES)
 
 short_description += ' This version uses {0}.'.format(' and '.join(libraries))
 
 package_data = {'mxnet': [os.path.join('mxnet', os.path.basename(LIB_PATH[0]))],
                 'dmlc_tracker': []}
-if Features().is_enabled("ONEDNN"):
+if features.is_enabled("ONEDNN"):
     shutil.copytree(os.path.join(CURRENT_DIR, 'mxnet-build/3rdparty/onednn/include'),
                     os.path.join(CURRENT_DIR, 'mxnet/include/onednn'))
 if platform.system() == 'Linux':
@@ -164,6 +226,9 @@ if platform.system() == 'Linux':
     if os.path.exists(os.path.join(libdir, 'libopenblas.so.0')):
         shutil.copy(os.path.join(libdir, 'libopenblas.so.0'), mxdir)
         package_data['mxnet'].append('mxnet/libopenblas.so.0')
+    if features.is_enabled("OPENCV") and not _env_flag('MXNET_SETUP_ALLOW_SYSTEM_OPENCV'):
+        for library in _copy_opencv_libraries(LIB_PATH[0], mxdir):
+            package_data['mxnet'].append('mxnet/{}'.format(library))
 
 # Copy licenses and notice
 for f in os.listdir('mxnet/licenses'):

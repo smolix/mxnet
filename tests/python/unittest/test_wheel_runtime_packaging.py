@@ -116,6 +116,16 @@ def test_release_wheel_build_disables_opencv_explicitly():
     assert 'cp -v "$libpath" python/mxnet/libmxnet.so' in workflow
 
 
+def test_legacy_pip_setup_handles_opencv_runtime_policy():
+    setup_py = (_repo_root() / "tools" / "pip" / "setup.py").read_text()
+
+    assert "OPENCV_PYTHON_INSTALL_REQUIRES" in setup_py
+    assert "MXNET_SETUP_ENABLE_OPENCV_DEPS" in setup_py
+    assert "MXNET_SETUP_ALLOW_SYSTEM_OPENCV" in setup_py
+    assert "_copy_opencv_libraries" in setup_py
+    assert "libopencv_" in setup_py
+
+
 def test_opencv_policy_rejects_silent_system_dependency():
     bundle_runtime_libs = _load_bundle_runtime_libs()
 

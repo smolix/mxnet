@@ -76,10 +76,13 @@ class CuDNNPoolingOp {
                const TBlob& out_data) {
     using namespace mshadow;
     using namespace mshadow::expr;
+    if (req == kNullOp) {
+      return;
+    }
     Stream<gpu>* s = ctx.get_stream<gpu>();
     CHECK_EQ(s->dnn_handle_ownership_, mshadow::Stream<gpu>::OwnHandle);
     typename DataType<DType>::ScaleType alpha = 1.0f;
-    typename DataType<DType>::ScaleType beta  = 0.0f;
+    typename DataType<DType>::ScaleType beta  = req == kAddTo ? 1.0f : 0.0f;
     CHECK(this->Init(s, in_data, out_data)) << "cuDNN Pooling invoked with unsupported parameters.";
     if (param_.kernel.ndim() == 2) {
       // 2d pool
@@ -122,11 +125,14 @@ class CuDNNPoolingOp {
                 const TBlob& in_grad) {
     using namespace mshadow;
     using namespace mshadow::expr;
+    if (req == kNullOp) {
+      return;
+    }
 
     Stream<gpu>* s = ctx.get_stream<gpu>();
     CHECK_EQ(s->dnn_handle_ownership_, mshadow::Stream<gpu>::OwnHandle);
     typename DataType<DType>::ScaleType alpha = 1.0f;
-    typename DataType<DType>::ScaleType beta  = 0.0f;
+    typename DataType<DType>::ScaleType beta  = req == kAddTo ? 1.0f : 0.0f;
     CHECK(this->Init(s, in_data, out_data)) << "cuDNN Pooling invoked with unsupported parameters.";
     if (param_.kernel.ndim() == 2) {
       // 2d pool

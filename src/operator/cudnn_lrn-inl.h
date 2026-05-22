@@ -55,8 +55,12 @@ class CuDNNLocalResponseNormOp : public Operator {
     using namespace mshadow::expr;
     CHECK_EQ(in_data.size(), 1U);
     CHECK_EQ(out_data.size(), 2U);
+    if (req[lrn_enum::kOut] == kNullOp) {
+      return;
+    }
     typename DataType<DType>::ScaleType alpha = 1.0f;
-    typename DataType<DType>::ScaleType beta  = 0.0f;
+    typename DataType<DType>::ScaleType beta =
+        req[lrn_enum::kOut] == kAddTo ? 1.0f : 0.0f;
     Stream<gpu>* s                            = ctx.get_stream<gpu>();
     Tensor<gpu, 4, DType> data                = in_data[lrn_enum::kData].get<gpu, 4, DType>(s);
     Tensor<gpu, 4, DType> out                 = out_data[lrn_enum::kOut].get<gpu, 4, DType>(s);
@@ -89,8 +93,12 @@ class CuDNNLocalResponseNormOp : public Operator {
     CHECK_EQ(out_data.size(), 2U);
     CHECK_EQ(req.size(), 1U);
     CHECK_EQ(in_grad.size(), 1U);
+    if (req[lrn_enum::kData] == kNullOp) {
+      return;
+    }
     typename DataType<DType>::ScaleType alpha = 1.0f;
-    typename DataType<DType>::ScaleType beta  = 0.0f;
+    typename DataType<DType>::ScaleType beta =
+        req[lrn_enum::kData] == kAddTo ? 1.0f : 0.0f;
     Stream<gpu>* s                            = ctx.get_stream<gpu>();
     Tensor<gpu, 4, DType> grad                = out_grad[lrn_enum::kOut].get<gpu, 4, DType>(s);
     Tensor<gpu, 4, DType> data                = in_data[lrn_enum::kData].get<gpu, 4, DType>(s);

@@ -1549,6 +1549,52 @@ def test_lrn():
     check_consistency(sym, ctx_list)
 
 
+def _check_backward_req_add_and_null(sym, data_name, shape, ctx=mx.gpu(0), rtol=1e-4, atol=1e-5):
+    data_np = np.linspace(-1.0, 1.0, num=np.prod(shape), dtype=np.float32).reshape(shape)
+
+    def run(grad_req, initial):
+        data = mx.nd.array(data_np, ctx=ctx)
+        grad = mx.nd.full(shape, initial, ctx=ctx)
+        exe = sym._bind(ctx, args={data_name: data}, args_grad={data_name: grad},
+                        grad_req={data_name: grad_req})
+        exe.forward(is_train=True)
+        head = mx.nd.arange(1, exe.outputs[0].size + 1, ctx=ctx, dtype=np.float32)
+        head = head.reshape(exe.outputs[0].shape)
+        exe.backward([head])
+        return grad.asnumpy()
+
+    write_grad = run('write', 0.0)
+    add_grad = run('add', 7.0)
+    null_grad = run('null', 11.0)
+    assert_almost_equal(add_grad, write_grad + 7.0, rtol=rtol, atol=atol)
+    assert_almost_equal(null_grad, np.full(shape, 11.0, dtype=np.float32), rtol=rtol, atol=atol)
+
+
+def test_activation_backward_req_add_and_null():
+    with environment('MXNET_MEMORY_OPT', '0'):
+        for act_type in ['relu', 'sigmoid', 'tanh']:
+            sym = mx.sym.Activation(name='act', act_type=act_type)
+            _check_backward_req_add_and_null(sym, 'act_data', (2, 3, 4, 5))
+
+
+def test_pooling_backward_req_add_and_null():
+    for pool_type in ['max', 'avg']:
+        sym = mx.sym.Pooling(name='pool', kernel=(2, 2), stride=(2, 2), pool_type=pool_type,
+                             cudnn_off=False)
+        _check_backward_req_add_and_null(sym, 'pool_data', (2, 3, 4, 4))
+
+
+def test_softmax_activation_backward_req_add_and_null():
+    sym = mx.sym.SoftmaxActivation(name='softmax')
+    _check_backward_req_add_and_null(sym, 'softmax_data', (3, 5))
+
+
+def test_lrn_backward_req_add_and_null():
+    sym = mx.sym.LRN(alpha=0.0001, beta=0.75, knorm=2, nsize=5, name='lrn')
+    _check_backward_req_add_and_null(sym, 'lrn_data', (2, 6, 4, 4))
+    _check_backward_req_add_and_null(sym, 'lrn_data', (2, 6, 4, 4), ctx=mx.cpu(0))
+
+
 @pytest.mark.skipif(os.environ.get('MXNET_ENGINE_TYPE') == 'NaiveEngine',
                     reason="Testing with naive engine consistently triggers illegal memory access. Tracked in #17713")
 def test_embedding_with_type():

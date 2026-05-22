@@ -52,6 +52,9 @@ class CuDNNSoftmaxActivationOp {
                const TBlob& out_data) {
     using namespace mshadow;
     using namespace mshadow::expr;
+    if (req == kNullOp) {
+      return;
+    }
     Stream<gpu>* s = ctx.get_stream<gpu>();
     Tensor<gpu, 4> data;
     Tensor<gpu, 4> out;
@@ -80,7 +83,7 @@ class CuDNNSoftmaxActivationOp {
       softmax_mode = CUDNN_SOFTMAX_MODE_CHANNEL;
     }
     float alpha = 1.0f;
-    float beta  = 0.0f;
+    float beta  = req == kAddTo ? 1.0f : 0.0f;
     CHECK_EQ(s->dnn_handle_ownership_, mshadow::Stream<gpu>::OwnHandle);
     CUDNN_CALL(cudnnSetTensor4dDescriptor(shape_desc_,
                                           CUDNN_TENSOR_NCHW,
@@ -107,8 +110,11 @@ class CuDNNSoftmaxActivationOp {
                 const TBlob& in_grad) {
     using namespace mshadow;
     using namespace mshadow::expr;
+    if (req == kNullOp) {
+      return;
+    }
     float alpha    = 1.0f;
-    float beta     = 0.0f;
+    float beta     = req == kAddTo ? 1.0f : 0.0f;
     Stream<gpu>* s = ctx.get_stream<gpu>();
     Tensor<gpu, 4> grad;
     Tensor<gpu, 4> output_data;

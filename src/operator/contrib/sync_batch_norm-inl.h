@@ -534,19 +534,24 @@ class SyncBatchNormProp : public OperatorProperty {
                   mxnet::ShapeVector* aux_shape) const override {
     using namespace mshadow;
     CHECK_EQ(in_shape->size(), 3U) << "Input:[data, gamma, beta]";
-    const mxnet::TShape& dshape = in_shape->at(0);
-    if (mxnet::op::shape_is_none(dshape))
+    const mxnet::TShape& dshape = in_shape->at(syncbatchnorm::kData);
+    if (!mxnet::ndim_is_known(dshape))
       return false;
-    in_shape->at(1) = mxnet::TShape(Shape1(dshape[1]));
-    in_shape->at(2) = mxnet::TShape(Shape1(dshape[1]));
-    out_shape->clear();
-    out_shape->push_back(dshape);
-    out_shape->push_back(Shape1(dshape[1]));
-    out_shape->push_back(Shape1(dshape[1]));
+    CHECK_GT(dshape.ndim(), 1U) << "SyncBatchNorm only supports input tensors of rank > 1.";
 
-    aux_shape->clear();
-    aux_shape->push_back(Shape1(dshape[1]));
-    aux_shape->push_back(Shape1(dshape[1]));
+    const index_t channelCount = dshape[1];
+
+    SHAPE_ASSIGN_CHECK(*in_shape, syncbatchnorm::kGamma, Shape1(channelCount));
+    SHAPE_ASSIGN_CHECK(*in_shape, syncbatchnorm::kBeta, Shape1(channelCount));
+
+    out_shape->resize(3);
+    SHAPE_ASSIGN_CHECK(*out_shape, syncbatchnorm::kOut, dshape);
+    SHAPE_ASSIGN_CHECK(*out_shape, syncbatchnorm::kMean, Shape1(channelCount));
+    SHAPE_ASSIGN_CHECK(*out_shape, syncbatchnorm::kVar, Shape1(channelCount));
+
+    aux_shape->resize(2);
+    SHAPE_ASSIGN_CHECK(*aux_shape, syncbatchnorm::kMovingMean, Shape1(channelCount));
+    SHAPE_ASSIGN_CHECK(*aux_shape, syncbatchnorm::kMovingVar, Shape1(channelCount));
     return true;
   }
 

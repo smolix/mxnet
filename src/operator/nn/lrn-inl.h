@@ -125,7 +125,15 @@ void LRNBackward(const nnvm::NodeAttrs& attrs,
   Tensor<xpu, 4> tmp_norm = out_norm.get<xpu, 4, real_t>(s);
   Tensor<xpu, 4> data     = in_data.get<xpu, 4, real_t>(s);
   Tensor<xpu, 4> grad_in  = in_grad.get<xpu, 4, real_t>(s);
-  grad_in                 = grad * F<mshadow_op::power>(tmp_norm, -param_.beta);
+  if (req == kNullOp) {
+    return;
+  }
+  CHECK_NE(req, kWriteInplace) << "LRNBackward does not support kWriteInplace";
+  if (req == kAddTo) {
+    grad_in += grad * F<mshadow_op::power>(tmp_norm, -param_.beta);
+  } else {
+    grad_in = grad * F<mshadow_op::power>(tmp_norm, -param_.beta);
+  }
   grad_in += (-2.0f * param_.beta * salpha) *
              chpool<red::sum>(grad * data * F<mshadow_op::power>(tmp_norm, -param_.beta - 1.0f),
                               param_.nsize) *

@@ -74,6 +74,9 @@ class CuDNNActivationOp {
                const TBlob& out_data) {
     using namespace mshadow;
     using namespace mshadow::expr;
+    if (req == kNullOp) {
+      return;
+    }
     Stream<gpu>* s = ctx.get_stream<gpu>();
     Tensor<gpu, 4, DType> data;
     Tensor<gpu, 4, DType> out;
@@ -97,7 +100,7 @@ class CuDNNActivationOp {
       out       = out_data.get_with_shape<gpu, 4, DType>(dshape, s);
     }
     typename DataType<DType>::ScaleType alpha = 1.0f;
-    typename DataType<DType>::ScaleType beta  = 0.0f;
+    typename DataType<DType>::ScaleType beta  = req == kAddTo ? 1.0f : 0.0f;
     CHECK_EQ(s->dnn_handle_ownership_, mshadow::Stream<gpu>::OwnHandle);
     CUDNN_CALL(cudnnSetTensor4dDescriptor(shape_desc_,
                                           CUDNN_TENSOR_NCHW,
@@ -121,8 +124,11 @@ class CuDNNActivationOp {
                 const TBlob& in_grad) {
     using namespace mshadow;
     using namespace mshadow::expr;
+    if (req == kNullOp) {
+      return;
+    }
     typename DataType<DType>::ScaleType alpha = 1.0f;
-    typename DataType<DType>::ScaleType beta  = 0.0f;
+    typename DataType<DType>::ScaleType beta  = req == kAddTo ? 1.0f : 0.0f;
     Stream<gpu>* s                            = ctx.get_stream<gpu>();
     Tensor<gpu, 4, DType> grad;
     Tensor<gpu, 4, DType> data;

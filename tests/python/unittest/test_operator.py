@@ -3427,6 +3427,12 @@ def test_norm_shape_inference_rejects_bad_affine_shapes():
     with pytest.raises(MXNetError):
         inst.infer_shape(data=(2, 3, 4), gamma=(3,), beta=(999,))
 
+    sync = mx.sym.contrib.SyncBatchNorm(data=data, gamma=gamma, beta=beta, key='shape_check')
+    with pytest.raises(MXNetError):
+        sync.infer_shape(data=(2, 3, 4), gamma=(999,), beta=(3,))
+    with pytest.raises(MXNetError):
+        sync.infer_shape(data=(2, 3, 4), gamma=(3,), beta=(999,))
+
 def test_hidden_output_names_for_instance_norm_and_ctc_loss():
     data = mx.sym.Variable('data')
     gamma = mx.sym.Variable('gamma')

@@ -262,8 +262,9 @@ DNNLBNBackward& DNNLBNBackward::GetCached(const BatchNormParam& param,
   static MX_THREAD_LOCAL std::unordered_map<DNNLBNSignature, DNNLBNBackward, OpHash> bwds;
 #endif
   DNNLBNSignature key(param);
-  key.AddSign(in_data);
-  key.AddSign(diff_data);
+  key.AddSign(in_mem);
+  key.AddSign(diff_mem);
+  key.AddSign(ctx.is_train);
   key.AddSign(static_cast<int>(flags));
 
   auto it = bwds.find(key);
@@ -326,6 +327,13 @@ void DNNLBNBackward::Execute(const BatchNormParam& param,
     gradIn = gradIn.Reshape(new_shape);
   }
 
+  if (data.IsDNNLData()) {
+    data = data.Reorder2Default();
+  }
+  if (diff.IsDNNLData()) {
+    diff = diff.Reorder2Default();
+  }
+
   auto data_mem = data.GetDNNLData();
   auto diff_mem = diff.GetDNNLData();
   // DNNL batchnorm should run on special layouts. If one of them isn't, we
@@ -337,8 +345,14 @@ void DNNLBNBackward::Execute(const BatchNormParam& param,
     auto data_desc = data_mem->get_desc();
     diff_mem       = diff.GetDNNLDataReorder(&data_desc);
   }
-  auto gradi_mem =
-      CreateDNNLMem(const_cast<NDArray&>(gradIn), pd.diff_src_desc(), req[batchnorm::kData]);
+  dnnl_output_t gradi_mem;
+  if (req[batchnorm::kData] == kAddTo) {
+    gradi_mem = dnnl_output_t(OutDataOp::AddBack, TmpMemMgr::Get()->Alloc(pd.diff_src_desc()));
+  } else if (IsBNWriting(req[batchnorm::kData])) {
+    gradi_mem = dnnl_output_t(OutDataOp::CopyBack, TmpMemMgr::Get()->Alloc(pd.diff_src_desc()));
+  } else {
+    gradi_mem = CreateDNNLMem(gradIn, pd.diff_src_desc(), req[batchnorm::kData]);
+  }
 
   // v3: use_scale_shift was split into use_scale | use_shift.
   if (static_cast<int>(flags) & static_cast<int>(dnnl::normalization_flags::use_scale)) {
@@ -396,12 +410,11 @@ void DNNLBNBackward::Execute(const BatchNormParam& param,
     // v3: split scale gradient (length C) and shift gradient (length C).
     float* g_scale_buf = reinterpret_cast<float*>(GetGradScale().get_data_handle());
     float* g_shift_buf = reinterpret_cast<float*>(GetGradShift().get_data_handle());
-    float* w_grad_1    = in_grad[batchnorm::kGamma].data().dptr<float>();
-    float* w_grad_2    = in_grad[batchnorm::kBeta].data().dptr<float>();
 
     // the gradient of gamma
     if (!param.fix_gamma) {
       if (req[batchnorm::kGamma] != kNullOp) {
+        float* w_grad_1 = in_grad[batchnorm::kGamma].data().dptr<float>();
         if (req[batchnorm::kGamma] != kAddTo) {
           memcpy(w_grad_1, g_scale_buf, copy_size);
         } else {
@@ -410,14 +423,18 @@ void DNNLBNBackward::Execute(const BatchNormParam& param,
           }
         }
       }
-    } else {
-      for (index_t i = 0; i < channels_; i++) {
-        (in_grad[1].data().dptr<float>())[i] = 0.0f;
+    } else if (req[batchnorm::kGamma] != kNullOp) {
+      float* w_grad_1 = in_grad[batchnorm::kGamma].data().dptr<float>();
+      if (req[batchnorm::kGamma] != kAddTo) {
+        for (index_t i = 0; i < channels_; i++) {
+          w_grad_1[i] = 0.0f;
+        }
       }
     }
 
     // the gradient of beta
     if (req[batchnorm::kBeta] != kNullOp) {
+      float* w_grad_2 = in_grad[batchnorm::kBeta].data().dptr<float>();
       if (req[batchnorm::kBeta] != kAddTo) {
         memcpy(w_grad_2, g_shift_buf, copy_size);
       } else {

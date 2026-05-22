@@ -32,7 +32,9 @@ if num_gpus > 8 :
 
 gpus = range(1, 1+num_gpus)
 
-@pytest.mark.skip(reason="Test requires NCCL library installed and enabled during build")
+@pytest.mark.skipif(num_gpus < 1, reason="NCCL push/pull requires at least one GPU")
+@pytest.mark.skipif(not mx.runtime.Features().is_enabled("NCCL"),
+                    reason="MXNet was built without NCCL")
 def test_nccl_pushpull():
     for shape, key in zip(shapes, keys):
         for n_gpus in gpus:

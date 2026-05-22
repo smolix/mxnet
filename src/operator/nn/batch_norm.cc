@@ -468,13 +468,30 @@ static inline bool SupportDNNLBN(const NDArray& input) {
          !mxnet::op::batchnorm::disable_mkl;
 }
 
+static inline bool SupportDNNLBNBackward(const BatchNormParam& param,
+                                         const OpContext& ctx,
+                                         const NDArray& input) {
+  if (!SupportDNNLBN(input)) {
+    return false;
+  }
+  if (ctx.is_train && !param.use_global_stats) {
+    // oneDNN v3.11 AVX2 local-statistics BatchNorm backward can corrupt heap
+    // memory for small NCHW training shapes produced by preceding oneDNN
+    // convolution layouts. Keep oneDNN global-statistics/inference paths
+    // enabled, but use the native CPU training path for local statistics.
+    return false;
+  }
+  return true;
+}
+
 void BatchNormComputeExCPU(const nnvm::NodeAttrs& attrs,
                            const OpContext& ctx,
                            const std::vector<NDArray>& inputs,
                            const std::vector<OpReqType>& req,
                            const std::vector<NDArray>& outputs) {
   CHECK_EQ(inputs.size(), 5U);
-  if (SupportDNNLBN(inputs[0])) {
+  const BatchNormParam& param = nnvm::get<BatchNormParam>(attrs.parsed);
+  if (SupportDNNLBN(inputs[0]) && !(ctx.is_train && !param.use_global_stats)) {
     DNNL_OPCHECK_INIT(false, outputs.size(), inputs, outputs);
     DNNLRun(DNNLBatchNormForward</*fuse_relu*/ false>, attrs, ctx, inputs, req, outputs);
     DNNL_OPCHECK_RUN(BatchNormCompute<cpu>, attrs, ctx, inputs, req, outputs);
@@ -488,7 +505,8 @@ void BatchNormGradComputeExCPU(const nnvm::NodeAttrs& attrs,
                                const std::vector<NDArray>& inputs,
                                const std::vector<OpReqType>& req,
                                const std::vector<NDArray>& outputs) {
-  if (SupportDNNLBN(inputs[0])) {
+  const BatchNormParam& param = nnvm::get<BatchNormParam>(attrs.parsed);
+  if (SupportDNNLBNBackward(param, ctx, inputs[3])) {
     DNNL_OPCHECK_INIT(true, outputs.size(), inputs, outputs);
     DNNLRun(DNNLBatchNormBackward, attrs, ctx, inputs, req, outputs);
     DNNL_OPCHECK_RUN(BatchNormGradCompute<cpu>, attrs, ctx, inputs, req, outputs);

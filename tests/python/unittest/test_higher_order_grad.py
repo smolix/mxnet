@@ -530,8 +530,9 @@ def check_nth_order_unary(x, op, grad_ops, orders, rtol=None, atol=None):
         y = op(x)
         for current_order in range(1, highest_order+1):
             head_grad = nd.random.normal(shape=x.shape)
-            y = autograd.grad(heads=y, variables=x, head_grads=head_grad,
+            y = autograd.grad(heads=y, variables=[x], head_grads=head_grad,
                               create_graph=True, retain_graph=True)[0]
+            assert y.shape == x.shape
             if current_order in orders:
                 computed_grads.append(y)
             head_grads.append(head_grad)
@@ -608,15 +609,15 @@ def test_dense_backward_flatten():
             w = params[0].as_nd_ndarray()
             b = params[1].as_nd_ndarray()
             print("Checking y ({}) = x({}) * w^T({}) + b({})".format(y.shape, x.shape, w.shape, b.shape))
-            x_grad = autograd.grad(heads=y, variables=x, head_grads=o_y,
+            x_grad = autograd.grad(heads=y, variables=[x], head_grads=o_y,
                                    create_graph=True, retain_graph=True)[0]
             o_x_grad = arange_shape_like(x_grad)
-            w_grad_grad = autograd.grad(heads=x_grad, variables=w,
+            w_grad_grad = autograd.grad(heads=x_grad, variables=[w],
                                         head_grads=o_x_grad, create_graph=False)[0]
-            w_grad = autograd.grad(heads=y, variables=w, head_grads=o_y,
+            w_grad = autograd.grad(heads=y, variables=[w], head_grads=o_y,
                                    create_graph=True, retain_graph=True)[0]
             o_w_grad = arange_shape_like(w_grad)
-            x_grad_grad = autograd.grad(heads=w_grad, variables=x,
+            x_grad_grad = autograd.grad(heads=w_grad, variables=[x],
                                         head_grads=o_w_grad, create_graph=False)[0]
         # Expected results
         w_grad_e = nd.dot(o_y, x, transpose_a=True)
@@ -647,15 +648,15 @@ def test_dense_backward_no_flatten():
             w = params[0].as_nd_ndarray()
             b = params[1].as_nd_ndarray()
             print("Checking y ({}) = x({}) * w^T({}) + b({})".format(y.shape, x.shape, w.shape, b.shape))
-            x_grad = autograd.grad(heads=y, variables=x, head_grads=o_y,
+            x_grad = autograd.grad(heads=y, variables=[x], head_grads=o_y,
                                    create_graph=True, retain_graph=True)[0]
             o_x_grad = arange_shape_like(x_grad)
-            w_grad_grad = autograd.grad(heads=x_grad, variables=w,
+            w_grad_grad = autograd.grad(heads=x_grad, variables=[w],
                                         head_grads=o_x_grad, create_graph=False)[0]
-            w_grad = autograd.grad(heads=y, variables=w, head_grads=o_y,
+            w_grad = autograd.grad(heads=y, variables=[w], head_grads=o_y,
                                    create_graph=True, retain_graph=True)[0]
             o_w_grad = arange_shape_like(w_grad)
-            x_grad_grad = autograd.grad(heads=w_grad, variables=x,
+            x_grad_grad = autograd.grad(heads=w_grad, variables=[x],
                                         head_grads=o_w_grad, create_graph=False)[0]
         # Expected results
         o_y = flatten2d_left(o_y)

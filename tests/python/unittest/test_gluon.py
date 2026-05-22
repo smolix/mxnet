@@ -1920,7 +1920,6 @@ def test_deconv2d_16c():
 
 
 @use_np
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
 def test_batchnorm_16c():
     chn_list = [16, 1024]
     shape = onp.random.randint(low=1, high=300, size=10)
@@ -1949,6 +1948,22 @@ def test_batchnorm_16c():
             x = mx.np.random.uniform(-1.0, 1.0, size=shape)
             net = Net(chn_list[i], 1, 1)
             check_layer_forward_withinput(net, x)
+
+
+@use_np
+def test_batchnorm_16c_one_by_one_training_backward():
+    class Net(gluon.HybridBlock):
+        def __init__(self, **kwargs):
+            super(Net, self).__init__(**kwargs)
+            self.conv0 = gluon.nn.Conv2D(16, (1, 1))
+            self.bn0 = gluon.nn.BatchNorm(axis=1)
+
+        def forward(self, x):
+            return self.bn0(self.conv0(x))
+
+    x = mx.np.random.uniform(-1.0, 1.0, size=(4, 3, 1, 1))
+    net = Net()
+    check_layer_forward_withinput(net, x)
 
 
 @use_np
@@ -2034,7 +2049,6 @@ def test_reshape_conv():
 
 
 @use_np
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
 def test_reshape_conv_reshape_conv():
     class Net(gluon.HybridBlock):
         def __init__(self, **kwargs):
@@ -2043,10 +2057,9 @@ def test_reshape_conv_reshape_conv():
             self.conv1 = nn.Conv2D(128, (3, 3))
 
         def forward(self, x):
-            x_reshape = x.reshape((0, 0, 128, 32))
+            x_reshape = mx.npx.reshape(x, newshape=(-2, -2, 128, 32))
             y = self.conv0(x_reshape)
-            "spatial shape of y is (62, 62)"
-            y_reshape = y.reshape((0, 0, 124, 31))
+            y_reshape = mx.npx.reshape(y, newshape=(4, 64, 90, 42))
             out = self.conv1(y_reshape)
             return out
     x = mx.np.random.uniform(size=(4, 3, 64, 64))
@@ -2090,7 +2103,6 @@ def test_slice_conv_slice_conv():
 
 
 @use_np
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
 def test_slice_conv_reshape_conv():
     class Net(gluon.HybridBlock):
         def __init__(self, **kwargs):
@@ -2102,7 +2114,7 @@ def test_slice_conv_reshape_conv():
             x_slice = mx.npx.slice(x, begin=(0, 0, 1, 1), end=(4, 16, 33, 33))
             y = self.conv0(x_slice)
             "shape of y is (4, 64, 30, 30)"
-            y_reshape = y.reshape((0, 0, 60, 15))
+            y_reshape = mx.npx.reshape(y, newshape=(-2, -2, 60, 15))
             out = self.conv1(y_reshape)
             return out
 
@@ -2262,7 +2274,6 @@ def test_reshape_dense_slice_dense():
 
 
 @use_np
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
 def test_reshape_batchnorm():
     class Net(gluon.HybridBlock):
         def __init__(self, shape, **kwargs):
@@ -2289,7 +2300,7 @@ def test_slice_batchnorm():
     class Net(gluon.HybridBlock):
         def __init__(self, slice, **kwargs):
             super(Net, self).__init__(**kwargs)
-            self.conv0 = nn.Conv2D(128, (1, 1))
+            self.conv0 = nn.Conv2D(128, (1, 1), in_channels=32)
             self.bn0 = nn.BatchNorm()
             self.slice = slice
 
@@ -2307,15 +2318,14 @@ def test_slice_batchnorm():
 
 
 @use_np
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
 @pytest.mark.serial
 def test_slice_batchnorm_slice_batchnorm():
     class Net(gluon.HybridBlock):
         def __init__(self, slice, **kwargs):
             super(Net, self).__init__(**kwargs)
             self.conv0 = nn.Conv2D(128, (1, 1))
-            self.bn0 = nn.BatchNorm()
-            self.bn1 = nn.BatchNorm()
+            self.bn0 = nn.BatchNorm(in_channels=32)
+            self.bn1 = nn.BatchNorm(in_channels=32)
             self.slice = slice
 
         def forward(self, x):
@@ -2333,14 +2343,13 @@ def test_slice_batchnorm_slice_batchnorm():
 
 
 @use_np
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
 def test_reshape_batchnorm_reshape_batchnorm():
     class Net(gluon.HybridBlock):
         def __init__(self, shape, **kwargs):
             super(Net, self).__init__(**kwargs)
             self.conv0 = nn.Conv2D(128, (1, 1))
-            self.bn0 = nn.BatchNorm()
-            self.bn1 = nn.BatchNorm()
+            self.bn0 = nn.BatchNorm(in_channels=64)
+            self.bn1 = nn.BatchNorm(in_channels=128)
             self.reshape = shape
 
         def forward(self, x):
@@ -2364,8 +2373,8 @@ def test_slice_batchnorm_reshape_batchnorm():
         def __init__(self, shape, slice, **kwargs):
             super(Net, self).__init__(**kwargs)
             self.conv0 = nn.Conv2D(128, (1, 1))
-            self.bn0 = nn.BatchNorm()
-            self.bn1 = nn.BatchNorm()
+            self.bn0 = nn.BatchNorm(in_channels=32)
+            self.bn1 = nn.BatchNorm(in_channels=128)
             self.reshape = shape
             self.slice = slice
 
@@ -2384,22 +2393,22 @@ def test_slice_batchnorm_reshape_batchnorm():
     check_layer_forward_withinput(net, x)
 
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
+@use_np
 def test_reshape_batchnorm_slice_batchnorm():
     class Net(gluon.HybridBlock):
         def __init__(self, shape, slice, **kwargs):
             super(Net, self).__init__(**kwargs)
-            self.conv0 = nn.Conv2D(128, (1, 1))
-            self.bn0 = nn.BatchNorm()
-            self.bn1 = nn.BatchNorm()
+            self.conv0 = nn.Conv2D(128, (1, 1), in_channels=32)
+            self.bn0 = nn.BatchNorm(in_channels=64)
+            self.bn1 = nn.BatchNorm(in_channels=64)
             self.reshape = shape
             self.slice = slice
 
         def forward(self, x):
             x_in = self.conv0(x)
-            x_reshape = x_in.reshape(self.reshape)
+            x_reshape = mx.npx.reshape(x_in, newshape=self.reshape)
             y = self.bn0(x_reshape)
-            y_slice = y.slice(begin=tuple(self.slice[0]), end=tuple(self.slice[1]))
+            y_slice = mx.npx.slice(y, begin=tuple(self.slice[0]), end=tuple(self.slice[1]))
             out = self.bn1(y_slice)
             return out
 
@@ -2409,7 +2418,6 @@ def test_reshape_batchnorm_slice_batchnorm():
     net = Net(shape, slice)
     check_layer_forward_withinput(net, x)
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
 def test_reshape_pooling2d():
     max_pooling = nn.MaxPool2D(strides=(2, 3), padding=(1, 1))
     avg_pooling = nn.AvgPool2D(strides=(2, 2), padding=(1, 1))
@@ -2473,7 +2481,6 @@ def test_slice_pooling2d():
             net = Net(slice, pooling_layers[i])
             check_layer_forward_withinput(net, x)
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
 def test_reshape_pooling2d_reshape_pooling2d():
     max_pooling = nn.MaxPool2D(strides=(2, 2), padding=(1, 1))
     avg_pooling = nn.AvgPool2D(strides=(2, 2), padding=(1, 1))
@@ -2541,7 +2548,6 @@ def test_slice_pooling2d_slice_pooling2d():
             net = Net(slice, pooling_layers[i], pooling_layers[j])
             check_layer_forward_withinput(net, x)
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
 def test_slice_pooling2d_reshape_pooling2d():
     max_pooling = nn.MaxPool2D(strides=(2, 3), padding=(1, 1))
     avg_pooling = nn.AvgPool2D(strides=(2, 2), padding=(1, 1))
@@ -2562,21 +2568,21 @@ def test_slice_pooling2d_reshape_pooling2d():
             self.pool1 = pooling_layer2
 
         def forward(self, x):
-            x_slice = x.slice(begin=self.slice[0], end=self.slice[1])
+            x_slice = mx.npx.slice(x, begin=self.slice[0], end=self.slice[1])
             y = self.pool0(x_slice)
-            y_reshape = y.reshape(self.reshape)
+            y_reshape = mx.npx.reshape(y, newshape=self.reshape)
             out = self.pool1(y_reshape)
             return out
 
     x = mx.np.random.uniform(size=(16, 128, 256, 256))
     slice = [(8, 0, 100, 50), (16, 128, 256, 256)]
-    shape = (32, -1, 0, 0)
+    shape = (32, -1, -2, -2)
     for i in range(len(pooling_layers)):
         for j in range(len(pooling_layers)):
             net = Net(shape, slice, pooling_layers[i], pooling_layers[j])
             check_layer_forward_withinput(net, x)
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
+@use_np
 @pytest.mark.serial
 def test_reshape_pooling2d_slice_pooling2d():
     max_pooling = nn.MaxPool2D(strides=(2, 3), padding=(1, 1))
@@ -2598,14 +2604,14 @@ def test_reshape_pooling2d_slice_pooling2d():
             self.pool1 = pooling_layer2
 
         def forward(self, x):
-            x_reshape = x.reshape(self.reshape)
+            x_reshape = mx.npx.reshape(x, newshape=self.reshape)
             y = self.pool0(x_reshape)
-            y_slice = y.slice(begin=self.slice[0], end=self.slice[1])
+            y_slice = mx.npx.slice(y, begin=self.slice[0], end=self.slice[1])
             out = self.pool1(y_slice)
             return out
 
     x = mx.np.random.uniform(size=(16, 128, 256, 256))
-    shape = (0, 512, 64, -1)
+    shape = (-2, 512, 64, -1)
     slice = [(8, 256, 10, 20), (-1, -1, -1, 70)]
     for i in range(len(pooling_layers)):
         for j in range(len(pooling_layers)):
@@ -2614,7 +2620,7 @@ def test_reshape_pooling2d_slice_pooling2d():
             net = Net(shape, slice, pooling_layers[i], pooling_layers[j])
             check_layer_forward_withinput(net, x)
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
+@use_np
 @pytest.mark.serial
 def test_reshape_deconv():
     class Net(gluon.HybridBlock):
@@ -2624,7 +2630,7 @@ def test_reshape_deconv():
             self.conv0 = nn.Conv2DTranspose(64, (3, 3))
 
         def forward(self, x):
-            x_reshape = x.reshape(self.reshape)
+            x_reshape = mx.npx.reshape(x, newshape=self.reshape)
             out = self.conv0(x_reshape)
             return out
     x = mx.np.random.uniform(size=(4, 16, 32, 32))
@@ -2632,7 +2638,7 @@ def test_reshape_deconv():
     net = Net(shape)
     check_layer_forward_withinput(net, x)
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
+@use_np
 @pytest.mark.serial
 def test_slice_deconv():
     class Net(gluon.HybridBlock):
@@ -2642,7 +2648,7 @@ def test_slice_deconv():
             self.conv0 = nn.Conv2DTranspose(64, (3, 3))
 
         def forward(self, x):
-            x_slice = x.slice(begin=self.slice[0], end=self.slice[1])
+            x_slice = mx.npx.slice(x, begin=self.slice[0], end=self.slice[1])
             out = self.conv0(x_slice)
             return out
     x = mx.np.random.uniform(size=(8, 32, 64, 64))
@@ -2650,7 +2656,7 @@ def test_slice_deconv():
     net = Net(slice)
     check_layer_forward_withinput(net, x)
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
+@use_np
 @pytest.mark.serial
 def test_reshape_deconv_reshape_deconv():
     class Net(gluon.HybridBlock):
@@ -2661,10 +2667,10 @@ def test_reshape_deconv_reshape_deconv():
             self.conv1 = nn.Conv2DTranspose(64, (3, 3), strides=(2, 2))
 
         def forward(self, x):
-            x_reshape = x.reshape(self.reshape[0])
+            x_reshape = mx.npx.reshape(x, newshape=self.reshape[0])
             y = self.conv0(x_reshape)
             "shape of y is (4, 32, 66, 18)"
-            y_reshape = y.reshape(self.reshape[1])
+            y_reshape = mx.npx.reshape(y, newshape=self.reshape[1])
             out = self.conv1(y_reshape)
             return out
     x = mx.np.random.uniform(size=(4, 16, 32, 32))
@@ -2672,7 +2678,7 @@ def test_reshape_deconv_reshape_deconv():
     net = Net(shape)
     check_layer_forward_withinput(net, x)
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
+@use_np
 @pytest.mark.serial
 def test_slice_deconv_slice_deconv():
     class Net(gluon.HybridBlock):
@@ -2683,10 +2689,10 @@ def test_slice_deconv_slice_deconv():
             self.conv1 = nn.Conv2DTranspose(64, (3, 3), strides=(2, 2))
 
         def forward(self, x):
-            x_slice = x.slice(begin=self.slice[0][0], end=self.slice[0][1])
+            x_slice = mx.npx.slice(x, begin=self.slice[0][0], end=self.slice[0][1])
             y = self.conv0(x_slice)
             "shape of y is (4, 32, 66, 18)"
-            y_slice = y.slice(begin=self.slice[1][0], end=self.slice[1][1])
+            y_slice = mx.npx.slice(y, begin=self.slice[1][0], end=self.slice[1][1])
             out = self.conv1(y_slice)
             return out
     x = mx.np.random.uniform(size=(8, 32, 64, 64))
@@ -2694,7 +2700,7 @@ def test_slice_deconv_slice_deconv():
     net = Net(slice)
     check_layer_forward_withinput(net, x)
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
+@use_np
 @pytest.mark.serial
 def test_reshape_deconv_slice_deconv():
     class Net(gluon.HybridBlock):
@@ -2706,10 +2712,10 @@ def test_reshape_deconv_slice_deconv():
             self.conv1 = nn.Conv2DTranspose(64, (3, 3), strides=(2, 2))
 
         def forward(self, x):
-            x_reshape = x.reshape(self.reshape)
+            x_reshape = mx.npx.reshape(x, newshape=self.reshape)
             y = self.conv0(x_reshape)
             "shape of y is (4, 32, 66, 18)"
-            y_slice = y.slice(begin=self.slice[0], end=self.slice[1])
+            y_slice = mx.npx.slice(y, begin=self.slice[0], end=self.slice[1])
             out = self.conv1(y_slice)
             return out
     x = mx.np.random.uniform(size=(4, 16, 32, 32))
@@ -2718,7 +2724,7 @@ def test_reshape_deconv_slice_deconv():
     net = Net(shape, slice)
     check_layer_forward_withinput(net, x)
 
-@pytest.mark.skip(reason='skippping temporarily, tracked by https://github.com/apache/mxnet/issues/11164')
+@use_np
 @pytest.mark.serial
 def test_slice_deconv_reshape_deconv():
     class Net(gluon.HybridBlock):
@@ -2730,10 +2736,10 @@ def test_slice_deconv_reshape_deconv():
             self.conv1 = nn.Conv2DTranspose(96, (3, 3), strides=(2, 2))
 
         def forward(self, x):
-            x_slice = x.slice(begin=self.slice[0], end=self.slice[1])
+            x_slice = mx.npx.slice(x, begin=self.slice[0], end=self.slice[1])
             y = self.conv0(x_slice)
             "shape of y is (4, 32, 34, 34)"
-            y_reshape = y.reshape(self.reshape)
+            y_reshape = mx.npx.reshape(y, newshape=self.reshape)
             out = self.conv1(y_reshape)
             return out
     x = mx.np.random.uniform(size=(8, 32, 64, 64))

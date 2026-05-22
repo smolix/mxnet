@@ -246,6 +246,13 @@ inline void DNNLBatchNormBackward(const nnvm::NodeAttrs& attrs,
     diff = diff.Reshape(new_shape);
   }
 
+  if (data.IsDNNLData()) {
+    data = data.Reorder2Default();
+  }
+  if (diff.IsDNNLData()) {
+    diff = diff.Reorder2Default();
+  }
+
   auto data_mem = data.GetDNNLData();
   auto diff_mem = diff.GetDNNLData();
   if (data.IsDefaultData()) {

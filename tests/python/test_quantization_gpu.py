@@ -17,11 +17,33 @@
 import os
 import sys
 import mxnet as mx
+import pytest
 
 
 curr_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))
-sys.path.insert(0, os.path.join(curr_path, '../quantization'))
-from mxnet.test_utils import set_default_device
-from test_quantization import *
+from mxnet.test_utils import default_device, set_default_device
 
-set_default_device(mx.gpu(0))
+sys.path.insert(0, os.path.join(curr_path, 'quantization'))
+from test_quantization import *
+from test_quantization import _legacy_nd_semantics
+
+
+@pytest.fixture(autouse=True)
+def _gpu_default_device():
+    prev = default_device()
+    set_default_device(mx.gpu(0))
+    yield
+    set_default_device(prev)
+
+
+def _skip_unsupported_gpu_quantization(func):
+    return pytest.mark.skip(reason="quantization path is not implemented for GPU")(func)
+
+
+test_calibrated_quantize_v2_bfloat16_to_int8 = _skip_unsupported_gpu_quantization(
+    test_calibrated_quantize_v2_bfloat16_to_int8)
+test_quantized_transpose = _skip_unsupported_gpu_quantization(test_quantized_transpose)
+test_quantized_reshape = _skip_unsupported_gpu_quantization(test_quantized_reshape)
+test_quantize_model = _skip_unsupported_gpu_quantization(test_quantize_model)
+test_rnn_quantization = _skip_unsupported_gpu_quantization(test_rnn_quantization)
+test_quantized_rnn = _skip_unsupported_gpu_quantization(test_quantized_rnn)

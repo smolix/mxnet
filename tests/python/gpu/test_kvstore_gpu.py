@@ -43,7 +43,6 @@ def init_kv_with_str(stype='default', kv_type='local'):
 # src/operator/nn/dnnl/dnnl_base.cc:567: Check failed: similar
 # Both of them are not reproducible, so this test is back on random seeds.
 @pytest.mark.skipif(mx.device.num_gpus() < 2, reason="test_rsp_push_pull needs more than 1 GPU")
-@pytest.mark.skip("Flaky test https://github.com/apache/incubator-mxnet/issues/14189")
 @pytest.mark.serial
 def test_rsp_push_pull():
     def check_rsp_push_pull(kv_type, sparse_pull, is_push_cpu=True):

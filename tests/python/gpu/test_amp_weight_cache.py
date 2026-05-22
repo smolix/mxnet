@@ -39,7 +39,6 @@ curr_path = Path(__file__).resolve().parent
 sys.path.insert(0, str(curr_path.parent))
 
 import mxnet as mx
-from mxnet import amp
 from mxnet.amp.amp import _amp_cast_cache, _cast_symbol_NDArray, clear_weight_cache
 
 # Run everything on GPU 0 (CUDA_VISIBLE_DEVICES=0 set by the caller)
@@ -168,14 +167,6 @@ class TestAmpWeightCacheMemory:
     @pytest.mark.timeout(300)
     def test_gpu_memory_flat_with_shared_layer(self):
         """Repeated AMP casts of a shared weight must not grow GPU memory."""
-        # Ensure AMP is initialised (idempotent).
-        # NOTE: amp.init() is not idempotent in a fresh interpreter —
-        # it wraps ndarray ops once.  We rely on the module-level init done by
-        # other tests or do it here defensively.
-        from mxnet.amp.amp import _amp_initialized
-        if not _amp_initialized:
-            amp.init()
-
         ctx = CTX
         W_ROWS, W_COLS = 1024, 1024  # 1M fp32 params = 4 MB; fp16 = 2 MB
         LOOP = 200

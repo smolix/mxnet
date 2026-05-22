@@ -37,10 +37,16 @@ import mxnet as mx
 
 NUM_GPUS = mx.device.num_gpus()
 
-pytestmark = pytest.mark.skipif(
-    NUM_GPUS < 2,
-    reason=f"NCCL tests require >= 2 GPUs, found {NUM_GPUS}"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        NUM_GPUS < 2,
+        reason=f"NCCL tests require >= 2 GPUs, found {NUM_GPUS}"
+    ),
+    pytest.mark.skipif(
+        not mx.runtime.Features().is_enabled("NCCL"),
+        reason="MXNet was built without NCCL"
+    ),
+]
 
 
 def _make_kv():

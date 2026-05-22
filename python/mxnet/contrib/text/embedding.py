@@ -346,9 +346,10 @@ class _TokenEmbedding(vocab.Vocabulary):
 
     def _build_embedding_for_vocabulary(self, vocabulary):
         if vocabulary is not None:
-            assert isinstance(vocabulary, vocab.Vocabulary), \
-                'The argument `vocabulary` must be an instance of ' \
-                'mxnet.contrib.text.vocab.Vocabulary.'
+            if not isinstance(vocabulary, vocab.Vocabulary):
+                raise TypeError(
+                    'The argument `vocabulary` must be an instance of '
+                    'mxnet.contrib.text.vocab.Vocabulary.')
 
             # Set _idx_to_vec so that indices of tokens from vocabulary are associated with the
             # loaded token embedding vectors.
@@ -437,11 +438,13 @@ class _TokenEmbedding(vocab.Vocabulary):
                 new_vectors = expand_dims_fn(new_vectors, axis=0)
 
         else:
-            assert isinstance(new_vectors, nd.NDArray) and len(new_vectors.shape) == 2, \
-                '`new_vectors` must be a 2-D NDArray if `tokens` is a list of multiple strings.'
-        assert new_vectors.shape == (len(tokens), self.vec_len), \
-            'The length of new_vectors must be equal to the number of tokens and the width of' \
-            'new_vectors must be equal to the dimension of embeddings of the glossary.'
+            if not (isinstance(new_vectors, nd.NDArray) and len(new_vectors.shape) == 2):
+                raise ValueError(
+                    '`new_vectors` must be a 2-D NDArray if `tokens` is a list of multiple strings.')
+        if new_vectors.shape != (len(tokens), self.vec_len):
+            raise ValueError(
+                'The length of new_vectors must be equal to the number of tokens and the width of'
+                'new_vectors must be equal to the dimension of embeddings of the glossary.')
 
         indices = []
         for token in tokens:

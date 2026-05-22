@@ -62,9 +62,10 @@ class LANS(Optimizer):
     def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-6,
                  lower_bound=None, upper_bound=None, aggregate_num=4, use_fused_step=True,
                  **kwargs):
-        assert aggregate_num <= 45,\
-            'When use_fused_step is True, LAMB only supports aggregate_num <= 45,' \
-            ' and receives {}'.format(aggregate_num)
+        if aggregate_num > 45:
+            raise ValueError(
+                'When use_fused_step is True, LAMB only supports aggregate_num <= 45,'
+                ' and receives {}'.format(aggregate_num))
         super(LANS, self).__init__(learning_rate=learning_rate,
                                    aggregate_num=aggregate_num,
                                    use_fused_step=use_fused_step,

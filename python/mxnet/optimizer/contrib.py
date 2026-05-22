@@ -67,7 +67,9 @@ class GroupAdaGrad(Optimizer):
         self.epsilon = epsilon
 
     def create_state(self, index, weight):
-        assert len(weight.shape) == 2
+        if len(weight.shape) != 2:
+            raise ValueError(
+                f"GroupAdaGrad requires a 2-D weight tensor, but got shape {weight.shape}")
         history = zeros(
             (weight.shape[0], 1), weight.context, stype=weight.stype)
         return history

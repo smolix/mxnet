@@ -47,7 +47,8 @@ def _get_kvstore_server_command_type(command):
                      'kSyncMode': 3,
                      'kSetGradientCompression': 4,
                      'kSetProfilerParams': 5}
-    assert (command in command_types), "Unknown command type to send to server"
+    if command not in command_types:
+        raise ValueError("Unknown command type to send to server")
     return command_types[command]
 
 
@@ -62,7 +63,9 @@ class KVStore(KVStoreBase):
         handle : KVStoreHandle
             `KVStore` handle of C API.
         """
-        assert isinstance(handle, KVStoreHandle)
+        if not isinstance(handle, KVStoreHandle):
+            raise TypeError(
+                f"handle must be a KVStoreHandle, but got {type(handle).__name__}")
         self.handle = handle
         self._updater = None
         self._updater_func = None

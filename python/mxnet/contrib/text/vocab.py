@@ -74,7 +74,8 @@ class Vocabulary(object):
                  reserved_tokens=None):
 
         # Sanity checks.
-        assert min_freq > 0, '`min_freq` must be set to a positive value.'
+        if min_freq <= 0:
+            raise ValueError('`min_freq` must be set to a positive value.')
 
         if reserved_tokens is not None:
             reserved_token_set = set(reserved_tokens)

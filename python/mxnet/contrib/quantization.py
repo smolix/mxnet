@@ -134,14 +134,18 @@ def _quantize_symbol(sym, device, excluded_symbols=None, excluded_operators=None
     """
     num_excluded_symbols = 0
     if excluded_symbols is not None:
-        assert isinstance(excluded_symbols, list)
+        if not isinstance(excluded_symbols, list):
+            raise TypeError(
+                f"excluded_symbols must be a list, but got {type(excluded_symbols).__name__}")
         num_excluded_symbols = len(excluded_symbols)
     else:
         excluded_symbols = []
 
     num_excluded_ops = 0
     if excluded_operators is not None:
-        assert isinstance(excluded_operators, list)
+        if not isinstance(excluded_operators, list):
+            raise TypeError(
+                f"excluded_operators must be a list, but got {type(excluded_operators).__name__}")
         num_excluded_ops = len(excluded_operators)
     else:
         excluded_operators = []

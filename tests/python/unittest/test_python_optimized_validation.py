@@ -240,6 +240,127 @@ def _run_optimized_python(source):
     else:
         raise AssertionError('MaxPool2D accepted invalid pool_size rank')
     """,
+    """
+    from mxnet.gluon import Parameter
+    try:
+        Parameter('w', shape=(2,), grad_req='bogus')
+    except ValueError as err:
+        if 'grad_req must be one of' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Parameter accepted invalid grad_req')
+    """,
+    """
+    from mxnet.gluon import Parameter
+    try:
+        Parameter('w', shape=(2,), stype='bogus')
+    except ValueError as err:
+        if 'stype for Parameter must be' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Parameter accepted invalid stype')
+    """,
+    """
+    from mxnet.gluon import Parameter
+    try:
+        Parameter('w', shape=(2,), grad_stype='bogus')
+    except ValueError as err:
+        if 'grad_stype for Parameter must be' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Parameter accepted invalid grad_stype')
+    """,
+    """
+    from mxnet.optimizer import SGD
+    try:
+        SGD(lazy_update=True, use_fused_step=False)
+    except ValueError as err:
+        if 'lazy_update has to be turned off' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('SGD accepted lazy_update with use_fused_step=False')
+    """,
+    """
+    from mxnet.optimizer import SGD
+    try:
+        SGD(lazy_update=True, multi_precision=True)
+    except ValueError as err:
+        if 'multi_precision has be turned off' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('SGD accepted lazy_update with multi_precision')
+    """,
+    """
+    from mxnet.optimizer import Adam
+    try:
+        Adam(lazy_update=True, use_fused_step=False)
+    except ValueError as err:
+        if 'lazy_update has to be turned off' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Adam accepted lazy_update with use_fused_step=False')
+    """,
+    """
+    from mxnet.optimizer import LANS
+    try:
+        LANS(aggregate_num=46)
+    except ValueError as err:
+        if 'aggregate_num <= 45' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('LANS accepted aggregate_num=46')
+    """,
+    """
+    from mxnet.optimizer import LAMB
+    try:
+        LAMB(aggregate_num=46)
+    except ValueError as err:
+        if 'aggregate_num <= 45' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('LAMB accepted aggregate_num=46')
+    """,
+    """
+    from mxnet.contrib.text.vocab import Vocabulary
+    from collections import Counter
+    try:
+        Vocabulary(counter=Counter({'a': 1}), min_freq=0)
+    except ValueError as err:
+        if 'min_freq' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Vocabulary accepted min_freq=0')
+    """,
+    """
+    from mxnet.kvstore.kvstore import _get_kvstore_server_command_type
+    try:
+        _get_kvstore_server_command_type('kBogus')
+    except ValueError as err:
+        if 'Unknown command type' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('_get_kvstore_server_command_type accepted unknown command')
+    """,
+    """
+    from mxnet.kvstore.kvstore import KVStore
+    try:
+        KVStore('not-a-handle')
+    except TypeError as err:
+        if 'KVStoreHandle' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('KVStore accepted non-handle')
+    """,
+    """
+    from mxnet.optimizer import Optimizer
+    try:
+        Optimizer(param_idx2name='not-a-dict')
+    except TypeError as err:
+        if 'param_idx2name' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Optimizer accepted non-dict param_idx2name')
+    """,
 ])
 def test_user_validation_survives_optimized_python(source):
     _run_optimized_python(source)

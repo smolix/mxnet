@@ -88,8 +88,9 @@ class Adam(Optimizer):
                                    learning_rate=learning_rate,
                                    **kwargs)
         if not self.use_fused_step:
-            assert not lazy_update,\
-                'When use_fused_step is set to False, lazy_update has to be turned off.'
+            if lazy_update:
+                raise ValueError(
+                    'When use_fused_step is set to False, lazy_update has to be turned off.')
         self.lazy_update = lazy_update
         self.beta1 = beta1
         self.beta2 = beta2

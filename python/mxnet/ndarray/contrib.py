@@ -108,9 +108,10 @@ def _flatten(args, inout_str):
     if isinstance(args, ndarray.NDArray):
         return [args], int(0)
 
-    assert isinstance(args, (list, tuple)), \
-        f"{inout_str} must be (nested) list of NDArray, " \
-        f"but got {str(args)} of type {str(type(args))}"
+    if not isinstance(args, (list, tuple)):
+        raise TypeError(
+            f"{inout_str} must be (nested) list of NDArray, "
+            f"but got {str(args)} of type {str(type(args))}")
     flat = []
     fmts = []
     for i in args:
@@ -126,9 +127,10 @@ def _regroup(args, fmt):
             return args[0], args[1:]
         return args[:fmt], args[fmt:]
 
-    assert isinstance(args, (list, tuple)), \
-        "output must be (nested) list of NDArray, " \
-        f"but got {str(args)} of type {str(type(args))}"
+    if not isinstance(args, (list, tuple)):
+        raise TypeError(
+            "output must be (nested) list of NDArray, "
+            f"but got {str(args)} of type {str(type(args))}")
     ret = []
     for i in fmt:
         res, args = _regroup(args, i)

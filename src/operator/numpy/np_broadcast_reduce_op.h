@@ -816,6 +816,14 @@ struct avg_grad_a_kernel {
   }
 };
 
+template <int req>
+struct weighted_average_assign {
+  template <typename DType>
+  MSHADOW_XINLINE static void Map(index_t i, const DType* in_data, DType* out_data) {
+    KERNEL_ASSIGN(out_data[i], req, in_data[i]);
+  }
+};
+
 template <int req, int NDim>
 struct avg_grad_w_kernel {
   template <typename DType>
@@ -924,16 +932,17 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
     // Get temp space
     size_t temp_data_size = data.shape_.Size() * sizeof(DType);
     size_t temp_sum_size  = small1.Size() * sizeof(DType);
+    size_t temp_scl_size  = small2.Size() * sizeof(DType);
     TShape src_shape, dst_shape;
     BroadcastReduceShapeCompact(data.shape_, small1, &src_shape, &dst_shape);
     size_t workspace_size = 0;
     workspace_size        = broadcast::ReduceWorkspaceSize(s, dst_shape, {kWriteTo}, src_shape);
-    size_t temp_mem_size  = temp_data_size + temp_sum_size + workspace_size;
+    size_t temp_mem_size  = temp_data_size + temp_sum_size + temp_scl_size + workspace_size;
     Tensor<xpu, 1, char> temp_mem =
         ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(temp_mem_size), s);
     auto* temp_data_ptr = reinterpret_cast<DType*>(temp_mem.dptr_);
     auto* temp_sum_ptr  = reinterpret_cast<DType*>(temp_mem.dptr_ + temp_data_size);
-    char* workspace_ptr = temp_mem.dptr_ + temp_data_size + temp_sum_size;
+    char* workspace_ptr = temp_mem.dptr_ + temp_data_size + temp_sum_size + temp_scl_size;
     workspace           = Tensor<xpu, 1, char>(workspace_ptr, Shape1(workspace_size), s);
 
     // Compute weighted data
@@ -957,16 +966,41 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
     const TBlob& avg            = outputs[0];
     const TBlob& sum_of_weights = outputs[1];
     // Compute sum of weight
-    TBlob scl = sum_of_weights.reshape(small2);
+    TBlob scl;
+    MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+      if (req[1] == kWriteTo) {
+        scl = sum_of_weights.reshape(small2);
+      } else {
+        auto* temp_scl_ptr = reinterpret_cast<DType*>(
+            reinterpret_cast<char*>(sum_of_wa.dptr_) + small1.Size() * sizeof(DType));
+        scl = TBlob(temp_scl_ptr, small2, xpu::kDevMask);
+      }
+    });
 #if !defined(__CUDACC__)
     ReduceAxesComputeImpl<xpu, mshadow_op::sum, true>(
         ctx, {weights}, {kWriteTo}, {scl}, small2, &workspace);
+    if (req[1] != kNullOp && req[1] != kWriteTo) {
+      MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+        MXNET_ASSIGN_REQ_SWITCH(req[1], req_1, {
+          mxnet_op::Kernel<weighted_average_assign<req_1>, xpu>::Launch(
+              s, sum_of_weights.Size(), scl.dptr<DType>(), sum_of_weights.dptr<DType>());
+        });
+      });
+    }
     // Compute avg and assign output
     BinaryBroadcastCompute<xpu, mshadow_op::div>(
         attrs, ctx, {sum_of_wa, scl}, req, {avg.reshape(small1)});
 #else
     ReduceAxesRTCComputeImpl(
         ctx, {weights}, {kWriteTo}, {scl}, small2, "red::sum{}", &workspace, false, "identity");
+    if (req[1] != kNullOp && req[1] != kWriteTo) {
+      MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+        MXNET_ASSIGN_REQ_SWITCH(req[1], req_1, {
+          mxnet_op::Kernel<weighted_average_assign<req_1>, xpu>::Launch(
+              s, sum_of_weights.Size(), scl.dptr<DType>(), sum_of_weights.dptr<DType>());
+        });
+      });
+    }
     // Compute avg and assign output
     BinaryBroadcastRTCCompute{"div"}(  // NOLINT
         attrs,
@@ -1041,9 +1075,10 @@ void NumpyWeightedAverageForward(const nnvm::NodeAttrs& attrs,
                                  const std::vector<TBlob>& outputs) {
   using namespace mshadow;
   using namespace mshadow::expr;
-  if (req[0] == kNullOp)
+  if (req[0] == kNullOp && req[1] == kNullOp)
     return;
   CHECK_NE(req[0], kWriteInplace) << "Average does not support write in-place";
+  CHECK_NE(req[1], kWriteInplace) << "Average does not support write in-place";
   const auto& param = nnvm::get<NumpyWeightedAverageParam>(attrs.parsed);
   const TBlob& data = inputs[0];
   TShape small;
@@ -1053,7 +1088,11 @@ void NumpyWeightedAverageForward(const nnvm::NodeAttrs& attrs,
       // Compute sum of weights which equals to the product of sizes of reduced axes
       Stream<xpu>* s = ctx.get_stream<xpu>();
       auto ret       = outputs[1].FlatTo1D<xpu, DType>(s);
-      ret            = scalar<DType>(data.shape_.Size() / small.Size());
+      if (req[1] == kWriteTo) {
+        ret = scalar<DType>(data.shape_.Size() / small.Size());
+      } else if (req[1] == kAddTo) {
+        ret += scalar<DType>(data.shape_.Size() / small.Size());
+      }
     }
   });
   if (!param.weighted) {

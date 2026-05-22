@@ -995,6 +995,23 @@ def test_np_average(a_shape, w_shape, axes, is_weighted, req_a,
 
 
 @use_np
+def test_np_average_returned_sum_only_symbol():
+    a = mx.sym.var('a').as_np_ndarray()
+    weights = mx.sym.var('weights').as_np_ndarray()
+    sum_of_weights = mx.sym.np.average(a, axis=1, weights=weights, returned=True)[1]
+    exe = sum_of_weights._simple_bind(ctx=mx.cpu(),
+                                      a=(2, 3),
+                                      weights=(2, 3),
+                                      type_dict={'a': 'float32', 'weights': 'float32'})
+    exe.arg_dict['a'][:] = mx.nd.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    exe.arg_dict['weights'][:] = mx.nd.array([[1.0, 2.0, 4.0], [8.0, 16.0, 32.0]])
+
+    exe.forward(is_train=False)
+
+    assert_almost_equal(exe.outputs[0].asnumpy(), onp.array([7.0, 56.0], dtype=onp.float32))
+
+
+@use_np
 def test_np_mean():
     class TestMean(HybridBlock):
         def __init__(self, axis=None, dtype=None, keepdims=False):

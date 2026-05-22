@@ -84,6 +84,18 @@ inline int GetRealAxis(int axis, int ndim) {
   return axis < 0 ? (axis + ndim) : axis;
 }
 
+#if defined(__CUDACC__)
+inline void LayerNormCopyFloatToHalfGpu(mshadow::Stream<gpu>* s,
+                                        const TBlob& src,
+                                        const TBlob& dst) {
+  CHECK_EQ(src.type_flag_, mshadow::kFloat32);
+  CHECK_EQ(dst.type_flag_, mshadow::kFloat16);
+  CHECK_EQ(src.Size(), dst.Size());
+  mxnet_op::Kernel<mshadow_op::identity_with_cast, gpu>::Launch(
+      s, dst.Size(), dst.dptr<mshadow::half::half_t>(), src.dptr<float>());
+}
+#endif
+
 template <typename xpu>
 void LayerNormCompute(const nnvm::NodeAttrs& attrs,
                       const OpContext& ctx,
@@ -126,8 +138,17 @@ void LayerNormComputeGeneral(const nnvm::NodeAttrs& attrs,
   int channel_size      = red_src_shape.Size() / red_dst_shape.Size();
   // Initialize the workspace
   Tensor<xpu, 1, char> workspace;
-  size_t workspace_size =
+  size_t reduce_workspace_size =
       broadcast::ReduceWorkspaceSize(s, mean_data.shape_, req[0], in_data.shape_);
+  size_t workspace_size = reduce_workspace_size;
+#if defined(__CUDACC__)
+  const bool use_fp32_moments = inputs[0].type_flag_ == mshadow::kFloat16;
+  const size_t moment_bytes   = outputs[layernorm::kMean].Size() * sizeof(float);
+  const size_t data_bytes     = outputs[layernorm::kOut].Size() * sizeof(float);
+  if (use_fp32_moments) {
+    workspace_size += 2 * moment_bytes + data_bytes;
+  }
+#endif
   workspace = ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(workspace_size), s);
 
 #if !defined(__CUDACC__)
@@ -182,30 +203,55 @@ void LayerNormComputeGeneral(const nnvm::NodeAttrs& attrs,
   BinaryBroadcastCompute<xpu, mshadow_op::plus>(
       attrs, ctx, {outputs[0], beta}, {kWriteTo}, {outputs[0]});
 #else
+  TBlob out_work         = outputs[layernorm::kOut];
+  TBlob mean_work        = outputs[layernorm::kMean];
+  TBlob std_work         = outputs[layernorm::kStd];
+  TBlob mean_reduce_data = mean_data;
+  TBlob std_reduce_data  = std_data;
+  if (use_fp32_moments) {
+    char* fp32_workspace = workspace.dptr_ + reduce_workspace_size;
+    mean_work = TBlob(fp32_workspace,
+                      outputs[layernorm::kMean].shape_,
+                      outputs[layernorm::kMean].dev_mask(),
+                      mshadow::kFloat32,
+                      outputs[layernorm::kMean].dev_id());
+    std_work  = TBlob(fp32_workspace + moment_bytes,
+                     outputs[layernorm::kStd].shape_,
+                     outputs[layernorm::kStd].dev_mask(),
+                     mshadow::kFloat32,
+                     outputs[layernorm::kStd].dev_id());
+    out_work  = TBlob(fp32_workspace + 2 * moment_bytes,
+                     outputs[layernorm::kOut].shape_,
+                     outputs[layernorm::kOut].dev_mask(),
+                     mshadow::kFloat32,
+                     outputs[layernorm::kOut].dev_id());
+    mean_reduce_data = mean_work.reshape(red_dst_shape);
+    std_reduce_data  = std_work.reshape(red_dst_shape);
+  }
   // Calculate mean
   BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
     broadcast::RTCReduce(
-        ctx, mean_data, req[0], workspace, in_data, "red::sum{}", NDim, "identity");
+        ctx, mean_reduce_data, kWriteTo, workspace, in_data, "red::sum{}", NDim, "identity");
   });
-  MSHADOW_REAL_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    Tensor<xpu, 1, DType> mean_data_tensor = mean_data.FlatTo1D<xpu, DType>(s);
+  MSHADOW_REAL_TYPE_SWITCH(mean_reduce_data.type_flag_, DType, {
+    Tensor<xpu, 1, DType> mean_data_tensor = mean_reduce_data.FlatTo1D<xpu, DType>(s);
     mean_data_tensor /= scalar<DType>(channel_size);
   });
   // Calculate data = data - mean
   BinaryBroadcastRTCCompute{"sub"}(  // NOLINT
       attrs,
       ctx,
-      {inputs[0], outputs[layernorm::kMean]},
+      {inputs[0], mean_work},
       {kWriteTo},
-      {outputs[0]});
+      {out_work});
   // Calculate std
-  const TBlob centered_out = outputs[0].reshape(red_src_shape);
+  const TBlob centered_out = out_work.reshape(red_src_shape);
   BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
     broadcast::RTCReduce(
-        ctx, std_data, req[0], workspace, centered_out, "red::sum{}", NDim, "square");
+        ctx, std_reduce_data, kWriteTo, workspace, centered_out, "red::sum{}", NDim, "square");
   });
-  MSHADOW_REAL_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    Tensor<xpu, 1, DType> std_data_tensor = std_data.FlatTo1D<xpu, DType>(s);
+  MSHADOW_REAL_TYPE_SWITCH(std_reduce_data.type_flag_, DType, {
+    Tensor<xpu, 1, DType> std_data_tensor = std_reduce_data.FlatTo1D<xpu, DType>(s);
     std_data_tensor = F<mshadow_op::square_root>(std_data_tensor / scalar<DType>(channel_size) +
                                                  scalar<DType>(param.eps));
   });
@@ -213,23 +259,28 @@ void LayerNormComputeGeneral(const nnvm::NodeAttrs& attrs,
   BinaryBroadcastRTCCompute{"div"}(  // NOLINT
       attrs,
       ctx,
-      {outputs[0], outputs[layernorm::kStd]},
+      {out_work, std_work},
       {kWriteTo},
-      {outputs[0]});
+      {out_work});
   // Calculate data = data * gamma
   BinaryBroadcastRTCCompute{"mul"}(  // NOLINT
       attrs,
       ctx,
-      {outputs[0], gamma},
+      {out_work, gamma},
       {kWriteTo},
-      {outputs[0]});
+      {out_work});
   // Calculate data = data + beta
   BinaryBroadcastRTCCompute{"add"}(  // NOLINT
       attrs,
       ctx,
-      {outputs[0], beta},
+      {out_work, beta},
       {kWriteTo},
-      {outputs[0]});
+      {out_work});
+  if (use_fp32_moments) {
+    LayerNormCopyFloatToHalfGpu(s, out_work, outputs[layernorm::kOut]);
+    LayerNormCopyFloatToHalfGpu(s, mean_work, outputs[layernorm::kMean]);
+    LayerNormCopyFloatToHalfGpu(s, std_work, outputs[layernorm::kStd]);
+  }
 #endif
 }
 

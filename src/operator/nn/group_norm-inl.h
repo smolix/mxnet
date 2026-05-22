@@ -49,6 +49,18 @@ enum GroupNormOpInputs { kData, kGamma, kBeta };  // kGamma: scaling parameters,
 enum GroupNormOpOutputs { kOut, kMean, kStd };    // req, out_data
 }  // namespace groupnorm
 
+#if defined(__CUDACC__)
+inline void GroupNormCopyFloatToHalfGpu(mshadow::Stream<gpu>* s,
+                                        const TBlob& src,
+                                        const TBlob& dst) {
+  CHECK_EQ(src.type_flag_, mshadow::kFloat32);
+  CHECK_EQ(dst.type_flag_, mshadow::kFloat16);
+  CHECK_EQ(src.Size(), dst.Size());
+  mxnet_op::Kernel<mshadow_op::identity_with_cast, gpu>::Launch(
+      s, dst.Size(), dst.dptr<mshadow::half::half_t>(), src.dptr<float>());
+}
+#endif
+
 struct GroupNormParam : public dmlc::Parameter<GroupNormParam> {
   int num_groups;
   float eps;
@@ -119,9 +131,47 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
 
   Tensor<xpu, 1, char> workspace;
 
-  size_t workspace_size = broadcast::ReduceWorkspaceSize(s, red_dst_shape, req[0], red_src_shape);
+  size_t reduce_workspace_size =
+      broadcast::ReduceWorkspaceSize(s, red_dst_shape, req[0], red_src_shape);
+  size_t workspace_size = reduce_workspace_size;
+#if defined(__CUDACC__)
+  const bool use_fp32_moments = data.type_flag_ == mshadow::kFloat16;
+  const size_t moment_bytes   = mean.Size() * sizeof(float);
+  const size_t data_bytes     = outputs[groupnorm::kOut].Size() * sizeof(float);
+  if (use_fp32_moments) {
+    workspace_size += 2 * moment_bytes + data_bytes;
+  }
+#endif
 
   workspace = ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(workspace_size), s);
+
+#if defined(__CUDACC__)
+  TBlob output_work = outputs[groupnorm::kOut];
+  TBlob mean_work   = mean;
+  TBlob std_work    = std;
+  TBlob mean_reduce = mean_;
+  TBlob std_reduce  = std_;
+  if (use_fp32_moments) {
+    char* fp32_workspace = workspace.dptr_ + reduce_workspace_size;
+    mean_work = TBlob(fp32_workspace,
+                      mean.shape_,
+                      mean.dev_mask(),
+                      mshadow::kFloat32,
+                      mean.dev_id());
+    std_work  = TBlob(fp32_workspace + moment_bytes,
+                     std.shape_,
+                     std.dev_mask(),
+                     mshadow::kFloat32,
+                     std.dev_id());
+    output_work = TBlob(fp32_workspace + 2 * moment_bytes,
+                        outputs[groupnorm::kOut].shape_,
+                        outputs[groupnorm::kOut].dev_mask(),
+                        mshadow::kFloat32,
+                        outputs[groupnorm::kOut].dev_id());
+    mean_reduce = mean_work.reshape(red_dst_shape);
+    std_reduce  = std_work.reshape(red_dst_shape);
+  }
+#endif
 
   // Calculate mean
 #if !defined(__CUDACC__)
@@ -133,18 +183,35 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
   });
 #else
   BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
-    broadcast::RTCReduce(ctx, mean_, req[0], workspace, data_, "red::sum{}", NDim, "identity");
+    broadcast::RTCReduce(ctx, mean_reduce, kWriteTo, workspace, data_, "red::sum{}", NDim, "identity");
   });
 #endif  // !defined(__CUDACC__)
-  MSHADOW_REAL_TYPE_SWITCH(data.type_flag_, DType, {
-    Tensor<xpu, 1, DType> mean_data_tensor = mean_.FlatTo1D<xpu, DType>(s);
+  MSHADOW_REAL_TYPE_SWITCH(
+#if !defined(__CUDACC__)
+      data.type_flag_,
+#else
+      mean_reduce.type_flag_,
+#endif
+      DType, {
+    Tensor<xpu, 1, DType> mean_data_tensor =
+#if !defined(__CUDACC__)
+        mean_.FlatTo1D<xpu, DType>(s);
+#else
+        mean_reduce.FlatTo1D<xpu, DType>(s);
+#endif
     mean_data_tensor /= scalar<DType>(channel_size);
   });
 
   TBlob data_grp          = data.reshape(temp_data_shape);
+#if !defined(__CUDACC__)
   const TBlob& mean_grp   = mean.reshape(moments_shape);
   const TBlob& std_grp    = std.reshape(moments_shape);
   const TBlob& output_grp = outputs[groupnorm::kOut].reshape(temp_data_shape);
+#else
+  const TBlob mean_grp   = mean_work.reshape(moments_shape);
+  const TBlob std_grp    = std_work.reshape(moments_shape);
+  const TBlob output_grp = output_work.reshape(temp_data_shape);
+#endif
 
   // Calculate data = data - mean
 #if !defined(__CUDACC__)
@@ -160,7 +227,7 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
 #endif  // !defined(__CUDACC__)
 
   // Calculate std
-  const TBlob centered_out = outputs[groupnorm::kOut].reshape(red_src_shape);
+  const TBlob centered_out = output_grp.reshape(red_src_shape);
 #if !defined(__CUDACC__)
   MSHADOW_REAL_TYPE_SWITCH(output_grp.type_flag_, DType, {
     BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
@@ -170,11 +237,16 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
   });
 #else
   BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
-    broadcast::RTCReduce(ctx, std_, req[0], workspace, centered_out, "red::sum{}", NDim, "square");
+    broadcast::RTCReduce(ctx, std_reduce, kWriteTo, workspace, centered_out, "red::sum{}", NDim, "square");
   });
 #endif
   MSHADOW_REAL_TYPE_SWITCH(output_grp.type_flag_, DType, {
-    Tensor<xpu, 1, DType> std_data_tensor = std_.FlatTo1D<xpu, DType>(s);
+    Tensor<xpu, 1, DType> std_data_tensor =
+#if !defined(__CUDACC__)
+        std_.FlatTo1D<xpu, DType>(s);
+#else
+        std_reduce.FlatTo1D<xpu, DType>(s);
+#endif
     std_data_tensor = F<mshadow_op::square_root>(std_data_tensor / scalar<DType>(channel_size) +
                                                  scalar<DType>(param.eps));
   });
@@ -192,7 +264,11 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
       {output_grp});
 #endif  // !defined(__CUDACC__)
 
+#if !defined(__CUDACC__)
   const TBlob& output = outputs[groupnorm::kOut];
+#else
+  const TBlob& output = output_work;
+#endif
   mxnet::TShape new_param_shape(data_shape.ndim(), 1);
   new_param_shape[1] = data_shape[1];
 
@@ -221,6 +297,11 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
       {output, beta},
       {kWriteTo},
       {output});
+  if (use_fp32_moments) {
+    GroupNormCopyFloatToHalfGpu(s, output_work, outputs[groupnorm::kOut]);
+    GroupNormCopyFloatToHalfGpu(s, mean_work, outputs[groupnorm::kMean]);
+    GroupNormCopyFloatToHalfGpu(s, std_work, outputs[groupnorm::kStd]);
+  }
 #endif  // !defined(__CUDACC__)
 }
 

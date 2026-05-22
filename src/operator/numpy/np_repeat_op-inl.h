@@ -66,7 +66,7 @@ struct RepeatsParam : public dmlc::Parameter<RepeatsParam> {
 
 inline void GetRepeatsParams(const RepeatsParam& param,
                              const mxnet::TShape& ishape,
-                             int* repeats,
+                             nnvm::dim_t* repeats,
                              dmlc::optional<int>* axisOpt,
                              int* axis) {
   *repeats                                        = 0;
@@ -93,7 +93,7 @@ inline bool RepeatsOpShape(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(in_attrs->size(), 1U);
   CHECK_EQ(out_attrs->size(), 1U);
   const mxnet::TShape& ishape = (*in_attrs)[0];
-  int repeats                 = 0;
+  nnvm::dim_t repeats         = 0;
   dmlc::optional<int> axisOpt;
   int axis = -1;
   GetRepeatsParams(param, ishape, &repeats, &axisOpt, &axis);
@@ -105,7 +105,7 @@ inline bool RepeatsOpShape(const nnvm::NodeAttrs& attrs,
 
   mxnet::Tuple<int> tuple_with_repetitions = param.repeats.value();
   if (tuple_with_repetitions.ndim() != 1) {
-    int len = static_cast<bool>(axisOpt) ? ishape[axis] : ishape.Size();
+    nnvm::dim_t len = static_cast<bool>(axisOpt) ? ishape[axis] : ishape.Size();
     CHECK(len == tuple_with_repetitions.ndim())
         << "ValueError: Operands could not be broadcast together with shape "
         << "(" << len << ",)"
@@ -117,7 +117,9 @@ inline bool RepeatsOpShape(const nnvm::NodeAttrs& attrs,
     mxnet::TShape shape(ishape.ndim(), -1);
     for (int i = 0; i < ishape.ndim(); ++i) {
       if (i == axis) {
-        shape[i] = param.repeats.value().ndim() == 1 ? repeats * ishape[i] : repeats;
+        shape[i] = param.repeats.value().ndim() == 1 ?
+                       repeats * ishape[i] :
+                       repeats;
       } else {
         shape[i] = ishape[i];
       }
@@ -126,8 +128,10 @@ inline bool RepeatsOpShape(const nnvm::NodeAttrs& attrs,
                                       << " input tensors (containing >= 2^31 elements).";
     SHAPE_ASSIGN_CHECK(*out_attrs, 0, shape);
   } else {  // If axis is not input by user, return a flat 1D array of size = repeats
-    repeats = param.repeats.value().ndim() == 1 ? ishape.Size() * repeats : repeats;
-    mxnet::TShape shape(1, repeats);
+    nnvm::dim_t repeated_size = param.repeats.value().ndim() == 1 ?
+                                    ishape.Size() * static_cast<nnvm::dim_t>(repeats) :
+                                    repeats;
+    mxnet::TShape shape(1, repeated_size);
     CHECK_LT(shape.Size(), INT32_MAX) << "ValueError: np.repeat does not support large"
                                       << " input tensors (containing >= 2^31 elements).";
     SHAPE_ASSIGN_CHECK(*out_attrs, 0, shape);
@@ -251,7 +255,7 @@ void NumpyRepeatsOpForward(const nnvm::NodeAttrs& attrs,
                            const std::vector<TBlob>& outputs) {
   using namespace mshadow;
   const mxnet::TShape& ishape = inputs[0].shape_;
-  int repeats                 = 0;
+  nnvm::dim_t repeats         = 0;
   int axis                    = -1;
   dmlc::optional<int> axisOpt;
   const RepeatsParam& param = nnvm::get<RepeatsParam>(attrs.parsed);

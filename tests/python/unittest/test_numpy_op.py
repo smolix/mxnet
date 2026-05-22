@@ -5899,6 +5899,18 @@ def test_np_repeat():
 
 
 @use_np
+def test_np_repeat_large_shape_infer_shape_no_alloc():
+    large_dim = 1 << 31
+    data = mx.sym.var('data').as_np_ndarray()
+
+    repeated_flat = mx.sym.np.repeat(data, repeats=1)
+    assertRaises(MXNetError, repeated_flat.infer_shape, data=(2, large_dim // 2))
+
+    repeated_axis = mx.sym.np.repeat(data, repeats=1, axis=1)
+    assertRaises(MXNetError, repeated_axis.infer_shape, data=(2, large_dim // 2))
+
+
+@use_np
 def test_np_linalg_norm():
     class TestLinalgNorm(HybridBlock):
         def __init__(self, ord=None, axis=None, keepdims=False):

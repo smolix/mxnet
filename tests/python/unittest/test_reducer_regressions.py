@@ -80,6 +80,45 @@ def check_numpy_inf_min_max(ctx):
             onp.testing.assert_array_equal(mxnp.min(data).asnumpy(), onp.min(expected))
 
 
+def check_numpy_empty_reduce_out_and_shape(ctx):
+    data = mxnp.empty((0, 3), ctx=ctx, dtype='float32')
+
+    for op, expected in (
+            (mxnp.sum, onp.zeros((3,), dtype='float32')),
+            (mxnp.prod, onp.ones((3,), dtype='float32'))):
+        out = mxnp.full((3,), -7, ctx=ctx, dtype='float32')
+        ret = op(data, axis=0, out=out)
+        assert ret is out
+        onp.testing.assert_array_equal(out.asnumpy(), expected)
+
+        zero_out = op(data, axis=1)
+        assert zero_out.shape == (0,)
+        onp.testing.assert_array_equal(zero_out.asnumpy(), onp.empty((0,), dtype='float32'))
+
+    mean_out = mxnp.full((3,), -7, ctx=ctx, dtype='float32')
+    ret = mxnp.mean(data, axis=0, out=mean_out)
+    assert ret is mean_out
+    onp.testing.assert_array_equal(onp.isnan(mean_out.asnumpy()), onp.ones((3,), dtype=bool))
+    assert mxnp.mean(data, axis=1).shape == (0,)
+
+    for op, expected in (
+            (mxnp.any, onp.zeros((3,), dtype=bool)),
+            (mxnp.all, onp.ones((3,), dtype=bool))):
+        out = mxnp.empty((3,), ctx=ctx, dtype=bool)
+        ret = op(data, axis=0, out=out)
+        assert ret is out
+        onp.testing.assert_array_equal(out.asnumpy(), expected)
+        assert op(data, axis=1).shape == (0,)
+
+    for op in (mxnp.min, mxnp.max):
+        assert op(data, axis=1).shape == (0,)
+        try:
+            op(data, axis=0).wait_to_read()
+            assert False, "{} accepted an empty reduction axis".format(op.__name__)
+        except mx.base.MXNetError:
+            pass
+
+
 def test_bool_all_cpu_product_reducer():
     check_bool_all(mx.cpu())
 
@@ -94,3 +133,7 @@ def test_half_bfloat_min_max_cpu_residual_init():
 
 def test_numpy_inf_min_max_cpu():
     check_numpy_inf_min_max(mx.cpu())
+
+
+def test_numpy_empty_reduce_out_and_shape_cpu():
+    check_numpy_empty_reduce_out_and_shape(mx.cpu())

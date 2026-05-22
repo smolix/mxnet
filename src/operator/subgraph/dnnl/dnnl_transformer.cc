@@ -26,6 +26,7 @@
 #include "operator/contrib/transformer-inl.h"
 #include "operator/nn/dnnl/dnnl_base-inl.h"
 #include "operator/quantization/quantization_utils.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/tensor/elemwise_unary_op.h"
 #include "operator/subgraph/common.h"
 #include "dnnl_transformer-inl.h"
@@ -265,11 +266,19 @@ void SgDNNLSelfAttQKForward(const OpStatePtr& state_pointer,
           out_was_bf16.push_back(false);
         }
       }
-      std::vector<OpReqType> f32_req(req.size(), kWriteTo);
+      std::vector<OpReqType> f32_req;
+      f32_req.reserve(req.size());
+      for (size_t i = 0; i < req.size(); ++i) {
+        f32_req.push_back((i < out_was_bf16.size() && out_was_bf16[i]) ? kWriteTo : req[i]);
+      }
       SgDNNLSelfAttQKForward<with_split>(state_pointer, ctx, f32_in, f32_req, f32_out);
       DNNLStream::Get()->Submit();
       for (size_t i = 0; i < outputs.size(); ++i) {
         if (!out_was_bf16[i]) continue;
+        if (req[i] == kNullOp) continue;
+        CHECK_NE(req[i], kAddTo)
+            << "kAddTo not supported for BF16 fallback path on output " << i
+            << " of _sg_onednn_selfatt_qk";
         auto src_mem = f32_out[i].GetDNNLData();
         auto dst_mem = outputs[i].GetDNNLData();
         ReorderTo(src_mem, dst_mem);
@@ -433,10 +442,10 @@ void SgDNNLSelfAttQKOp::Forward(const OpContext& ctx,
   DNNLStream::Get()->Submit();
 
   if (param_.quantized && !param_.enabled_float_output.has_value()) {
-    float* output_min = outputs[1].data().dptr<float>();
-    float* output_max = outputs[2].data().dptr<float>();
-    *output_min       = min_output_;
-    *output_max       = max_output_;
+    AssignQuantizedRangeOutput(outputs[1].data().dptr<float>(), &min_output_,
+                               req[1], "_sg_onednn_selfatt_qk");
+    AssignQuantizedRangeOutput(outputs[2].data().dptr<float>(), &max_output_,
+                               req[2], "_sg_onednn_selfatt_qk");
   }
 }
 
@@ -779,11 +788,19 @@ static void DNNLSelfAttValAttForward(const OpStatePtr& state_pointer,
           out_was_bf16.push_back(false);
         }
       }
-      std::vector<OpReqType> f32_req(req.size(), kWriteTo);
+      std::vector<OpReqType> f32_req;
+      f32_req.reserve(req.size());
+      for (size_t i = 0; i < req.size(); ++i) {
+        f32_req.push_back((i < out_was_bf16.size() && out_was_bf16[i]) ? kWriteTo : req[i]);
+      }
       DNNLSelfAttValAttForward(state_pointer, ctx, f32_in, f32_req, f32_out);
       DNNLStream::Get()->Submit();
       for (size_t i = 0; i < outputs.size(); ++i) {
         if (!out_was_bf16[i]) continue;
+        if (req[i] == kNullOp) continue;
+        CHECK_NE(req[i], kAddTo)
+            << "kAddTo not supported for BF16 fallback path on output " << i
+            << " of _sg_onednn_selfatt_valatt";
         auto src_mem = f32_out[i].GetDNNLData();
         auto dst_mem = outputs[i].GetDNNLData();
         ReorderTo(src_mem, dst_mem);
@@ -949,11 +966,10 @@ void DNNLSelfAttValAttOp::Forward(const OpContext& ctx,
   DNNLStream::Get()->Submit();
 
   if (param_.quantized && !param_.enabled_float_output.has_value()) {
-    float* output_min = outputs[1].data().dptr<float>();
-    float* output_max = outputs[2].data().dptr<float>();
-
-    *output_min = min_output_;
-    *output_max = max_output_;
+    AssignQuantizedRangeOutput(outputs[1].data().dptr<float>(), &min_output_,
+                               req[1], "_sg_onednn_selfatt_valatt");
+    AssignQuantizedRangeOutput(outputs[2].data().dptr<float>(), &max_output_,
+                               req[2], "_sg_onednn_selfatt_valatt");
   }
 }
 

@@ -36,6 +36,7 @@
 #include "operator/nn/dnnl/dnnl_base-inl.h"
 #include "operator/nn/dnnl/dnnl_fully_connected-inl.h"
 #include "operator/quantization/quantization_utils.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/tensor/matrix_op-inl.h"
 #include "operator/subgraph/common.h"
 #include "dnnl_common.h"
@@ -121,6 +122,15 @@ void SgDNNLFCOp::Forward(const OpContext& ctx,
   const int out_index     = 0;
   const int out_min_index = 1;
   const int out_max_index = 2;
+
+  // Primary-output req contract: kNullOp means caller does not want the value,
+  // so skip the entire forward. kAddTo would require an extra accumulation
+  // step on top of the cached primitive's direct dst binding; reject it
+  // explicitly rather than silently overwriting the output buffer.
+  if (req[out_index] == kNullOp)
+    return;
+  CHECK_NE(req[out_index], kAddTo)
+      << "kAddTo is not supported for the primary output of _sg_onednn_fully_connected";
 
   const auto& default_param = full_param_.default_param;
   const auto& dnnl_param    = full_param_.dnnl_param;
@@ -244,15 +254,18 @@ void SgDNNLFCOp::Forward(const OpContext& ctx,
   DNNLStream::Get()->RegisterPrimArgs(fwd_->GetFwd(), args_);
   DNNLStream::Get()->Submit();
 
-  // AUDIT-S5-fc: only write min/max scalars when the caller actually asked for
-  // the quantized output to be produced (req != kNullOp for those outputs).
-  if (!dnnl_param.enabled_float_output.has_value() &&
-      req[out_min_index] != kNullOp && req[out_max_index] != kNullOp) {
-    float* output_min_ptr = out_data[out_min_index].data().dptr<float>();
-    float* output_max_ptr = out_data[out_max_index].data().dptr<float>();
-
-    *output_min_ptr = cached_output_min_;
-    *output_max_ptr = cached_output_max_;
+  // Route quantized min/max scalar outputs through the shared req-aware helper
+  // so kNullOp skips, kAddTo accumulates, and kWriteTo/kWriteInplace assign.
+  // The two outputs are independent: caller may ask for only one of them.
+  if (!dnnl_param.enabled_float_output.has_value()) {
+    AssignQuantizedRangeOutput(out_data[out_min_index].data().dptr<float>(),
+                               &cached_output_min_,
+                               req[out_min_index],
+                               "_sg_onednn_fully_connected");
+    AssignQuantizedRangeOutput(out_data[out_max_index].data().dptr<float>(),
+                               &cached_output_max_,
+                               req[out_max_index],
+                               "_sg_onednn_fully_connected");
   }
 }
 

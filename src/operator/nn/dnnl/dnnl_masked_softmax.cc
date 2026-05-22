@@ -126,6 +126,13 @@ void DNNLMaskedSoftmaxForward(const nnvm::NodeAttrs& attrs,
                               const std::vector<NDArray>& inputs,
                               const std::vector<OpReqType>& req,
                               const std::vector<NDArray>& outputs) {
+  // The output write is realized by the final binary multiply (step 3) writing
+  // into output's data buffer. Skip the entire work when the caller does not
+  // want any output, and reject kAddTo because the chain reuses the output
+  // buffer in place and cannot accumulate without an extra temp buffer.
+  if (req[0] == kNullOp)
+    return;
+  CHECK_NE(req[0], kAddTo) << "kAddTo is not supported for masked softmax oneDNN forward";
   TmpMemMgr::Get()->Init(ctx.requested[0]);
   const auto& param  = nnvm::get<MaskedSoftmaxParam>(attrs.parsed);
   const auto tensors = DNNLMaskedSoftmaxFwd::Tensors(inputs, outputs);

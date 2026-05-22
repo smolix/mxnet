@@ -1418,4 +1418,36 @@ TEST(IMPERATIVE, BNOp) {
   TestOpExBN(forward_attrs, backwards_attrs);
 }
 
+TEST(IMPERATIVE, NumpySumReduceDNNLAddToReq) {
+  nnvm::NodeAttrs attrs;
+  attrs.op = Op::Get("_npi_sum");
+  attrs.dict.insert({"axis", "(2,)"});
+  attrs.dict.insert({"keepdims", "False"});
+  attrs.op->attr_parser(&attrs);
+
+  NDArray input(TShape({2, 3, 4}), Context::CPU(), false, mshadow::kFloat32);
+  NDArray output(TShape({2, 3}), Context::CPU(), false, mshadow::kFloat32);
+
+  const std::vector<float> input_data{
+      1.f,  2.f,  3.f,  4.f,  5.f,  6.f,  7.f,  8.f,  9.f,  10.f, 11.f, 12.f,
+      13.f, 14.f, 15.f, 16.f, 17.f, 18.f, 19.f, 20.f, 21.f, 22.f, 23.f, 24.f};
+  const std::vector<float> output_seed(6, 10.f);
+  input.SyncCopyFromCPU(input_data.data(), input_data.size());
+  output.SyncCopyFromCPU(output_seed.data(), output_seed.size());
+
+  std::vector<NDArray*> inputs{&input};
+  std::vector<NDArray*> outputs{&output};
+  std::vector<OpReqType> req{kAddTo};
+  Imperative::Get()->InvokeOp(
+      Context(), attrs, inputs, outputs, req, DispatchMode::kFComputeEx, mxnet::OpStatePtr());
+  Engine::Get()->WaitForAll();
+
+  std::vector<float> actual(6);
+  output.SyncCopyToCPU(actual.data(), actual.size());
+  const std::vector<float> expected{20.f, 36.f, 52.f, 68.f, 84.f, 100.f};
+  for (size_t i = 0; i < actual.size(); ++i) {
+    EXPECT_FLOAT_EQ(expected[i], actual[i]);
+  }
+}
+
 #endif  // MXNET_USE_ONEDNN == 1

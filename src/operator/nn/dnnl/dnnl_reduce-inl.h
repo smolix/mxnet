@@ -58,7 +58,7 @@ class DNNLReduceFwd {
                 const Tensors& tensors,
                 const bool is_train,
                 const dnnl::algorithm reduction_alg);
-  void Execute(const Tensors& tensors) const;
+  void Execute(const Tensors& tensors, const OpReqType& req) const;
 
  private:
   std::shared_ptr<reduce_fwd_pd_t> reduce_pd;

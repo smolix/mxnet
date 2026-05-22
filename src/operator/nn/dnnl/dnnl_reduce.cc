@@ -122,12 +122,11 @@ void DNNLReduceForwardImpl(const NumpyReduceAxesParam& param,
                            const dnnl::algorithm reduction_alg) {
   if (req == kNullOp)
     return;
-  CHECK_NE(req, kAddTo);
 
   const bool is_train = ctx.is_train;
   const auto tensors  = DNNLReduceFwd::Tensors(in_data, out_data);
   const auto fwd      = DNNLReduceFwd::GetCached(param, tensors, is_train, reduction_alg);
-  fwd.Execute(tensors);
+  fwd.Execute(tensors, req);
 }
 
 DNNLReduceFwd::Tensors::Tensors(const NDArray& data, const NDArray& output)
@@ -213,19 +212,13 @@ reduce_fwd_pd_t DNNLReduceFwd::GetReduceFwdPd(const dnnl::memory::desc& input_md
   return reduce_fwd_pd_t(cpu_engine, reduction_alg, input_md, output_md, 0.f, 0.f);
 }
 
-void DNNLReduceFwd::Execute(const Tensors& tensors) const {
+void DNNLReduceFwd::Execute(const Tensors& tensors, const OpReqType& req) const {
   auto stream    = DNNLStream::Get();
-  auto engine    = CpuEngine::Get()->get_engine();
   auto input_mem = tensors.data.GetDNNLData();
-  if (tensors.out.shape().Size() == 1) {
-    // scalar result
-    auto out_mem = dnnl::memory(reduce_pd->dst_desc(), engine, tensors.out.data().dptr_);
-    stream->RegisterPrimArgs(*reduce_fwd, {{DNNL_ARG_SRC, *input_mem}, {DNNL_ARG_DST, out_mem}});
-  } else {
-    auto desc    = reduce_pd->dst_desc();
-    auto out_mem = tensors.out.GetDNNLData(&desc);
-    stream->RegisterPrimArgs(*reduce_fwd, {{DNNL_ARG_SRC, *input_mem}, {DNNL_ARG_DST, *out_mem}});
-  }
+  auto out_mem   = CreateDNNLMem(tensors.out, reduce_pd->dst_desc(), req);
+  stream->RegisterPrimArgs(*reduce_fwd,
+                           {{DNNL_ARG_SRC, *input_mem}, {DNNL_ARG_DST, *out_mem.second}});
+  CommitOutput(tensors.out, out_mem);
   stream->Submit();
 }
 

@@ -251,8 +251,8 @@ def test_bf16_binary_broadcast_elemwise_mixed_input(function, dtype):
     out_bf_16_2 = function(a_fp32, b_bf16)
     assert_almost_equal_with_err(out_bf_16_2, out_fp_32, rtol=rtol, atol=atol, etol=etol)
 
-@pytest.mark.skip(reason="env dependent, need check further.")
 def test_bf16_concat():
+    require_native_onednn_bf16()
     dshape = rand_shape_nd(4)
     a_shape = tuple(dshape)
     b_shape = tuple(dshape)

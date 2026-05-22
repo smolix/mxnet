@@ -38,8 +38,9 @@ def find_optional_library(lib, paths):
     pytest.skip(f"optional extension library {lib} not built")
 
 @pytest.mark.skipif(check_platform(), reason="not all machine types supported")
-@pytest.mark.skipif(is_cd_run(), reason="continuous delivery run - ignoring test")
 def test_custom_op_gpu():
+    # find_optional_library() below will pytest.skip if the optional extension
+    # shared library isn't present in the build tree.
     # possible places to find library file
     if (os.name=='posix'):
         lib = 'libcustomop_gpu_lib.so'

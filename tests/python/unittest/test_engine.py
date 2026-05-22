@@ -15,10 +15,22 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import ctypes
 import mxnet as mx
 import os
+import platform
 from mxnet.test_utils import environment
 import pytest
+
+
+def _is_llvm_openmp():
+    """Return True only if MXNet is linked against LLVM OpenMP (which respects
+    OMP_NUM_THREADS across fork)."""
+    try:
+        # LLVM OMP exports kmp_get_library_version / omp_get_library_version
+        return hasattr(mx.base._LIB, 'kmp_get_library_version')
+    except Exception:
+        return False
 
 def test_bulk():
     with mx.engine.bulk(10):
@@ -32,7 +44,9 @@ def test_bulk():
             x += 1
     assert (x.asnumpy() == 104).all()
 
-@pytest.mark.skip(reason="OMP platform dependent")
+@pytest.mark.skipif(not _is_llvm_openmp(),
+                    reason="post-fork OMP_NUM_THREADS only honored with LLVM OpenMP; "
+                           "GOMP forces child threads back to parent's count")
 def test_engine_openmp_after_fork():
     """
     Test that the number of max threads in the child is 1. After forking we should not use a bigger

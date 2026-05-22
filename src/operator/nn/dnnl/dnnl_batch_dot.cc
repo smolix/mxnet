@@ -29,6 +29,7 @@
 #include <limits>
 
 #include "dnnl_batch_dot-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/quantization/quantization_utils.h"
 
 namespace mxnet {
@@ -250,10 +251,18 @@ void DNNLBatchDotFwd::Execute(const OpContext& ctx,
       }
     }
 
-    float* min_output_ptr = outputs[DotOut::out_min].data().dptr<float>();
-    float* max_output_ptr = outputs[DotOut::out_max].data().dptr<float>();
-    *min_output_ptr       = min_output;
-    *max_output_ptr       = max_output;
+    if (req[DotOut::out_min] != kNullOp) {
+      AssignQuantizedRangeOutput(outputs[DotOut::out_min].data().dptr<float>(),
+                                 &min_output,
+                                 req[DotOut::out_min],
+                                 "_sg_onednn_batch_dot");
+    }
+    if (req[DotOut::out_max] != kNullOp) {
+      AssignQuantizedRangeOutput(outputs[DotOut::out_max].data().dptr<float>(),
+                                 &max_output,
+                                 req[DotOut::out_max],
+                                 "_sg_onednn_batch_dot");
+    }
   }
 }
 

@@ -737,6 +737,10 @@ class CoreOpExecutor : public test::op::OperatorDataInitializer<DType>,
   const std::vector<TBlob>& output_blobs() const {
     return blob_outputs_;
   }
+  void set_requests(const std::vector<OpReqType>& req) {
+    CHECK_EQ(req.size(), req_.size());
+    req_ = req;
+  }
 
   /*!
    * \brief Backward inputs (i.e. output grad)

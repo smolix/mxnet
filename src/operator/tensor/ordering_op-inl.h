@@ -246,8 +246,12 @@ using namespace mshadow;
 
 struct fill_ind_to_one {
   template <typename DType, typename IDXType>
-  MSHADOW_XINLINE static void Map(index_t i, const IDXType* indices, DType* out) {
-    out[indices[i]] = static_cast<DType>(1);
+  MSHADOW_XINLINE static void Map(index_t i, const IDXType* indices, int req, DType* out) {
+    if (req == kAddTo) {
+      out[indices[i]] += static_cast<DType>(1);
+    } else {
+      out[indices[i]] = static_cast<DType>(1);
+    }
   }
 };
 
@@ -581,8 +585,13 @@ void TopKImpl(const RunContext& ctx,
   // Cast `ret_indices` from int to real_t could introduce conversion error when the element_num
   // is large enough.
   if (param.ret_typ == topk_enum::kReturnMask) {
+    if (req[0] == kNullOp) {
+      return;
+    }
     Tensor<xpu, 1, DType> ret_mask = ret[0].FlatTo1D<xpu, DType>(s);
-    ret_mask                       = scalar<DType>(0);
+    if (req[0] == kWriteTo) {
+      ret_mask = scalar<DType>(0);
+    }
     sel_indices = reshape(slice<1>(inplace_reshape(indices, Shape2(batch_size, element_num)), 0, k),
                           Shape1(batch_size * k));
     if (do_transpose) {
@@ -591,11 +600,9 @@ void TopKImpl(const RunContext& ctx,
       sel_indices = transpose_indices(
           sel_indices, Shape3(src_shape[0], src_shape[2], src_shape[1]), Shape3(0, 2, 1));
     }
-    if (req[0] == kNullOp) {
-      return;
-    } else if (req[0] == kWriteTo) {
+    if (req[0] == kWriteTo || req[0] == kAddTo) {
       mxnet_op::Kernel<fill_ind_to_one, xpu>::Launch(
-          s, batch_size * k, sel_indices.dptr_, ret_mask.dptr_);
+          s, batch_size * k, sel_indices.dptr_, req[0], ret_mask.dptr_);
     } else {
       LOG(FATAL) << "req=" << req[0] << " is not supported yet.";
     }
@@ -809,8 +816,13 @@ void TopKImplwithWorkspace(const RunContext& ctx,
   // Cast `ret_indices` from int to real_t could introduce conversion error when the element_num
   // is large enough.
   if (param.ret_typ == topk_enum::kReturnMask) {
+    if (req[0] == kNullOp) {
+      return;
+    }
     Tensor<xpu, 1, DType> ret_mask = ret[0].FlatTo1D<xpu, DType>(s);
-    ret_mask                       = scalar<DType>(0);
+    if (req[0] == kWriteTo) {
+      ret_mask = scalar<DType>(0);
+    }
     sel_indices = reshape(slice<1>(inplace_reshape(indices, Shape2(batch_size, element_num)), 0, k),
                           Shape1(batch_size * k));
     if (do_transpose) {
@@ -819,11 +831,9 @@ void TopKImplwithWorkspace(const RunContext& ctx,
       sel_indices = transpose_indices(
           sel_indices, Shape3(src_shape[0], src_shape[2], src_shape[1]), Shape3(0, 2, 1));
     }
-    if (req[0] == kNullOp) {
-      return;
-    } else if (req[0] == kWriteTo) {
+    if (req[0] == kWriteTo || req[0] == kAddTo) {
       mxnet_op::Kernel<fill_ind_to_one, xpu>::Launch(
-          s, batch_size * k, sel_indices.dptr_, ret_mask.dptr_);
+          s, batch_size * k, sel_indices.dptr_, req[0], ret_mask.dptr_);
     } else {
       LOG(FATAL) << "req=" << req[0] << " is not supported yet.";
     }

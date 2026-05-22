@@ -29,8 +29,10 @@
 
 #include <climits>
 #include <cmath>
+#include <cstdint>
 #include <set>
 
+#include "../../src/operator/nn/batch_norm-inl.h"
 #include "../../src/operator/nn/convolution-inl.h"
 #include "../../src/operator/nn/deconvolution-inl.h"
 #include "../../src/operator/nn/dnnl/dnnl_base-inl.h"
@@ -43,6 +45,7 @@
 
 using namespace mxnet;
 using namespace mxnet::test;
+namespace qbn = mxnet::op::quantized_batchnorm;
 
 OpAttrs GetCopyOp() {
   OpAttrs attrs;
@@ -1448,6 +1451,125 @@ TEST(IMPERATIVE, NumpySumReduceDNNLAddToReq) {
   for (size_t i = 0; i < actual.size(); ++i) {
     EXPECT_FLOAT_EQ(expected[i], actual[i]);
   }
+}
+
+TEST(IMPERATIVE, QuantizedBatchNormDNNLReq) {
+  nnvm::NodeAttrs attrs;
+  attrs.op = Op::Get("_contrib_quantized_batch_norm");
+  attrs.dict.insert({"axis", "1"});
+  attrs.dict.insert({"fix_gamma", "False"});
+  attrs.dict.insert({"use_global_stats", "True"});
+  attrs.dict.insert({"min_calib_range", "-5"});
+  attrs.dict.insert({"max_calib_range", "5"});
+  attrs.op->attr_parser(&attrs);
+
+  const std::vector<int8_t> data_values{-8, -6, -4, -2, 2, 4, 6, 8};
+  const std::vector<float> gamma_values{1.f, 1.f};
+  const std::vector<float> beta_values{0.f, 0.f};
+  const std::vector<float> mean_values{0.f, 0.f};
+  const std::vector<float> var_values{1.f, 1.f};
+  const std::vector<float> data_min{-4.f};
+  const std::vector<float> data_max{4.f};
+
+  auto make_inputs = [&]() {
+    std::vector<NDArray> inputs;
+    inputs.emplace_back(TShape({1, 2, 2, 2}), Context::CPU(), false, mshadow::kInt8);
+    inputs.emplace_back(TShape({2}), Context::CPU(), false, mshadow::kFloat32);
+    inputs.emplace_back(TShape({2}), Context::CPU(), false, mshadow::kFloat32);
+    inputs.emplace_back(TShape({2}), Context::CPU(), false, mshadow::kFloat32);
+    inputs.emplace_back(TShape({2}), Context::CPU(), false, mshadow::kFloat32);
+    inputs.emplace_back(TShape({1}), Context::CPU(), false, mshadow::kFloat32);
+    inputs.emplace_back(TShape({1}), Context::CPU(), false, mshadow::kFloat32);
+    inputs[qbn::kData].SyncCopyFromCPU(data_values.data(), data_values.size());
+    inputs[qbn::kGamma].SyncCopyFromCPU(gamma_values.data(), gamma_values.size());
+    inputs[qbn::kBeta].SyncCopyFromCPU(beta_values.data(), beta_values.size());
+    inputs[qbn::kInMovingMean].SyncCopyFromCPU(mean_values.data(), mean_values.size());
+    inputs[qbn::kInMovingVar].SyncCopyFromCPU(var_values.data(), var_values.size());
+    inputs[qbn::kDataMin].SyncCopyFromCPU(data_min.data(), data_min.size());
+    inputs[qbn::kDataMax].SyncCopyFromCPU(data_max.data(), data_max.size());
+    return inputs;
+  };
+
+  auto invoke = [&](std::vector<NDArray>* inputs,
+                    std::vector<NDArray>* outputs,
+                    const std::vector<OpReqType>& req) {
+    std::vector<NDArray*> input_ptrs;
+    std::vector<NDArray*> output_ptrs;
+    for (auto& input : *inputs) {
+      input_ptrs.push_back(&input);
+    }
+    for (auto& output : *outputs) {
+      output_ptrs.push_back(&output);
+    }
+    Imperative::Get()->InvokeOp(Context(),
+                                attrs,
+                                input_ptrs,
+                                output_ptrs,
+                                req,
+                                DispatchMode::kFComputeEx,
+                                mxnet::OpStatePtr());
+    Engine::Get()->WaitForAll();
+  };
+
+  std::vector<NDArray> baseline_inputs = make_inputs();
+  std::vector<NDArray> baseline_outputs{
+      NDArray(TShape({1, 2, 2, 2}), Context::CPU(), false, mshadow::kInt8),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  invoke(&baseline_inputs, &baseline_outputs, {kWriteTo, kWriteTo, kWriteTo});
+  std::vector<int8_t> baseline_out(data_values.size());
+  std::vector<float> baseline_min(1);
+  std::vector<float> baseline_max(1);
+  baseline_outputs[qbn::kOut].SyncCopyToCPU(baseline_out.data(), baseline_out.size());
+  baseline_outputs[qbn::kOutMin].SyncCopyToCPU(baseline_min.data(), baseline_min.size());
+  baseline_outputs[qbn::kOutMax].SyncCopyToCPU(baseline_max.data(), baseline_max.size());
+  EXPECT_FLOAT_EQ(-5.f, baseline_min[0]);
+  EXPECT_FLOAT_EQ(5.f, baseline_max[0]);
+
+  std::vector<NDArray> null_inputs = make_inputs();
+  std::vector<NDArray> null_outputs{
+      NDArray(TShape({1, 2, 2, 2}), Context::CPU(), false, mshadow::kInt8),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  const std::vector<int8_t> output_sentinel(data_values.size(), 77);
+  const std::vector<float> min_sentinel{3.f};
+  const std::vector<float> max_sentinel{7.f};
+  null_outputs[qbn::kOut].SyncCopyFromCPU(output_sentinel.data(), output_sentinel.size());
+  null_outputs[qbn::kOutMin].SyncCopyFromCPU(min_sentinel.data(), min_sentinel.size());
+  null_outputs[qbn::kOutMax].SyncCopyFromCPU(max_sentinel.data(), max_sentinel.size());
+  invoke(&null_inputs, &null_outputs, {kNullOp, kAddTo, kAddTo});
+  std::vector<int8_t> null_out(data_values.size());
+  std::vector<float> null_min(1);
+  std::vector<float> null_max(1);
+  null_outputs[qbn::kOut].SyncCopyToCPU(null_out.data(), null_out.size());
+  null_outputs[qbn::kOutMin].SyncCopyToCPU(null_min.data(), null_min.size());
+  null_outputs[qbn::kOutMax].SyncCopyToCPU(null_max.data(), null_max.size());
+  EXPECT_EQ(output_sentinel, null_out);
+  EXPECT_FLOAT_EQ(-2.f, null_min[0]);
+  EXPECT_FLOAT_EQ(12.f, null_max[0]);
+
+  std::vector<NDArray> add_inputs = make_inputs();
+  std::vector<NDArray> add_outputs{
+      NDArray(TShape({1, 2, 2, 2}), Context::CPU(), false, mshadow::kInt8),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  const std::vector<int8_t> add_seed(data_values.size(), 2);
+  add_outputs[qbn::kOut].SyncCopyFromCPU(add_seed.data(), add_seed.size());
+  add_outputs[qbn::kOutMin].SyncCopyFromCPU(min_sentinel.data(), min_sentinel.size());
+  add_outputs[qbn::kOutMax].SyncCopyFromCPU(max_sentinel.data(), max_sentinel.size());
+  invoke(&add_inputs, &add_outputs, {kAddTo, kAddTo, kNullOp});
+  std::vector<int8_t> add_out(data_values.size());
+  std::vector<float> add_min(1);
+  std::vector<float> add_max(1);
+  add_outputs[qbn::kOut].SyncCopyToCPU(add_out.data(), add_out.size());
+  add_outputs[qbn::kOutMin].SyncCopyToCPU(add_min.data(), add_min.size());
+  add_outputs[qbn::kOutMax].SyncCopyToCPU(add_max.data(), add_max.size());
+  for (size_t i = 0; i < add_out.size(); ++i) {
+    EXPECT_EQ(static_cast<int>(baseline_out[i]) + static_cast<int>(add_seed[i]),
+              static_cast<int>(add_out[i]));
+  }
+  EXPECT_FLOAT_EQ(-2.f, add_min[0]);
+  EXPECT_FLOAT_EQ(7.f, add_max[0]);
 }
 
 #endif  // MXNET_USE_ONEDNN == 1

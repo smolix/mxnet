@@ -24,6 +24,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 #include "operator/nn/dnnl/dnnl_batch_norm-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/quantization/quantization_utils.h"
 
 namespace mxnet {
@@ -75,16 +76,31 @@ static void DNNLQuantizedBatchNormForward(const nnvm::NodeAttrs& attrs,
   const float max_data     = in_data[quantized_batchnorm::kDataMax].data().dptr<float>()[0];
   const float max_abs_data = std::max(std::abs(min_data), std::abs(max_data));
 
-  float* min_output_ptr = outputs[quantized_batchnorm::kOutMin].data().dptr<float>();
-  float* max_output_ptr = outputs[quantized_batchnorm::kOutMax].data().dptr<float>();
+  float min_output = 0.0f;
+  float max_output = 0.0f;
   if (param.min_calib_range.has_value() && param.max_calib_range.has_value()) {
-    *max_output_ptr = param.max_calib_range.value();
-    *min_output_ptr = param.min_calib_range.value();
+    max_output = param.max_calib_range.value();
+    min_output = param.min_calib_range.value();
   } else {
     LOG(FATAL) << "min_calib_range or max_calib_range is not available. Quantized BN currently "
                   "don't support calib_mode=None";
   }
-  const float max_abs_output = std::max(std::abs(*min_output_ptr), std::abs(*max_output_ptr));
+  if (req[quantized_batchnorm::kOutMin] != kNullOp) {
+    AssignQuantizedRangeOutput(outputs[quantized_batchnorm::kOutMin].data().dptr<float>(),
+                               &min_output,
+                               req[quantized_batchnorm::kOutMin],
+                               "_contrib_quantized_batch_norm");
+  }
+  if (req[quantized_batchnorm::kOutMax] != kNullOp) {
+    AssignQuantizedRangeOutput(outputs[quantized_batchnorm::kOutMax].data().dptr<float>(),
+                               &max_output,
+                               req[quantized_batchnorm::kOutMax],
+                               "_contrib_quantized_batch_norm");
+  }
+  if (req[quantized_batchnorm::kOut] == kNullOp) {
+    return;
+  }
+  const float max_abs_output = std::max(std::abs(min_output), std::abs(max_output));
 
   // v3: use_scale_shift split; use_scale + use_shift with separate args.
   dnnl::normalization_flags flags = dnnl::normalization_flags::use_global_stats |
@@ -125,16 +141,17 @@ static void DNNLQuantizedBatchNormForward(const nnvm::NodeAttrs& attrs,
 
   const NDArray& out = outputs[batchnorm::kOut];
   auto fwd_dst_desc  = fwd.GetPd().dst_desc();
-  auto out_mem       = const_cast<NDArray&>(out).CreateDNNLData(&fwd_dst_desc);
+  auto out_mem       = CreateDNNLMem(out, fwd_dst_desc, req[quantized_batchnorm::kOut]);
   dnnl_args_map_t net_args;
   net_args[DNNL_ARG_SRC]      = *data_mem;
   net_args[DNNL_ARG_SCALE]    = scale_mem;
   net_args[DNNL_ARG_SHIFT]    = shift_mem;
-  net_args[DNNL_ARG_DST]      = *out_mem;
+  net_args[DNNL_ARG_DST]      = *out_mem.second;
   net_args[DNNL_ARG_MEAN]     = *rescaled_mean_mem;
   net_args[DNNL_ARG_VARIANCE] = *rescaled_var_mem;
 
   DNNLStream::Get()->RegisterPrimArgs(fwd.GetFwd(), net_args);
+  CommitOutput(out, out_mem);
   DNNLStream::Get()->Submit();
 }
 

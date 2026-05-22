@@ -64,22 +64,42 @@ Status labels:
 This is the short queue for what still needs action. Detailed context remains in
 the sections below; resolved items are retired to the appendix.
 
-| Priority | Trackers | Work left | Next action |
+### Cleanup pass closed (2026-05-22)
+
+The `cleanup/p0-p1-p2-20260522` branch and the `v2.0.0+cu13.bw.20260522`
+tag are both on GitHub.  The corresponding wheel
+`dist/mxnet-2.0.0+cu13.bw.20260522-cp312-cp312-linux_x86_64.whl` (516 MB)
+was built and clean-venv acceptance-tested before tagging.
+
+Items closed in this pass:
+
+| Tracker | Resolution |
+|---|---|
+| XOP19 | oneDNN output-request audit closed: masked_softmax kNullOp/kAddTo guards, BF16 fallback per-output req preservation in `_sg_onednn_conv` / selfatt_qk / selfatt_valatt, quantized FC/conv/transformer range outputs routed through `AssignQuantizedRangeOutput`, primary outputs in FC/conv early-return on kNullOp and reject kAddTo.  Commit `f97f9cab8` + smoke test in `tests/python/dnnl/test_xop19_onednn_req.py`. |
+| XOP21 | 24 large-shape int truncation sites hardened in LayerNorm, GroupNorm, ROIAlign, PSROIPool, depthwise conv, FC, transformer, linalg, image; cuDNN bilinear/spatial transformer add CHECK_LE per dim.  Commit `a07c27e2e` + `tests/python/unittest/test_xop21_large_shape_validation.py`. |
+| XOP22 | 26 public Python assert→exception conversions across KVStore, Gluon Parameter, all optimizers, contrib text/quantization/ndarray; 11 new subprocess `-O` regressions (31 passed, was 20).  Commit `2aeee1473`. |
+| XOP23 | 5 unsafe engine asserts promoted to CHECK in `threaded_engine.cc`, `threaded_engine_pooled.cc`, `kvstore_nccl.h`; new gtest stress file `tests/cpp/engine/threaded_engine_invariants_test.cc`.  Commit `3e7ea07b3`. |
+| FS13 | 1 stale test file removed (`test_engine_import.py`); 8 files updated with precise capability guards.  Commit `568ec1aba`. |
+| CN2 | GCC 13+ `-Wno-error=array-bounds` / `-Wno-error=stringop-overflow` in CMakeLists.txt for RelWithDebInfo.  Commit `e2b102404`. |
+| O11 + wheel | Wheel built, provenance-validated, tagged.  Tag `v2.0.0+cu13.bw.20260522`. |
+| Tooling | New helpers: `tools/build_cleanup_wheel.sh`, `tools/run_fp16_remote_smoke.sh` (remote target with BF16 capability), `tools/run_wheel_full_test.sh` (clean-venv acceptance).  Commit `aec700eca`. |
+
+### Carry-over for next session
+
+| Priority | Tracker | Status | Next action |
 |---|---|---|---|
-| P0 | FS12 | Deferred: order-sensitive bus error around `test_randint_generator` reproduces only in a long direct shard; focused reruns and the standalone file pass cleanly. Not a wheel blocker. | Revisit only if it reproduces during post-wheel validation. |
-| P0 | XOP19 | Cleanup pass landed on `cleanup/p0-p1-p2-20260522`: masked softmax now early-returns on kNullOp and rejects kAddTo; BF16 fallback in `_sg_onednn_conv`, selfatt_qk, selfatt_valatt preserves caller `req` per-output and rejects kAddTo on bf16-derived outputs; primary outputs in `_sg_onednn_fully_connected` / `_sg_onednn_conv` early-return on kNullOp and reject kAddTo; quantized range outputs in FC, conv, selfatt_qk, selfatt_valatt now route through the shared `AssignQuantizedRangeOutput` helper. | Validate against rebuilt library, then commit; XOP7 deconv-weight-grad / reshape copyback paths are already either correct (reshape) or pending audit (deconv weight grad). |
-| P0 | B4, XOP18 | Architectural blocker confirmed: NNVM/CachedOp does not support custom backward nodes referencing subgraph op inputs (segfaults). `tests/python/dnnl/subgraphs/test_quantized_backward.py` documents this with strict xfails. | Treat B4 as deferred until the executor framework supports the required backward shape; no concrete plan to revisit in this cleanup. |
-| P1 | XOP12 | Reusable operator contract tests are still missing. | Out of scope for this cleanup PR; revisit after wheel ships. |
-| P1 | XOP21 | 24 large-shape truncation sites converted: LayerNorm/GroupNorm channel_size to int64_t (header+CUDA matched), PSROIPool/ROIAlign count to mxnet::index_t with loop variables promoted, depthwise conv, fully_connected, transformer-inl, allclose all hardened; cuDNN bilinear_sampler/spatial_transformer added `CHECK_LE` per dim; image_random channel checks added; linalg_impl `ws_size` / `matrix_size` hardened. | Validate in unified rebuild. |
-| P1 | XOP22 | 20 required + 6 optional `assert→raise` conversions across KVStore, Gluon Parameter, all optimizers, contrib text/quantization/ndarray; 11 new subprocess `-O` regressions added (31 passed, was 20); two stale AssertionError-expecting tests in `test_gluon.py` rewired to ValueError. | Done. |
-| P1 | XOP23 | 5 unsafe engine `assert()` calls → `CHECK*` in `threaded_engine.cc`, `threaded_engine_pooled.cc`, `kvstore_nccl.h`. | Validate in unified rebuild; agent built `mxnet_unit_tests` to confirm. |
-| P1 | FS8, FS13 | 1 stale test file removed (`test_engine_import.py`, admittedly ineffective); 8 files updated with precise capability guards (LLVM-OpenMP probe replacing platform skip, BF16 runtime probe replacing env-dependent skip, GPU quantization xfail-strict-false with B4 reference, `test_conv2d_16c` skipif removed because it passes on Ada, etc.). | Done. |
-| P2 | CN2 | GCC 13+ flexible-tail policy: `-Wno-error=array-bounds` and `-Wno-error=stringop-overflow` added to RelWithDebInfo target_compile_options (warnings remain visible). | Done. |
-| P2 | CN9, L6 | Bundled dmlc queue u32 sentinel and oneDNN ITT executable-stack note: confirmed as upstream/submodule policy items, not appropriate to patch in this fork. | Defer indefinitely. |
-| P2 | O11 + wheel | Wheel built and provenance-validated on commit `3ec9f9446`: sm_80/86/89/90/100/120+PTX, CUDA on, OpenCV off, NCCL off, oneDNN on. Clean-venv acceptance partially complete: cpu_xop19 2/2, cpu_optimized_validation 31/31, cpu_optimizer 37/37, cpu_gluon_parameter 13/13, cpu_layer_norm 6/6, cpu_group_norm passed, cpu_test_operator 1096/1096; cpu_unittest 65 fail (1 stale AssertionError test fixed in 63e8c57e5; remainder are pre-existing oneDNN-0-dim and missing-scipy in the clean venv, not introduced by this branch); cpu_test_random collection error from missing scipy; DNNL + GPU lanes still running. | Tag `v2.0.0+cu13.bw.20260522` after sweep finishes; Alex pushes the tag. |
-| P2 | C4, O1, O4, O7 | Release/build matrix + Linux wheel runtime bundling decisions stable. | No change in this cleanup pass. |
-| P2 | T2-T6, T11 | Ecosystem and cross-platform integration coverage is incomplete. | Out of scope for this cleanup. |
-| External | L4, D5-D8 | D2L notebook diagnostics. | Unchanged. |
+| P0 | FS12 | Deferred — order-sensitive bus error around `test_randint_generator`; reproduces only in long direct shards. | Bisect predecessors under gdb if it ever recurs in CI; otherwise leave deferred. |
+| P0 | B4 / XOP18 | Architectural blocker confirmed: NNVM/CachedOp doesn't support custom backward referencing subgraph op inputs.  `tests/python/dnnl/subgraphs/test_quantized_backward.py` documents this with strict xfails. | Revisit only after the executor framework supports the required backward shape. |
+| P0 | Pre-existing oneDNN 0-dim LOG(FATAL) | New: `ndarray.cc:624` rejects ndim==0 NDArrays; bites `_mx_np.square(x).sum().item()` paths in clip_global_norm, loss code, sync_batchnorm, embedding accumulation, QAT composite forward.  Untouched since 2b08298b9 (pre-cleanup). | Add a default-format fallback in `NDArray::SetDNNLMem()` when ndim()==0 instead of LOG(FATAL); affects ~57 test cases. |
+| P0 | Pre-existing BoxNMS segfault | `tests/python/unittest/test_contrib_operator.py::test_box_nms_backward_add_request` segfaults on grad_req='add'.  Not from this branch (last touched in `8cf3410a4`). | Triage native BoxNMS backward request handling under sanitizers. |
+| P1 | XOP12 | Reusable operator contract tests still missing — would have caught both 0-dim and BoxNMS-add issues earlier. | Build the parameterized req/copyback/hidden-output/aux-state/backend-parity harness, then require new XOP fixes to use it. |
+| P1 | XOP7 leftovers | DNNL deconvolution weight-grad fast path uses raw `CreateDNNLData` (audit-flagged but not converted in this pass). | Convert to CreateDNNLMem + CommitOutput pattern; add focused regression. |
+| P1 | Wheel test harness | `tools/run_wheel_full_test.sh` doesn't pip-install scipy, so cpu_test_random and gpu_operator_* collect-error in the clean venv. | Add `scipy` (and any other transitive test deps surfaced) to the venv-install step. |
+| P2 | CN9 / L6 | Bundled dmlc queue u32 sentinel and oneDNN ITT executable-stack note remain submodule policy items. | Track upstream; not appropriate to commit private patches in this fork. |
+| P2 | C4, O1, O4, O7 | Release/build matrix + Linux wheel runtime bundling decisions stable. | No change planned. |
+| P2 | T2-T6, T11 | Ecosystem + cross-platform lifecycle coverage incomplete. | Pick after the next major MXNet refactor lands. |
+| External | L4, D5-D8 | D2L notebook diagnostics. | Wait for fresh notebook-run/output-audit artifacts. |
+| Remote | FP16 smoke | `tools/run_fp16_remote_smoke.sh` is ready for a Zen 4+ host with BF16 (e.g. Ryzen 7000-series + RTX 3070). | Run on the target; bundle the report and ingest fresh BF16 findings. |
 
 ## Immediate Linux/CUDA Execution Queue
 
@@ -527,25 +547,30 @@ They stay here as context, not as active work.
 
 ## Suggested Triage Order
 
-Active cleanup pass on `cleanup/p0-p1-p2-20260522`:
+Cleanup pass on `cleanup/p0-p1-p2-20260522` is closed — branch + tag
+`v2.0.0+cu13.bw.20260522` are on GitHub.  Next session:
 
-1. Wait for the in-progress unified rebuild to settle; run focused validation:
-   `tests/python/dnnl/test_xop19_onednn_req.py`, `tests/python/dnnl/test_dnnl.py`,
-   `tests/python/dnnl/subgraphs/test_matmul_subgraph.py`, the existing
-   quantization shards, and `tests/python/unittest/test_python_optimized_validation.py`.
-2. Commit each cleanup area as its own commit (XOP19 oneDNN req, XOP21 large
-   shape, XOP22 Python asserts, XOP23 engine asserts, FS13 stale skips, CN2
-   compiler policy).
-3. Run `tools/build_cleanup_wheel.sh <version>` against the clean tree; the
-   build target is already configured for `sm_80/86/89/90/100/120+PTX`.
-4. Validate provenance against the rebuilt wheel; tag and let Alex drive the
-   Yubikey-authenticated push.
+1. **Highest-leverage next bug**: the pre-existing `oneDNN doesn't support
+   0 dimensions` LOG(FATAL) at `ndarray.cc:624` — fixing it should reclaim
+   ~57 currently-failing tests in `cpu_unittest` and `dnnl_subgraphs_qat_backward`.
+   Add a default-format fallback for ndim==0 NDArrays.
+2. **Second**: `test_box_nms_backward_add_request` segfault on grad_req='add'.
+   Native BoxNMS backward path, pre-existing in `master`.
+3. **Test-harness gap**: pip-install `scipy` (and surface any other test deps)
+   in `tools/run_wheel_full_test.sh` so the GPU operator and test_random shards
+   don't collect-error in the clean venv.
+4. **XOP12** reusable operator contract harness — would have prevented both
+   findings above being silent.
+5. **XOP7 leftover**: DNNL deconv weight-grad fast path conversion.
+6. **Remote FP16 smoke**: when a Zen 4+ box is available, run
+   `tools/run_fp16_remote_smoke.sh` to ingest fresh BF16 findings (the Zen 2
+   dev host can't exercise the native BF16 path).
 
-Deferred for follow-up:
+Long-term deferred:
 
-- FS12 order-sensitive bus error: revisit only if it reproduces post-wheel.
-- B4 QAT subgraph backward: blocked on NNVM/CachedOp executor changes.
-- XOP12 reusable contract test harness: revisit after wheel ships.
+- FS12 order-sensitive `test_randint_generator` bus error.
+- B4 / XOP18 QAT subgraph backward (blocked on NNVM/CachedOp executor).
+- CN9 / L6 dmlc queue + oneDNN ITT executable-stack note (submodule policy).
 
 Pointers:
 

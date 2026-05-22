@@ -130,6 +130,10 @@ def test_resize():
     for dtype in ['uint8', 'float32', 'float64']:
         _test_resize_with_diff_type(dtype)
 
+    for dtype in ['float16', 'int32', 'int64']:
+        invalid_data_in = np.random.uniform(0, 255, (30, 20, 3)).astype(dtype)
+        assertRaises(MXNetError, transforms.Resize(20), invalid_data_in)
+
 
 @use_np
 @requires_opencv

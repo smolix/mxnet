@@ -1,0 +1,94 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+import os
+import subprocess
+import sys
+import textwrap
+
+import pytest
+
+
+def _run_optimized_python(source):
+    env = os.environ.copy()
+    repo_python = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'python'))
+    env['PYTHONPATH'] = repo_python + os.pathsep + env.get('PYTHONPATH', '')
+    result = subprocess.run(
+        [sys.executable, '-O', '-c', textwrap.dedent(source)],
+        cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('source', [
+    """
+    import mxnet as mx
+    record = object.__new__(mx.recordio.MXRecordIO)
+    record.writable = False
+    try:
+        record.write(b'data')
+    except RuntimeError as err:
+        if 'not open for writing' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('MXRecordIO.write accepted read-only handle')
+    """,
+    """
+    from mxnet.kvstore.base import _ctype_key_value
+    try:
+        _ctype_key_value(1.5, [])
+    except TypeError as err:
+        if 'unexpected type for keys' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('_ctype_key_value accepted invalid key type')
+    """,
+    """
+    from mxnet import amp
+    try:
+        amp.convert_symbol('not-a-symbol', {}, {}, 'float16')
+    except TypeError as err:
+        if 'convert_symbol should be a Symbol' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('amp.convert_symbol accepted invalid symbol')
+    """,
+    """
+    import numpy as np
+    import mxnet as mx
+    from mxnet.rtc import CudaKernel
+
+    CudaKernel.__del__ = lambda self: None
+    kernel = object.__new__(CudaKernel)
+    kernel._name = 'test_kernel'
+    kernel._is_ndarray = [False]
+    kernel._dtypes = [np.float32]
+    try:
+        kernel.launch(['not-a-number'], mx.gpu(0), (1, 1, 1), (1, 1, 1))
+    except TypeError as err:
+        if 'expected to be a number' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('CudaKernel.launch accepted invalid scalar argument')
+    """,
+])
+def test_user_validation_survives_optimized_python(source):
+    _run_optimized_python(source)

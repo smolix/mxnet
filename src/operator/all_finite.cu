@@ -24,6 +24,7 @@
  */
 
 #include "./all_finite-inl.h"
+#include <limits>
 
 namespace mxnet {
 namespace op {
@@ -53,7 +54,9 @@ inline void AllFiniteGPU(const nnvm::NodeAttrs& attrs,
     out = 1.;
   MSHADOW_REAL_TYPE_SWITCH(inputs[0].type_flag_, DType, {
     Tensor<gpu, 2, DType> in = inputs[0].FlatTo2D<gpu, DType>(s);
-    const int n              = in.shape_.Size();
+    CHECK_LE(in.shape_.Size(), static_cast<size_t>(std::numeric_limits<int>::max()))
+        << "all_finite supports at most INT_MAX elements per input.";
+    const int n = static_cast<int>(in.shape_.Size());
     AllFiniteGPUKernel<DType><<<cuda_get_num_blocks(n),
                                 mshadow::cuda_impl::kBaseThreadNum,
                                 0,
@@ -90,7 +93,10 @@ inline void MultiAllFiniteGPU(const nnvm::NodeAttrs& attrs,
   MSHADOW_REAL_TYPE_SWITCH(inputs[0].type_flag_, DType, {
     MultiAllFiniteKernelParam<DType> param =
         FillMultiAllFiniteParam<gpu, DType>(op_param, ctx, inputs);
-    MultiAllFiniteGPUKernel<DType><<<cuda_get_num_blocks(param.max_size),
+    CHECK_LE(param.max_size, static_cast<size_t>(std::numeric_limits<int>::max()))
+        << "multi_all_finite supports at most INT_MAX elements per input.";
+    const int max_size = static_cast<int>(param.max_size);
+    MultiAllFiniteGPUKernel<DType><<<cuda_get_num_blocks(max_size),
                                      mshadow::cuda_impl::kBaseThreadNum,
                                      1,
                                      mshadow::Stream<gpu>::GetStream(s)>>>(param, out.dptr_);

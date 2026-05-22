@@ -74,6 +74,11 @@ class WarpCTCOp : public Operator {
     }
   }
 
+  inline void CheckWriteReq(OpReqType req, const char* name) {
+    CHECK(req == kWriteTo || req == kWriteInplace)
+        << "WarpCTC only supports write requests for " << name;
+  }
+
   virtual void Forward(const OpContext& ctx,
                        const std::vector<TBlob>& in_data,
                        const std::vector<OpReqType>& req,
@@ -83,6 +88,11 @@ class WarpCTCOp : public Operator {
     using namespace mshadow::expr;
     CHECK_EQ(in_data.size(), 2) << "CTCOutput Input: [data, label]";
     CHECK_EQ(out_data.size(), 1) << "CTCOutput Output: [output]";
+    CHECK_EQ(req.size(), 1U);
+    if (req[warpctc_enum::kOut] == kNullOp) {
+      return;
+    }
+    CheckWriteReq(req[warpctc_enum::kOut], "output");
 
     Stream<xpu>* s                    = ctx.get_stream<xpu>();
     TBlob data                        = in_data[warpctc_enum::kData];
@@ -129,6 +139,15 @@ class WarpCTCOp : public Operator {
                         const std::vector<TBlob>& in_grad,
                         const std::vector<TBlob>& aux_args) {
     using namespace mshadow;
+    CHECK_EQ(req.size(), 2U);
+    if (req[warpctc_enum::kLabel] != kNullOp) {
+      LOG(FATAL) << "WarpCTC does not support gradients for label input";
+    }
+    if (req[warpctc_enum::kData] == kNullOp) {
+      return;
+    }
+    CheckWriteReq(req[warpctc_enum::kData], "data gradient");
+
     Stream<xpu>* s = ctx.get_stream<xpu>();
     TBlob data     = in_data[warpctc_enum::kData];
     TBlob label    = in_data[warpctc_enum::kLabel];

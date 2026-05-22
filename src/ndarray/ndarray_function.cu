@@ -89,12 +89,12 @@ void Copy<gpu, gpu>(const TBlob& from,
         << "Source and target must have the same data type when copying across devices.";
     mshadow::Stream<gpu>* s = ctx.get_stream<gpu>();
     CHECK(s != nullptr) << "need stream in GPU context";
-    cudaMemcpyPeerAsync(to->dptr_,
-                        to_ctx.dev_id,
-                        from.dptr_,
-                        from_ctx.dev_id,
-                        from.shape_.Size() * mshadow::mshadow_sizeof(to->type_flag_),
-                        s->stream_);
+    CUDA_CALL(cudaMemcpyPeerAsync(to->dptr_,
+                                  to_ctx.dev_id,
+                                  from.dptr_,
+                                  from_ctx.dev_id,
+                                  from.shape_.Size() * mshadow::mshadow_sizeof(to->type_flag_),
+                                  s->stream_));
   }
 }
 

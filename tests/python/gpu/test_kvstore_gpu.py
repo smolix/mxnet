@@ -29,6 +29,21 @@ shape = (4, 4)
 keys = [5, 7, 11]
 str_keys = ['b', 'c', 'd']
 
+@pytest.mark.skipif(mx.device.num_gpus() < 2, reason="requires at least 2 GPUs")
+@pytest.mark.serial
+def test_device_kvstore_repeated_p2p_setup():
+    with environment('MXNET_ENABLE_GPU_P2P', '1'):
+        for key in [101, 102]:
+            kv = mx.kv.create('device')
+            kv.init(key, mx.nd.zeros((16,), ctx=mx.gpu(0)))
+            vals = [mx.nd.ones((16,), ctx=mx.gpu(i)) * (i + 1) for i in range(2)]
+            out = [mx.nd.zeros((16,), ctx=mx.gpu(i)) for i in range(2)]
+            kv.push(key, vals)
+            kv.pull(key, out)
+            mx.nd.waitall()
+            for arr in out:
+                assert_almost_equal(arr.asnumpy(), np.full((16,), 3.0))
+
 def init_kv_with_str(stype='default', kv_type='local'):
     """init kv """
     kv = mx.kv.create(kv_type)

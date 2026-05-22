@@ -26,6 +26,7 @@
 #define MXNET_OPERATOR_CONTRIB_ALLCLOSE_OP_INL_H_
 
 #include <mxnet/operator_util.h>
+#include <limits>
 #include <vector>
 #include "../mshadow_op.h"
 #include "../mxnet_op.h"
@@ -137,7 +138,9 @@ void AllClose(const nnvm::NodeAttrs& attrs,
 
   const TBlob& in0    = inputs[0];
   const TBlob& in1    = inputs[1];
-  const int num_items = in0.Size();
+  CHECK_LE(in0.Size(), static_cast<size_t>(std::numeric_limits<int>::max()))
+      << "_contrib_allclose supports at most INT_MAX elements per input.";
+  const int num_items = static_cast<int>(in0.Size());
 
   size_t extraStorageBytes;
   auto workspaceMem          = GetAdditionalMemoryLogical<xpu>(ctx, num_items, &extraStorageBytes);

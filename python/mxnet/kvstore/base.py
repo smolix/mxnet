@@ -34,7 +34,8 @@ def _ctype_key_value(keys, vals):
     For internal use only.
     """
     if isinstance(keys, (tuple, list)):
-        assert(len(keys) == len(vals))
+        if len(keys) != len(vals):
+            raise ValueError("keys and vals must have the same length")
         c_keys = []
         c_vals = []
         use_str_keys = None
@@ -43,14 +44,15 @@ def _ctype_key_value(keys, vals):
             c_keys += c_key_i
             c_vals += c_val_i
             use_str_keys = str_keys_i if use_str_keys is None else use_str_keys
-            assert(use_str_keys == str_keys_i), "inconsistent types of keys detected."
+            if use_str_keys != str_keys_i:
+                raise TypeError("inconsistent types of keys detected.")
         c_keys_arr = c_array(ctypes.c_char_p, c_keys) if use_str_keys \
                      else c_array(ctypes.c_int, c_keys)
         c_vals_arr = c_array(ctypes.c_void_p, c_vals)
         return (c_keys_arr, c_vals_arr, use_str_keys)
 
-    assert(isinstance(keys, (int,) + string_types)), \
-           "unexpected type for keys: " + str(type(keys))
+    if not isinstance(keys, (int,) + string_types):
+        raise TypeError("unexpected type for keys: " + str(type(keys)))
     use_str_keys = isinstance(keys, string_types)
     if isinstance(vals, NDArray):
         c_keys = c_str_array([keys]) if use_str_keys \
@@ -58,15 +60,16 @@ def _ctype_key_value(keys, vals):
         return (c_keys, c_handle_array([vals]), use_str_keys)
     else:
         for value in vals:
-            assert(isinstance(value, NDArray))
+            if not isinstance(value, NDArray):
+                raise TypeError("unexpected type for vals: " + str(type(value)))
         c_keys = c_str_array([keys] * len(vals)) if use_str_keys \
                  else c_array_buf(ctypes.c_int, array('i', [keys] * len(vals)))
         return (c_keys, c_handle_array(vals), use_str_keys)
 
 def _ctype_dict(param_dict):
     """Returns ctype arrays for keys and values(converted to strings) in a dictionary"""
-    assert(isinstance(param_dict, dict)), \
-        "unexpected type for param_dict: " + str(type(param_dict))
+    if not isinstance(param_dict, dict):
+        raise TypeError("unexpected type for param_dict: " + str(type(param_dict)))
     c_keys = c_array(ctypes.c_char_p, [c_str(k) for k in param_dict.keys()])
     c_vals = c_array(ctypes.c_char_p, [c_str(str(v)) for v in param_dict.values()])
     return (c_keys, c_vals)
@@ -231,7 +234,8 @@ class KVStoreBase(object):
         >>> print(type(kv))
         <class '__main__.MyKVStore'>
         """
-        assert(isinstance(klass, type))
+        if not isinstance(klass, type):
+            raise TypeError("klass must be a type")
         name = klass.__name__.lower()
         if name in KVStoreBase.kv_registry:
             warnings.warn(f'WARNING: New kvstore {klass.__module__}.{klass.__name__} is overriding '

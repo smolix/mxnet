@@ -53,6 +53,12 @@
 #define ncclNumTypes nccl_NUM_TYPES
 #endif  // NCCL_MAJOR == 1
 
+#define MXNET_NCCL_CALL(func)                                      \
+  do {                                                             \
+    ncclResult_t e = (func);                                       \
+    CHECK_EQ(e, ncclSuccess) << "NCCL: " << ncclGetErrorString(e); \
+  } while (0)
+
 namespace mxnet {
 namespace kvstore {
 
@@ -76,6 +82,22 @@ class KVStoreNCCL : public KVStoreLocal {
   }
 
  private:
+  static void NCCLGroupStart() {
+#if NCCL_MAJOR > 1
+    MXNET_NCCL_CALL(ncclGroupStart());
+#else
+    ncclGroupStart();
+#endif
+  }
+
+  static void NCCLGroupEnd() {
+#if NCCL_MAJOR > 1
+    MXNET_NCCL_CALL(ncclGroupEnd());
+#else
+    ncclGroupEnd();
+#endif
+  }
+
   void InitImpl(const std::vector<int>& keys, const std::vector<NDArray>& values) override {
     for (size_t i = 0; i < keys.size(); ++i) {
       CHECK(local_.find(keys[i]) == local_.end()) << "duplicate init of key " << keys[i];
@@ -267,7 +289,7 @@ class KVStoreNCCL : public KVStoreLocal {
         [srcs, reduces, root_ids, this](RunContext rctx) {
           std::lock_guard<std::mutex> l(Storage::Get()->GetMutex(Context::kGPU));
 #if (NCCL_MAJOR > 2 || (NCCL_MAJOR == 2 && NCCL_MINOR > 1))
-          ncclGroupStart();
+          NCCLGroupStart();
 #endif
           for (size_t k = 0; k < srcs.size(); ++k) {
             auto& src     = srcs[k];
@@ -277,37 +299,37 @@ class KVStoreNCCL : public KVStoreLocal {
               continue;
             }
             int root = nccl_data_[src[root_id].ctx().dev_id].rank;
-            ncclGroupStart();
+            NCCLGroupStart();
             for (size_t i = 0; i < src.size(); ++i) {
               NCCLEntry cur = nccl_data_[src[i].ctx().dev_id];
               if (i == root_id) {
                 MSHADOW_TYPE_SWITCH(src[i].dtype(),
                                     DType,
-                                    ncclReduce(src[i].data().dptr<DType>(),
-                                               reduce.data().dptr<DType>(),
-                                               src[i].shape().Size(),
-                                               GetNCCLType(src[i].dtype()),
-                                               ncclSum,
-                                               root,
-                                               cur.comm,
-                                               cur.stream););
+                                    MXNET_NCCL_CALL(ncclReduce(src[i].data().dptr<DType>(),
+                                                              reduce.data().dptr<DType>(),
+                                                              src[i].shape().Size(),
+                                                              GetNCCLType(src[i].dtype()),
+                                                              ncclSum,
+                                                              root,
+                                                              cur.comm,
+                                                              cur.stream)););
               } else {
                 MSHADOW_TYPE_SWITCH(src[i].dtype(),
                                     DType,
-                                    ncclReduce(src[i].data().dptr<DType>(),
-                                               nullptr,
-                                               src[i].shape().Size(),
-                                               GetNCCLType(src[i].dtype()),
-                                               ncclSum,
-                                               root,
-                                               cur.comm,
-                                               cur.stream););
+                                    MXNET_NCCL_CALL(ncclReduce(src[i].data().dptr<DType>(),
+                                                              nullptr,
+                                                              src[i].shape().Size(),
+                                                              GetNCCLType(src[i].dtype()),
+                                                              ncclSum,
+                                                              root,
+                                                              cur.comm,
+                                                              cur.stream)););
               }
             }
-            ncclGroupEnd();
+            NCCLGroupEnd();
           }
 #if (NCCL_MAJOR > 2 || (NCCL_MAJOR == 2 && NCCL_MINOR > 1))
-          ncclGroupEnd();
+          NCCLGroupEnd();
 #endif
         },
         Context::CPU(),
@@ -387,7 +409,7 @@ class KVStoreNCCL : public KVStoreLocal {
         [srcs, broadcasts, root_ids, this](RunContext rctx) {
           std::lock_guard<std::mutex> l(Storage::Get()->GetMutex(Context::kGPU));
 #if (NCCL_MAJOR > 2 || (NCCL_MAJOR == 2 && NCCL_MINOR > 1))
-          ncclGroupStart();
+          NCCLGroupStart();
 #endif
           for (size_t k = 0; k < srcs.size(); ++k) {
             auto& src     = srcs[k];
@@ -398,23 +420,23 @@ class KVStoreNCCL : public KVStoreLocal {
             }
 
             int root = nccl_data_[src.ctx().dev_id].rank;
-            ncclGroupStart();
+            NCCLGroupStart();
             for (size_t i = 0; i < dst.size(); ++i) {
               auto& bcast   = (i == root_id) ? src : dst[i];
               NCCLEntry cur = nccl_data_[bcast.ctx().dev_id];
               MSHADOW_TYPE_SWITCH(bcast.dtype(),
                                   DType,
-                                  ncclBcast(bcast.data().dptr<DType>(),
-                                            bcast.shape().Size(),
-                                            GetNCCLType(bcast.dtype()),
-                                            root,
-                                            cur.comm,
-                                            cur.stream););
+                                  MXNET_NCCL_CALL(ncclBcast(bcast.data().dptr<DType>(),
+                                                           bcast.shape().Size(),
+                                                           GetNCCLType(bcast.dtype()),
+                                                           root,
+                                                           cur.comm,
+                                                           cur.stream)););
             }
-            ncclGroupEnd();
+            NCCLGroupEnd();
           }
 #if (NCCL_MAJOR > 2 || (NCCL_MAJOR == 2 && NCCL_MINOR > 1))
-          ncclGroupEnd();
+          NCCLGroupEnd();
 #endif
         },
         Context::CPU(),
@@ -487,7 +509,7 @@ class KVStoreNCCL : public KVStoreLocal {
     std::sort(device_ids_.begin(), device_ids_.end());
     std::lock_guard<std::mutex> l(Storage::Get()->GetMutex(Context::kGPU));
     std::vector<ncclComm_t> comms(devs.size());
-    ncclCommInitAll(&(comms[0]), devs.size(), &(device_ids_[0]));
+    MXNET_NCCL_CALL(ncclCommInitAll(&(comms[0]), devs.size(), &(device_ids_[0])));
     mxnet::common::cuda::DeviceStore device_store;
     for (size_t i = 0; i < devs.size(); ++i) {
       NCCLEntry e;
@@ -495,7 +517,7 @@ class KVStoreNCCL : public KVStoreLocal {
       e.comm   = comms[i];
       e.rank   = i;
       device_store.SetDevice(e.dev_id);
-      cudaStreamCreate(&(e.stream));
+      CUDA_CALL(cudaStreamCreate(&(e.stream)));
       nccl_data_[device_ids_[i]] = e;
     }
   }

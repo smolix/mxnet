@@ -161,7 +161,7 @@ def _get_np_fun_to_wrap(name, ns_prefix):
                 func, modules = nm, [sys.modules[f'{ns_prefix}.{mod}']]
                 break
     else:
-        assert False, f'Unable to find target module for {name} in {ns_prefix}'
+        raise RuntimeError(f'Unable to find target module for {name} in {ns_prefix}')
     if name.startswith(_NP_INTERNAL_OP_PREFIX) and ns_prefix == 'mxnet.ndarray':
         if hasattr(ndarray.numpy._api_internal, func):
             modules.append(ndarray.numpy._api_internal)
@@ -353,8 +353,8 @@ _loss_scaler = None
 
 @contextlib.contextmanager
 def scale_loss(loss, optimizer_or_trainer):
-    assert optimizer_or_trainer._amp_loss_scaler is not None, \
-        'Loss scaler is not initialized, did you forget to call amp.init_trainer()?'
+    if optimizer_or_trainer._amp_loss_scaler is None:
+        raise RuntimeError('Loss scaler is not initialized, did you forget to call amp.init_trainer()?')
     optimizer_or_trainer._scale = (optimizer_or_trainer._amp_original_scale /
                                    optimizer_or_trainer._amp_loss_scaler.loss_scale)
     if isinstance(loss, (list, tuple)):
@@ -394,8 +394,8 @@ def init(target_dtype='float16', target_precision_ops=None,
     global _amp_initialized
     global _loss_scaler
     if not _amp_initialized:
-        assert target_dtype in ['float16', np.float16, 'bfloat16', bfloat16], \
-               "AMP currently supports only float16 or bfloat16 as a target_dtype"
+        if target_dtype not in ['float16', np.float16, 'bfloat16', bfloat16]:
+            raise ValueError("AMP currently supports only float16 or bfloat16 as a target_dtype")
         _amp_initialized = True
         log_msg = "Using AMP"
         if layout_optimization:
@@ -451,7 +451,8 @@ def init_trainer(optimizer_or_trainer):
     global _amp_loss_scale_initialized
     global _amp_initialized
     global _loss_scaler
-    assert _amp_initialized, "AMP not initialized, did you forget to call amp.init()?"
+    if not _amp_initialized:
+        raise RuntimeError("AMP not initialized, did you forget to call amp.init()?")
     if not _amp_loss_scale_initialized:
         _amp_loss_scale_initialized = True
         loss_scaler = _loss_scaler
@@ -532,17 +533,18 @@ def convert_symbol(sym, input_dtypes, param_dtypes, target_dtype, target_dtype_o
     """
     import json
 
-    assert isinstance(sym, Symbol), "First argument to convert_symbol should be a Symbol"
-    assert target_dtype_ops is None or isinstance(target_dtype_ops, list), \
-        "target_dtype_ops should be a list of strings"
-    assert fp32_ops is None or isinstance(fp32_ops, list), \
-        "fp32_ops should be a list of strings"
-    assert conditional_fp32_ops is None or isinstance(conditional_fp32_ops, list), \
-        "conditional_fp32_ops should be a list of strings"
+    if not isinstance(sym, Symbol):
+        raise TypeError("First argument to convert_symbol should be a Symbol")
+    if target_dtype_ops is not None and not isinstance(target_dtype_ops, list):
+        raise TypeError("target_dtype_ops should be a list of strings")
+    if fp32_ops is not None and not isinstance(fp32_ops, list):
+        raise TypeError("fp32_ops should be a list of strings")
+    if conditional_fp32_ops is not None and not isinstance(conditional_fp32_ops, list):
+        raise TypeError("conditional_fp32_ops should be a list of strings")
 
     target_dtype = get_dtype_name(target_dtype)
-    assert target_dtype in ['float16', *bfloat16.names], \
-        "Only float16 and bfloat16 types are currently supported as target_dtype"
+    if target_dtype not in ['float16', *bfloat16.names]:
+        raise ValueError("Only float16 and bfloat16 types are currently supported as target_dtype")
 
     if target_dtype_ops is None:
         target_dtype_ops = list_lp16_ops(target_dtype)
@@ -555,8 +557,8 @@ def convert_symbol(sym, input_dtypes, param_dtypes, target_dtype, target_dtype_o
     cond_ops = {cond_op[0]: {} for cond_op in conditional_fp32_ops}
     for cond_op in conditional_fp32_ops:
         op_name, attr_name, attr_vals = cond_op
-        assert isinstance(op_name, str) and isinstance(attr_name, str) and isinstance(attr_vals, list), \
-            "conditional_fp32_ops should be a list of (str, str, list of str)"
+        if not (isinstance(op_name, str) and isinstance(attr_name, str) and isinstance(attr_vals, list)):
+            raise TypeError("conditional_fp32_ops should be a list of (str, str, list of str)")
         cond_ops[op_name].setdefault(attr_name, []).extend(attr_vals)
 
     nodes_attrs = sym.attr_dict()
@@ -566,7 +568,8 @@ def convert_symbol(sym, input_dtypes, param_dtypes, target_dtype, target_dtype_o
             continue
         node_attrs = nodes_attrs[node_name]
         for attr_name, attr_vals in cond_ops[node_op].items():
-            assert attr_name in node_attrs
+            if attr_name not in node_attrs:
+                raise ValueError(f"Attribute {attr_name} is missing from node {node_name}")
             if node_attrs[attr_name] in attr_vals:
                 excluded_sym_names.append(node_name)
                 break
@@ -586,12 +589,14 @@ def convert_symbol(sym, input_dtypes, param_dtypes, target_dtype, target_dtype_o
 
     # Op lists should not intersect
     common_ops = set(target_dtype_ops) & set(fp32_ops)
-    assert len(common_ops) == 0, "Common ops in target_dtype_ops and fp32_ops: {}".format(common_ops)
+    if len(common_ops) != 0:
+        raise ValueError("Common ops in target_dtype_ops and fp32_ops: {}".format(common_ops))
     common_ops = set(target_dtype_ops) & set(cond_ops)
-    assert len(common_ops) == 0, "Common ops in target_dtype_ops and conditional_fp32_ops: {}".format(
-        common_ops)
+    if len(common_ops) != 0:
+        raise ValueError("Common ops in target_dtype_ops and conditional_fp32_ops: {}".format(common_ops))
     common_ops = set(cond_ops) & set(fp32_ops)
-    assert len(common_ops) == 0, "Common ops in fp32_ops and conditional_fp32_ops: {}".format(common_ops)
+    if len(common_ops) != 0:
+        raise ValueError("Common ops in fp32_ops and conditional_fp32_ops: {}".format(common_ops))
 
     combined_ops = set(target_dtype_ops + fp32_ops + list(cond_ops.keys()))
     original_cond_ops = [cond_op[0] for cond_op in list_conditional_fp32_ops(target_dtype)]
@@ -599,13 +604,14 @@ def convert_symbol(sym, input_dtypes, param_dtypes, target_dtype, target_dtype_o
                             list_lp16_fp32_ops(target_dtype) + original_cond_ops)
 
     illegal_ops = combined_ops - all_lp16_fp32_ops
-    assert len(illegal_ops) == 0, f'''Can only choose ops from one of the four lists
+    if len(illegal_ops) != 0:
+        raise ValueError(f'''Can only choose ops from one of the four lists
                             for lp16_ops and fp32_ops
                             1. amp.list_lp16_ops(target_dtype)
                             2. amp.list_fp32_ops(target_dtype)
                             3. amp.list_lp16_fp32_ops(target_dtype)
                             4. amp.list_conditional_fp32_ops(target_dtype)
-                            Op {illegal_ops} not in any of them'''
+                            Op {illegal_ops} not in any of them''')
 
     widest_dtype_ops = list_widest_type_cast(target_dtype)
 
@@ -675,11 +681,12 @@ def convert_model(sym, arg_params, aux_params, input_dtypes, target_dtype,
     cast_params_offline : bool, default False
         Whether to cast arg_params and aux_params now, instead of doing it every time at runtime.
     """
-    assert isinstance(sym, Symbol), "First argument to convert_model should be a Symbol"
-    assert isinstance(
-        arg_params, dict), "Second argument to convert_model should be a dict of name to ndarray"
-    assert isinstance(
-        aux_params, dict), "Third argument to convert_model should be a dict of name to ndarray"
+    if not isinstance(sym, Symbol):
+        raise TypeError("First argument to convert_model should be a Symbol")
+    if not isinstance(arg_params, dict):
+        raise TypeError("Second argument to convert_model should be a dict of name to ndarray")
+    if not isinstance(aux_params, dict):
+        raise TypeError("Third argument to convert_model should be a dict of name to ndarray")
 
     arg_params = arg_params.copy()
     aux_params = aux_params.copy()
@@ -743,12 +750,14 @@ def convert_hybrid_block(block, data_example, target_dtype, target_dtype_ops=Non
     from ..ndarray import NDArray as ND_NDArray, waitall
     from ..numpy import ndarray as NP_NDArray
 
-    assert isinstance(block, HybridBlock), "block input should be a HybridBlock"
+    if not isinstance(block, HybridBlock):
+        raise TypeError("block input should be a HybridBlock")
     if not isinstance(data_example, (list, tuple)):
         data_example = [data_example]
     for data in data_example:
-        assert isinstance(data, (ND_NDArray, NP_NDArray)), "Data example must be composed of " \
-            "mxnet.numpy.ndarray or mxnet.ndarray.NDArray instances"
+        if not isinstance(data, (ND_NDArray, NP_NDArray)):
+            raise TypeError("Data example must be composed of "
+                            "mxnet.numpy.ndarray or mxnet.ndarray.NDArray instances")
     if not block._active:
         block.hybridize(static_alloc=False, static_shape=False)
     block(*data_example)
@@ -761,13 +770,15 @@ def convert_hybrid_block(block, data_example, target_dtype, target_dtype_ops=Non
             arg_name = name[len('arg:'):]
             args[arg_name] = data
         else:
-            assert name.startswith('aux:')
+            if not name.startswith('aux:'):
+                raise RuntimeError(f"Unexpected parameter name {name}")
             aux_name = name[len('aux:'):]
             auxs[aux_name] = data
 
     input_names = set(sym.list_arguments()) - (set(args.keys()) | set(auxs.keys()))
     input_names_ordered = HybridBlock.generate_arg_names(len(data_example))
-    assert input_names == set(input_names_ordered)
+    if input_names != set(input_names_ordered):
+        raise RuntimeError("Input names do not match generated argument names")
 
     input_dtypes = {name: data.dtype for name, data in zip(input_names_ordered, data_example)}
     lp_sym, lp_args, lp_auxs = convert_model(sym, args, auxs, input_dtypes, target_dtype,
@@ -789,7 +800,8 @@ def list_lp16_ops(target_dtype):
     if target_dtype in ['float16', np.float16]:
         return lists.symbol_fp16.FP16_FUNCS
     else:
-        assert get_dtype_name(target_dtype) in bfloat16.names, "not supported type"
+        if get_dtype_name(target_dtype) not in bfloat16.names:
+            raise ValueError("not supported type")
         return lists.symbol_bf16.BF16_FUNCS
 
 def list_fp32_ops(target_dtype):
@@ -798,7 +810,8 @@ def list_fp32_ops(target_dtype):
     if target_dtype in ['float16', np.float16]:
         return lists.symbol_fp16.FP32_FUNCS
     else:
-        assert get_dtype_name(target_dtype) in bfloat16.names, "not supported type"
+        if get_dtype_name(target_dtype) not in bfloat16.names:
+            raise ValueError("not supported type")
         return lists.symbol_bf16.FP32_FUNCS
 
 def list_lp16_fp32_ops(target_dtype):
@@ -807,7 +820,8 @@ def list_lp16_fp32_ops(target_dtype):
     if target_dtype in ['float16', np.float16]:
         return lists.symbol_fp16.FP16_FP32_FUNCS
     else:
-        assert get_dtype_name(target_dtype) in bfloat16.names, "not supported type"
+        if get_dtype_name(target_dtype) not in bfloat16.names:
+            raise ValueError("not supported type")
         return lists.symbol_bf16.BF16_FP32_FUNCS
 
 def list_conditional_fp32_ops(target_dtype):
@@ -816,7 +830,8 @@ def list_conditional_fp32_ops(target_dtype):
     if target_dtype in ['float16', np.float16]:
         return lists.symbol_fp16.CONDITIONAL_FP32_FUNCS
     else:
-        assert get_dtype_name(target_dtype) in bfloat16.names, "not supported type"
+        if get_dtype_name(target_dtype) not in bfloat16.names:
+            raise ValueError("not supported type")
         return lists.symbol_bf16.CONDITIONAL_FP32_FUNCS
 
 def list_widest_type_cast(target_dtype):
@@ -825,7 +840,8 @@ def list_widest_type_cast(target_dtype):
     if target_dtype in ['float16', np.float16]:
         return lists.symbol_fp16.WIDEST_TYPE_CASTS
     else:
-        assert get_dtype_name(target_dtype) in bfloat16.names, "not supported type"
+        if get_dtype_name(target_dtype) not in bfloat16.names:
+            raise ValueError("not supported type")
         return lists.symbol_bf16.WIDEST_TYPE_CASTS
 
 def list_loss_output_functions(target_dtype):
@@ -834,7 +850,8 @@ def list_loss_output_functions(target_dtype):
     if target_dtype in ['float16', np.float16]:
         return lists.symbol_fp16.LOSS_OUTPUT_FUNCTIONS
     else:
-        assert get_dtype_name(target_dtype) in bfloat16.names, "not supported type"
+        if get_dtype_name(target_dtype) not in bfloat16.names:
+            raise ValueError("not supported type")
         return lists.symbol_bf16.LOSS_OUTPUT_FUNCTIONS
 
 def list_lp16_use_fp32_params(target_dtype):
@@ -844,5 +861,6 @@ def list_lp16_use_fp32_params(target_dtype):
     if target_dtype in ['float16', np.float16]:
         return None
     else:
-        assert get_dtype_name(target_dtype) in bfloat16.names, "not supported type"
+        if get_dtype_name(target_dtype) not in bfloat16.names:
+            raise ValueError("not supported type")
         return lists.symbol_bf16.BF16_USE_FP32_PARAMS

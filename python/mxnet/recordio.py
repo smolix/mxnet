@@ -170,7 +170,8 @@ class MXRecordIO(object):
         buf : string (python2), bytes (python3)
             Buffer to write.
         """
-        assert self.writable
+        if not self.writable:
+            raise RuntimeError('RecordIO is not open for writing')
         self._check_pid(allow_reset=False)
         check_call(_LIB.MXRecordIOWriterWriteRecord(self.handle,
                                                     ctypes.c_char_p(buf),
@@ -197,7 +198,8 @@ class MXRecordIO(object):
         buf : string
             Buffer read.
         """
-        assert not self.writable
+        if self.writable:
+            raise RuntimeError('RecordIO is not open for reading')
         # trying to implicitly read from multiple processes is forbidden,
         # there's no elegant way to handle unless lock is introduced
         self._check_pid(allow_reset=False)
@@ -282,7 +284,8 @@ class MXIndexedRecordIO(MXRecordIO):
 
         This function is internally called by `read_idx(idx)` to find the current
         reader pointer position. It doesn't return anything."""
-        assert not self.writable
+        if self.writable:
+            raise RuntimeError('RecordIO is not open for reading')
         self._check_pid(allow_reset=True)
         pos = ctypes.c_size_t(self.idx[idx])
         check_call(_LIB.MXRecordIOReaderSeek(self.handle, pos))
@@ -304,7 +307,8 @@ class MXIndexedRecordIO(MXRecordIO):
         64
         80
         """
-        assert self.writable
+        if not self.writable:
+            raise RuntimeError('RecordIO is not open for writing')
         pos = ctypes.c_size_t()
         check_call(_LIB.MXRecordIOWriterTell(self.handle, ctypes.byref(pos)))
         return pos.value
@@ -471,7 +475,8 @@ def unpack_img(s, iscolor=-1):
     """
     header, s = unpack(s)
     img = np.frombuffer(s, dtype=np.uint8)
-    assert cv2 is not None
+    if cv2 is None:
+        raise ImportError('OpenCV is required for unpack_img')
     img = cv2.imdecode(img, iscolor)
     return header, img
 
@@ -503,7 +508,8 @@ def pack_img(header, img, quality=95, img_fmt='.jpg'):
     >>> img = cv2.imread('test.jpg')
     >>> packed_s = mx.recordio.pack_img(header, img)
     """
-    assert cv2 is not None
+    if cv2 is None:
+        raise ImportError('OpenCV is required for pack_img')
     jpg_formats = ['.JPG', '.JPEG']
     png_formats = ['.PNG']
     encode_params = None
@@ -513,5 +519,6 @@ def pack_img(header, img, quality=95, img_fmt='.jpg'):
         encode_params = [cv2.IMWRITE_PNG_COMPRESSION, quality]
 
     ret, buf = cv2.imencode(img_fmt, img, encode_params)
-    assert ret, 'failed to encode image'
+    if not ret:
+        raise RuntimeError('failed to encode image')
     return pack(header, buf.tobytes())

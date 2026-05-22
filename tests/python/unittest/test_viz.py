@@ -60,3 +60,15 @@ def test_plot_network():
     assert len(w) == 1
     assert "There are multiple variables with the same name in your graph" in str(w[-1].message)
     assert "fc" in str(w[-1].message)
+
+
+@pytest.mark.skipif(not graphviz_exists(), reason="Skip test_plot_network as Graphviz could not be imported")
+def test_plot_network_multi_output_edge_uses_consumed_output_index():
+    data = mx.sym.Variable('data')
+    split = mx.sym.split_v2(data, indices_or_sections=(1, 3), axis=1)
+    net = mx.sym.concat(split[1], dim=1, name='cat')
+
+    digraph = mx.viz.plot_network(net, shape={'data': (2, 5)})
+
+    assert 'label=2' in digraph.source
+    assert 'label=1' not in digraph.source

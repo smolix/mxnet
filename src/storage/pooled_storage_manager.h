@@ -54,7 +54,7 @@ const std::string env_var_name(const char* dev_type, env_var_type type);
 
 #define SET_GPU_PROFILER(prof, contextHelper)                                                    \
   auto prof = contextHelper->contextGPU() ? profiler::GpuDeviceStorageProfiler::Get() : nullptr; \
-  if (!prof->IsProfiling()) {                                                                    \
+  if (prof && !prof->IsProfiling()) {                                                            \
     prof = nullptr;                                                                              \
   }
 

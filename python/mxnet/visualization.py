@@ -314,6 +314,16 @@ def plot_network(symbol, title="plot", save_format='pdf', shape=None, dtype=None
                        '_moving_var', '_moving_mean', '_running_var', '_running_mean')
         return name.endswith(weight_like)
 
+    def output_key(input_node, output_index, values):
+        """Return the internals key for the consumed output of a node."""
+        input_name = input_node["name"]
+        if input_node["op"] == "null":
+            return input_name
+        indexed_key = input_name + "_output" + str(output_index)
+        if indexed_key in values:
+            return indexed_key
+        return input_name + "_output"
+
     # make nodes
     hidden_nodes = set()
     for node in nodes:
@@ -393,33 +403,14 @@ def plot_network(symbol, title="plot", save_format='pdf', shape=None, dtype=None
                     attr = {"dir": "back", 'arrowtail':'open', 'label': ''}
                     # add shapes
                     if draw_shape:
-                        if input_node["op"] != "null":
-                            key = input_name + "_output"
-                            if "attrs" in input_node:
-                                params = input_node["attrs"]
-                                if "num_outputs" in params:
-                                    key += str(int(params["num_outputs"]) - 1)
-                            shape = shape_dict[key][1:]
-                            label = "x".join([str(x) for x in shape])
-                            attr["label"] = label
-                        else:
-                            key = input_name
-                            shape = shape_dict[key][1:]
-                            label = "x".join([str(x) for x in shape])
-                            attr["label"] = label
+                        key = output_key(input_node, item[1], shape_dict)
+                        shape = shape_dict[key][1:]
+                        label = "x".join([str(x) for x in shape])
+                        attr["label"] = label
                     if draw_type:
-                        if input_node["op"] != "null":
-                            key = input_name + "_output"
-                            if "attrs" in input_node:
-                                params = input_node["attrs"]
-                                if "num_outputs" in params:
-                                    key += str(int(params["num_outputs"]) - 1)
-                            dtype = type_dict[key]
-                            attr["label"] += '(' + dtype.__name__ + ')'
-                        else:
-                            key = input_name
-                            dtype = type_dict[key]
-                            attr["label"] += '(' + dtype.__name__ + ')'
+                        key = output_key(input_node, item[1], type_dict)
+                        dtype = type_dict[key]
+                        attr["label"] += '(' + dtype.__name__ + ')'
                     dot.edge(tail_name=name, head_name=input_name, **attr)
 
     return dot

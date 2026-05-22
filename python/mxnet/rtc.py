@@ -201,21 +201,27 @@ class CudaKernel(object):
         shared_mem : integer, optional
             Size of dynamically allocated shared memory. Defaults to 0.
         """
-        assert ctx.device_type == 'gpu', "Cuda kernel can only be launched on GPU"
-        assert len(grid_dims) == 3, "grid_dims must be a tuple of 3 integers"
-        assert len(block_dims) == 3, "grid_dims must be a tuple of 3 integers"
-        assert len(args) == len(self._dtypes), \
-            f"CudaKernel({self._name}) expects {len(self._dtypes)} arguments but got {len(args)}"
+        if ctx.device_type != 'gpu':
+            raise ValueError("Cuda kernel can only be launched on GPU")
+        if len(grid_dims) != 3:
+            raise ValueError("grid_dims must be a tuple of 3 integers")
+        if len(block_dims) != 3:
+            raise ValueError("grid_dims must be a tuple of 3 integers")
+        if len(args) != len(self._dtypes):
+            raise ValueError(
+                f"CudaKernel({self._name}) expects {len(self._dtypes)} arguments but got {len(args)}")
         void_args = []
         ref_holder = []
         for i, (arg, is_nd, dtype) in enumerate(zip(args, self._is_ndarray, self._dtypes)):
             if is_nd:
-                assert isinstance(arg, NDArray), \
-                    f"The {i}-th argument is expected to be a NDArray but got {type(arg)}"
+                if not isinstance(arg, NDArray):
+                    raise TypeError(
+                        f"The {i}-th argument is expected to be a NDArray but got {type(arg)}")
                 void_args.append(arg.handle)
             else:
-                assert isinstance(arg, numeric_types), \
-                    f"The {i}-th argument is expected to be a number, but got {type(arg)}"
+                if not isinstance(arg, numeric_types):
+                    raise TypeError(
+                        f"The {i}-th argument is expected to be a number, but got {type(arg)}")
                 ref_holder.append(np.array(arg, dtype=dtype))
                 void_args.append(ref_holder[-1].ctypes.data_as(ctypes.c_void_p))
 

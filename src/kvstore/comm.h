@@ -32,9 +32,36 @@
 #include "../ndarray/ndarray_function.h"
 #include "../operator/tensor/sparse_retain-inl.h"
 #include "../profiler/profiler.h"
+#if MXNET_USE_CUDA
+#include "../common/cuda/utils.h"
+#endif
 #include "./kvstore_utils.h"
 namespace mxnet {
 namespace kvstore {
+
+#if MXNET_USE_CUDA
+inline bool EnablePeerAccessIfAvailable(int device, int peer) {
+  if (device == peer) {
+    return false;
+  }
+  int access = 0;
+  CUDA_CALL(cudaDeviceCanAccessPeer(&access, device, peer));
+  if (!access) {
+    return false;
+  }
+  cudaError_t err = cudaDeviceEnablePeerAccess(peer, 0);
+  if (err == cudaSuccess) {
+    return true;
+  }
+  if (err == cudaErrorPeerAccessAlreadyEnabled) {
+    cudaGetLastError();  // Clear the sticky runtime error for subsequent CUDA checks.
+    return true;
+  }
+  CUDA_CALL(err);
+  return false;
+}
+#endif
+
 /**
  * \brief multiple device commmunication
  */
@@ -784,20 +811,15 @@ class CommDevice : public Comm {
     }
     int n       = static_cast<int>(gpus.size());
     int enabled = 0;
-    std::vector<int> p2p(n * n);
+    std::vector<int> p2p(n * n, 0);
 
     for (int i = 0; i < n; ++i) {
       // Restores active device to what it was before EnableP2P
       mxnet::common::cuda::DeviceStore device_store(gpus[i]);
       for (int j = 0; j < n; j++) {
-        int access;
-        cudaDeviceCanAccessPeer(&access, gpus[i], gpus[j]);
-        if (access) {
-          cudaError_t e = cudaDeviceEnablePeerAccess(gpus[j], 0);
-          if (e == cudaSuccess || e == cudaErrorPeerAccessAlreadyEnabled) {
-            ++enabled;
-            p2p[i * n + j] = 1;
-          }
+        if (EnablePeerAccessIfAvailable(gpus[i], gpus[j])) {
+          ++enabled;
+          p2p[i * n + j] = 1;
         }
       }
     }

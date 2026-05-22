@@ -344,14 +344,9 @@ class CommDeviceTree : public CommDevice {
     for (int i = 0; i < n; ++i) {
       mxnet::common::cuda::DeviceStore device_store(gpus[i]);
       for (int j = 0; j < n; j++) {
-        int access;
-        cudaDeviceCanAccessPeer(&access, gpus[i], gpus[j]);
-        if (access) {
-          cudaError_t e = cudaDeviceEnablePeerAccess(gpus[j], 0);
-          if (e == cudaSuccess || e == cudaErrorPeerAccessAlreadyEnabled) {
-            ++enabled;
-            (*p2p)[i * n + j] = 1;
-          }
+        if (EnablePeerAccessIfAvailable(gpus[i], gpus[j])) {
+          ++enabled;
+          (*p2p)[i * n + j] = 1;
         }
       }
     }

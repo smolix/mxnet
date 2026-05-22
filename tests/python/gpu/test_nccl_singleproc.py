@@ -134,7 +134,30 @@ def test_nccl_multidim_shape():
 
 
 # ---------------------------------------------------------------------------
-# Test 6: multiple keys in a single kvstore
+# Test 6: repeated communicator and stream setup in one process
+# ---------------------------------------------------------------------------
+def test_nccl_repeated_kvstore_setup():
+    for key in [11, 12]:
+        kv = _make_kv()
+        shape = (256,)
+        dtype = 'float32'
+        expected = sum(g + 1 for g in range(NUM_GPUS))
+        kv.init(key, mx.nd.zeros(shape, mx.gpu(0), dtype=dtype))
+        arr_list = [
+            mx.nd.ones(shape, mx.gpu(g), dtype=dtype) * (g + 1)
+            for g in range(NUM_GPUS)
+        ]
+        res = [mx.nd.zeros(shape, mx.gpu(g), dtype=dtype) for g in range(NUM_GPUS)]
+        kv.push(key, arr_list)
+        kv.pull(key, res)
+        mx.nd.waitall()
+        for g in range(NUM_GPUS):
+            assert np.allclose(res[g].asnumpy(), expected, rtol=1e-4, atol=1e-4), \
+                f"iteration key={key} GPU {g}: expected {expected}"
+
+
+# ---------------------------------------------------------------------------
+# Test 7: multiple keys in a single kvstore
 #
 # Constraint: ALL keys must be init()'d before any push().  Adding a new key
 # after push() has been called is not supported by KVStoreNCCL.
@@ -165,7 +188,7 @@ def test_nccl_multiple_keys():
 
 
 # ---------------------------------------------------------------------------
-# Test 7: bandwidth measurement at 1 MiB, 16 MiB, 256 MiB
+# Test 8: bandwidth measurement at 1 MiB, 16 MiB, 256 MiB
 #         (informational, not a correctness assertion)
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("size_mib", [1, 16, 256])
@@ -208,7 +231,7 @@ def test_nccl_bandwidth(size_mib, request):
 
 
 # ---------------------------------------------------------------------------
-# Test 8: int8 NOT supported (MUST BE LAST — see warning below)
+# Test 9: int8 NOT supported (MUST BE LAST — see warning below)
 #
 # Pushing a dtype not in kvstore_nccl.h's GetNCCLType() switch causes an
 # async error that is raised at waitall() time.  This error corrupts the

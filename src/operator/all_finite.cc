@@ -24,6 +24,7 @@
  */
 #include "./all_finite-inl.h"
 #include <cmath>
+#include <limits>
 
 namespace mxnet {
 namespace op {
@@ -53,7 +54,9 @@ inline void AllFiniteCPU(const nnvm::NodeAttrs& attrs,
   }
   MSHADOW_REAL_TYPE_SWITCH(inputs[0].type_flag_, DType, {
     Tensor<cpu, 2, DType> in = inputs[0].FlatTo2D<cpu, DType>(s);
-    const int n              = in.shape_.Size();
+    CHECK_LE(in.shape_.Size(), static_cast<size_t>(std::numeric_limits<int>::max()))
+        << "all_finite supports at most INT_MAX elements per input.";
+    const int n = static_cast<int>(in.shape_.Size());
     Kernel<AllFiniteCPUKernel<DType>, cpu>::Launch(s, n, in.dptr_, out.dptr_);
   });
 }
@@ -87,7 +90,10 @@ inline void MultiAllFiniteCPU(const nnvm::NodeAttrs& attrs,
   MSHADOW_REAL_TYPE_SWITCH(inputs[0].type_flag_, DType, {
     MultiAllFiniteKernelParam<DType> param =
         FillMultiAllFiniteParam<cpu, DType>(op_param, ctx, inputs);
-    Kernel<MultiAllFiniteCPUKernel<DType>, cpu>::Launch(s, param.max_size, param, out.dptr_);
+    CHECK_LE(param.max_size, static_cast<size_t>(std::numeric_limits<int>::max()))
+        << "multi_all_finite supports at most INT_MAX elements per input.";
+    Kernel<MultiAllFiniteCPUKernel<DType>, cpu>::Launch(
+        s, static_cast<int>(param.max_size), param, out.dptr_);
   });
 }
 

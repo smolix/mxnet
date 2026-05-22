@@ -116,7 +116,9 @@ class ContextHelperCPU : public ContextHelper {
     if (sysinfo(&info) < 0)
       LOG(FATAL) << "Error: sysinfo failed";
 
-    return std::make_tuple(info.freeram, info.totalram);
+    const uint64_t mem_unit = info.mem_unit ? static_cast<uint64_t>(info.mem_unit) : 1;
+    return std::make_tuple(static_cast<size_t>(info.freeram * mem_unit),
+                           static_cast<size_t>(info.totalram * mem_unit));
 #endif
   }
 

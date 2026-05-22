@@ -26,14 +26,26 @@ import mxnet as mx
 from mxnet.base import _LIB
 from mxnet.base import mx_uint, NDArrayHandle, check_call
 
+def _as_image_bytes(str_img):
+    """Return an image buffer as bytes for the C API."""
+    if isinstance(str_img, bytes):
+        return str_img
+    if isinstance(str_img, bytearray):
+        return bytes(str_img)
+    if isinstance(str_img, memoryview):
+        return str_img.tobytes()
+    if isinstance(str_img, str):
+        return str_img.encode('latin1')
+    raise TypeError('str_img must be bytes, bytearray, memoryview, or str')
+
 def imdecode(str_img, flag=1):
     """Decode image from str buffer.
     Wrapper for cv2.imdecode that uses mx.nd.NDArray
 
     Parameters
     ----------
-    str_img : str
-        str buffer read from image file
+    str_img : bytes or str
+        Image buffer read from image file
     flag : int
         same as flag for cv2.imdecode
     Returns
@@ -42,6 +54,7 @@ def imdecode(str_img, flag=1):
         decoded image in (width, height, channels)
         with BGR color channel order
     """
+    str_img = _as_image_bytes(str_img)
     hdl = NDArrayHandle()
     check_call(_LIB.MXCVImdecode(ctypes.c_char_p(str_img),
                                  mx_uint(len(str_img)),
@@ -175,7 +188,8 @@ class ImageListIter(mx.io.DataIter):
         batch = mx.nd.zeros((self.batch_size, self.size[1], self.size[0], 3))
         i = self.cur
         for i in range(self.cur, min(len(self.list), self.cur+self.batch_size)):
-            str_img = open(self.root+self.list[i]+'.jpg').read()
+            with open(self.root+self.list[i]+'.jpg', 'rb') as fin:
+                str_img = fin.read()
             img = imdecode(str_img, 1)
             img, _ = random_crop(img, self.size)
             batch[i - self.cur] = img
@@ -186,7 +200,6 @@ class ImageListIter(mx.io.DataIter):
                               index=None)
         self.cur = i
         return ret
-
 
 
 

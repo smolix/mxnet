@@ -134,7 +134,7 @@ inline void ResizeImpl(const std::vector<TBlob>& inputs,
                        const int output_index = 0) {
 #if MXNET_USE_OPENCV
   CHECK_NE(inputs[0].type_flag_, mshadow::kFloat16) << "opencv image mat doesn't support fp16";
-  CHECK((inputs[0].type_flag_ != mshadow::kInt32) || (inputs[0].type_flag_ != mshadow::kInt64))
+  CHECK((inputs[0].type_flag_ != mshadow::kInt32) && (inputs[0].type_flag_ != mshadow::kInt64))
       << "opencv resize doesn't support int32, int64";
   // mapping to opencv matrix element type according to channel
   const int DTYPE[] = {CV_32F, CV_64F, -1, CV_8U, CV_32S};
@@ -212,6 +212,10 @@ inline void Resize(const nnvm::NodeAttrs& attrs,
                    const std::vector<TBlob>& outputs) {
   CHECK_EQ(outputs.size(), 1U);
   const ResizeParam& param = nnvm::get<ResizeParam>(attrs.parsed);
+  if (req[0] == kNullOp) {
+    return;
+  }
+  CHECK_NE(req[0], kAddTo) << "image resize does not support kAddTo requests.";
   ResizeImplWrapper<xpu>(param, ctx, inputs, outputs);
 }
 

@@ -59,9 +59,9 @@ inline void ThreadedVar::AppendReadDependency(OprBlock* opr_block) {
     opr_block->decr_wait();
   } else {
     auto&& new_var_block = VersionedVarBlock::New();
-    assert(head_->next == nullptr);
-    assert(head_->trigger == nullptr);
-    assert(head_->write == false);
+    CHECK(head_->next == nullptr);
+    CHECK(head_->trigger == nullptr);
+    CHECK(!head_->write);
     // append things to next.
     head_->next    = new_var_block;
     head_->trigger = opr_block;
@@ -73,9 +73,9 @@ inline void ThreadedVar::AppendWriteDependency(OprBlock* opr_block) {
   auto&& new_var_block = VersionedVarBlock::New();
   std::lock_guard<std::mutex> lock{mutex_};
   // invariant.
-  assert(head_->next == nullptr);
-  assert(head_->trigger == nullptr);
-  assert(head_->write == false);
+  CHECK(head_->next == nullptr);
+  CHECK(head_->trigger == nullptr);
+  CHECK(!head_->write);
   // attach to head.
   head_->next    = new_var_block;
   head_->trigger = opr_block;
@@ -126,8 +126,8 @@ inline bool ThreadedVar::CompleteWriteDependency(Dispatcher dispatcher) {
   {
     std::lock_guard<std::mutex> lock{mutex_};
     // invariants
-    assert(head_->next == nullptr);
-    assert(pending_write_ != nullptr);
+    CHECK(head_->next == nullptr);
+    CHECK_NE(pending_write_, nullptr);
     CHECK_EQ(num_pending_reads_, kWriteTriggered);
 
     // increment version number
@@ -155,7 +155,7 @@ inline bool ThreadedVar::CompleteWriteDependency(Dispatcher dispatcher) {
       pending_write_ = nullptr;
     } else {
       // check if there is pending reads, if not trigger write
-      assert(end_of_read_chain->write == true);
+      CHECK(end_of_read_chain->write == true);
       pending_write_ = end_of_read_chain;
       if (num_pending_reads_ == 0) {
         // mark write as already activated in this var
@@ -179,7 +179,7 @@ inline bool ThreadedVar::CompleteWriteDependency(Dispatcher dispatcher) {
     }
     auto prev = cur_head;
     cur_head  = cur_head->next;
-    assert(cur_head != nullptr);
+    CHECK(cur_head != nullptr);
     VersionedVarBlock::Delete(prev);
   }
   if (trigger_write != nullptr && trigger_write->decr_wait() == 0) {

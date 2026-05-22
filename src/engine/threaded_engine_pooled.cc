@@ -169,7 +169,7 @@ class ThreadedEnginePooled : public ThreadedEngine {
 #if MXNET_USE_CUDA
     mxnet::common::cuda::DeviceStore device_store(-1, false);
 #endif
-    assert(opr_block->wait.load() == 0);
+    CHECK_EQ(opr_block->wait.load(), 0);
     if (opr_block->ctx.dev_mask() == gpu::kDevMask) {
 #if MXNET_USE_CUDA
       device_store.SetDevice(opr_block->ctx.dev_id);

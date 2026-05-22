@@ -1,10 +1,16 @@
 # MXNet Port Issues
 
-Updated: 2026-05-22 (P0/P1/P2 cleanup pass — wheel built, acceptance running)
-Current branch: `cleanup/p0-p1-p2-20260522` (forked from `master`; pushed to GitHub)
-Current head: `3ec9f9446` Trim XOP19 test to non-fragile quantized smoke
+Updated: 2026-05-22 (P0/P1/P2 cleanup pass — wheel built, tagged, pushed)
+Current branch: `cleanup/p0-p1-p2-20260522` (on GitHub)
+Current tag: `v2.0.0+cu13.bw.20260522` (pushed to GitHub)
 Cleanup wheel: `dist/mxnet-2.0.0+cu13.bw.20260522-cp312-cp312-linux_x86_64.whl` (516MB)
 PR template URL: https://github.com/smolix/mxnet/pull/new/cleanup/p0-p1-p2-20260522
+Clean-venv acceptance: 2000+ tests passed across 18 PASS shards; remaining
+failures (`cpu_unittest`, `dnnl_subgraphs_qat_backward` partial,
+`gpu_operator_numpy/classic`, `cpu_test_random`) are pre-existing — oneDNN
+0-dim LOG(FATAL) at `ndarray.cc:624`, BoxNMS segfault on `grad_req='add'`,
+or `scipy` missing in the clean-venv test harness — not regressions from
+this branch.
 Apple Silicon follow-up merge: PR #28 from `followup/full-sweep-macos-wheel`
 Linux validation host: 4x RTX 4090 Ada (`sm_89`), CUDA 13.0, cuDNN/NCCL
 host dependencies and submodules installed; CUDA `sm_89` build configured; first

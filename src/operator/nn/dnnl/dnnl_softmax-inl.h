@@ -72,7 +72,7 @@ class DNNLSoftmaxFwd {
   static linear_pd_t GetTemperaturePd(const dnnl::memory& input_mem, const float temperature);
 
   DNNLSoftmaxFwd(const SoftmaxParam& param, const Tensors& tensors, const bool is_train);
-  void Execute(const Tensors& tensors) const;
+  void Execute(const Tensors& tensors, const OpReqType& req) const;
 
   std::shared_ptr<softmax_fwd_pd_t> softmax_pd;
   std::shared_ptr<softmax_fwd_t> softmax_fwd;

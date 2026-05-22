@@ -57,7 +57,7 @@ void DNNLSoftmaxForward(const nnvm::NodeAttrs& attrs,
   const bool is_train = ctx.is_train;
   const auto tensors  = DNNLSoftmaxFwd::Tensors(in_data, out_data);
   const auto& fwd     = DNNLSoftmaxFwd::GetCached(param, tensors, is_train);
-  fwd.Execute(tensors);
+  fwd.Execute(tensors, req);
 }
 
 DNNLSoftmaxFwd::Tensors::Tensors(const NDArray& data, const NDArray& output)
@@ -128,20 +128,20 @@ linear_pd_t DNNLSoftmaxFwd::GetTemperaturePd(const dnnl::memory& input_mem,
                      1.0f / temperature, 0.0f);
 }
 
-void DNNLSoftmaxFwd::Execute(const Tensors& tensors) const {
+void DNNLSoftmaxFwd::Execute(const Tensors& tensors, const OpReqType& req) const {
   DNNLStream* stream = DNNLStream::Get();
 
   auto original_input_mem  = tensors.data.GetDNNLData();
   auto softmax_pd_dst_desc = softmax_pd->dst_desc();
-  const auto out_mem       = tensors.out.GetDNNLData(&softmax_pd_dst_desc);
+  const auto out_mem       = CreateDNNLMem(tensors.out, softmax_pd_dst_desc, req, &tensors.data);
 
   dnnl::memory* softmax_input_mem;
   if (temperature_pd) {
     // check whether additional buffer is needed, when temperature parameter is being used
-    if (original_input_mem->get_desc() != out_mem->get_desc()) {
+    if (original_input_mem->get_desc() != out_mem.second->get_desc()) {
       softmax_input_mem = TmpMemMgr::Get()->Alloc(original_input_mem->get_desc());
     } else {
-      softmax_input_mem = const_cast<dnnl::memory*>(out_mem);
+      softmax_input_mem = out_mem.second;
     }
     stream->RegisterPrimArgs(
         *temperature_fwd,
@@ -151,7 +151,8 @@ void DNNLSoftmaxFwd::Execute(const Tensors& tensors) const {
   }
 
   stream->RegisterPrimArgs(*softmax_fwd,
-                           {{DNNL_ARG_SRC, *softmax_input_mem}, {DNNL_ARG_DST, *out_mem}});
+                           {{DNNL_ARG_SRC, *softmax_input_mem}, {DNNL_ARG_DST, *out_mem.second}});
+  CommitOutput(tensors.out, out_mem);
   stream->Submit();
 }
 

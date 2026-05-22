@@ -201,7 +201,7 @@ void DNNLMaskedSoftmaxFwd::Execute(const Tensors& tensors,
   stream->Submit();
 
   // 2. out = softmax(out)
-  softmax_op.Execute(softmax_tensors);
+  softmax_op.Execute(softmax_tensors, kWriteTo);
 
   // 3. out = out * mask
   stream->RegisterPrimArgs(this->primitives->mask_output,

@@ -41,7 +41,8 @@ class LRScheduler(object):
     def __init__(self, base_lr=0.01,
                  warmup_steps=0, warmup_begin_lr=0, warmup_mode='linear'):
         self.base_lr = base_lr
-        assert isinstance(warmup_steps, int)
+        if not isinstance(warmup_steps, int):
+            raise TypeError("warmup_steps must be an int")
         self.warmup_steps = warmup_steps
 
         self.warmup_final_lr = base_lr
@@ -55,7 +56,8 @@ class LRScheduler(object):
         self.warmup_mode = warmup_mode
 
     def get_warmup_lr(self, num_update):
-        assert num_update < self.warmup_steps
+        if num_update >= self.warmup_steps:
+            raise ValueError("num_update must be smaller than warmup_steps")
         if self.warmup_mode == 'linear':
             increase = (self.warmup_final_lr - self.warmup_begin_lr) \
                        * float(num_update) / float(self.warmup_steps)
@@ -158,7 +160,10 @@ class MultiFactorScheduler(LRScheduler):
                  warmup_mode='linear'):
         super(MultiFactorScheduler, self).__init__(base_lr, warmup_steps,
                                                    warmup_begin_lr, warmup_mode)
-        assert isinstance(step, list) and len(step) >= 1
+        if not isinstance(step, list):
+            raise TypeError("Schedule step must be a list of integers")
+        if len(step) < 1:
+            raise ValueError("Schedule step must contain at least one integer")
         for i, _step in enumerate(step):
             if i != 0 and step[i] <= step[i-1]:
                 raise ValueError("Schedule step must be an increasing integer list")
@@ -218,7 +223,8 @@ class PolyScheduler(LRScheduler):
     def __init__(self, max_update, base_lr=0.01, pwr=2, final_lr=0,
                  warmup_steps=0, warmup_begin_lr=0, warmup_mode='linear'):
         super(PolyScheduler, self).__init__(base_lr, warmup_steps, warmup_begin_lr, warmup_mode)
-        assert isinstance(max_update, int)
+        if not isinstance(max_update, int):
+            raise TypeError("max_update must be an int")
         if max_update < 1:
             raise ValueError("maximum number of updates must be strictly positive")
         self.power = pwr
@@ -264,7 +270,8 @@ class CosineScheduler(LRScheduler):
     def __init__(self, max_update, base_lr=0.01, final_lr=0,
                  warmup_steps=0, warmup_begin_lr=0, warmup_mode='linear'):
         super(CosineScheduler, self).__init__(base_lr, warmup_steps, warmup_begin_lr, warmup_mode)
-        assert isinstance(max_update, int)
+        if not isinstance(max_update, int):
+            raise TypeError("max_update must be an int")
         if max_update < 1:
             raise ValueError("maximum number of updates must be strictly positive")
         self.base_lr_orig = base_lr

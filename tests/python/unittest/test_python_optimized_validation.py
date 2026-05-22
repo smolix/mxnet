@@ -89,6 +89,57 @@ def _run_optimized_python(source):
     else:
         raise AssertionError('CudaKernel.launch accepted invalid scalar argument')
     """,
+    """
+    from mxnet.lr_scheduler import LRScheduler
+    try:
+        LRScheduler(warmup_steps=1.5)
+    except TypeError as err:
+        if 'warmup_steps must be an int' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('LRScheduler accepted non-integer warmup_steps')
+    """,
+    """
+    from mxnet.lr_scheduler import MultiFactorScheduler
+    try:
+        MultiFactorScheduler(step=())
+    except TypeError as err:
+        if 'Schedule step must be a list of integers' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('MultiFactorScheduler accepted non-list step')
+    """,
+    """
+    from mxnet.lr_scheduler import PolyScheduler
+    try:
+        PolyScheduler(max_update=1.5)
+    except TypeError as err:
+        if 'max_update must be an int' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('PolyScheduler accepted non-integer max_update')
+    """,
+    """
+    from mxnet.lr_scheduler import CosineScheduler
+    try:
+        CosineScheduler(max_update=1.5)
+    except TypeError as err:
+        if 'max_update must be an int' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('CosineScheduler accepted non-integer max_update')
+    """,
+    """
+    from mxnet.lr_scheduler import LRScheduler
+    scheduler = LRScheduler(warmup_steps=1)
+    try:
+        scheduler.get_warmup_lr(1)
+    except ValueError as err:
+        if 'num_update must be smaller than warmup_steps' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('get_warmup_lr accepted num_update outside warmup range')
+    """,
 ])
 def test_user_validation_survives_optimized_python(source):
     _run_optimized_python(source)

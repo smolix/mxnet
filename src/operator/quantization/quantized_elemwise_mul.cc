@@ -24,6 +24,7 @@
 #include <mxnet/op_attr_types.h>
 #include "../tensor/elemwise_binary_op-inl.h"
 #include "./quantized_elemwise_mul-inl.h"
+#include "./quantized_range_utils.h"
 #include "./quantization_utils.h"
 
 namespace mxnet {
@@ -170,42 +171,69 @@ void QuantizedElemwiseMulOpForward(const nnvm::NodeAttrs& attrs,
     if (params.max_calib_range.has_value() && params.min_calib_range.has_value()) {
       typedef int8_t out_type;
       auto* out_data = outputs[quantized_elemwise_mul::kOut].dptr<out_type>();
+      if (req[quantized_elemwise_mul::kOut] != kNullOp) {
 #if !defined(_MSC_VER)
 #pragma omp simd
 #endif
-      for (size_t i = 0; i < out_size; ++i) {
-        const int8_t a = input_l[i];
-        const int8_t b = input_r[i];
-        out_data[i]    = static_cast<out_type>(a * b * out_scale);
+        for (size_t i = 0; i < out_size; ++i) {
+          const int8_t a = input_l[i];
+          const int8_t b = input_r[i];
+          const auto value = static_cast<out_type>(a * b * out_scale);
+          if (req[quantized_elemwise_mul::kOut] == kAddTo) {
+            out_data[i] += value;
+          } else {
+            out_data[i] = value;
+          }
+        }
       }
     } else {
       using out_type = int32_t;
       auto* out_data = outputs[quantized_elemwise_mul::kOut].dptr<out_type>();
+      if (req[quantized_elemwise_mul::kOut] != kNullOp) {
 #if !defined(_MSC_VER)
 #pragma omp simd
 #endif
-      for (size_t i = 0; i < out_size; ++i) {
-        const int8_t a = input_l[i];
-        const int8_t b = input_r[i];
-        out_data[i]    = static_cast<out_type>(a * b * out_scale);
+        for (size_t i = 0; i < out_size; ++i) {
+          const int8_t a = input_l[i];
+          const int8_t b = input_r[i];
+          const auto value = static_cast<out_type>(a * b * out_scale);
+          if (req[quantized_elemwise_mul::kOut] == kAddTo) {
+            out_data[i] += value;
+          } else {
+            out_data[i] = value;
+          }
+        }
       }
     }
   } else {
     using out_type = float;
     auto* out_data = outputs[quantized_elemwise_mul::kOut].dptr<out_type>();
+    if (req[quantized_elemwise_mul::kOut] != kNullOp) {
 #if !defined(_MSC_VER)
 #pragma omp simd
 #endif
-    for (size_t i = 0; i < out_size; ++i) {
-      const int8_t a = input_l[i];
-      const int8_t b = input_r[i];
-      out_data[i]    = static_cast<out_type>(a * b * out_scale);
+      for (size_t i = 0; i < out_size; ++i) {
+        const int8_t a = input_l[i];
+        const int8_t b = input_r[i];
+        const auto value = static_cast<out_type>(a * b * out_scale);
+        if (req[quantized_elemwise_mul::kOut] == kAddTo) {
+          out_data[i] += value;
+        } else {
+          out_data[i] = value;
+        }
+      }
     }
   }
 
   if (!params.enable_float_output) {
-    outputs[quantized_elemwise_mul::kOutMin].dptr<float>()[0] = cached_output_min_;
-    outputs[quantized_elemwise_mul::kOutMax].dptr<float>()[0] = cached_output_max_;
+    AssignQuantizedRangeOutput(outputs[quantized_elemwise_mul::kOutMin].dptr<float>(),
+                               &cached_output_min_,
+                               req[quantized_elemwise_mul::kOutMin],
+                               "quantized_elemwise_mul");
+    AssignQuantizedRangeOutput(outputs[quantized_elemwise_mul::kOutMax].dptr<float>(),
+                               &cached_output_max_,
+                               req[quantized_elemwise_mul::kOutMax],
+                               "quantized_elemwise_mul");
   }
 }
 

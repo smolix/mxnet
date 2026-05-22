@@ -7047,6 +7047,28 @@ def test_dropout():
         check_dropout_axes(0.25, nshape, axes = (1, 2, 3), cudnn_off=False)
 
 
+def test_dropout_backward_req():
+    shape = (32, 32)
+    ctx = default_device()
+    data = mx.nd.ones(shape, ctx=ctx)
+    sym = mx.sym.Dropout(mx.sym.var('data'), p=0.5, cudnn_off=True)
+
+    add_grad = mx.nd.full(shape, 7, ctx=ctx)
+    add_exe = sym._bind(ctx, args={'data': data}, args_grad={'data': add_grad},
+                        grad_req={'data': 'add'})
+    add_exe.forward(is_train=True)
+    add_out = add_exe.outputs[0].asnumpy()
+    add_exe.backward([mx.nd.ones(shape, ctx=ctx)])
+    assert_almost_equal(add_grad.asnumpy(), add_out + 7)
+
+    null_grad = mx.nd.full(shape, 11, ctx=ctx)
+    null_exe = sym._bind(ctx, args={'data': data}, args_grad={'data': null_grad},
+                         grad_req={'data': 'null'})
+    null_exe.forward(is_train=True)
+    null_exe.backward([mx.nd.ones(shape, ctx=ctx)])
+    assert_almost_equal(null_grad.asnumpy(), np.full(shape, 11))
+
+
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
 # @pytest.mark.skip(reason="test fails intermittently. temporarily disabled till it gets fixed. tracked at https://github.com/apache/mxnet/issues/11290")
 def test_scatter_gather_nd():

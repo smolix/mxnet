@@ -146,6 +146,7 @@ class DropoutOp {
   // MKL forward pass
   inline void MKLForward(const OpContext& ctx,
                          const std::vector<TBlob>& in_data,
+                         const std::vector<OpReqType>& req,
                          const std::vector<TBlob>& out_data) {
     Stream<xpu>* s                  = ctx.get_stream<xpu>();
     RandGenerator<xpu, DType>* pgen = ctx.requested[0].get_parallel_random<xpu, DType>();
@@ -167,7 +168,11 @@ class DropoutOp {
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
     for (int i = 0; i < count; ++i) {
       const DType maskVal = static_cast<DType>(maskptr[i]) * pk_1;
-      outptr[i]           = dataptr[i] * maskVal;
+      if (req[dropout::kOut] == kAddTo) {
+        outptr[i] += dataptr[i] * maskVal;
+      } else {
+        outptr[i] = dataptr[i] * maskVal;
+      }
       mask.dptr_[i]       = maskVal;
     }
   }
@@ -176,7 +181,8 @@ class DropoutOp {
   inline void MKLBackward(const OpContext& ctx,
                           const std::vector<TBlob>& in_grad,
                           const std::vector<TBlob>& out_data,
-                          const std::vector<TBlob>& out_grad) {
+                          const std::vector<TBlob>& out_grad,
+                          const std::vector<OpReqType>& req) {
     Stream<xpu>* s              = ctx.get_stream<xpu>();
     Tensor<xpu, 2, DType> grad  = out_grad[dropout::kOut].FlatTo2D<xpu, DType>(s);
     Tensor<xpu, 2, DType> mask  = out_data[dropout::kMask].FlatTo2D<xpu, DType>(s);
@@ -187,7 +193,11 @@ class DropoutOp {
     const int count             = mask.shape_[0] * mask.shape_[1];
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
     for (int i = 0; i < count; ++i) {
-      ingradptr[i] = outgradptr[i] * maskptr[i];
+      if (req[dropout::kData] == kAddTo) {
+        ingradptr[i] += outgradptr[i] * maskptr[i];
+      } else {
+        ingradptr[i] = outgradptr[i] * maskptr[i];
+      }
     }
   }
 
@@ -363,12 +373,14 @@ class DropoutOp {
         if (this->axes_.ndim() == 0) {
 #if MXNET_USE_MKL_DROPOUT
           if (MKLAvailable()) {
-            MKLForward(ctx, in_data, out_data);
+            MKLForward(ctx, in_data, req, out_data);
             return;
           }
 #endif  // MXNET_USE_MKL_DROPOUT
 #if MXNET_USE_CUDNN_DROPOUT && defined(__CUDACC__)
           if (CuDNNAvailable()) {
+            CHECK_NE(req[dropout::kOut], kAddTo)
+                << "cuDNN Dropout does not support kAddTo requests.";
             CuDNNForward(ctx, in, mask, out);
             return;
           }
@@ -435,6 +447,9 @@ class DropoutOp {
                 const std::vector<TBlob>& in_grad) {
     using namespace mshadow;
     using namespace mshadow::expr;
+    if (req[dropout::kData] == kNullOp) {
+      return;
+    }
     Stream<xpu>* s = ctx.get_stream<xpu>();
     if (!this->dropout_passthrough_) {
       const TBlob& gdata         = in_grad[dropout::kData];
@@ -443,12 +458,14 @@ class DropoutOp {
       if (this->axes_.ndim() == 0) {
 #if MXNET_USE_MKL_DROPOUT
         if (MKLAvailable()) {
-          MKLBackward(ctx, in_grad, out_data, out_grad);
+          MKLBackward(ctx, in_grad, out_data, out_grad, req);
           return;
         }
 #endif  // MXNET_USE_MKL_DROPOUT
 #if MXNET_USE_CUDNN_DROPOUT && defined(__CUDACC__)
         if (CuDNNAvailable()) {
+          CHECK_NE(req[dropout::kData], kAddTo)
+              << "cuDNN Dropout backward does not support kAddTo requests.";
           CuDNNBackward(ctx, grad, mask, gdata);
           return;
         }

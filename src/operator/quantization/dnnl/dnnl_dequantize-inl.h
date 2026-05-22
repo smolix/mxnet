@@ -61,6 +61,8 @@ void SgDNNLDequantizeOperator::Forward(const OpContext& ctx,
                                        const std::vector<NDArray>& inputs,
                                        const std::vector<OpReqType>& req,
                                        const std::vector<NDArray>& outputs) {
+  if (req[0] == kNullOp)
+    return;
   NDArray in_buffer = inputs[0];
   if (inputs[0].IsView() && inputs[0].IsDNNLData())
     in_buffer = inputs[0].Reorder2Default();

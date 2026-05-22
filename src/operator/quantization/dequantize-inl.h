@@ -54,9 +54,11 @@ struct dequantize_unsigned {
                                   const float* imin_range,
                                   const float* imax_range,
                                   const float imin_limit,
-                                  const float imax_limit) {
+                                  const float imax_limit,
+                                  const OpReqType req) {
     const float scale = (*imax_range - *imin_range) / (imax_limit - imin_limit);
-    out[i]            = static_cast<DstDType>(in[i] * scale + *imin_range);
+    const DstDType dequantized = static_cast<DstDType>(in[i] * scale + *imin_range);
+    KERNEL_ASSIGN(out[i], req, dequantized);
   }
 };
 
@@ -68,9 +70,11 @@ struct dequantize_zero_centered {
                                   const SrcDType* in,
                                   const float* imin_range,
                                   const float* imax_range,
-                                  const float quantized_range) {
+                                  const float quantized_range,
+                                  const OpReqType req) {
     const float real_range = MaxAbs(*imax_range, *imin_range);
-    out[i]                 = in[i] * (real_range / quantized_range);
+    const DstDType dequantized = in[i] * (real_range / quantized_range);
+    KERNEL_ASSIGN(out[i], req, dequantized);
   }
 };
 
@@ -121,6 +125,8 @@ class DequantizeOperator {
     using mshadow::red::limits::MaxValue;
     using mshadow::red::limits::MinValue;
     Stream<xpu>* s = ctx.get_stream<xpu>();
+    if (req[0] == kNullOp)
+      return;
     if (inputs[0].type_flag_ == mshadow::kUint8) {
       Kernel<dequantize_unsigned, xpu>::Launch(s,
                                                outputs[0].Size(),
@@ -129,7 +135,8 @@ class DequantizeOperator {
                                                inputs[1].dptr<float>(),
                                                inputs[2].dptr<float>(),
                                                MinValue<uint8_t>(),
-                                               MaxValue<uint8_t>());
+                                               MaxValue<uint8_t>(),
+                                               req[0]);
     } else if (inputs[0].type_flag_ == mshadow::kInt8) {
       Kernel<dequantize_zero_centered, xpu>::Launch(s,
                                                     outputs[0].Size(),
@@ -137,7 +144,8 @@ class DequantizeOperator {
                                                     inputs[0].dptr<int8_t>(),
                                                     inputs[1].dptr<float>(),
                                                     inputs[2].dptr<float>(),
-                                                    MinAbs(MaxValue<int8_t>(), MinValue<int8_t>()));
+                                                    MinAbs(MaxValue<int8_t>(), MinValue<int8_t>()),
+                                                    req[0]);
     } else {
       LOG(FATAL) << "dequantize op only supports input type int8 or uint8";
     }

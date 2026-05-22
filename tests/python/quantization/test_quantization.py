@@ -104,6 +104,43 @@ def test_quantize_float32_to_int8():
     qdata_np = (onp.sign(data_np) * onp.minimum(onp.abs(data_np) * scale + 0.5, quantized_range)).astype(onp.int8)
     assert_almost_equal(qdata.asnumpy(), qdata_np, atol = 1)
 
+def test_quantize_out_buffers_overwrite_prefilled_sentinels():
+    data = mx.nd.array([-2.0, -0.5, 0.25, 1.5], dtype='float32', ctx=mx.current_device())
+    min_range = mx.nd.array([-2.0], dtype='float32', ctx=mx.current_device())
+    max_range = mx.nd.array([1.5], dtype='float32', ctx=mx.current_device())
+    out_data = mx.nd.full(data.shape, 17, dtype='int8', ctx=mx.current_device())
+    out_min = mx.nd.array([123.0], dtype='float32', ctx=mx.current_device())
+    out_max = mx.nd.array([456.0], dtype='float32', ctx=mx.current_device())
+
+    mx.nd.contrib.quantize(data, min_range, max_range, out_type='int8',
+                           out=(out_data, out_min, out_max))
+
+    expected_range = max(abs(min_range.asscalar()), abs(max_range.asscalar()))
+    expected = (onp.sign(data.asnumpy()) *
+                onp.minimum(onp.abs(data.asnumpy()) * 127.0 / expected_range + 0.5,
+                            127.0)).astype(onp.int8)
+    assert_almost_equal(out_data.asnumpy(), expected, atol=1)
+    assert_almost_equal(out_min.asnumpy(), onp.array([-expected_range], dtype=onp.float32))
+    assert_almost_equal(out_max.asnumpy(), onp.array([expected_range], dtype=onp.float32))
+
+
+def test_quantize_v2_out_buffers_overwrite_prefilled_sentinels():
+    data = mx.nd.array([-3.0, -1.0, 0.5, 2.0], dtype='float32', ctx=mx.current_device())
+    out_data = mx.nd.full(data.shape, 11, dtype='int8', ctx=mx.current_device())
+    out_min = mx.nd.array([77.0], dtype='float32', ctx=mx.current_device())
+    out_max = mx.nd.array([88.0], dtype='float32', ctx=mx.current_device())
+
+    mx.nd.contrib.quantize_v2(data, out_type='int8', min_calib_range=-3.0,
+                              max_calib_range=2.0, out=(out_data, out_min, out_max))
+
+    expected_range = 3.0
+    expected = (onp.sign(data.asnumpy()) *
+                onp.minimum(onp.abs(data.asnumpy()) * 127.0 / expected_range + 0.5,
+                            127.0)).astype(onp.int8)
+    assert_almost_equal(out_data.asnumpy(), expected, atol=1)
+    assert_almost_equal(out_min.asnumpy(), onp.array([-expected_range], dtype=onp.float32))
+    assert_almost_equal(out_max.asnumpy(), onp.array([expected_range], dtype=onp.float32))
+
 def test_calibrated_quantize_v2_bfloat16_to_int8():
     shape = rand_shape_nd(4)
     data = mx.nd.random.normal(0, 1, shape).astype('bfloat16')
@@ -162,6 +199,18 @@ def test_dequantize_int8_to_float32():
     test_nd_array_dequantization(qdata, min_range, max_range, expected_result)
     # test symbolic api implementaion.
     test_symbolic_api_dequantization(qdata, min_range, max_range, expected_result)
+
+
+def test_dequantize_out_buffer_overwrites_prefilled_sentinel():
+    qdata_np = onp.array([-127, -64, 0, 127], dtype=onp.int8)
+    qdata = mx.nd.array(qdata_np, dtype=onp.int8, ctx=mx.current_device())
+    min_range = mx.nd.array([-4.0], dtype=onp.float32, ctx=mx.current_device())
+    max_range = mx.nd.array([4.0], dtype=onp.float32, ctx=mx.current_device())
+    out = mx.nd.full(qdata.shape, 99.0, dtype='float32', ctx=mx.current_device())
+
+    mx.nd.contrib.dequantize(qdata, min_range, max_range, out_type='float32', out=out)
+
+    assert_almost_equal(out.asnumpy(), qdata_np.astype('float32') * (4.0 / 127.0), atol=1)
 
 
 def test_requantize_int32_to_int8():

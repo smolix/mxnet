@@ -31,6 +31,7 @@
 #include "../mshadow_op.h"
 #include "../mxnet_op.h"
 #include "./quantization_utils.h"
+#include "./quantized_range_utils.h"
 
 namespace mxnet {
 namespace op {
@@ -51,19 +52,17 @@ struct quantize_unsigned {
   template <typename DstDType, typename SrcDType>
   MSHADOW_XINLINE static void Map(int i,
                                   DstDType* out,
-                                  float* omin_range,
-                                  float* omax_range,
                                   const SrcDType* in,
                                   const float* imin_range,
                                   const float* imax_range,
                                   const double min_limit,
-                                  const double max_limit) {
+                                  const double max_limit,
+                                  const OpReqType req) {
     using mshadow::red::limits::MaxValue;
     using mshadow::red::limits::MinValue;
     const float scale = (max_limit - min_limit) / (*imax_range - *imin_range);
-    out[i]            = static_cast<DstDType>((in[i] - *imin_range) * scale + 0.5);
-    *omin_range       = *imin_range;
-    *omax_range       = *imax_range;
+    const DstDType quantized = static_cast<DstDType>((in[i] - *imin_range) * scale + 0.5);
+    KERNEL_ASSIGN(out[i], req, quantized);
   }
 };
 
@@ -72,18 +71,17 @@ struct quantize_zero_centered {
   template <typename DstDType, typename SrcDType>
   MSHADOW_XINLINE static void Map(int i,
                                   DstDType* out,
-                                  float* omin_range,
-                                  float* omax_range,
                                   const SrcDType* in,
                                   const float* imin_range,
                                   const float* imax_range,
-                                  const float quantized_range) {
+                                  const float quantized_range,
+                                  const OpReqType req) {
     float real_range = MaxAbs(*imin_range, *imax_range);
     float scale      = quantized_range / real_range;
     SrcDType x       = in[i];
-    out[i]           = static_cast<DstDType>(Sign(x) * Min(Abs(x) * scale + 0.5f, quantized_range));
-    *omin_range      = -real_range;
-    *omax_range      = real_range;
+    const DstDType quantized =
+        static_cast<DstDType>(Sign(x) * Min(Abs(x) * scale + 0.5f, quantized_range));
+    KERNEL_ASSIGN(out[i], req, quantized);
   }
 };
 
@@ -105,26 +103,32 @@ void QuantizeCompute(const nnvm::NodeAttrs& attrs,
       LOG(FATAL) << "currently, uint8 quantization is only supported by CPU, "
                     "please switch to the context of CPU or int8 data type for GPU.";
     }
-    Kernel<quantize_unsigned, xpu>::Launch(s,
-                                           outputs[0].Size(),
-                                           outputs[0].dptr<uint8_t>(),
-                                           outputs[1].dptr<float>(),
-                                           outputs[2].dptr<float>(),
-                                           inputs[0].dptr<float>(),
-                                           inputs[1].dptr<float>(),
-                                           inputs[2].dptr<float>(),
-                                           MinValue<uint8_t>(),
-                                           MaxValue<uint8_t>());
+    if (req[0] != kNullOp) {
+      Kernel<quantize_unsigned, xpu>::Launch(s,
+                                             outputs[0].Size(),
+                                             outputs[0].dptr<uint8_t>(),
+                                             inputs[0].dptr<float>(),
+                                             inputs[1].dptr<float>(),
+                                             inputs[2].dptr<float>(),
+                                             MinValue<uint8_t>(),
+                                             MaxValue<uint8_t>(),
+                                             req[0]);
+    }
+    AssignQuantizedRangeOutput<xpu>(s, outputs[1], inputs[1], req[1]);
+    AssignQuantizedRangeOutput<xpu>(s, outputs[2], inputs[2], req[2]);
   } else if (param.out_type == mshadow::kInt8) {  // zero-centered quantization
-    Kernel<quantize_zero_centered, xpu>::Launch(s,
-                                                outputs[0].Size(),
-                                                outputs[0].dptr<int8_t>(),
-                                                outputs[1].dptr<float>(),
-                                                outputs[2].dptr<float>(),
-                                                inputs[0].dptr<float>(),
-                                                inputs[1].dptr<float>(),
-                                                inputs[2].dptr<float>(),
-                                                MinAbs(MaxValue<int8_t>(), MinValue<int8_t>()));
+    if (req[0] != kNullOp) {
+      Kernel<quantize_zero_centered, xpu>::Launch(s,
+                                                  outputs[0].Size(),
+                                                  outputs[0].dptr<int8_t>(),
+                                                  inputs[0].dptr<float>(),
+                                                  inputs[1].dptr<float>(),
+                                                  inputs[2].dptr<float>(),
+                                                  MinAbs(MaxValue<int8_t>(), MinValue<int8_t>()),
+                                                  req[0]);
+    }
+    AssignQuantizedZeroCenteredRangeOutput<xpu>(
+        s, outputs[1], outputs[2], inputs[1], inputs[2], req[1], req[2]);
   } else {
     LOG(FATAL) << "quantize op only supports int8 and uint8 as output type";
   }

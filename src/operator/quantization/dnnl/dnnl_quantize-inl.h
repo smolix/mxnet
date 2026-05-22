@@ -32,6 +32,7 @@
 
 #include "operator/nn/dnnl/dnnl_base-inl.h"
 #include "operator/quantization/quantize-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 
 namespace mxnet {
 namespace op {
@@ -50,16 +51,28 @@ static void DNNLQuantizeComputeKer(const std::vector<NDArray>& inputs,
   if (param.out_type == mshadow::kUint8) {
     real_range      = MaxAbs(*inputs[1].data().dptr<float>(), *inputs[2].data().dptr<float>());
     quantized_range = MaxAbs(MaxValue<DstType>(), MinValue<DstType>());
-    *outputs[1].data().dptr<float>() = *inputs[1].data().dptr<float>();
-    *outputs[2].data().dptr<float>() = *inputs[2].data().dptr<float>();
+    AssignQuantizedRangeOutput(outputs[1].data().dptr<float>(),
+                               inputs[1].data().dptr<float>(),
+                               req[1],
+                               "_contrib_quantize");
+    AssignQuantizedRangeOutput(outputs[2].data().dptr<float>(),
+                               inputs[2].data().dptr<float>(),
+                               req[2],
+                               "_contrib_quantize");
   } else if (param.out_type == mshadow::kInt8) {
     real_range      = MaxAbs(*inputs[1].data().dptr<float>(), *inputs[2].data().dptr<float>());
     quantized_range = MinAbs(MaxValue<DstType>(), MinValue<DstType>());
-    *outputs[1].data().dptr<float>() = -real_range;
-    *outputs[2].data().dptr<float>() = real_range;
+    const float omin_range = -real_range;
+    const float omax_range = real_range;
+    AssignQuantizedRangeOutput(
+        outputs[1].data().dptr<float>(), &omin_range, req[1], "_contrib_quantize");
+    AssignQuantizedRangeOutput(
+        outputs[2].data().dptr<float>(), &omax_range, req[2], "_contrib_quantize");
   } else {
     LOG(FATAL) << "oneDNN quantize op only supports int8 and uint8 as output type";
   }
+  if (req[0] == kNullOp)
+    return;
   float scale = quantized_range / real_range;
   // v3: set_output_scales removed. For reorder primitives, DNNL_ARG_DST scale
   // is *inverse* (divides the output), unlike v2 set_output_scales which

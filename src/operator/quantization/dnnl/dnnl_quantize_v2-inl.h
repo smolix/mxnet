@@ -31,6 +31,7 @@
 
 #include "operator/nn/dnnl/dnnl_base-inl.h"
 #include "operator/quantization/quantize_v2-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 
 namespace mxnet {
 namespace op {
@@ -68,19 +69,33 @@ void SgDNNLQuantizeOperator::Forward(const OpContext& ctx,
 
   // Pass through quantized data
   if (inputs[0].dtype() == mshadow::kUint8 || inputs[0].dtype() == mshadow::kInt8) {
+    CHECK_NE(req[0], kAddTo)
+        << "_contrib_quantize_v2 oneDNN quantized pass-through does not support kAddTo";
     if (param_.min_calib_range.has_value() && param_.max_calib_range.has_value()) {
-      *outputs[1].data().dptr<float>() = param_.min_calib_range.value();
-      *outputs[2].data().dptr<float>() = param_.max_calib_range.value();
+      const float out_min = param_.min_calib_range.value();
+      const float out_max = param_.max_calib_range.value();
+      AssignQuantizedRangeOutput(
+          outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_quantize_v2");
+      AssignQuantizedRangeOutput(
+          outputs[2].data().dptr<float>(), &out_max, req[2], "_contrib_quantize_v2");
     } else {
       if (inputs[0].dtype() == mshadow::kUint8) {
-        *outputs[1].data().dptr<float>() = 0;
-        *outputs[2].data().dptr<float>() = kUint8Range;
+        const float out_min = 0;
+        const float out_max = kUint8Range;
+        AssignQuantizedRangeOutput(
+            outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_quantize_v2");
+        AssignQuantizedRangeOutput(
+            outputs[2].data().dptr<float>(), &out_max, req[2], "_contrib_quantize_v2");
       } else {
-        *outputs[1].data().dptr<float>() = -kInt8Range;
-        *outputs[2].data().dptr<float>() = kInt8Range;
+        const float out_min = -kInt8Range;
+        const float out_max = kInt8Range;
+        AssignQuantizedRangeOutput(
+            outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_quantize_v2");
+        AssignQuantizedRangeOutput(
+            outputs[2].data().dptr<float>(), &out_max, req[2], "_contrib_quantize_v2");
       }
     }
-    if (req[0] != kWriteInplace) {
+    if (req[0] != kNullOp && req[0] != kWriteInplace) {
       const_cast<NDArray&>(outputs[0]).CopyFrom(*inputs[0].GetDNNLData());
       DNNLStream::Get()->Submit();
     }
@@ -121,17 +136,25 @@ void SgDNNLQuantizeOperator::Forward(const OpContext& ctx,
     // Write output min/max
     auto out_type = GetQuantizeOutputType(param_);
     if (out_type == mshadow::kUint8) {
-      quantized_range                  = kUint8Range;
-      *outputs[1].data().dptr<float>() = data_min;
-      *outputs[2].data().dptr<float>() = data_max;
+      quantized_range = kUint8Range;
+      AssignQuantizedRangeOutput(
+          outputs[1].data().dptr<float>(), &data_min, req[1], "_contrib_quantize_v2");
+      AssignQuantizedRangeOutput(
+          outputs[2].data().dptr<float>(), &data_max, req[2], "_contrib_quantize_v2");
     } else if (out_type == mshadow::kInt8) {
-      float real_range                 = MaxAbs(data_min, data_max);
-      quantized_range                  = kInt8Range;
-      *outputs[1].data().dptr<float>() = -real_range;
-      *outputs[2].data().dptr<float>() = real_range;
+      float real_range = MaxAbs(data_min, data_max);
+      quantized_range  = kInt8Range;
+      const float out_min = -real_range;
+      const float out_max = real_range;
+      AssignQuantizedRangeOutput(
+          outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_quantize_v2");
+      AssignQuantizedRangeOutput(
+          outputs[2].data().dptr<float>(), &out_max, req[2], "_contrib_quantize_v2");
     } else {
       LOG(FATAL) << "oneDNN quantize op only supports int8 and uint8 as output type";
     }
+    if (req[0] == kNullOp)
+      return;
 
     if (!initalized_) {
       cached_data_min_ = data_min;

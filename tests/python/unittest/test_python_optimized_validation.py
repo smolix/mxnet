@@ -140,6 +140,46 @@ def _run_optimized_python(source):
     else:
         raise AssertionError('get_warmup_lr accepted num_update outside warmup range')
     """,
+    """
+    from mxnet.gluon.data import ArrayDataset
+    try:
+        ArrayDataset([1], [2, 3])
+    except ValueError as err:
+        if 'same length' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('ArrayDataset accepted mismatched lengths')
+    """,
+    """
+    from mxnet.gluon.data import ArrayDataset
+    try:
+        ArrayDataset([1, 2, 3]).shard(0, 0)
+    except ValueError as err:
+        if 'Number of shards' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Dataset.shard accepted zero shards')
+    """,
+    """
+    from mxnet.gluon.data.batchify import Group, Stack
+    try:
+        Group([Stack()], Stack())
+    except ValueError as err:
+        if 'Input pattern not understood' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Group accepted mixed constructor pattern')
+    """,
+    """
+    from mxnet.gluon.data.batchify import Group
+    try:
+        Group(1)
+    except TypeError as err:
+        if 'Batchify functions must be callable' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Group accepted non-callable batchify function')
+    """,
 ])
 def test_user_validation_survives_optimized_python(source):
     _run_optimized_python(source)

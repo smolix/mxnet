@@ -83,9 +83,12 @@ class Dataset(object):
         Dataset
             The result dataset.
         """
-        assert index < num_shards, f'Shard index of out bound: {index} out of {num_shards}'
-        assert num_shards > 0, 'Number of shards must be greater than 0'
-        assert index >= 0, 'Index must be non-negative'
+        if num_shards <= 0:
+            raise ValueError('Number of shards must be greater than 0')
+        if index < 0:
+            raise ValueError('Index must be non-negative')
+        if index >= num_shards:
+            raise ValueError(f'Shard index of out bound: {index} out of {num_shards}')
         length = len(self)
         shard_len = length // num_shards
         rest = length % num_shards
@@ -350,13 +353,15 @@ class ArrayDataset(Dataset):
         The data arrays.
     """
     def __init__(self, *args):
-        assert len(args) > 0, "Needs at least 1 arrays"
+        if len(args) == 0:
+            raise ValueError("Needs at least 1 arrays")
         self._length = len(args[0])
         self._data = []
         for i, data in enumerate(args):
-            assert len(data) == self._length, \
-                f"All arrays must have the same length; array[0] has length {self._length} " \
-                f"while array[{i+1}] has {len(data)}."
+            if len(data) != self._length:
+                raise ValueError(
+                    f"All arrays must have the same length; array[0] has length {self._length} "
+                    f"while array[{i+1}] has {len(data)}.")
             if isinstance(data, ndarray.NDArray) and len(data.shape) == 1:
                 data = data.asnumpy()
             self._data.append(data)

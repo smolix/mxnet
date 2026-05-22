@@ -356,15 +356,18 @@ class Group(object):
     def __init__(self, fn, *args):
         self._handle = None
         if isinstance(fn, (list, tuple)):
-            assert len(args) == 0, 'Input pattern not understood. The input of Group can be ' \
-                                   'Group(A, B, C) or Group([A, B, C]) or Group((A, B, C)). ' \
-                                   f'Received fn={str(fn)}, args={str(args)}'
+            if len(args) != 0:
+                raise ValueError(
+                    'Input pattern not understood. The input of Group can be '
+                    'Group(A, B, C) or Group([A, B, C]) or Group((A, B, C)). '
+                    f'Received fn={str(fn)}, args={str(args)}')
             self._fn = fn
         else:
             self._fn = (fn, ) + args
         for i, ele_fn in enumerate(self._fn):
-            assert hasattr(ele_fn, '__call__'), 'Batchify functions must be callable! ' \
-                                                f'type(fn[{i}]) = {str(type(ele_fn))}'
+            if not hasattr(ele_fn, '__call__'):
+                raise TypeError('Batchify functions must be callable! '
+                                f'type(fn[{i}]) = {str(type(ele_fn))}')
 
     def __call__(self, data):
         """Batchify the input data.

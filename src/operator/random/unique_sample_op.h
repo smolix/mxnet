@@ -81,7 +81,7 @@ inline bool SampleUniqueType(const nnvm::NodeAttrs& attrs,
 }
 
 inline std::vector<ResourceRequest> UniqueSampleResource(const NodeAttrs& attrs) {
-  return {ResourceRequest::kParallelRandom};
+  return {ResourceRequest::kParallelRandom, ResourceRequest::kTempSpace};
 }
 
 /*!
@@ -152,8 +152,12 @@ inline void SampleUniqueZifpian(const nnvm::NodeAttrs& attrs,
   const size_t num_sampled              = static_cast<size_t>(param.shape[1]);
   const double log_range_max            = log(param.range_max);
   CHECK_EQ(outputs.size(), 2U);
+  CHECK_EQ(req.size(), 2U);
   CHECK_LE(num_sampled, param.range_max)
       << "Number of samples cannot exceed the number of possible classes";
+  if (req[0] == kNullOp && req[1] == kNullOp) {
+    return;
+  }
   // rand generator resource and result sets
   RandGenerator<cpu, GType>* pgen = ctx.requested[0].get_parallel_random<cpu, GType>();
   std::vector<std::unordered_set<DType>> results(batch_size);
@@ -161,11 +165,38 @@ inline void SampleUniqueZifpian(const nnvm::NodeAttrs& attrs,
     results[i].reserve(num_sampled);
   }
 
-  DType* num_tries = outputs[1].dptr<DType>();
-  DType* samples   = outputs[0].dptr<DType>();
-  Stream<cpu>* s   = ctx.get_stream<cpu>();
+  Stream<cpu>* s = ctx.get_stream<cpu>();
+  const bool direct_samples =
+      req[0] == kWriteTo || req[0] == kWriteInplace;
+  const bool direct_num_tries =
+      req[1] == kWriteTo || req[1] == kWriteInplace;
+  const size_t temp_size =
+      (direct_samples ? 0 : outputs[0].Size()) + (direct_num_tries ? 0 : outputs[1].Size());
+  DType* temp_ptr = nullptr;
+  if (temp_size != 0) {
+    Tensor<cpu, 1, DType> temp =
+        ctx.requested[1].get_space_typed<cpu, 1, DType>(mshadow::Shape1(temp_size), s);
+    temp_ptr = temp.dptr_;
+  }
+  DType* samples   = direct_samples ? outputs[0].dptr<DType>() : temp_ptr;
+  if (!direct_samples) {
+    temp_ptr += outputs[0].Size();
+  }
+  DType* num_tries = direct_num_tries ? outputs[1].dptr<DType>() : temp_ptr;
+
   LaunchUniqueRNG<GType, DType, UniqueSampleUniformKernel>(
       s, pgen, batch_size, num_sampled, &results, log_range_max, samples, num_tries);
+
+  if (!direct_samples && req[0] != kNullOp) {
+    Tensor<cpu, 1, DType> out = outputs[0].FlatTo1D<cpu, DType>(s);
+    Tensor<cpu, 1, DType> src(samples, mshadow::Shape1(outputs[0].Size()), s);
+    Assign(out, req[0], src);
+  }
+  if (!direct_num_tries && req[1] != kNullOp) {
+    Tensor<cpu, 1, DType> out = outputs[1].FlatTo1D<cpu, DType>(s);
+    Tensor<cpu, 1, DType> src(num_tries, mshadow::Shape1(outputs[1].Size()), s);
+    Assign(out, req[1], src);
+  }
 }
 
 }  // namespace op

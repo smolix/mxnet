@@ -200,6 +200,48 @@ def test_box_nms_op():
     test_box_nms_forward(np.array(boxes9), np.array(expected9), force=force, thresh=thresh, bid=background_id)
     test_box_nms_backward(np.array(boxes9), grad9, expected_in_grad9, force=force, thresh=thresh, bid=background_id)
 
+def test_box_nms_forward_add_request():
+    data_np = np.array([[0, 0.5, 0.1, 0.1, 0.2, 0.2],
+                        [1, 0.4, 0.1, 0.1, 0.2, 0.2],
+                        [0, 0.3, 0.1, 0.1, 0.14, 0.14],
+                        [2, 0.6, 0.5, 0.5, 0.7, 0.8]], dtype='float32')
+    data = mx.sym.Variable('data')
+    kwargs = dict(overlap_thresh=0.5, valid_thresh=0, topk=-1,
+                  coord_start=2, score_index=1, id_index=0,
+                  force_suppress=True)
+    lhs = mx.contrib.sym.box_nms(data, name='lhs', **kwargs)
+    rhs = mx.contrib.sym.box_nms(data, name='rhs', **kwargs)
+    out = mx.sym.add_n(lhs, rhs)
+    exe = out._simple_bind(ctx=default_device(), data=data_np.shape, grad_req='null')
+    exe.arg_dict['data'][:] = data_np
+
+    expected = mx.contrib.nd.box_nms(mx.nd.array(data_np, ctx=default_device()), **kwargs)
+    assert_almost_equal(exe.forward(is_train=False)[0].asnumpy(),
+                        (expected * 2).asnumpy(),
+                        rtol=1e-3,
+                        atol=1e-3)
+
+def test_box_nms_backward_add_request():
+    data_np = np.array([[0, 0.5, 0.1, 0.1, 0.2, 0.2],
+                        [1, 0.4, 0.1, 0.1, 0.2, 0.2],
+                        [0, 0.3, 0.1, 0.1, 0.14, 0.14],
+                        [2, 0.6, 0.5, 0.5, 0.7, 0.8]], dtype='float32')
+    grad_np = np.arange(data_np.size, dtype='float32').reshape(data_np.shape) / 10
+    init_grad_np = np.full(data_np.shape, 3.0, dtype='float32')
+    expected_write = grad_np[(1, 3, 2, 0), :]
+    expected_write[1, :] = 0
+
+    data = mx.sym.Variable('data')
+    out = mx.contrib.sym.box_nms(data, overlap_thresh=0.5, valid_thresh=0, topk=-1,
+                                 coord_start=2, score_index=1, id_index=0,
+                                 force_suppress=True)
+    data_arr = mx.nd.array(data_np, ctx=default_device())
+    data_grad = mx.nd.array(init_grad_np, ctx=default_device())
+    exe = out._bind(ctx=default_device(), args=[data_arr], args_grad=[data_grad], grad_req='add')
+    exe.forward(is_train=True)
+    exe.backward(mx.nd.array(grad_np, ctx=default_device()))
+    assert_almost_equal(data_grad.asnumpy(), init_grad_np + expected_write, rtol=1e-3, atol=1e-3)
+
 def test_box_iou_op():
     def numpy_box_iou(a, b, fmt='corner'):
         def area(left, top, right, bottom):

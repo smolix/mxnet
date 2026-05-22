@@ -307,10 +307,16 @@ inline void RandomCropOpForward(const nnvm::NodeAttrs& attrs,
   const RandomCropParam& param = nnvm::get<RandomCropParam>(attrs.parsed);
 
   const TShape& dshape = inputs[0].shape_;
-  Stream<cpu>* s       = ctx.get_stream<cpu>();
-  Random<cpu>* prnd    = ctx.requested[0].get_random<cpu, real_t>(s);
   auto src_size        = GetSourceSize(dshape);
   auto resize_size     = GetSourceSize(outputs[1].shape_);
+  if (req[0] == kNullOp) {
+    return;
+  }
+  const bool needs_resize = resize_size[0] != src_size[0] || resize_size[1] != src_size[1];
+  CHECK(!needs_resize || req[0] != kAddTo)
+      << "image random crop with resize does not support kAddTo requests.";
+  Stream<cpu>* s    = ctx.get_stream<cpu>();
+  Random<cpu>* prnd = ctx.requested[0].get_random<cpu, real_t>(s);
   // random left/top position
   float x = std::uniform_real_distribution<float>(param.xrange[0],
                                                   param.xrange[1])(prnd->GetRndEngine()) *
@@ -324,12 +330,13 @@ inline void RandomCropOpForward(const nnvm::NodeAttrs& attrs,
   workspace.dptr_[1]       = y;
   workspace.dptr_[2]       = resize_size[0];
   workspace.dptr_[3]       = resize_size[1];
-  if (resize_size[0] == src_size[0] && resize_size[1] == src_size[1]) {
+  if (!needs_resize) {
     // no need to resize
     CropImpl<xpu>(x, y, resize_size[0], resize_size[1], inputs, outputs, ctx, req);
   } else {
     std::vector<TBlob> hidden_outputs = {outputs[1]};
-    CropImpl<xpu>(x, y, resize_size[0], resize_size[1], inputs, hidden_outputs, ctx, req);
+    std::vector<OpReqType> hidden_req  = {kWriteTo};
+    CropImpl<xpu>(x, y, resize_size[0], resize_size[1], inputs, hidden_outputs, ctx, hidden_req);
     ResizeParam rparam;
     rparam.interp     = param.interp;
     rparam.keep_ratio = false;
@@ -404,6 +411,10 @@ inline void CropResizeImpl(const OpContext& ctx,
                            int resize_width,
                            int resize_height,
                            int interp) {
+  if (req[0] == kNullOp) {
+    return;
+  }
+  CHECK_NE(req[0], kAddTo) << "image crop resize does not support kAddTo requests.";
   auto& dshape   = inputs[0].shape_;
   Stream<xpu>* s = ctx.get_stream<xpu>();
   CHECK(x0 >= 0 && y0 >= 0 && crop_width > 0 && crop_height > 0 && resize_width > 0 &&
@@ -415,7 +426,8 @@ inline void CropResizeImpl(const OpContext& ctx,
       Tensor<xpu, 3, DType> workspace = ctx.requested[1].get_space_typed<xpu, 3, DType>(
           mshadow::Shape3(crop_height, crop_width, dshape[C]), s);
       std::vector<TBlob> temp_out = {TBlob(workspace)};
-      CropImpl<xpu>(x0, y0, crop_width, crop_height, inputs, temp_out, ctx, req);
+      std::vector<OpReqType> temp_req = {kWriteTo};
+      CropImpl<xpu>(x0, y0, crop_width, crop_height, inputs, temp_out, ctx, temp_req);
       ResizeParam rparam;
       rparam.interp     = interp;
       rparam.keep_ratio = false;
@@ -425,7 +437,8 @@ inline void CropResizeImpl(const OpContext& ctx,
       Tensor<xpu, 4, DType> workspace = ctx.requested[1].get_space_typed<xpu, 4, DType>(
           mshadow::Shape4(dshape[N], crop_height, crop_width, dshape[kC]), s);
       std::vector<TBlob> temp_out = {TBlob(workspace)};
-      CropImpl<xpu>(x0, y0, crop_width, crop_height, inputs, temp_out, ctx, req);
+      std::vector<OpReqType> temp_req = {kWriteTo};
+      CropImpl<xpu>(x0, y0, crop_width, crop_height, inputs, temp_out, ctx, temp_req);
       ResizeParam rparam;
       rparam.interp     = interp;
       rparam.keep_ratio = false;
@@ -445,6 +458,9 @@ inline void RandomResizedCropOpForward(const nnvm::NodeAttrs& attrs,
                                        const std::vector<TBlob>& outputs) {
   CHECK_EQ(outputs.size(), 1U);
   CHECK_EQ(inputs.size(), 1U);
+  if (req[0] == kNullOp) {
+    return;
+  }
   const RandomResizedCropParam& param = nnvm::get<RandomResizedCropParam>(attrs.parsed);
   auto src_size                       = GetSourceSize(inputs[0].shape_);
   int64_t src_area                    = src_size[0] * src_size[1];

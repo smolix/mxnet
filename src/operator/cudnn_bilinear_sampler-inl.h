@@ -56,7 +56,7 @@ class CuDNNBilinearSamplerOp : public Operator {
                        const std::vector<TBlob>& out_data,
                        const std::vector<TBlob>& aux_args) {
     using namespace mshadow;
-    CHECK_EQ(req[bs::kOut], kWriteTo);
+    CHECK_NE(req[bs::kOut], kWriteInplace);
     CHECK_EQ(in_data.size(), 2U);
     CHECK_EQ(out_data.size(), 2U);
     Stream<gpu>* s = ctx.get_stream<gpu>();
@@ -70,11 +70,14 @@ class CuDNNBilinearSamplerOp : public Operator {
     if (!init_cudnn_) {
       Init(s, in_data, out_data);
     }
+    if (req[bs::kOut] == kNullOp) {
+      return;
+    }
     CHECK_EQ(data.CheckContiguous(), true);
     CHECK_EQ(out.CheckContiguous(), true);
     CHECK_EQ(grid_tmp.CheckContiguous(), true);
     typename DataType<DType>::ScaleType alpha = 1.0f;
-    typename DataType<DType>::ScaleType beta  = 0.0f;
+    typename DataType<DType>::ScaleType beta  = (req[bs::kOut] == kAddTo) ? 1.0f : 0.0f;
     CUDNN_CALL(cudnnSpatialTfSamplerForward(s->dnn_handle_,
                                             st_desc_,
                                             &alpha,
@@ -99,6 +102,9 @@ class CuDNNBilinearSamplerOp : public Operator {
     CHECK_EQ(in_data.size(), 2U);
     CHECK_EQ(out_data.size(), 2U);
     CHECK_EQ(out_grad.size(), 1U);
+    if (req[bs::kData] == kNullOp && req[bs::kGrid] == kNullOp) {
+      return;
+    }
     Stream<gpu>* s                 = ctx.get_stream<gpu>();
     Tensor<gpu, 4, DType> data     = in_data[bs::kData].get<gpu, 4, DType>(s);
     Tensor<gpu, 4, DType> grid_tmp = out_data[bs::kTmp].get<gpu, 4, DType>(s);

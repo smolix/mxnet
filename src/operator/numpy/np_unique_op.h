@@ -46,6 +46,14 @@
 namespace mxnet {
 namespace op {
 
+inline bool NumpyUniqueShouldWrite(const std::vector<OpReqType>& req, const size_t output_idx) {
+  CHECK_LT(output_idx, req.size());
+  CHECK(req[output_idx] == kNullOp || req[output_idx] == kWriteTo ||
+        req[output_idx] == kWriteInplace)
+      << "NumpyUnique only supports null and write requests";
+  return req[output_idx] != kNullOp;
+}
+
 struct UniqueReturnInverseKernel {
   MSHADOW_XINLINE static void Map(dim_t i,
                                   dim_t* unique_inverse,

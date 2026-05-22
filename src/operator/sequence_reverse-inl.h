@@ -48,6 +48,16 @@ enum SequenceReverseOpInputs { kData, kSequenceLength };
 enum SequenceReverseOpOutputs { kOut };
 }  // namespace seq_reverse
 
+inline mshadow::Shape<3> SequenceReverseFlatTo3DShape(const TBlob& data) {
+  const index_t max_seq_len = data.size(0);
+  const index_t batch_size  = data.size(1);
+  const size_t total_size   = data.Size();
+  CHECK_NE(max_seq_len, 0) << "Cannot flatten SequenceReverse input with zero sequence length.";
+  CHECK_NE(batch_size, 0) << "Cannot flatten SequenceReverse input with zero batch size.";
+  const index_t other_dim = static_cast<index_t>(total_size / max_seq_len / batch_size);
+  return mshadow::Shape3(max_seq_len, batch_size, other_dim);
+}
+
 struct SequenceReverseParam : public dmlc::Parameter<SequenceReverseParam> {
   bool use_sequence_length;
   int axis;
@@ -140,17 +150,13 @@ class SequenceReverseOp : public Operator {
     Stream<xpu>* const s = ctx.get_stream<xpu>();
 
     // Get any size input + output into required form
-    auto max_seq_len = in_data[seq_reverse::kData].size(0);
-    auto n           = in_data[seq_reverse::kData].size(1);
     auto total_size  = in_data[seq_reverse::kData].Size();
 
     if (total_size == 0) {
       return;  // noop if any input dimension is zero-sized, out_data is of a right shape
     }
 
-    auto rest_dim = static_cast<int>(total_size / n / max_seq_len);
-
-    Shape<3> s3                = Shape3(max_seq_len, n, rest_dim);
+    Shape<3> s3                = SequenceReverseFlatTo3DShape(in_data[seq_reverse::kData]);
     Tensor<xpu, 3, DType> data = in_data[seq_reverse::kData].get_with_shape<xpu, 3, DType>(s3, s);
     Tensor<xpu, 3, DType> out  = out_data[seq_reverse::kOut].get_with_shape<xpu, 3, DType>(s3, s);
 
@@ -174,12 +180,12 @@ class SequenceReverseOp : public Operator {
     Stream<xpu>* s = ctx.get_stream<xpu>();
 
     // Get any size input + output into required form
-    auto max_seq_len = in_grad[seq_reverse::kData].size(0);
-    auto n           = in_grad[seq_reverse::kData].size(1);
     auto total_size  = in_grad[seq_reverse::kData].Size();
-    auto rest_dim    = static_cast<int>(total_size / n / max_seq_len);
+    if (total_size == 0) {
+      return;  // noop if any input dimension is zero-sized, in_grad is of a right shape
+    }
 
-    Shape<3> s3 = Shape3(max_seq_len, n, rest_dim);
+    Shape<3> s3 = SequenceReverseFlatTo3DShape(in_grad[seq_reverse::kData]);
 
     Tensor<xpu, 3, DType> data_grad =
         in_grad[seq_reverse::kData].get_with_shape<xpu, 3, DType>(s3, s);

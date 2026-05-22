@@ -385,6 +385,15 @@ void BoxNMSForward(const nnvm::NodeAttrs& attrs,
   using namespace mxnet_op;
   CHECK_EQ(inputs.size(), 1U);
   CHECK_EQ(outputs.size(), 2U) << "BoxNMS output: [output, temp]";
+  CHECK(req[box_nms_enum::kOut] == kNullOp || req[box_nms_enum::kOut] == kWriteTo ||
+        req[box_nms_enum::kOut] == kWriteInplace || req[box_nms_enum::kOut] == kAddTo)
+      << "BoxNMS output only supports kNullOp, kWriteTo, kWriteInplace, and kAddTo";
+  CHECK(req[box_nms_enum::kTemp] == kNullOp || req[box_nms_enum::kTemp] == kWriteTo ||
+        req[box_nms_enum::kTemp] == kWriteInplace)
+      << "BoxNMS temp output only supports kNullOp, kWriteTo, and kWriteInplace";
+  if (req[box_nms_enum::kOut] == kNullOp && req[box_nms_enum::kTemp] == kNullOp) {
+    return;
+  }
   const BoxNMSParam& param = nnvm::get<BoxNMSParam>(attrs.parsed);
   Stream<xpu>* s           = ctx.get_stream<xpu>();
   mxnet::TShape in_shape   = inputs[box_nms_enum::kData].shape_;
@@ -409,8 +418,17 @@ void BoxNMSForward(const nnvm::NodeAttrs& attrs,
     // index
     index_t int32_size = sort_index_shape.Size() * 3 + batch_start_shape.Size();
     index_t dtype_size = sort_index_shape.Size() * 3;
-    if (req[0] == kWriteInplace) {
+    bool temp_out_required = req[box_nms_enum::kOut] == kNullOp ||
+                             req[box_nms_enum::kOut] == kAddTo;
+    bool temp_record_required = req[box_nms_enum::kTemp] == kNullOp;
+    if (req[box_nms_enum::kOut] == kWriteInplace) {
       dtype_size += buffer_shape.Size();
+    }
+    if (temp_out_required) {
+      dtype_size += buffer_shape.Size();
+    }
+    if (temp_record_required) {
+      dtype_size += sort_index_shape.Size();
     }
     // ceil up when sizeof(DType) is larger than sizeof(DType)
     index_t int32_offset   = (int32_size * sizeof(int32_t) - 1) / sizeof(DType) + 1;
@@ -428,11 +446,23 @@ void BoxNMSForward(const nnvm::NodeAttrs& attrs,
     Tensor<xpu, 1, DType> scores(workspace.dptr_ + int32_offset, sort_index_shape, s);
     Tensor<xpu, 1, DType> areas(scores.dptr_ + scores.MSize(), sort_index_shape, s);
     Tensor<xpu, 1, DType> classes(areas.dptr_ + areas.MSize(), sort_index_shape, s);
+    DType* dtype_workspace_end = classes.dptr_ + classes.MSize();
     Tensor<xpu, 3, DType> buffer = data;
-    if (req[0] == kWriteInplace) {
+    if (req[box_nms_enum::kOut] == kWriteInplace) {
       // make copy
-      buffer = Tensor<xpu, 3, DType>(areas.dptr_ + areas.MSize(), buffer_shape, s);
+      buffer = Tensor<xpu, 3, DType>(dtype_workspace_end, buffer_shape, s);
+      dtype_workspace_end += buffer.MSize();
       buffer = F<mshadow_op::identity>(data);
+    }
+    Tensor<xpu, 3, DType> nms_out = out;
+    if (temp_out_required) {
+      nms_out = Tensor<xpu, 3, DType>(dtype_workspace_end, buffer_shape, s);
+      dtype_workspace_end += nms_out.MSize();
+    }
+    Tensor<xpu, 3, DType> nms_record = record;
+    if (temp_record_required) {
+      nms_record =
+          Tensor<xpu, 3, DType>(dtype_workspace_end, Shape3(num_batch, num_elem, 1), s);
     }
 
     // indecies
@@ -443,8 +473,11 @@ void BoxNMSForward(const nnvm::NodeAttrs& attrs,
     // sort topk
     int topk = param.topk < 0 ? num_elem : std::min(num_elem, param.topk);
     if (topk < 1) {
-      out    = F<mshadow_op::identity>(buffer);
-      record = reshape(range<DType>(0, num_batch * num_elem), record.shape_);
+      nms_out    = F<mshadow_op::identity>(buffer);
+      nms_record = reshape(range<DType>(0, num_batch * num_elem), nms_record.shape_);
+      if (temp_out_required) {
+        Assign(out, req[box_nms_enum::kOut], F<mshadow_op::identity>(nms_out));
+      }
       return;
     }
 
@@ -474,8 +507,11 @@ void BoxNMSForward(const nnvm::NodeAttrs& attrs,
 
     // if everything is filtered, output -1
     if (num_valid == 0) {
-      record = -1;
-      out    = -1;
+      nms_record = -1;
+      nms_out    = -1;
+      if (temp_out_required) {
+        Assign(out, req[box_nms_enum::kOut], F<mshadow_op::identity>(nms_out));
+      }
       return;
     }
     // mark the invalid boxes before nms
@@ -528,12 +564,12 @@ void BoxNMSForward(const nnvm::NodeAttrs& attrs,
                         param.in_format);
 
     // store the results to output, keep a record for backward
-    record = -1;
-    out    = -1;
+    nms_record = -1;
+    nms_out    = -1;
     Kernel<nms_assign, xpu>::Launch(s,
                                     num_batch,
-                                    out.dptr_,
-                                    record.dptr_,
+                                    nms_out.dptr_,
+                                    nms_record.dptr_,
                                     buffer.dptr_,
                                     sorted_index.dptr_,
                                     batch_start.dptr_,
@@ -545,11 +581,14 @@ void BoxNMSForward(const nnvm::NodeAttrs& attrs,
     if (param.in_format != param.out_format) {
       if (box_common_enum::kCenter == param.out_format) {
         Kernel<corner_to_center, xpu>::Launch(
-            s, num_batch * num_elem, out.dptr_ + coord_start, width_elem);
+            s, num_batch * num_elem, nms_out.dptr_ + coord_start, width_elem);
       } else {
         Kernel<center_to_corner, xpu>::Launch(
-            s, num_batch * num_elem, out.dptr_ + coord_start, width_elem);
+            s, num_batch * num_elem, nms_out.dptr_ + coord_start, width_elem);
       }
+    }
+    if (temp_out_required) {
+      Assign(out, req[box_nms_enum::kOut], F<mshadow_op::identity>(nms_out));
     }
   });
 }
@@ -565,6 +604,12 @@ void BoxNMSBackward(const nnvm::NodeAttrs& attrs,
   using namespace mxnet_op;
   CHECK_EQ(inputs.size(), 4U);
   CHECK_EQ(outputs.size(), 1U);
+  CHECK(req[box_nms_enum::kData] == kNullOp || req[box_nms_enum::kData] == kWriteTo ||
+        req[box_nms_enum::kData] == kWriteInplace || req[box_nms_enum::kData] == kAddTo)
+      << "BoxNMS backward only supports kNullOp, kWriteTo, kWriteInplace, and kAddTo";
+  if (req[box_nms_enum::kData] == kNullOp) {
+    return;
+  }
   Stream<xpu>* s         = ctx.get_stream<xpu>();
   mxnet::TShape in_shape = outputs[box_nms_enum::kData].shape_;
   int indim              = in_shape.ndim();
@@ -578,10 +623,26 @@ void BoxNMSBackward(const nnvm::NodeAttrs& attrs,
         Shape3(num_batch, num_elem, width_elem), s);
     Tensor<xpu, 3, DType> record = inputs[box_nms_enum::kTemp + 2].get_with_shape<xpu, 3, DType>(
         Shape3(num_batch, num_elem, 1), s);
+    Tensor<xpu, 3, DType> target_grad = in_grad;
+    if (req[box_nms_enum::kData] == kAddTo) {
+      Tensor<xpu, 1, DType> workspace =
+          ctx.requested[box_nms_enum::kTempSpace].get_space_typed<xpu, 1, DType>(
+              Shape1(num_batch * num_elem * width_elem), s);
+      target_grad = Tensor<xpu, 3, DType>(
+          workspace.dptr_, Shape3(num_batch, num_elem, width_elem), s);
+    }
 
-    in_grad = 0;
-    Kernel<nms_backward, xpu>::Launch(
-        s, num_batch * num_elem, in_grad.dptr_, out_grad.dptr_, record.dptr_, num_elem, width_elem);
+    target_grad = 0;
+    Kernel<nms_backward, xpu>::Launch(s,
+                                      num_batch * num_elem,
+                                      target_grad.dptr_,
+                                      out_grad.dptr_,
+                                      record.dptr_,
+                                      num_elem,
+                                      width_elem);
+    if (req[box_nms_enum::kData] == kAddTo) {
+      Assign(in_grad, req[box_nms_enum::kData], F<mshadow_op::identity>(target_grad));
+    }
   });
 }
 

@@ -8402,6 +8402,24 @@ def test_np_unique():
 
 
 @use_np
+def test_np_unique_mixed_output_requests():
+    class TestUniqueSubset(HybridBlock):
+        def forward(self, a):
+            unique = np.unique(a, True, True, True)
+            return unique[0], unique[2]
+
+    x = np.array([3, 1, 3, 2, 1, 2], dtype='float32')
+    expected = onp.unique(x.asnumpy(), return_index=True, return_inverse=True, return_counts=True)
+    for hybridize in [False, True]:
+        test_unique = TestUniqueSubset()
+        if hybridize:
+            test_unique.hybridize()
+        values, inverse = test_unique(x)
+        assert_almost_equal(values.asnumpy(), expected[0], rtol=1e-3, atol=1e-5)
+        assert_almost_equal(inverse.asnumpy(), expected[2], rtol=1e-3, atol=1e-5)
+
+
+@use_np
 @pytest.mark.parametrize('shape,index,inverse,counts', [
     ((), True, True, True),
     ((1, ), True, True, True),

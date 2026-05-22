@@ -664,8 +664,8 @@ void BoxNMSForwardGPU_notemp(const nnvm::NodeAttrs& attrs,
   using mshadow::Shape1;
   using mshadow::Shape2;
   using mshadow::Shape3;
-  CHECK_NE(req[0], kAddTo) << "BoxNMS does not support kAddTo";
-  CHECK_NE(req[0], kWriteInplace) << "BoxNMS does not support in place computation";
+  CHECK_EQ(req[box_nms_enum::kOut], kWriteTo)
+      << "BoxNMS GPU no-temp path only supports kWriteTo";
   CHECK_EQ(inputs.size(), 1U);
   CHECK_EQ(outputs.size(), 2U) << "BoxNMS output: [output, temp]";
   const BoxNMSParam& param = nnvm::get<BoxNMSParam>(attrs.parsed);
@@ -684,9 +684,7 @@ void BoxNMSForwardGPU_notemp(const nnvm::NodeAttrs& attrs,
 
     // Special case for topk == 0
     if (param.topk == 0) {
-      if (req[0] != kNullOp && req[0] != kWriteInplace) {
-        out = mshadow::expr::F<mshadow_op::identity>(data);
-      }
+      out = mshadow::expr::F<mshadow_op::identity>(data);
       return;
     }
 
@@ -762,7 +760,7 @@ void BoxNMSForwardGPU(const nnvm::NodeAttrs& attrs,
   using namespace mxnet_op;
   CHECK_EQ(inputs.size(), 1U);
   CHECK_EQ(outputs.size(), 2U) << "BoxNMS output: [output, temp]";
-  if (req[1] == kNullOp) {
+  if (req[box_nms_enum::kTemp] == kNullOp && req[box_nms_enum::kOut] == kWriteTo) {
     BoxNMSForwardGPU_notemp(attrs, ctx, inputs, req, outputs);
     return;
   }

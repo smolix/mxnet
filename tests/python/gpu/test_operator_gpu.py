@@ -1045,6 +1045,57 @@ def test_spatial_transformer_with_type():
     check_consistency(sym, ctx_list)
     check_consistency(sym, ctx_list, grad_req="add")
 
+
+def test_spatial_transformer_cudnn_grad_req():
+    ctx = default_device()
+    data_shape = (2, 3, 4, 5)
+    loc_shape = (2, 6)
+    target_shape = (3, 4)
+    data = mx.sym.Variable('data')
+    loc = mx.sym.Variable('loc')
+    sym = mx.sym.SpatialTransformer(data=data, loc=loc, target_shape=target_shape,
+                                    transform_type="affine", sampler_type="bilinear",
+                                    cudnn_off=False)
+    data_np = np.random.uniform(-0.2, 0.2, size=data_shape).astype(np.float32)
+    loc_np = np.tile(np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float32), (data_shape[0], 1))
+    out_grad_np = np.random.uniform(-0.1, 0.1,
+                                    size=(data_shape[0], data_shape[1],
+                                          target_shape[0], target_shape[1])).astype(np.float32)
+
+    exe_write = sym._simple_bind(data=data_shape, loc=loc_shape, ctx=ctx, grad_req='write')
+    exe_write.arg_dict['data'][:] = data_np
+    exe_write.arg_dict['loc'][:] = loc_np
+    exe_write.forward(is_train=True)
+    exe_write.backward(mx.nd.array(out_grad_np, ctx=ctx))
+    data_grad = exe_write.grad_dict['data'].asnumpy()
+    loc_grad = exe_write.grad_dict['loc'].asnumpy()
+
+    exe_add = sym._simple_bind(data=data_shape, loc=loc_shape, ctx=ctx, grad_req='add')
+    data_initial_grad = np.random.normal(size=data_shape).astype(np.float32)
+    loc_initial_grad = np.random.normal(size=loc_shape).astype(np.float32)
+    exe_add.arg_dict['data'][:] = data_np
+    exe_add.arg_dict['loc'][:] = loc_np
+    exe_add.grad_dict['data'][:] = data_initial_grad
+    exe_add.grad_dict['loc'][:] = loc_initial_grad
+    exe_add.forward(is_train=True)
+    exe_add.backward(mx.nd.array(out_grad_np, ctx=ctx))
+    assert_almost_equal(exe_add.grad_dict['data'].asnumpy(), data_grad + data_initial_grad,
+                        rtol=1e-3, atol=1e-5)
+    assert_almost_equal(exe_add.grad_dict['loc'].asnumpy(), loc_grad + loc_initial_grad,
+                        rtol=1e-3, atol=1e-5)
+
+    for req_dict in [{'data': 'null', 'loc': 'write'}, {'data': 'write', 'loc': 'null'}]:
+        exe_mix = sym._simple_bind(data=data_shape, loc=loc_shape, ctx=ctx, grad_req=req_dict)
+        exe_mix.arg_dict['data'][:] = data_np
+        exe_mix.arg_dict['loc'][:] = loc_np
+        exe_mix.forward(is_train=True)
+        exe_mix.backward(mx.nd.array(out_grad_np, ctx=ctx))
+        if req_dict['data'] == 'write':
+            assert_almost_equal(exe_mix.grad_dict['data'].asnumpy(), data_grad, rtol=1e-3, atol=1e-5)
+        if req_dict['loc'] == 'write':
+            assert_almost_equal(exe_mix.grad_dict['loc'].asnumpy(), loc_grad, rtol=1e-3, atol=1e-5)
+
+
 def test_pooling_with_type2():
     # While the float32 and float64 output is reliably consistent, float16 departs occasionally.
     # We compare cpu and gpu results only within a given precision.

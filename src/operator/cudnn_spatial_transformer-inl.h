@@ -58,6 +58,7 @@ class CuDNNSpatialTransformerOp : public Operator {
                        const std::vector<TBlob>& out_data,
                        const std::vector<TBlob>& aux_args) {
     using namespace mshadow;
+    CHECK_NE(req[st::kOut], kWriteInplace);
     CHECK_EQ(in_data.size(), 2U);
     CHECK_EQ(out_data.size(), 3U);
     Stream<gpu>* s             = ctx.get_stream<gpu>();
@@ -74,10 +75,13 @@ class CuDNNSpatialTransformerOp : public Operator {
     CHECK_EQ(data.CheckContiguous(), true);
     CHECK_EQ(out.CheckContiguous(), true);
     typename DataType<DType>::ScaleType alpha = 1.0f;
-    typename DataType<DType>::ScaleType beta  = 0.0f;
+    typename DataType<DType>::ScaleType beta  = (req[st::kOut] == kAddTo) ? 1.0f : 0.0f;
     if (param_.transform_type == st::kAffine) {
       CUDNN_CALL(
           cudnnSpatialTfGridGeneratorForward(s->dnn_handle_, st_desc_, loc.dptr_, grid.dptr_));
+    }
+    if (req[st::kOut] == kNullOp) {
+      return;
     }
     CUDNN_CALL(cudnnSpatialTfSamplerForward(s->dnn_handle_,
                                             st_desc_,
@@ -98,9 +102,15 @@ class CuDNNSpatialTransformerOp : public Operator {
                         const std::vector<TBlob>& in_grad,
                         const std::vector<TBlob>& aux_args) {
     using namespace mshadow;
+    using namespace mshadow::expr;
+    CHECK_NE(req[st::kData], kWriteInplace);
+    CHECK_NE(req[st::kLoc], kWriteInplace);
     CHECK_EQ(in_data.size(), 2U);
     CHECK_EQ(out_data.size(), 3U);
     CHECK_EQ(out_grad.size(), 1U);
+    if (req[st::kData] == kNullOp && req[st::kLoc] == kNullOp) {
+      return;
+    }
     Stream<gpu>* s              = ctx.get_stream<gpu>();
     Tensor<gpu, 4, DType> data  = in_data[st::kData].get<gpu, 4, DType>(s);
     Tensor<gpu, 4, DType> grad  = out_grad[st::kOut].get<gpu, 4, DType>(s);
@@ -112,8 +122,8 @@ class CuDNNSpatialTransformerOp : public Operator {
         out_data[st::kGridSrc].get_with_shape<gpu, 4, DType>(grid_shape, s);
     // do not use out_grad[st::kGridSrc], because dgrid is a intermediate tensor, and not include in
     // DeclareBackwardDependency, another, we can we reuse grid for inplace operator
-    typename DataType<DType>::ScaleType alpha       = 1.0f;
-    typename DataType<DType>::ScaleType beta        = 0.0f;
+    typename DataType<DType>::ScaleType alpha       = (req[st::kData] == kNullOp) ? 0.0f : 1.0f;
+    typename DataType<DType>::ScaleType beta        = (req[st::kData] == kAddTo) ? 1.0f : 0.0f;
     typename DataType<DType>::ScaleType alpha_dgrid = 1.0f;
     typename DataType<DType>::ScaleType beta_dgrid  = 0.0f;
     CUDNN_CALL(cudnnSpatialTfSamplerBackward(s->dnn_handle_,
@@ -130,9 +140,16 @@ class CuDNNSpatialTransformerOp : public Operator {
                                              grid.dptr_,
                                              &beta_dgrid,
                                              grid.dptr_));
-    if (param_.transform_type == st::kAffine) {
+    if (param_.transform_type == st::kAffine && req[st::kLoc] != kNullOp) {
+      Tensor<gpu, 3, DType> dloc_out = dloc;
+      if (req[st::kLoc] == kAddTo) {
+        dloc_out = ctx.requested[st::kTempSpace].get_space_typed<gpu, 3, DType>(loc_shape, s);
+      }
       CUDNN_CALL(cudnnSpatialTfGridGeneratorBackward(
-          s->dnn_handle_, st_desc_, grid.dptr_, dloc.dptr_ /*out*/));
+          s->dnn_handle_, st_desc_, grid.dptr_, dloc_out.dptr_ /*out*/));
+      if (req[st::kLoc] == kAddTo) {
+        Assign(dloc, req[st::kLoc], dloc_out);
+      }
     }
   }
 

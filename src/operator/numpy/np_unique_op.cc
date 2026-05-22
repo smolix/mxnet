@@ -129,48 +129,58 @@ void NumpyUniqueCPUNoneAxisImpl(const NumpyUniqueParam& param,
       valid_num = prefix_sum[input_size - 1];
       // set the output shape forcefully
       mxnet::TShape s(1, valid_num);
-      const_cast<NDArray&>(outputs[0]).Init(s);
-      // launch kernal to obtain unique array, reuse boolean_mask kernel
-      mxnet_op::Kernel<BooleanMaskForwardCPUKernel, cpu>::Launch(
-          stream, input_size, outputs[0].data().dptr<DType>(), aux.data(), prefix_sum.data(), 1);
+      if (NumpyUniqueShouldWrite(req, 0)) {
+        const_cast<NDArray&>(outputs[0]).Init(s);
+        // launch kernal to obtain unique array, reuse boolean_mask kernel
+        mxnet_op::Kernel<BooleanMaskForwardCPUKernel, cpu>::Launch(
+            stream, input_size, outputs[0].data().dptr<DType>(), aux.data(), prefix_sum.data(), 1);
+      }
       // handle other optional outputs
       int output_flag = 0;
       if (param.return_index) {
         output_flag += 1;
-        const_cast<NDArray&>(outputs[output_flag]).Init(s);
-        dim_t* unique_indices = outputs[output_flag].data().dptr<dim_t>();
-        // reuse boolean_mask kernel
-        mxnet_op::Kernel<BooleanMaskForwardCPUKernel, cpu>::Launch(
-            stream, input_size, unique_indices, perm.data(), prefix_sum.data(), 1);
+        if (NumpyUniqueShouldWrite(req, output_flag)) {
+          const_cast<NDArray&>(outputs[output_flag]).Init(s);
+          dim_t* unique_indices = outputs[output_flag].data().dptr<dim_t>();
+          // reuse boolean_mask kernel
+          mxnet_op::Kernel<BooleanMaskForwardCPUKernel, cpu>::Launch(
+              stream, input_size, unique_indices, perm.data(), prefix_sum.data(), 1);
+        }
       }
       if (param.return_inverse) {
         output_flag += 1;
-        const_cast<NDArray&>(outputs[output_flag]).Init(mxnet::TShape(1, input_size));
-        dim_t* unique_inverse = outputs[output_flag].data().dptr<dim_t>();
-        mxnet_op::Kernel<UniqueReturnInverseKernel, cpu>::Launch(
-            stream, input_size, unique_inverse, prefix_sum.data(), perm.data());
+        if (NumpyUniqueShouldWrite(req, output_flag)) {
+          const_cast<NDArray&>(outputs[output_flag]).Init(mxnet::TShape(1, input_size));
+          dim_t* unique_inverse = outputs[output_flag].data().dptr<dim_t>();
+          mxnet_op::Kernel<UniqueReturnInverseKernel, cpu>::Launch(
+              stream, input_size, unique_inverse, prefix_sum.data(), perm.data());
+        }
       }
       if (param.return_counts) {
         output_flag += 1;
-        std::vector<dim_t> idx(valid_num + 1);
-        auto iter = idx.begin();
-        for (dim_t i = 0; i < input_size; ++i) {
-          if (mask[i]) {
-            *iter = i;
-            ++iter;
+        if (NumpyUniqueShouldWrite(req, output_flag)) {
+          std::vector<dim_t> idx(valid_num + 1);
+          auto iter = idx.begin();
+          for (dim_t i = 0; i < input_size; ++i) {
+            if (mask[i]) {
+              *iter = i;
+              ++iter;
+            }
           }
+          *iter = input_size;
+          const_cast<NDArray&>(outputs[output_flag]).Init(s);
+          dim_t* unique_counts = outputs[output_flag].data().dptr<dim_t>();
+          mxnet_op::Kernel<UniqueReturnCountsKernel, cpu>::Launch(
+              stream, valid_num, unique_counts, idx.data());
         }
-        *iter = input_size;
-        const_cast<NDArray&>(outputs[output_flag]).Init(s);
-        dim_t* unique_counts = outputs[output_flag].data().dptr<dim_t>();
-        mxnet_op::Kernel<UniqueReturnCountsKernel, cpu>::Launch(
-            stream, valid_num, unique_counts, idx.data());
       }
     } else {
       std::set<DType> set(input_data, input_data + input_size);
       mxnet::TShape s(1, set.size());
-      const_cast<NDArray&>(outputs[0]).Init(s);
-      std::copy(set.begin(), set.end(), outputs[0].data().dptr<DType>());
+      if (NumpyUniqueShouldWrite(req, 0)) {
+        const_cast<NDArray&>(outputs[0]).Init(s);
+        std::copy(set.begin(), set.end(), outputs[0].data().dptr<DType>());
+      }
     }
   });
 }
@@ -245,42 +255,51 @@ void NumpyUniqueCPUImpl(const NumpyUniqueParam& param,
     // set the output shape forcefully and swap axis back
     mxnet::TShape out_shape(origin_shape);
     out_shape[actual_axis] = valid_num;
-    const_cast<NDArray&>(outputs[0]).Init(out_shape);
-    Tensor<cpu, 3, DType> output_tensor(
-        outputs[0].data().dptr<DType>(), Shape3(temp_shape[1], valid_num, temp_shape[2]), stream);
-    output_tensor = swapaxis<1, 0>(temp_tensor);
+    if (NumpyUniqueShouldWrite(req, 0)) {
+      const_cast<NDArray&>(outputs[0]).Init(out_shape);
+      Tensor<cpu, 3, DType> output_tensor(outputs[0].data().dptr<DType>(),
+                                          Shape3(temp_shape[1], valid_num, temp_shape[2]),
+                                          stream);
+      output_tensor = swapaxis<1, 0>(temp_tensor);
+    }
     // handle other optional outputs
     int output_flag = 0;
     if (param.return_index) {
       output_flag += 1;
-      const_cast<NDArray&>(outputs[output_flag]).Init(mxnet::TShape(1, valid_num));
-      dim_t* unique_indices = outputs[output_flag].data().dptr<dim_t>();
-      // reuse boolean_mask kernel
-      mxnet_op::Kernel<BooleanMaskForwardCPUKernel, cpu>::Launch(
-          stream, temp_shape[0], unique_indices, perm.data(), prefix_sum.data(), 1);
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        const_cast<NDArray&>(outputs[output_flag]).Init(mxnet::TShape(1, valid_num));
+        dim_t* unique_indices = outputs[output_flag].data().dptr<dim_t>();
+        // reuse boolean_mask kernel
+        mxnet_op::Kernel<BooleanMaskForwardCPUKernel, cpu>::Launch(
+            stream, temp_shape[0], unique_indices, perm.data(), prefix_sum.data(), 1);
+      }
     }
     if (param.return_inverse) {
       output_flag += 1;
-      const_cast<NDArray&>(outputs[output_flag]).Init(mxnet::TShape(1, temp_shape[0]));
-      dim_t* unique_inverse = outputs[output_flag].data().dptr<dim_t>();
-      mxnet_op::Kernel<UniqueReturnInverseKernel, cpu>::Launch(
-          stream, temp_shape[0], unique_inverse, prefix_sum.data(), perm.data());
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        const_cast<NDArray&>(outputs[output_flag]).Init(mxnet::TShape(1, temp_shape[0]));
+        dim_t* unique_inverse = outputs[output_flag].data().dptr<dim_t>();
+        mxnet_op::Kernel<UniqueReturnInverseKernel, cpu>::Launch(
+            stream, temp_shape[0], unique_inverse, prefix_sum.data(), perm.data());
+      }
     }
     if (param.return_counts) {
       output_flag += 1;
-      std::vector<dim_t> idx(valid_num + 1);
-      auto iter = idx.begin();
-      for (dim_t i = 0; i < temp_shape[0]; ++i) {
-        if (mask[i]) {
-          *iter = i;
-          ++iter;
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        std::vector<dim_t> idx(valid_num + 1);
+        auto iter = idx.begin();
+        for (dim_t i = 0; i < temp_shape[0]; ++i) {
+          if (mask[i]) {
+            *iter = i;
+            ++iter;
+          }
         }
+        *iter = temp_shape[0];
+        const_cast<NDArray&>(outputs[output_flag]).Init(mxnet::TShape(1, valid_num));
+        dim_t* unique_counts = outputs[output_flag].data().dptr<dim_t>();
+        mxnet_op::Kernel<UniqueReturnCountsKernel, cpu>::Launch(
+            stream, valid_num, unique_counts, idx.data());
       }
-      *iter = temp_shape[0];
-      const_cast<NDArray&>(outputs[output_flag]).Init(mxnet::TShape(1, valid_num));
-      dim_t* unique_counts = outputs[output_flag].data().dptr<dim_t>();
-      mxnet_op::Kernel<UniqueReturnCountsKernel, cpu>::Launch(
-          stream, valid_num, unique_counts, idx.data());
     }
   });
 }
@@ -291,7 +310,9 @@ void NumpyUniqueCPUForward(const nnvm::NodeAttrs& attrs,
                            const std::vector<OpReqType>& req,
                            const std::vector<NDArray>& outputs) {
   CHECK_EQ(inputs.size(), 1U);
-  CHECK(req[0] == kWriteTo || req[0] == kWriteInplace);
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    NumpyUniqueShouldWrite(req, i);
+  }
   using namespace mshadow;
   const NumpyUniqueParam& param = nnvm::get<NumpyUniqueParam>(attrs.parsed);
   if (inputs[0].shape().ndim() == 0) {
@@ -299,33 +320,41 @@ void NumpyUniqueCPUForward(const nnvm::NodeAttrs& attrs,
         << "Axis can only be -1 or 0 for scalor tensor";
     Stream<cpu>* s = ctx.get_stream<cpu>();
     mxnet::TShape shape_1(1, 1);
-    const_cast<NDArray&>(outputs[0]).Init(shape_1);
-    MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
-      Tensor<cpu, 1, DType> unique_out =
-          outputs[0].data().get_with_shape<cpu, 1, DType>(Shape1(1), s);
-      ASSIGN_DISPATCH(unique_out, OpReqType::kWriteTo, inputs[0].data().dptr<DType>()[0]);
-    });
+    if (NumpyUniqueShouldWrite(req, 0)) {
+      const_cast<NDArray&>(outputs[0]).Init(shape_1);
+      MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
+        Tensor<cpu, 1, DType> unique_out =
+            outputs[0].data().get_with_shape<cpu, 1, DType>(Shape1(1), s);
+        ASSIGN_DISPATCH(unique_out, req[0], inputs[0].data().dptr<DType>()[0]);
+      });
+    }
     int output_flag = 0;
     if (param.return_index) {
       output_flag += 1;
-      const_cast<NDArray&>(outputs[output_flag]).Init(shape_1);
-      Tensor<cpu, 1, dim_t> outdata =
-          outputs[output_flag].data().get_with_shape<cpu, 1, dim_t>(Shape1(1), s);
-      ASSIGN_DISPATCH(outdata, OpReqType::kWriteTo, 0);
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        const_cast<NDArray&>(outputs[output_flag]).Init(shape_1);
+        Tensor<cpu, 1, dim_t> outdata =
+            outputs[output_flag].data().get_with_shape<cpu, 1, dim_t>(Shape1(1), s);
+        ASSIGN_DISPATCH(outdata, req[output_flag], 0);
+      }
     }
     if (param.return_inverse) {
       output_flag += 1;
-      const_cast<NDArray&>(outputs[output_flag]).Init(shape_1);
-      Tensor<cpu, 1, dim_t> outdata =
-          outputs[output_flag].data().get_with_shape<cpu, 1, dim_t>(Shape1(1), s);
-      ASSIGN_DISPATCH(outdata, OpReqType::kWriteTo, 0);
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        const_cast<NDArray&>(outputs[output_flag]).Init(shape_1);
+        Tensor<cpu, 1, dim_t> outdata =
+            outputs[output_flag].data().get_with_shape<cpu, 1, dim_t>(Shape1(1), s);
+        ASSIGN_DISPATCH(outdata, req[output_flag], 0);
+      }
     }
     if (param.return_counts) {
       output_flag += 1;
-      const_cast<NDArray&>(outputs[output_flag]).Init(shape_1);
-      Tensor<cpu, 1, dim_t> outdata =
-          outputs[output_flag].data().get_with_shape<cpu, 1, dim_t>(Shape1(1), s);
-      ASSIGN_DISPATCH(outdata, OpReqType::kWriteTo, 1);
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        const_cast<NDArray&>(outputs[output_flag]).Init(shape_1);
+        Tensor<cpu, 1, dim_t> outdata =
+            outputs[output_flag].data().get_with_shape<cpu, 1, dim_t>(Shape1(1), s);
+        ASSIGN_DISPATCH(outdata, req[output_flag], 1);
+      }
     }
   } else if (inputs[0].shape().Size() == 0) {
     // If the input tensor is zero size, only a check on axis is needed
@@ -338,19 +367,27 @@ void NumpyUniqueCPUForward(const nnvm::NodeAttrs& attrs,
     }
     // set the shapes of outputs
     mxnet::TShape shape_0(1, 0);
-    const_cast<NDArray&>(outputs[0]).Init(shape_0);
+    if (NumpyUniqueShouldWrite(req, 0)) {
+      const_cast<NDArray&>(outputs[0]).Init(shape_0);
+    }
     int output_flag = 0;
     if (param.return_index) {
       output_flag += 1;
-      const_cast<NDArray&>(outputs[output_flag]).Init(shape_0);
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        const_cast<NDArray&>(outputs[output_flag]).Init(shape_0);
+      }
     }
     if (param.return_inverse) {
       output_flag += 1;
-      const_cast<NDArray&>(outputs[output_flag]).Init(shape_0);
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        const_cast<NDArray&>(outputs[output_flag]).Init(shape_0);
+      }
     }
     if (param.return_counts) {
       output_flag += 1;
-      const_cast<NDArray&>(outputs[output_flag]).Init(shape_0);
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        const_cast<NDArray&>(outputs[output_flag]).Init(shape_0);
+      }
     }
   } else {
     CHECK_LT(inputs[0].shape().Size(), INT32_MAX) << "ValueError: np.unique does not support large"

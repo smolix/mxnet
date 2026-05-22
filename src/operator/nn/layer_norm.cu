@@ -46,7 +46,7 @@ void LayerNormGradComputeGeneralImpl<gpu>(const nnvm::NodeAttrs& attrs,
                                           const mxnet::TShape& red_src_shape,
                                           const mxnet::TShape& red_exclude_dst_shape,
                                           const mxnet::TShape& red_exclude_src_shape,
-                                          const int channel_size) {
+                                          const int64_t channel_size) {
   using namespace mshadow;
   using namespace mshadow::expr;
   Stream<gpu>* s = ctx.get_stream<gpu>();

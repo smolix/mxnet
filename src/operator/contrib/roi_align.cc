@@ -134,7 +134,7 @@ void pre_calc_for_bilinear_interpolate(const int height,
 }
 
 template <typename T>
-void ROIAlignForward(const int nthreads,
+void ROIAlignForward(const mxnet::index_t nthreads,
                      const T* bottom_data,
                      const T& spatial_scale,
                      const bool position_sensitive,
@@ -150,12 +150,12 @@ void ROIAlignForward(const int nthreads,
                      T* top_data) {
   DCHECK(roi_cols == 4 || roi_cols == 5);
 
-  int n_rois = nthreads / channels / pooled_width / pooled_height;
+  mxnet::index_t n_rois = nthreads / channels / pooled_width / pooled_height;
   // (n, c, ph, pw) is an element in the pooled output
   // can be parallelized using omp
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
-  for (int n = 0; n < n_rois; n++) {
-    int index_n = n * channels * pooled_width * pooled_height;
+  for (mxnet::index_t n = 0; n < n_rois; n++) {
+    mxnet::index_t index_n = n * channels * pooled_width * pooled_height;
 
     // roi could have 4 or 5 columns
     const T* offset_bottom_rois = bottom_rois + n * roi_cols;
@@ -217,12 +217,12 @@ void ROIAlignForward(const int nthreads,
                                       &pre_calc);
 
     for (int c = 0; c < channels; c++) {
-      int index_n_c      = index_n + c * pooled_width * pooled_height;
+      mxnet::index_t index_n_c = index_n + c * pooled_width * pooled_height;
       int pre_calc_index = 0;
 
       for (int ph = 0; ph < pooled_height; ph++) {
         for (int pw = 0; pw < pooled_width; pw++) {
-          int index = index_n_c + ph * pooled_width + pw;
+          mxnet::index_t index = index_n_c + ph * pooled_width + pw;
 
           int c_unpooled        = c;
           int channels_unpooled = channels;
@@ -313,7 +313,7 @@ inline void add(const T& val, T* address) {
 }
 
 template <typename T>
-void ROIAlignBackward(const int nthreads,
+void ROIAlignBackward(const mxnet::index_t nthreads,
                       const T* top_diff,
                       const int /*num_rois*/,
                       const T& spatial_scale,
@@ -330,7 +330,7 @@ void ROIAlignBackward(const int nthreads,
                       int rois_cols) {
   DCHECK(rois_cols == 4 || rois_cols == 5);
 
-  for (int index = 0; index < nthreads; index++) {
+  for (mxnet::index_t index = 0; index < nthreads; index++) {
     // (n, c, ph, pw) is an element in the pooled output
     int pw = index % pooled_width;
     int ph = (index / pooled_width) % pooled_height;
@@ -431,7 +431,7 @@ void ROIAlignForwardCompute(const nnvm::NodeAttrs& attrs,
 
   const ROIAlignParam& param = nnvm::get<ROIAlignParam>(attrs.parsed);
 
-  const int count = out_data[roialign::kOut].Size();
+  const index_t count = out_data[roialign::kOut].Size();
   // const int num_rois = in_data[roialign::kBox].size(0);
   const int channels      = out_data[roialign::kOut].size(1);  // channels of pooled output
   const int height        = in_data[roialign::kData].size(2);
@@ -484,7 +484,7 @@ void ROIAlignBackwardCompute(const nnvm::NodeAttrs& attrs,
 
   const ROIAlignParam& param = nnvm::get<ROIAlignParam>(attrs.parsed);
 
-  const int count         = out_grad[0].Size();
+  const index_t count     = out_grad[0].Size();
   const int num_rois      = in_data[0].size(0);
   const int channels      = out_grad[0].size(1);  // channels of pooled output
   const int height        = outputs[0].size(2);

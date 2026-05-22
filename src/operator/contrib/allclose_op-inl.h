@@ -140,7 +140,7 @@ void AllClose(const nnvm::NodeAttrs& attrs,
   const TBlob& in1    = inputs[1];
   CHECK_LE(in0.Size(), static_cast<size_t>(std::numeric_limits<int>::max()))
       << "_contrib_allclose supports at most INT_MAX elements per input.";
-  const int num_items = static_cast<int>(in0.Size());
+  const index_t num_items = in0.Size();
 
   size_t extraStorageBytes;
   auto workspaceMem          = GetAdditionalMemoryLogical<xpu>(ctx, num_items, &extraStorageBytes);

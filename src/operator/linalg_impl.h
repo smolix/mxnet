@@ -28,6 +28,8 @@
 #include <mxnet/op_attr_types.h>
 
 #include <algorithm>
+#include <climits>
+#include <limits>
 
 #include "../common/cuda/utils.h"
 #if MXNET_USE_CUDA
@@ -1656,6 +1658,7 @@ LINALG_CPU_ORGLQ(dorglq, double)
     int ret(MXNET_LAPACK_##prefix##gelqf(                                             \
         MXNET_LAPACK_ROW_MAJOR, m, A.size(1), A.dptr_, A.stride_, &work, &work, -1)); \
     CHECK_EQ(ret, 0) << #prefix << "gelqf: Workspace query failed on CPU.";           \
+    CHECK_LE(static_cast<double>(work), static_cast<double>(std::numeric_limits<int>::max())); \
     int ws_size(static_cast<int>(work));                                              \
     ret = MXNET_LAPACK_##prefix##orglq(                                               \
         MXNET_LAPACK_ROW_MAJOR, m, A.size(1), A.dptr_, A.stride_, &work, &work, -1);  \
@@ -2337,14 +2340,14 @@ LINALG_CPU_BATCH_INVERSE(cpu, double)
                                                const Tensor<xpu, 3, DType>& B,                \
                                                const mxnet::OpContext& ctx) {                 \
     Stream<xpu>* s     = ctx.get_stream<xpu>();                                               \
-    int pivot_size     = sizeof(int) * A.size(0) * A.size(1);                                 \
-    int matrix_size    = sizeof(DType) * A.shape_.Size();                                     \
-    int workspace_size = (pivot_size + matrix_size + sizeof(DType) - 1) / sizeof(DType);      \
+    size_t pivot_size     = sizeof(int) * A.size(0) * A.size(1);                              \
+    size_t matrix_size    = sizeof(DType) * A.shape_.Size();                                  \
+    size_t workspace_size = (pivot_size + matrix_size + sizeof(DType) - 1) / sizeof(DType);   \
     Tensor<xpu, 1, DType> workspace =                                                         \
         ctx.requested[0].get_space_typed<xpu, 1, DType>(Shape1(workspace_size), s);           \
     const Tensor<xpu, 2, int> pivot(reinterpret_cast<int*>(workspace.dptr_),                  \
                                     Shape2(A.size(0), A.size(1)));                            \
-    int offset = pivot.MSize() & 1 ? pivot.MSize() + 1 : pivot.MSize();                       \
+    index_t offset = pivot.MSize() & 1 ? pivot.MSize() + 1 : pivot.MSize();                   \
     const Tensor<xpu, 3, DType> LU(reinterpret_cast<DType*>(pivot.dptr_ + offset), A.shape_); \
     Copy(LU, B, s);                                                                           \
     linalg_batch_getrf(LU, pivot, true, s);                                                   \

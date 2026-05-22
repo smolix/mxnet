@@ -123,7 +123,7 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
 
   mxnet::TShape red_src_shape, red_dst_shape;
   BroadcastReduceShapeCompact(temp_data_shape, moments_shape, &red_src_shape, &red_dst_shape);
-  int channel_size = red_src_shape.Size() / red_dst_shape.Size();
+  int64_t channel_size = red_src_shape.Size() / red_dst_shape.Size();
 
   TBlob data_        = data.reshape(red_src_shape);
   const TBlob& mean_ = mean.reshape(red_dst_shape);

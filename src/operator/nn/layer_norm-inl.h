@@ -135,7 +135,7 @@ void LayerNormComputeGeneral(const nnvm::NodeAttrs& attrs,
   const TBlob in_data   = inputs[0].reshape(red_src_shape);
   const TBlob mean_data = outputs[layernorm::kMean].reshape(red_dst_shape);
   const TBlob std_data  = outputs[layernorm::kStd].reshape(red_dst_shape);
-  int channel_size      = red_src_shape.Size() / red_dst_shape.Size();
+  int64_t channel_size  = red_src_shape.Size() / red_dst_shape.Size();
   // Initialize the workspace
   Tensor<xpu, 1, char> workspace;
   size_t reduce_workspace_size =
@@ -309,7 +309,7 @@ void LayerNormGradComputeGeneralImpl(const nnvm::NodeAttrs& attrs,
                                      const mxnet::TShape& red_src_shape,
                                      const mxnet::TShape& red_exclude_dst_shape,
                                      const mxnet::TShape& red_exclude_src_shape,
-                                     const int channel_size);
+                                     const int64_t channel_size);
 
 /*
 Calculate the gradient of layer normalization.
@@ -358,7 +358,7 @@ void LayerNormGradComputeGeneral(const nnvm::NodeAttrs& attrs,
   BroadcastReduceShapeCompact(ograd.shape_, mean.shape_, &red_src_shape, &red_dst_shape);
   BroadcastReduceShapeCompact(
       ograd.shape_, gamma.shape_, &red_exclude_src_shape, &red_exclude_dst_shape);
-  int channel_size = red_src_shape.Size() / red_dst_shape.Size();
+  int64_t channel_size = red_src_shape.Size() / red_dst_shape.Size();
   // Initialize the workspace + Construct the temporary TBlobs
   Tensor<xpu, 1, char> workspace;
   size_t dtype_size   = common::mshadow_type_info(outputs[0].type_flag_).size;

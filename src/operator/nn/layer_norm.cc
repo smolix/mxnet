@@ -135,8 +135,8 @@ bool LayerNormComputeMKL(const nnvm::NodeAttrs& attrs,
     const TBlob in_data    = inputs[layernorm::kData].reshape(red_src_shape);
     const TBlob mean_data  = outputs[layernorm::kMean].reshape(red_dst_shape);
     const TBlob std_data   = outputs[layernorm::kStd].reshape(red_dst_shape);
-    const int outter_size  = red_dst_shape.Size();
-    const int channel_size = red_src_shape.Size() / red_dst_shape.Size();
+    const index_t outter_size  = red_dst_shape.Size();
+    const index_t channel_size = red_src_shape.Size() / red_dst_shape.Size();
 
     // call
     MSHADOW_SGL_DBL_TYPE_SWITCH(in_data.type_flag_, DType, {
@@ -191,7 +191,7 @@ void LayerNormGradComputeGeneralImpl<cpu>(const nnvm::NodeAttrs& attrs,
                                           const mxnet::TShape& red_src_shape,
                                           const mxnet::TShape& red_exclude_dst_shape,
                                           const mxnet::TShape& red_exclude_src_shape,
-                                          const int channel_size) {
+                                          const int64_t channel_size) {
   using namespace mshadow;
   using namespace mshadow::expr;
   Stream<cpu>* s = ctx.get_stream<cpu>();

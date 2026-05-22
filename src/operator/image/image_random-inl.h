@@ -26,6 +26,7 @@
 #define MXNET_OPERATOR_IMAGE_IMAGE_RANDOM_INL_H_
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <limits>
 #include <tuple>
@@ -195,6 +196,7 @@ void ToTensorOpForward(const nnvm::NodeAttrs& attrs,
   } else if (inputs[0].ndim() == 3) {
     // 3D Input - (h, w, c)
     const int length  = inputs[0].shape_[0] * inputs[0].shape_[1];
+    CHECK_LE(inputs[0].shape_[2], INT_MAX);
     const int channel = static_cast<int>(inputs[0].shape_[2]);
     const int step    = 0;
     ToTensorImpl(inputs, outputs, req, length, channel, normalize_factor, step);
@@ -202,6 +204,7 @@ void ToTensorOpForward(const nnvm::NodeAttrs& attrs,
     // 4D input (n, h, w, c)
     const int batch_size = inputs[0].shape_[0];
     const int length     = inputs[0].shape_[1] * inputs[0].shape_[2];
+    CHECK_LE(inputs[0].shape_[3], INT_MAX);
     const int channel    = static_cast<int>(inputs[0].shape_[3]);
     const int step       = channel * length;
 
@@ -362,6 +365,7 @@ void NormalizeOpForward(const nnvm::NodeAttrs& attrs,
         DType* input  = nullptr;
         DType* output = nullptr;
         if (inputs[0].ndim() == 3) {
+          CHECK_LE(inputs[0].shape_[0], INT_MAX);
           N      = 1;
           C      = static_cast<int>(inputs[0].shape_[0]);
           H      = static_cast<int>(inputs[0].shape_[1]);
@@ -369,6 +373,7 @@ void NormalizeOpForward(const nnvm::NodeAttrs& attrs,
           input  = (inputs[0].get<gpu, 3, DType>(s)).dptr_;
           output = (outputs[0].get<gpu, 3, DType>(s)).dptr_;
         } else {
+          CHECK_LE(inputs[0].shape_[1], INT_MAX);
           N      = static_cast<int>(inputs[0].shape_[0]);
           C      = static_cast<int>(inputs[0].shape_[1]);
           H      = static_cast<int>(inputs[0].shape_[2]);
@@ -398,6 +403,7 @@ void NormalizeOpForward(const nnvm::NodeAttrs& attrs,
   } else if (inputs[0].ndim() == 3) {
     // 3D input (c, h, w)
     const int length  = inputs[0].shape_[1] * inputs[0].shape_[2];
+    CHECK_LE(inputs[0].shape_[0], INT_MAX);
     const int channel = static_cast<int>(inputs[0].shape_[0]);
     const int step    = 0;
     NormalizeImpl(inputs, outputs, req, length, channel, step, mean, std);
@@ -405,6 +411,7 @@ void NormalizeOpForward(const nnvm::NodeAttrs& attrs,
     // 4D input (n, c, h, w)
     const int batch_size = inputs[0].shape_[0];
     const int length     = inputs[0].shape_[2] * inputs[0].shape_[3];
+    CHECK_LE(inputs[0].shape_[1], INT_MAX);
     const int channel    = static_cast<int>(inputs[0].shape_[1]);
     const int step       = channel * length;
 

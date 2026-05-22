@@ -738,6 +738,19 @@ def test_layernorm():
             layer.hybridize()
         pytest.raises(AssertionError, lambda: layer(mx.np.ones((2, 11))))
 
+def test_layernorm_disabled_affine_ignores_parameter_values():
+    data = mx.np.array([[1.0, 2.0, 3.0]], dtype='float32')
+    layer = nn.LayerNorm(in_channels=3, center=False, scale=False)
+    layer.initialize()
+    layer.gamma.set_data(mx.np.array([10.0, 20.0, 30.0], dtype='float32'))
+    layer.beta.set_data(mx.np.array([5.0, 6.0, 7.0], dtype='float32'))
+
+    expected = mx.npx.layer_norm(
+        data,
+        gamma=mx.np.ones((3,), dtype='float32'),
+        beta=mx.np.zeros((3,), dtype='float32'))
+    assert_almost_equal(layer(data).asnumpy(), expected.asnumpy(), atol=1e-5, rtol=1e-5)
+
 def test_groupnorm():
     layer = nn.GroupNorm()
     check_layer_forward(layer, (2, 10, 10, 10))

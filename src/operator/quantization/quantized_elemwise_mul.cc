@@ -63,10 +63,11 @@ inline bool QuantizedElemwiseMulOpType(const nnvm::NodeAttrs& attrs,
                                        std::vector<int>* out_type) {
   const QuantizeElemwiseMulParam& params = nnvm::get<QuantizeElemwiseMulParam>(attrs.parsed);
   for (int i = 0; i < 2; ++i) {
-    if (in_type->at(i) == mshadow::kInt8) {
+    if (in_type->at(i) == -1 || in_type->at(i) == mshadow::kInt8) {
       TYPE_ASSIGN_CHECK(*in_type, i, mshadow::kInt8);
     } else {
       LOG(ERROR) << "currently, quantized elemwise mul only support int8 inputs.";
+      return false;
     }
   }
   TYPE_ASSIGN_CHECK(*in_type, quantized_elemwise_mul::kLhsMin, mshadow::kFloat32);

@@ -297,9 +297,6 @@ class SyncBatchNorm : public Operator {
     Tensor<xpu, 1> moving_mean = aux_states[syncbatchnorm::kMovingMean].get<xpu, 1, real_t>(s);
     Tensor<xpu, 1> moving_var  = aux_states[syncbatchnorm::kMovingVar].get<xpu, 1, real_t>(s);
 
-    if (param_.fix_gamma)
-      slope = 1.f;
-
     // whether use global statistics
     if (ctx.is_train && !param_.use_global_stats) {
       // get my rank
@@ -332,20 +329,41 @@ class SyncBatchNorm : public Operator {
       mshadow::Copy(var, var_cpu, s);
 
       var = var - F<mshadow_op::square>(mean);
-      Assign(out,
-             req[syncbatchnorm::kOut],
-             broadcast<1>(slope, out.shape_) * (data - broadcast<1>(mean, data.shape_)) /
-                     F<mshadow_op::square_root>(broadcast<1>(var + param_.eps, data.shape_)) +
-                 broadcast<1>(bias, out.shape_));
+      moving_mean = moving_mean * param_.momentum + mean * (1 - param_.momentum);
+      moving_var  = moving_var * param_.momentum + var * (1 - param_.momentum);
+      if (!param_.fix_gamma) {
+        Assign(out,
+               req[syncbatchnorm::kOut],
+               broadcast<1>(slope, out.shape_) * (data - broadcast<1>(mean, data.shape_)) /
+                       F<mshadow_op::square_root>(broadcast<1>(var + param_.eps, data.shape_)) +
+                   broadcast<1>(bias, out.shape_));
+      } else {
+        Assign(out,
+               req[syncbatchnorm::kOut],
+               (data - broadcast<1>(mean, data.shape_)) /
+                       F<mshadow_op::square_root>(broadcast<1>(var + param_.eps, data.shape_)) +
+                   broadcast<1>(bias, out.shape_));
+      }
     } else {
-      Assign(
-          out,
-          req[syncbatchnorm::kOut],
-          broadcast<1>(slope / F<mshadow_op::square_root>(moving_var + param_.eps), data.shape_) *
-                  data +
-              broadcast<1>(bias - (slope * moving_mean) /
-                                      F<mshadow_op::square_root>(moving_var + param_.eps),
-                           data.shape_));
+      if (!param_.fix_gamma) {
+        Assign(out,
+               req[syncbatchnorm::kOut],
+               broadcast<1>(slope / F<mshadow_op::square_root>(moving_var + param_.eps),
+                            data.shape_) *
+                       data +
+                   broadcast<1>(bias - (slope * moving_mean) /
+                                            F<mshadow_op::square_root>(moving_var + param_.eps),
+                                data.shape_));
+      } else {
+        Assign(out,
+               req[syncbatchnorm::kOut],
+               broadcast<1>(1.0f / F<mshadow_op::square_root>(moving_var + param_.eps),
+                            data.shape_) *
+                       data +
+                   broadcast<1>(bias - moving_mean /
+                                            F<mshadow_op::square_root>(moving_var + param_.eps),
+                                data.shape_));
+      }
     }
   }
 
@@ -393,9 +411,6 @@ class SyncBatchNorm : public Operator {
     Tensor<xpu, 1> moving_mean = aux_states[syncbatchnorm::kMovingMean].get<xpu, 1, real_t>(s);
     Tensor<xpu, 1> moving_var  = aux_states[syncbatchnorm::kMovingVar].get<xpu, 1, real_t>(s);
 
-    if (param_.fix_gamma)
-      slope = 1.f;
-
     if (ctx.is_train && !param_.use_global_stats) {
       // get my rank
       Barrier* global_barrier = global_shared_barrier_backward.Register(param_.key, param_.ndev);
@@ -406,8 +421,6 @@ class SyncBatchNorm : public Operator {
       Tensor<xpu, 1> gmean = workspace[0];
       Tensor<xpu, 1> gvar  = workspace[1];
 
-      moving_mean = moving_mean * param_.momentum + mean * (1 - param_.momentum);
-      moving_var  = moving_var * param_.momentum + var * (1 - param_.momentum);
       // cal
       Tensor<xpu, 1> sumGrad = workspace[3];
       Tensor<xpu, 1> sumProd = workspace[4];
@@ -431,8 +444,14 @@ class SyncBatchNorm : public Operator {
       mshadow::Copy(sumGrad, grad_cpu, s);
       mshadow::Copy(sumProd, prod_cpu, s);
 
-      gvar  = -1.0f * sumProd * slope * F<mshadow_op::power>(var + param_.eps, -1.5f);
-      gmean = sumGrad * slope;
+      gvar = -1.0f * sumProd * F<mshadow_op::power>(var + param_.eps, -1.5f);
+      if (!param_.fix_gamma) {
+        gvar *= slope;
+      }
+      gmean = sumGrad;
+      if (!param_.fix_gamma) {
+        gmean *= slope;
+      }
       gmean *= -1.0f / F<mshadow_op::square_root>(var + param_.eps);
       // assign
       if (!param_.fix_gamma) {
@@ -444,13 +463,25 @@ class SyncBatchNorm : public Operator {
       } else {
         Assign(gslope, req[syncbatchnorm::kGamma], 0.0f);
       }
-      Assign(
-          grad_in,
-          req[syncbatchnorm::kData],
-          (grad * broadcast<1>(slope, data.shape_)) *
-                  broadcast<1>(1.0f / F<mshadow_op::square_root>(var + param_.eps), data.shape_) +
-              broadcast<1>(gvar, data.shape_) * scale * (data - broadcast<1>(mean, data.shape_)) +
-              broadcast<1>(gmean, data.shape_) * scale);
+      if (!param_.fix_gamma) {
+        Assign(grad_in,
+               req[syncbatchnorm::kData],
+               (grad * broadcast<1>(slope, data.shape_)) *
+                       broadcast<1>(1.0f / F<mshadow_op::square_root>(var + param_.eps),
+                                    data.shape_) +
+                   broadcast<1>(gvar, data.shape_) * scale *
+                       (data - broadcast<1>(mean, data.shape_)) +
+                   broadcast<1>(gmean, data.shape_) * scale);
+      } else {
+        Assign(grad_in,
+               req[syncbatchnorm::kData],
+               grad *
+                       broadcast<1>(1.0f / F<mshadow_op::square_root>(var + param_.eps),
+                                    data.shape_) +
+                   broadcast<1>(gvar, data.shape_) * scale *
+                       (data - broadcast<1>(mean, data.shape_)) +
+                   broadcast<1>(gmean, data.shape_) * scale);
+      }
       Assign(gbias, req[syncbatchnorm::kBeta], sumall_except_dim<1>(grad));
     } else {
       // use global statistics with freeze moving mean and var.
@@ -464,11 +495,19 @@ class SyncBatchNorm : public Operator {
         Assign(gslope, req[syncbatchnorm::kGamma], 0.0f);
       }
       Assign(gbias, req[syncbatchnorm::kBeta], sumall_except_dim<1>(grad));
-      Assign(grad_in,
-             req[syncbatchnorm::kData],
-             (grad * broadcast<1>(slope, data.shape_)) *
-                 broadcast<1>(1.0f / F<mshadow_op::square_root>(moving_var + param_.eps),
-                              data.shape_));
+      if (!param_.fix_gamma) {
+        Assign(grad_in,
+               req[syncbatchnorm::kData],
+               (grad * broadcast<1>(slope, data.shape_)) *
+                   broadcast<1>(1.0f / F<mshadow_op::square_root>(moving_var + param_.eps),
+                                data.shape_));
+      } else {
+        Assign(grad_in,
+               req[syncbatchnorm::kData],
+               grad * broadcast<1>(1.0f /
+                                       F<mshadow_op::square_root>(moving_var + param_.eps),
+                                   data.shape_));
+      }
     }
   }
 

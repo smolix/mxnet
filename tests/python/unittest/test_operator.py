@@ -21,6 +21,7 @@ from __future__ import division
 import numpy as np
 import mxnet as mx
 import copy
+import json
 import math
 import random
 import itertools
@@ -3409,6 +3410,39 @@ def test_instance_normalization():
     check_instance_norm_with_shape((2,4,5,6), default_device())
     check_instance_norm_with_shape((3,3,2,3,2,1,1), default_device())
 
+def test_norm_shape_inference_rejects_bad_affine_shapes():
+    data = mx.sym.Variable('data')
+    gamma = mx.sym.Variable('gamma')
+    beta = mx.sym.Variable('beta')
+
+    group = mx.sym.GroupNorm(data=data, gamma=gamma, beta=beta, num_groups=1)
+    with pytest.raises(MXNetError):
+        group.infer_shape(data=(2, 3, 4), gamma=(999,), beta=(3,))
+    with pytest.raises(MXNetError):
+        group.infer_shape(data=(2, 3, 4), gamma=(3,), beta=(999,))
+
+    inst = mx.sym.InstanceNorm(data=data, gamma=gamma, beta=beta)
+    with pytest.raises(MXNetError):
+        inst.infer_shape(data=(2, 3, 4), gamma=(999,), beta=(3,))
+    with pytest.raises(MXNetError):
+        inst.infer_shape(data=(2, 3, 4), gamma=(3,), beta=(999,))
+
+def test_hidden_output_names_for_instance_norm_and_ctc_loss():
+    data = mx.sym.Variable('data')
+    gamma = mx.sym.Variable('gamma')
+    beta = mx.sym.Variable('beta')
+    inst = mx.sym.InstanceNorm(data=data, gamma=gamma, beta=beta, name='inst')
+    inst_json = json.loads(inst.tojson())
+    inst_json['heads'] = [[3, 0, 0], [3, 1, 0], [3, 2, 0]]
+    assert mx.sym.fromjson(json.dumps(inst_json)).list_outputs() == [
+        'inst_output', 'inst_mean', 'inst_var']
+
+    ctc_data = mx.sym.Variable('ctc_data')
+    label = mx.sym.Variable('label')
+    ctc = mx.sym.ctc_loss(data=ctc_data, label=label, name='ctc')
+    ctc_json = json.loads(ctc.tojson())
+    ctc_json['heads'] = [[2, 0, 0], [2, 1, 0]]
+    assert mx.sym.fromjson(json.dumps(ctc_json)).list_outputs() == ['ctc_out', 'ctc_grad']
 
 def check_l2_normalization(in_shape, mode, dtype, norm_eps=1e-10):
     ctx = default_device()
@@ -9600,6 +9634,40 @@ def test_elemwise_sum_for_gradient_accumulation():
             stored_grad[grad_req] = a.grad.asscalar()
         assert stored_grad['write'] == stored_grad['add']
         assert stored_grad['write'] == 2 * nrepeat
+
+
+def test_identity_attach_kl_sparse_reg_updates_moving_avg_in_forward_only():
+    data_np = np.array([[0.2, 0.4, 0.6],
+                        [0.3, 0.5, 0.7],
+                        [0.4, 0.6, 0.8],
+                        [0.5, 0.7, 0.9]], dtype=np.float32)
+    initial_avg = np.array([0.15, 0.25, 0.35], dtype=np.float32)
+    momentum = 0.25
+    target = 0.2
+    penalty = 0.5
+
+    data = mx.sym.Variable('data')
+    out = mx.sym.IdentityAttachKLSparseReg(
+        data, sparseness_target=target, penalty=penalty, momentum=momentum)
+    exe = out._simple_bind(ctx=mx.cpu(), data=data_np.shape, grad_req='write')
+    aux_name = out.list_auxiliary_states()[0]
+
+    exe.arg_dict['data'][:] = data_np
+    exe.aux_dict[aux_name][:] = initial_avg
+    exe.forward(is_train=True)
+
+    expected_avg = momentum * initial_avg + (1.0 - momentum) * data_np.mean(axis=0)
+    assert_almost_equal(exe.outputs[0].asnumpy(), data_np)
+    assert_almost_equal(exe.aux_dict[aux_name].asnumpy(), expected_avg)
+
+    exe.backward(out_grads=mx.nd.ones_like(exe.outputs[0]))
+    assert_almost_equal(exe.aux_dict[aux_name].asnumpy(), expected_avg)
+
+    expected_grad = 1.0 + penalty * (
+        -target / expected_avg + (1.0 - target) / (1.0 - expected_avg))
+    assert_almost_equal(exe.grad_dict['data'].asnumpy(),
+                        np.broadcast_to(expected_grad, data_np.shape))
+
 
 def test_elementwise_ops_on_misaligned_input():
     a = mx.nd.array([1,2,3,4], dtype='float16')

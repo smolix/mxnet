@@ -183,8 +183,8 @@ inline bool InstanceNormShape(const nnvm::NodeAttrs& attrs,
   if (dshape.ndim() == 0)
     return false;
 
-  in_shape->at(1) = mxnet::TShape(Shape1(dshape[1]));
-  in_shape->at(2) = mxnet::TShape(Shape1(dshape[1]));
+  SHAPE_ASSIGN_CHECK(*in_shape, 1, mxnet::TShape(Shape1(dshape[1])));
+  SHAPE_ASSIGN_CHECK(*in_shape, 2, mxnet::TShape(Shape1(dshape[1])));
   out_shape->clear();
   out_shape->push_back(dshape);
   out_shape->push_back(Shape2(dshape[0], dshape[1]));

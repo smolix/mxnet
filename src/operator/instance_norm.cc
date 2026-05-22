@@ -113,7 +113,7 @@ Examples::
                                      })
     .set_attr<nnvm::FListOutputNames>("FListOutputNames",
                                       [](const NodeAttrs& attrs) {
-                                        return std::vector<std::string>{"output"};
+                                        return std::vector<std::string>{"output", "mean", "var"};
                                       })
     .set_attr<nnvm::FNumVisibleOutputs>("FNumVisibleOutputs",
                                         [](const NodeAttrs& attrs) { return 1; })

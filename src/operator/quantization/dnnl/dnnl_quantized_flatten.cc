@@ -24,6 +24,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 #include "operator/nn/dnnl/dnnl_reshape-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/quantization/quantization_utils.h"
 
 namespace mxnet {
@@ -50,8 +51,14 @@ static void DNNLQuantizedFlattenForward(const nnvm::NodeAttrs& attrs,
   } else {
     FallBackCompute(UnaryOp::IdentityCompute<cpu>, attrs, ctx, inputs, req, outputs);
   }
-  outputs[1].data().dptr<float>()[0] = inputs[1].data().dptr<float>()[0];
-  outputs[2].data().dptr<float>()[0] = inputs[2].data().dptr<float>()[0];
+  AssignQuantizedRangeOutput(outputs[1].data().dptr<float>(),
+                             inputs[1].data().dptr<float>(),
+                             req[1],
+                             "quantized_flatten");
+  AssignQuantizedRangeOutput(outputs[2].data().dptr<float>(),
+                             inputs[2].data().dptr<float>(),
+                             req[2],
+                             "quantized_flatten");
 }
 
 NNVM_REGISTER_OP(_contrib_quantized_flatten)

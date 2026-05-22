@@ -79,6 +79,19 @@ mshadow::TypeFlag ParamType(int x_type) {
   return xt == mshadow::kFloat16 ? mshadow::kFloat32 : xt;
 }
 
+template <typename DType>
+__global__ void FillKernel(DType* data, int size, DType value) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < size) {
+    data[i] = value;
+  }
+}
+
+inline size_t AlignWorkspaceSize(size_t size) {
+  constexpr size_t alignment = 256;
+  return ((size + alignment - 1) / alignment) * alignment;
+}
+
 }  // namespace
 
 bool CudnnBatchNormSupports(const BatchNormParam& param, const TBlob& x) {
@@ -108,8 +121,6 @@ void CudnnBatchNormForward(const BatchNormParam& param,
   MSHADOW_REAL_TYPE_SWITCH(ParamType(inputs[batchnorm::kData].type_flag_), DType, {
     DType a = 1.0f;
     DType b = 0.0f;
-    if (param.fix_gamma)
-      inputs[batchnorm::kGamma].FlatTo1D<gpu, DType>(s) = 1.0f;
     if (ctx.is_train) {
       size_t workspace_size = 0;
       CUDNN_CALL(cudnnGetBatchNormalizationForwardTrainingExWorkspaceSize(
@@ -122,7 +133,20 @@ void CudnnBatchNormForward(const BatchNormParam& param,
           Globals::Get().mean_desc,
           nullptr,
           &workspace_size));
-      auto workspace = ctx.requested[0].get_space_internal(workspace_size, "CudnnBatchNormForward");
+      const int channel_count = inputs[batchnorm::kGamma].shape_.Size();
+      const size_t aligned_workspace_size = AlignWorkspaceSize(workspace_size);
+      const size_t gamma_bytes = param.fix_gamma ? channel_count * sizeof(DType) : 0;
+      char* workspace_base = static_cast<char*>(ctx.requested[0].get_space_internal(
+          aligned_workspace_size + gamma_bytes, "CudnnBatchNormForward"));
+      void* workspace = workspace_base;
+      DType* gamma = inputs[batchnorm::kGamma].dptr<DType>();
+      if (param.fix_gamma) {
+        gamma = reinterpret_cast<DType*>(workspace_base + aligned_workspace_size);
+        constexpr int threads = 256;
+        const int blocks      = (channel_count + threads - 1) / threads;
+        FillKernel<DType><<<blocks, threads, 0, mshadow::Stream<gpu>::GetStream(s)>>>(
+            gamma, channel_count, DType(1.0f));
+      }
 
       // If the lock on the auxiliary states is set, then this implies that
       // the preceding call is also a `Forward()` call, which further
@@ -147,7 +171,7 @@ void CudnnBatchNormForward(const BatchNormParam& param,
                                                    Globals::Get().io_desc,
                                                    outputs[batchnorm::kOut].dptr_,
                                                    Globals::Get().mean_desc,
-                                                   inputs[batchnorm::kGamma].dptr_,
+                                                   gamma,
                                                    inputs[batchnorm::kBeta].dptr_,
                                                    factor,
                                                    inputs[batchnorm::kInMovingMean].dptr_,
@@ -161,6 +185,16 @@ void CudnnBatchNormForward(const BatchNormParam& param,
                                                    nullptr,
                                                    0));  // reserveSpace, reserveSpaceSizeInBytes
     } else {
+      const int channel_count = inputs[batchnorm::kGamma].shape_.Size();
+      DType* gamma = inputs[batchnorm::kGamma].dptr<DType>();
+      if (param.fix_gamma) {
+        gamma = static_cast<DType*>(ctx.requested[0].get_space_internal(
+            channel_count * sizeof(DType), "CudnnBatchNormForward"));
+        constexpr int threads = 256;
+        const int blocks      = (channel_count + threads - 1) / threads;
+        FillKernel<DType><<<blocks, threads, 0, mshadow::Stream<gpu>::GetStream(s)>>>(
+            gamma, channel_count, DType(1.0f));
+      }
       CUDNN_CALL(cudnnBatchNormalizationForwardInference(s->dnn_handle_,
                                                          CUDNN_BATCHNORM_SPATIAL,
                                                          &a,
@@ -170,7 +204,7 @@ void CudnnBatchNormForward(const BatchNormParam& param,
                                                          Globals::Get().io_desc,
                                                          outputs[batchnorm::kOut].dptr_,
                                                          Globals::Get().mean_desc,
-                                                         inputs[batchnorm::kGamma].dptr_,
+                                                         gamma,
                                                          inputs[batchnorm::kBeta].dptr_,
                                                          inputs[batchnorm::kInMovingMean].dptr_,
                                                          inputs[batchnorm::kInMovingVar].dptr_,
@@ -206,11 +240,35 @@ void CudnnBatchNormBackward(const BatchNormParam& param,
                                                                Globals::Get().mean_desc,
                                                                nullptr,
                                                                &workspace_size));
-  auto workspace = ctx.requested[0].get_space_internal(workspace_size, "CudnnBatchNormBackward");
   MSHADOW_REAL_TYPE_SWITCH(ParamType(inputs[3 + batchnorm::kData].type_flag_), DType, {
-    if (param.fix_gamma)
-      inputs[3 + batchnorm::kGamma].FlatTo1D<gpu, DType>(s) = 1.0f;
+    const int channel_count = inputs[3 + batchnorm::kGamma].shape_.Size();
+    const bool use_temp_gamma_grad =
+        param.fix_gamma || req[batchnorm::kGamma] == kNullOp;
+    const size_t aligned_workspace_size = AlignWorkspaceSize(workspace_size);
+    const size_t fixed_gamma_bytes = param.fix_gamma ? channel_count * sizeof(DType) : 0;
+    const size_t gamma_grad_bytes = use_temp_gamma_grad ? channel_count * sizeof(DType) : 0;
+    char* workspace_base = static_cast<char*>(ctx.requested[0].get_space_internal(
+        aligned_workspace_size + fixed_gamma_bytes + gamma_grad_bytes, "CudnnBatchNormBackward"));
+    void* workspace = workspace_base;
+    DType* gamma = inputs[3 + batchnorm::kGamma].dptr<DType>();
+    if (param.fix_gamma) {
+      gamma = reinterpret_cast<DType*>(workspace_base + aligned_workspace_size);
+      constexpr int threads = 256;
+      const int blocks      = (channel_count + threads - 1) / threads;
+      FillKernel<DType><<<blocks, threads, 0, mshadow::Stream<gpu>::GetStream(s)>>>(
+          gamma, channel_count, DType(1.0f));
+    }
+    DType* gamma_grad = use_temp_gamma_grad ?
+                            reinterpret_cast<DType*>(
+                                workspace_base + aligned_workspace_size + fixed_gamma_bytes) :
+                            outputs[batchnorm::kGamma].dptr<DType>();
     bool grad_add_gamma_beta = req[batchnorm::kGamma] == kAddTo || req[batchnorm::kBeta] == kAddTo;
+    if (use_temp_gamma_grad && grad_add_gamma_beta) {
+      constexpr int threads = 256;
+      const int blocks      = (channel_count + threads - 1) / threads;
+      FillKernel<DType><<<blocks, threads, 0, mshadow::Stream<gpu>::GetStream(s)>>>(
+          gamma_grad, channel_count, DType(0.0f));
+    }
     if (grad_add_gamma_beta) {
       if (IsBNWriting(req[batchnorm::kGamma]))
         outputs[batchnorm::kGamma].FlatTo1D<gpu, DType>(s) = 0.0f;
@@ -240,9 +298,9 @@ void CudnnBatchNormBackward(const BatchNormParam& param,
                                           Globals::Get().io_desc,
                                           outputs[batchnorm::kData].dptr_,
                                           Globals::Get().mean_desc,
-                                          inputs[3 + batchnorm::kGamma].dptr_,
+                                          gamma,
                                           inputs[3 + batchnorm::kBeta].dptr_,
-                                          outputs[batchnorm::kGamma].dptr_,
+                                          gamma_grad,
                                           outputs[batchnorm::kBeta].dptr_,
                                           param.eps,
                                           global_stats ? nullptr : inputs[batchnorm::kMean].dptr_,
@@ -252,7 +310,7 @@ void CudnnBatchNormBackward(const BatchNormParam& param,
                                           workspace_size,
                                           nullptr,
                                           0));  // reserveSpace, reserveSpaceSizeInBytes
-    if (param.fix_gamma)
+    if (param.fix_gamma && IsBNWriting(req[batchnorm::kGamma]))
       outputs[batchnorm::kGamma].FlatTo1D<gpu, DType>(s) = 0.0f;
   })
   Globals::Get().internal_aux_states_lock = false;

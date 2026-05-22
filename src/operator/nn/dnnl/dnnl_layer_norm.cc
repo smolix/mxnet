@@ -26,6 +26,9 @@
 
 #include "dnnl_layer_norm-inl.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace mxnet {
 namespace op {
 
@@ -56,7 +59,7 @@ void DNNLLayerNormForward(const nnvm::NodeAttrs& attrs,
                           const std::vector<NDArray>& outputs) {
   const LayerNormParam& param = nnvm::get<LayerNormParam>(attrs.parsed);
   const auto& fwd             = DNNLLayerNormFwd::GetCached(param, ctx, inputs[layernorm::kData]);
-  fwd.Execute(param, ctx, inputs, req[layernorm::kOut], outputs);
+  fwd.Execute(param, ctx, inputs, req, outputs);
 }
 
 DNNLLayerNormFwd& DNNLLayerNormFwd::GetCached(const LayerNormParam& param,
@@ -102,14 +105,23 @@ inline dnnl::memory::desc GetMeanVarDesc(const dnnl::memory::data_type& dtype,
                                          const mxnet::TShape& _shape) {
   const auto ndim = _shape.ndim();
 
-  dnnl::memory::dims shape(ndim, 1), strides(ndim, 1);
-  shape[0] = _shape[0];
-  for (int i = ndim - 1; i > 0; --i) {
-    shape[i]       = _shape[i];
-    strides[i - 1] = strides[i] * shape[i];
+  dnnl::memory::dims shape(ndim, 1);
+  for (int i = 0; i < ndim; ++i) {
+    shape[i] = _shape[i];
   }
-
-  return dnnl::memory::desc{shape, dtype, strides};
+  switch (ndim) {
+    case 1:
+      return dnnl::memory::desc{shape, dtype, dnnl::memory::format_tag::a};
+    case 2:
+      return dnnl::memory::desc{shape, dtype, dnnl::memory::format_tag::ab};
+    case 3:
+      return dnnl::memory::desc{shape, dtype, dnnl::memory::format_tag::abc};
+    case 4:
+      return dnnl::memory::desc{shape, dtype, dnnl::memory::format_tag::abcd};
+    default:
+      LOG(FATAL) << "Unsupported LayerNorm stats rank for oneDNN: " << ndim;
+  }
+  return dnnl::memory::desc();
 }
 
 // v3: SCALE_SHIFT was split into SCALE + SHIFT, each a 1-D tensor of length C.
@@ -122,36 +134,124 @@ inline dnnl::memory GetGammaOrBetaMem(const NDArray& tensor) {
   return mem;
 }
 
+inline void CommitStatOutput(const NDArray& output,
+                             const dnnl::memory& value,
+                             const OpReqType req,
+                             const char* name) {
+  if (req == kNullOp) {
+    return;
+  }
+  CHECK_EQ(output.dtype(), mshadow::kFloat32);
+
+  const float* value_data = static_cast<const float*>(value.get_data_handle());
+  float* output_data      = output.data().dptr<float>();
+  const size_t size       = output.shape().Size();
+  if (req == kAddTo) {
+    for (size_t i = 0; i < size; ++i) {
+      output_data[i] += value_data[i];
+    }
+  } else {
+    std::copy(value_data, value_data + size, output_data);
+  }
+}
+
+inline void CommitStdOutput(const NDArray& output,
+                            const dnnl::memory& variance,
+                            const OpReqType req,
+                            float eps) {
+  if (req == kNullOp) {
+    return;
+  }
+  CHECK_EQ(output.dtype(), mshadow::kFloat32);
+
+  const float* variance_data = static_cast<const float*>(variance.get_data_handle());
+  float* output_data         = output.data().dptr<float>();
+  const size_t size          = output.shape().Size();
+  for (size_t i = 0; i < size; ++i) {
+    const float std = std::sqrt(variance_data[i] + eps);
+    if (req == kAddTo) {
+      output_data[i] += std;
+    } else {
+      output_data[i] = std;
+    }
+  }
+}
+
+inline dnnl::memory CopyStatToDNNL(const NDArray& input,
+                                   const dnnl::memory::desc& desc,
+                                   const char* name) {
+  CHECK_EQ(input.dtype(), mshadow::kFloat32);
+  dnnl::memory mem(desc, CpuEngine::Get()->get_engine());
+  std::copy(input.data().dptr<float>(),
+            input.data().dptr<float>() + input.shape().Size(),
+            static_cast<float*>(mem.get_data_handle()));
+  return mem;
+}
+
+inline dnnl::memory StdToVariance(const NDArray& std, const dnnl::memory::desc& desc, float eps) {
+  CHECK_EQ(std.dtype(), mshadow::kFloat32);
+
+  dnnl::memory variance(desc, CpuEngine::Get()->get_engine());
+  const float* std_data = std.data().dptr<float>();
+  float* variance_data  = static_cast<float*>(variance.get_data_handle());
+  const size_t size     = std.shape().Size();
+  for (size_t i = 0; i < size; ++i) {
+    variance_data[i] = std::max(0.0f, std_data[i] * std_data[i] - eps);
+  }
+  return variance;
+}
+
+inline void CommitScaleOrShiftGrad(const NDArray& output,
+                                   const dnnl::memory& grad,
+                                   const OpReqType req) {
+  if (req == kNullOp) {
+    return;
+  }
+  CHECK_EQ(output.dtype(), mshadow::kFloat32);
+
+  const float* grad_data = static_cast<const float*>(grad.get_data_handle());
+  float* output_data     = output.data().dptr<float>();
+  const size_t size      = output.shape().Size();
+  if (req == kAddTo) {
+    for (size_t i = 0; i < size; ++i) {
+      output_data[i] += grad_data[i];
+    }
+  } else {
+    std::copy(grad_data, grad_data + size, output_data);
+  }
+}
+
 void DNNLLayerNormFwd::Execute(const LayerNormParam& param,
                                const OpContext& ctx,
                                const std::vector<NDArray>& inputs,
-                               const OpReqType& req,
+                               const std::vector<OpReqType>& req,
                                const std::vector<NDArray>& outputs) const {
   auto mean_var_md = GetMeanVarDesc(get_dnnl_type(outputs[layernorm::kMean].dtype()),
                                     outputs[layernorm::kMean].shape());
-  auto mean_mem =
-      dnnl_output_t(OutDataOp::Noop,
-                    const_cast<NDArray&>(outputs[layernorm::kMean]).CreateDNNLData(&mean_var_md));
-  auto variance_mem = dnnl_output_t(
-      OutDataOp::Noop, const_cast<NDArray&>(outputs[layernorm::kStd]).CreateDNNLData(&mean_var_md));
+  const size_t stat_size = outputs[layernorm::kMean].shape().Size();
+  std::vector<float> mean_storage(stat_size);
+  std::vector<float> variance_storage(stat_size);
+  dnnl::memory mean_mem(mean_var_md, CpuEngine::Get()->get_engine(), mean_storage.data());
+  dnnl::memory variance_mem(mean_var_md, CpuEngine::Get()->get_engine(), variance_storage.data());
 
-  auto output_mem = CreateDNNLMem(outputs[layernorm::kOut], fwd_pd->dst_desc(), req);
+  auto output_mem =
+      CreateDNNLMem(outputs[layernorm::kOut], fwd_pd->dst_desc(), req[layernorm::kOut]);
   // v3: separate scale + shift args.
   auto scale_mem  = GetGammaOrBetaMem(inputs[layernorm::kGamma]);
   auto shift_mem  = GetGammaOrBetaMem(inputs[layernorm::kBeta]);
 
   dnnl_args_map_t args = {{DNNL_ARG_SRC, *inputs[layernorm::kData].GetDNNLData()},
                           {DNNL_ARG_DST, *output_mem.second},
-                          {DNNL_ARG_MEAN, *mean_mem.second},
-                          {DNNL_ARG_VARIANCE, *variance_mem.second},
+                          {DNNL_ARG_MEAN, mean_mem},
+                          {DNNL_ARG_VARIANCE, variance_mem},
                           {DNNL_ARG_SCALE, scale_mem},
                           {DNNL_ARG_SHIFT, shift_mem}};
 
   DNNLStream::Get()->RegisterPrimArgs(*fwd, args);
   CommitOutput(outputs[layernorm::kOut], output_mem);
-  CommitOutput(outputs[layernorm::kMean], mean_mem);
-  CommitOutput(outputs[layernorm::kStd], variance_mem);
   DNNLStream::Get()->Submit();
+  CommitStatOutput(outputs[layernorm::kMean], mean_mem, req[layernorm::kMean], "LayerNorm mean");
+  CommitStdOutput(outputs[layernorm::kStd], variance_mem, req[layernorm::kStd], param.eps);
 }
 
 DNNLLayerNormBwd::DNNLLayerNormBwd(const LayerNormParam& param,
@@ -179,7 +279,8 @@ std::shared_ptr<layernorm_bwd_pd_t> DNNLLayerNormBwd::CreatePrimitiveDesc(
                                               flags, layernorm_fwd_pd);
 }
 
-void DNNLLayerNormBwd::Execute(const std::vector<NDArray>& inputs,
+void DNNLLayerNormBwd::Execute(const LayerNormParam& param,
+                               const std::vector<NDArray>& inputs,
                                const std::vector<NDArray>& outputs,
                                const std::vector<OpReqType>& req) const {
   // v3: scale/shift handled as separate 1-D tensors.
@@ -190,55 +291,43 @@ void DNNLLayerNormBwd::Execute(const std::vector<NDArray>& inputs,
   // AUDIT-F1: oneDNN v3 layer_normalization_backward exposes only a single
   // diff_weights_desc() (it's shared between scale and shift; no diff_weights_desc(i)).
   // If a future v3.x splits them, switch to per-arg descriptors here.
-  auto cpu_engine        = CpuEngine::Get()->get_engine();
-  auto diff_weights_md   = bwd_pd->diff_weights_desc();
-  auto diff_scale_mem    = dnnl::memory(diff_weights_md, cpu_engine);
-  auto diff_shift_mem    = dnnl::memory(diff_weights_md, cpu_engine);
-
-  const auto gamma_bytes = inputs[layernorm::kBwdGamma].shape()[0] *
-                           mshadow::mshadow_sizeof(inputs[layernorm::kBwdGamma].dtype());
-  const auto beta_bytes  = inputs[layernorm::kBwdBeta].shape()[0] *
-                           mshadow::mshadow_sizeof(inputs[layernorm::kBwdBeta].dtype());
-  const auto gamma_req = req[layernorm::kBwdGammaGrad];
-  const auto beta_req  = req[layernorm::kBwdBetaGrad];
-  // B5: seed the v3 primitive's diff_scale/diff_shift buffers from the
-  // existing outputs only when the caller wants accumulation. NOTE: oneDNN
-  // layer_norm bwd writes (not accumulates) into DIFF_SCALE/SHIFT; the seed
-  // here matches pre-v3 behavior but a true kAddTo accumulation would need
-  // a post-op add (AUDIT-B5: tracked alongside the kAddTo accuracy item).
-  if (gamma_req == kAddTo) {
-    memcpy(diff_scale_mem.get_data_handle(),
-           outputs[layernorm::kBwdGammaGrad].data().dptr_, gamma_bytes);
-  }
-  if (beta_req == kAddTo) {
-    memcpy(diff_shift_mem.get_data_handle(),
-           outputs[layernorm::kBwdBetaGrad].data().dptr_, beta_bytes);
-  }
+  auto diff_weights_md = bwd_pd->diff_weights_desc();
+  dnnl::memory diff_scale_mem(diff_weights_md, CpuEngine::Get()->get_engine());
+  dnnl::memory diff_shift_mem(diff_weights_md, CpuEngine::Get()->get_engine());
   dnnl_output_t diff_src_mem = CreateDNNLMem(
       outputs[layernorm::kBwdDataGrad], bwd_pd->diff_src_desc(), req[layernorm::kBwdDataGrad]);
+  auto mean_var_md = GetMeanVarDesc(get_dnnl_type(inputs[layernorm::kBwdMean].dtype()),
+                                    inputs[layernorm::kBwdMean].shape());
+  const size_t stat_size = inputs[layernorm::kBwdMean].shape().Size();
+  std::vector<float> mean_storage(stat_size);
+  std::vector<float> variance_storage(stat_size);
+  std::copy(inputs[layernorm::kBwdMean].data().dptr<float>(),
+            inputs[layernorm::kBwdMean].data().dptr<float>() + stat_size,
+            mean_storage.data());
+  const float* std_data = inputs[layernorm::kBwdStd].data().dptr<float>();
+  for (size_t i = 0; i < stat_size; ++i) {
+    variance_storage[i] = std::max(0.0f, std_data[i] * std_data[i] - param.eps);
+  }
+  dnnl::memory mean_mem(mean_var_md, CpuEngine::Get()->get_engine(), mean_storage.data());
+  dnnl::memory variance_mem(mean_var_md, CpuEngine::Get()->get_engine(), variance_storage.data());
   dnnl_args_map_t args = {{DNNL_ARG_DIFF_DST, *inputs[layernorm::kBwdOutGrad].GetDNNLData()},
                           {DNNL_ARG_SRC, *inputs[layernorm::kBwdData].GetDNNLData()},
                           {DNNL_ARG_SCALE, scale_mem},
                           {DNNL_ARG_SHIFT, shift_mem},
-                          {DNNL_ARG_MEAN, *inputs[layernorm::kBwdMean].GetDNNLData()},
-                          {DNNL_ARG_VARIANCE, *inputs[layernorm::kBwdStd].GetDNNLData()},
+                          {DNNL_ARG_MEAN, mean_mem},
+                          {DNNL_ARG_VARIANCE, variance_mem},
                           {DNNL_ARG_DIFF_SRC, *diff_src_mem.second},
                           {DNNL_ARG_DIFF_SCALE, diff_scale_mem},
                           {DNNL_ARG_DIFF_SHIFT, diff_shift_mem}};
   DNNLStream::Get()->RegisterPrimArgs(*bwd, args);
   CommitOutput(outputs[layernorm::kBwdDataGrad], diff_src_mem);
   DNNLStream::Get()->Submit();
-  // B5: respect kNullOp / kAddTo — the v3 primitive writes its accumulated
-  // result (seeded above for kAddTo) into diff_scale/shift_mem; don't stomp the
-  // output when the caller didn't ask for it.
-  if (gamma_req != kNullOp) {
-    memcpy(outputs[layernorm::kBwdGammaGrad].data().dptr_,
-           diff_scale_mem.get_data_handle(), gamma_bytes);
-  }
-  if (beta_req != kNullOp) {
-    memcpy(outputs[layernorm::kBwdBetaGrad].data().dptr_,
-           diff_shift_mem.get_data_handle(), beta_bytes);
-  }
+  CommitScaleOrShiftGrad(outputs[layernorm::kBwdGammaGrad],
+                         diff_scale_mem,
+                         req[layernorm::kBwdGammaGrad]);
+  CommitScaleOrShiftGrad(outputs[layernorm::kBwdBetaGrad],
+                         diff_shift_mem,
+                         req[layernorm::kBwdBetaGrad]);
 }
 
 DNNLLayerNormBwd& DNNLLayerNormBwd::GetCached(const LayerNormParam& param,
@@ -274,7 +363,7 @@ void DNNLLayerNormBackward(const nnvm::NodeAttrs& attrs,
                            const std::vector<NDArray>& outputs) {
   const LayerNormParam& param = nnvm::get<LayerNormParam>(attrs.parsed);
   DNNLLayerNormBwd& bwd       = DNNLLayerNormBwd::GetCached(param, inputs);
-  bwd.Execute(inputs, outputs, req);
+  bwd.Execute(param, inputs, outputs, req);
 }
 
 }  // namespace op

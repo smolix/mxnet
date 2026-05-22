@@ -24,6 +24,7 @@
 
 #include <utility>
 #include "quantized_reshape-inl.h"
+#include "quantized_range_utils.h"
 
 namespace mxnet {
 namespace op {
@@ -40,8 +41,10 @@ void QuantizedReshapeCompute(const nnvm::NodeAttrs& attrs,
   if (req[0] != kWriteInplace)
     UnaryOp::IdentityCompute<cpu>(attrs, ctx, inputs, req, outputs);
 
-  *outputs[1].dptr<float>() = *inputs[1].dptr<float>();
-  *outputs[2].dptr<float>() = *inputs[2].dptr<float>();
+  AssignQuantizedRangeOutput(
+      outputs[1].dptr<float>(), inputs[1].dptr<float>(), req[1], "quantized_reshape");
+  AssignQuantizedRangeOutput(
+      outputs[2].dptr<float>(), inputs[2].dptr<float>(), req[2], "quantized_reshape");
 }
 
 #define MXNET_OPERATOR_REGISTER_QUANTIZED_RESHAPE(name)                                      \

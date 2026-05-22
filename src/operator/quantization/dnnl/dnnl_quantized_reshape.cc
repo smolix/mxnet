@@ -24,6 +24,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 #include "operator/quantization/quantized_reshape-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/nn/dnnl/dnnl_reshape-inl.h"
 
 namespace mxnet {
@@ -48,8 +49,14 @@ static void DNNLQuantizedReshapeForward(const nnvm::NodeAttrs& attrs,
     FallBackCompute(UnaryOp::IdentityCompute<cpu>, attrs, ctx, inputs, req, outputs);
   }
 
-  *outputs[1].data().dptr<float>() = *inputs[1].data().dptr<float>();
-  *outputs[2].data().dptr<float>() = *inputs[2].data().dptr<float>();
+  AssignQuantizedRangeOutput(outputs[1].data().dptr<float>(),
+                             inputs[1].data().dptr<float>(),
+                             req[1],
+                             "quantized_reshape");
+  AssignQuantizedRangeOutput(outputs[2].data().dptr<float>(),
+                             inputs[2].data().dptr<float>(),
+                             req[2],
+                             "quantized_reshape");
 }
 
 inline bool QuantizedReshapeStorageType(const nnvm::NodeAttrs& attrs,

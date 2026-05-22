@@ -590,6 +590,30 @@ def test_quantized_elemwise_mul():
 
 
 @use_np
+def test_quantized_elemwise_mul_rejects_unsupported_input_type_inference():
+    lhs, rhs, lhs_min, lhs_max, rhs_min, rhs_max = [
+        mx.sym.Variable(name).as_np_ndarray()
+        for name in ['lhs', 'rhs', 'lhs_min', 'lhs_max', 'rhs_min', 'rhs_max']
+    ]
+    sym = mx.sym.Group(mx.sym.npx.quantized_elemwise_mul(
+        lhs, rhs, lhs_min, lhs_max, rhs_min, rhs_max))
+
+    int8_arg_types, int8_out_types, _ = sym.infer_type(
+        lhs='int8', rhs='int8', lhs_min='float32', lhs_max='float32',
+        rhs_min='float32', rhs_max='float32')
+    assert int8_arg_types is not None
+    assert int8_out_types is not None
+
+    for dtype in ['uint8', 'float32']:
+        arg_types, out_types, aux_types = sym.infer_type(
+            lhs=dtype, rhs=dtype, lhs_min='float32', lhs_max='float32',
+            rhs_min='float32', rhs_max='float32')
+        assert arg_types is None
+        assert out_types is None
+        assert aux_types is None
+
+
+@use_np
 def test_quantized_pooling():
     def check_quantized_pooling(data_shape, kernel, pool_type, pad, stride, global_pool, qdtype, convention='valid'):
         if is_test_for_native_cpu():
@@ -1643,3 +1667,23 @@ def test_quantized_rnn():
 
     check_quantized_rnn(1, False, 5, 2, 16, 16)
     check_quantized_rnn(1, True, 5, 2, 16, 16)
+
+
+def test_quantized_rnn_state_cell_output_name():
+    args = {
+        name: mx.sym.Variable(name)
+        for name in ['data', 'parameters', 'state', 'state_cell', 'min_data', 'max_data']
+    }
+    rnn = mx.sym.contrib.quantized_rnn(
+        mode='lstm',
+        state_size=4,
+        num_layers=1,
+        bidirectional=False,
+        state_outputs=True,
+        **args)
+    outputs = mx.sym.Group(rnn if isinstance(rnn, list) else [rnn]).list_outputs()
+    assert outputs == [
+        'quantized_rnn0_output',
+        'quantized_rnn0_state_output',
+        'quantized_rnn0_statecell_output',
+    ]

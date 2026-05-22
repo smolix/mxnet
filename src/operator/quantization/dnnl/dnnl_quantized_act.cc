@@ -25,6 +25,7 @@
 
 #include "operator/nn/activation-inl.h"
 #include "operator/nn/dnnl/dnnl_act-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/quantization/quantization_utils.h"
 
 namespace mxnet {
@@ -40,8 +41,14 @@ static void DNNLQuantizedActForward(const nnvm::NodeAttrs& attrs,
          "type";
 
   DNNLRun(DNNLActivationForward, attrs, ctx, in_data[0], req[0], out_data[0]);
-  out_data[1].data().dptr<float>()[0] = in_data[1].data().dptr<float>()[0];
-  out_data[2].data().dptr<float>()[0] = in_data[2].data().dptr<float>()[0];
+  AssignQuantizedRangeOutput(out_data[1].data().dptr<float>(),
+                             in_data[1].data().dptr<float>(),
+                             req[1],
+                             "quantized_act");
+  AssignQuantizedRangeOutput(out_data[2].data().dptr<float>(),
+                             in_data[2].data().dptr<float>(),
+                             req[2],
+                             "quantized_act");
 }
 
 NNVM_REGISTER_OP(_contrib_quantized_act)

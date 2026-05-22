@@ -26,6 +26,7 @@
 #include "operator/numpy/np_matrix_op-inl.h"
 #include "operator/tensor/matrix_op-inl.h"
 #include "operator/nn/dnnl/dnnl_transpose-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 
 namespace mxnet {
 namespace op {
@@ -46,22 +47,6 @@ bool SupportDNNLQuantizedTranspose(const NDArray& data) {
   return SupportDNNLTranspose() && SupportDNNL<DNNLTypeMode::ByteTypes>(data);
 }
 
-void AssignQuantizedTransposeRange(const NDArray& output, const NDArray& input, OpReqType req) {
-  switch (req) {
-    case kNullOp:
-      return;
-    case kWriteTo:
-    case kWriteInplace:
-      output.data().dptr<float>()[0] = input.data().dptr<float>()[0];
-      return;
-    case kAddTo:
-      output.data().dptr<float>()[0] += input.data().dptr<float>()[0];
-      return;
-    default:
-      LOG(FATAL) << "Unsupported request type for quantized_transpose range output";
-  }
-}
-
 typedef void (*TransposeFallbackFunAny)(const nnvm::NodeAttrs&,
                                         const OpContext&,
                                         const std::vector<TBlob>&,
@@ -78,8 +63,14 @@ static void DNNLQuantizedTransposeForward(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(outputs.size(), 3U);
   CHECK(inputs[0].dtype() == mshadow::kUint8 || inputs[0].dtype() == mshadow::kInt8)
       << "dnnl_quantized_transpose only supports uint8 and int8 as input type";
-  AssignQuantizedTransposeRange(outputs[1], inputs[1], req[1]);
-  AssignQuantizedTransposeRange(outputs[2], inputs[2], req[2]);
+  AssignQuantizedRangeOutput(outputs[1].data().dptr<float>(),
+                             inputs[1].data().dptr<float>(),
+                             req[1],
+                             "quantized_transpose");
+  AssignQuantizedRangeOutput(outputs[2].data().dptr<float>(),
+                             inputs[2].data().dptr<float>(),
+                             req[2],
+                             "quantized_transpose");
   if (req[0] == kNullOp) {
     return;
   }

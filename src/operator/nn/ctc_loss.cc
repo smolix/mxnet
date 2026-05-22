@@ -106,7 +106,7 @@ information on the definition and the algorithm.
     .set_num_inputs(CTCLossOpNumInputs)
     .set_num_outputs(2)
     .set_attr<nnvm::FListInputNames>("FListInputNames", CTCLossOpListInputNames)
-    .set_attr<nnvm::FListOutputNames>("FListOutputNAmes",
+    .set_attr<nnvm::FListOutputNames>("FListOutputNames",
                                       [](const NodeAttrs& attrs) {
                                         return std::vector<std::string>{"out", "grad"};
                                       })

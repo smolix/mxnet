@@ -59,16 +59,6 @@ MSHADOW_XINLINE double variance_to_invstd(double var, double eps) {
   return rsqrt(var + eps);
 }
 
-template <typename AccReal>
-MSHADOW_XINLINE AccReal invstd_to_variance(AccReal invstd, AccReal eps) {
-  return static_cast<AccReal>(1.0) / (invstd * invstd) - eps;
-}
-
-template <>
-MSHADOW_XINLINE double invstd_to_variance(double invstd, double eps) {
-  return 1.0 / (invstd * invstd) - eps;
-}
-
 }  // namespace
 
 namespace mxnet {
@@ -298,9 +288,6 @@ __launch_bounds__(inference_forward_threads) __global__
     if (i < num_channels) {
       saveMean[i]   = runningMean[i];
       saveInvStd[i] = variance_to_invstd(runningVar[i], epsilon);
-      if ((flags & WRITE_GAMMA_FLAG) != 0 && (flags & FIX_GAMMA_FLAG) != 0 && weight != nullptr) {
-        weight[i] = 1;
-      }
     }
   }
 }
@@ -339,10 +326,10 @@ __global__ void BatchNormalizationUpdateOutputKernel(DeviceTensor input,
     // Momentum based writeback
     saveMean[plane]   = ScalarConvert<AccReal, DType>::to(mean);
     saveInvStd[plane] = invStd;
-    if ((flags & WRITE_GAMMA_FLAG) != 0 && (flags & FIX_GAMMA_FLAG) != 0 &&
-        weight.numElements() > 0) {
-      weight[plane] = AccReal(1);
-    }
+    runningMean[plane] =
+        runningMean[plane] * momentum + mean * (AccReal(1) - momentum);
+    runningVar[plane] =
+        runningVar[plane] * momentum + varN * norm * (AccReal(1) - momentum);
   }
 
   // Write normalized and update the output
@@ -667,17 +654,6 @@ static __global__ void BatchNormalizationBackwardKernel(const DeviceTensor input
   const AccReal projScale = dotP * norm * invstd * invstd;
   const AccReal gradScale = invstd * weightVal;
 
-  if (threadIdx.x == 0) {
-    const AccReal localVariance = invstd_to_variance(tensors.saveInvStd[plane], eps);
-    const AccReal localMean     = tensors.saveMean[plane];
-
-    // update running averages
-    tensors.runningMean[plane] =
-        tensors.runningMean[plane] * momentum + localMean * (AccReal(1) - momentum);
-    tensors.runningVar[plane] =
-        tensors.runningVar[plane] * momentum + localVariance * (AccReal(1) - momentum);
-  }
-
   if (gradInput.Size() > 0 && (flags & (WRITE_DATA_FLAG | ADDTO_DATA_FLAG)) != 0) {
     const bool grad_write = flags & WRITE_DATA_FLAG;
     if (grad_write) {
@@ -712,7 +688,8 @@ static __global__ void BatchNormalizationBackwardKernel(const DeviceTensor input
       else
         tensors.gradWeight[plane] += ScalarConvert<AccReal, DType>::to(dotP * invstd);
     } else {
-      tensors.gradWeight[plane] = DType(0);
+      if (flags & WRITE_GAMMA_FLAG)
+        tensors.gradWeight[plane] = DType(0);
     }
   }
 

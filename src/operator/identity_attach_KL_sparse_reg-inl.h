@@ -81,9 +81,15 @@ class IdentityAttachKLSparseRegOp : public Operator {
     CHECK_EQ(in_data.size(), 1U);
     CHECK_EQ(out_data.size(), 1U);
     Stream<xpu>* s      = ctx.get_stream<xpu>();
-    Tensor<xpu, 2> data = in_data[sparsereg::kData].FlatTo2D<xpu, real_t>(s);
-    Tensor<xpu, 2> out  = out_data[sparsereg::kOut].FlatTo2D<xpu, real_t>(s);
-    Assign(out, req[sparsereg::kData], F<mshadow_op::identity>(data));
+    Tensor<xpu, 2> data       = in_data[sparsereg::kData].FlatTo2D<xpu, real_t>(s);
+    Tensor<xpu, 2> out        = out_data[sparsereg::kOut].FlatTo2D<xpu, real_t>(s);
+    Tensor<xpu, 1> moving_avg = aux_args[sparsereg::kMovingAvg].get<xpu, 1, real_t>(s);
+    Tensor<xpu, 1> avg        = ctx.requested[sparsereg::kTempSpace].get_space<xpu>(
+        mshadow::Shape1(moving_avg.shape_[0]), s);
+    avg = sumall_except_dim<1>(data);
+    avg /= data.shape_[0];
+    moving_avg = param_.momentum * moving_avg + (1 - param_.momentum) * avg;
+    Assign(out, req[sparsereg::kOut], F<mshadow_op::identity>(data));
   }
 
   virtual void Backward(const OpContext& ctx,
@@ -97,20 +103,14 @@ class IdentityAttachKLSparseRegOp : public Operator {
     using namespace mshadow::expr;
     Stream<xpu>* s            = ctx.get_stream<xpu>();
     Tensor<xpu, 2> grad_in    = in_grad[sparsereg::kData].FlatTo2D<xpu, real_t>(s);
-    Tensor<xpu, 2> data_in    = in_data[sparsereg::kData].FlatTo2D<xpu, real_t>(s);
     Tensor<xpu, 2> grad_out   = out_grad[sparsereg::kOut].FlatTo2D<xpu, real_t>(s);
     Tensor<xpu, 1> moving_avg = aux_args[sparsereg::kMovingAvg].get<xpu, 1, real_t>(s);
-    Tensor<xpu, 1> avg        = ctx.requested[sparsereg::kTempSpace].get_space<xpu>(
-        mshadow::Shape1(moving_avg.shape_[0]), s);
-    avg = sumall_except_dim<1>(data_in);
-    avg /= data_in.shape_[0];
-    moving_avg = param_.momentum * moving_avg + (1 - param_.momentum) * avg;
     Assign(grad_in,
            req[sparsereg::kData],
            grad_out + param_.penalty *
-                          (-param_.sparseness_target / broadcast<1>(moving_avg, data_in.shape_) +
+                          (-param_.sparseness_target / broadcast<1>(moving_avg, grad_in.shape_) +
                            ((1 - param_.sparseness_target) /
-                            (1 - broadcast<1>(moving_avg, data_in.shape_)))));
+                            (1 - broadcast<1>(moving_avg, grad_in.shape_)))));
   }
 
  private:
@@ -180,7 +180,7 @@ class IdentityAttachKLSparseRegProp : public OperatorProperty {
     return {"moving_avg"};
   }
 
-  std::vector<ResourceRequest> BackwardResource(const mxnet::ShapeVector& in_shape) const override {
+  std::vector<ResourceRequest> ForwardResource(const mxnet::ShapeVector& in_shape) const override {
     return {ResourceRequest::kTempSpace};
   }
 

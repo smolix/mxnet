@@ -57,7 +57,7 @@ class DNNLLayerNormFwd {
   void Execute(const LayerNormParam& param,
                const OpContext& ctx,
                const std::vector<NDArray>& inputs,
-               const OpReqType& req,
+               const std::vector<OpReqType>& req,
                const std::vector<NDArray>& outputs) const;
 
   ~DNNLLayerNormFwd() {}
@@ -83,7 +83,8 @@ class DNNLLayerNormBwd {
       const dnnl::memory::desc& diff_md,
       const layernorm_fwd_pd_t& layernorm_fwd_pd);
 
-  void Execute(const std::vector<NDArray>& inputs,
+  void Execute(const LayerNormParam& param,
+               const std::vector<NDArray>& inputs,
                const std::vector<NDArray>& outputs,
                const std::vector<OpReqType>& req) const;
 

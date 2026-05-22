@@ -712,8 +712,15 @@ class LayerNorm(HybridBlock):
 
     def forward(self, data):
         device = data.device
-        return npx.layer_norm(data, gamma=self.gamma.data(device),
-                              beta=self.beta.data(device), axis=self._axis, eps=self._epsilon)
+        channel_axis = self._axis if self._axis >= 0 else self._axis + data.ndim
+        channel_count = data.shape[channel_axis]
+        gamma = self.gamma.data(device) if self._scale else np.ones((channel_count,),
+                                                                    dtype=data.dtype,
+                                                                    device=device)
+        beta = self.beta.data(device) if self._center else np.zeros((channel_count,),
+                                                                    dtype=data.dtype,
+                                                                    device=device)
+        return npx.layer_norm(data, gamma=gamma, beta=beta, axis=self._axis, eps=self._epsilon)
 
     def infer_shape(self, data, *args):
         channel_axis = self._axis if self._axis >= 0 else self._axis + data.ndim

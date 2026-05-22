@@ -147,6 +147,100 @@ def test_running_stats_updated_in_forward():
                                    err_msg=f"{ctx}: running_var not updated in forward")
 
 
+@requires_gpu
+@pytest.mark.parametrize("op_name", ["BatchNorm", "SyncBatchNorm"])
+def test_native_running_stats_updated_in_forward(op_name):
+    """Native CUDA BatchNorm and SyncBatchNorm update moving stats in forward."""
+    ctx = mx.gpu(0)
+    data = mx.nd.ones((4, 3, 4, 4), ctx=ctx)
+    gamma = mx.nd.array([2.0, 3.0, 4.0], ctx=ctx)
+    beta = mx.nd.zeros(3, ctx=ctx)
+    running_mean = mx.nd.zeros(3, ctx=ctx)
+    running_var = mx.nd.ones(3, ctx=ctx)
+
+    with autograd.record():
+        if op_name == "BatchNorm":
+            mx.nd.BatchNorm(data, gamma, beta, running_mean, running_var,
+                            momentum=0, fix_gamma=False, cudnn_off=True)
+        else:
+            mx.nd.contrib.SyncBatchNorm(data, gamma, beta, running_mean, running_var,
+                                        momentum=0, fix_gamma=False,
+                                        key="running-stats-forward", ndev=1)
+    mx.nd.waitall()
+
+    np.testing.assert_allclose(running_mean.asnumpy(), np.ones(3, dtype=np.float32), atol=1e-5)
+    np.testing.assert_allclose(running_var.asnumpy(), np.zeros(3, dtype=np.float32), atol=1e-4)
+
+
+@requires_gpu
+@pytest.mark.parametrize("op_name", ["BatchNorm", "SyncBatchNorm"])
+@pytest.mark.parametrize("gamma_grad_req", ["null", "write", "add"])
+def test_fix_gamma_does_not_mutate_gamma_and_respects_grad_req(op_name, gamma_grad_req):
+    """fix_gamma=True uses unit gamma without overwriting gamma or add/null grads."""
+    ctx = mx.gpu(0)
+    data = mx.nd.arange(2 * 3 * 4 * 4, ctx=ctx).reshape((2, 3, 4, 4)) / 10.0
+    data.attach_grad()
+    gamma_initial = np.array([2.0, 3.0, 4.0], dtype=np.float32)
+    gamma = mx.nd.array(gamma_initial, ctx=ctx)
+    gamma.attach_grad(grad_req=gamma_grad_req)
+    beta = mx.nd.zeros(3, ctx=ctx)
+    beta.attach_grad()
+    running_mean = mx.nd.zeros(3, ctx=ctx)
+    running_var = mx.nd.ones(3, ctx=ctx)
+
+    if gamma_grad_req == "add":
+        gamma.grad[:] = 7.0
+
+    with autograd.record():
+        if op_name == "BatchNorm":
+            out = mx.nd.BatchNorm(data, gamma, beta, running_mean, running_var,
+                                  momentum=0.9, fix_gamma=True, cudnn_off=True)
+        else:
+            out = mx.nd.contrib.SyncBatchNorm(data, gamma, beta, running_mean, running_var,
+                                              momentum=0.9, fix_gamma=True,
+                                              key="fix-gamma-grad-{}".format(gamma_grad_req),
+                                              ndev=1)
+    out.backward(mx.nd.ones_like(out))
+    mx.nd.waitall()
+
+    np.testing.assert_allclose(gamma.asnumpy(), gamma_initial, atol=0)
+    if gamma_grad_req == "write":
+        np.testing.assert_allclose(gamma.grad.asnumpy(), np.zeros_like(gamma_initial), atol=0)
+    elif gamma_grad_req == "add":
+        np.testing.assert_allclose(gamma.grad.asnumpy(), np.full_like(gamma_initial, 7.0), atol=0)
+
+
+@requires_gpu
+@pytest.mark.parametrize("gamma_grad_req", ["null", "write", "add"])
+def test_cudnn_fix_gamma_does_not_mutate_gamma_and_respects_grad_req(gamma_grad_req):
+    """cuDNN BatchNorm fix_gamma=True does not overwrite gamma or add/null grads."""
+    ctx = mx.gpu(0)
+    data = mx.nd.arange(2 * 3 * 4 * 4, ctx=ctx).reshape((2, 3, 4, 4)) / 10.0
+    data.attach_grad()
+    gamma_initial = np.array([2.0, 3.0, 4.0], dtype=np.float32)
+    gamma = mx.nd.array(gamma_initial, ctx=ctx)
+    gamma.attach_grad(grad_req=gamma_grad_req)
+    beta = mx.nd.zeros(3, ctx=ctx)
+    beta.attach_grad()
+    running_mean = mx.nd.zeros(3, ctx=ctx)
+    running_var = mx.nd.ones(3, ctx=ctx)
+
+    if gamma_grad_req == "add":
+        gamma.grad[:] = 7.0
+
+    with autograd.record():
+        out = mx.nd.BatchNorm(data, gamma, beta, running_mean, running_var,
+                              momentum=0.9, fix_gamma=True, cudnn_off=False)
+    out.backward(mx.nd.ones_like(out))
+    mx.nd.waitall()
+
+    np.testing.assert_allclose(gamma.asnumpy(), gamma_initial, atol=0)
+    if gamma_grad_req == "write":
+        np.testing.assert_allclose(gamma.grad.asnumpy(), np.zeros_like(gamma_initial), atol=0)
+    elif gamma_grad_req == "add":
+        np.testing.assert_allclose(gamma.grad.asnumpy(), np.full_like(gamma_initial, 7.0), atol=0)
+
+
 # ---------------------------------------------------------------------------
 # 4. Check that backward does not produce NaN (regression for transfer
 #    learning divergence reported in issue #18751).

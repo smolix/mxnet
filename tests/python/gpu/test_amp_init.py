@@ -70,6 +70,15 @@ def test_npi_concatenate_multicast(np_shape_array, amp_init):
     assert out.dtype == np.float32
 
 
+def test_amp_float16_keeps_cpu_conv_fp32(amp_init):
+    conv = nn.Conv2D(channels=8, kernel_size=3, padding=1, in_channels=4)
+    conv.initialize(ctx=mx.cpu())
+    data = mx.np.random.uniform(size=(2, 4, 16, 16), ctx=mx.cpu()).astype('float32')
+    out = conv(data)
+    out.wait_to_read()
+    assert out.dtype == np.float32
+
+
 CONV = {1: nn.Conv1D, 2: nn.Conv2D, 3: nn.Conv3D}
 MAX_POOL = {1: nn.MaxPool1D, 2: nn.MaxPool2D, 3: nn.MaxPool3D}
 

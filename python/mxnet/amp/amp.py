@@ -101,8 +101,12 @@ def _cast_symbol_NDArray(s, dtype, is_numpy_module=False):
         return amp_cast(s, dtype=dtype)
     if isinstance(s, NDArray):
         amp_cast = ndarray.numpy._internal.amp_cast if is_numpy_module else ndarray.amp_cast
-        if s.dtype != dtype and (s.dtype in float_types_gpu and s.context.device_type != 'cpu' or
-                                 s.dtype in float_types_cpu and s.context.device_type == 'cpu'):
+        target_name = get_dtype_name(dtype)
+        cast_supported = (
+            s.dtype in float_types_gpu and s.context.device_type != 'cpu' or
+            s.dtype in float_types_cpu and s.context.device_type == 'cpu' and
+            target_name in bfloat16.names)
+        if s.dtype != dtype and cast_supported:
             if dc.is_deferred_compute():
                 return amp_cast(s, dtype=dtype)
             # Cache key: identity + dtypes.  id() is stable while the source

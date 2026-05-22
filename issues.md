@@ -1,6 +1,6 @@
 # MXNet Port Issues
 
-Updated: 2026-05-21
+Updated: 2026-05-22
 Current branch: `master`
 Current head: local validation commits ahead of `origin/master` (see git log)
 Apple Silicon follow-up merge: PR #28 from `followup/full-sweep-macos-wheel`
@@ -399,6 +399,7 @@ the rest of the build matrix:
 | O9 | Strategic | oneDNN cadence | Future oneDNN major releases will likely require repeated porting work. |
 | O10 | Resolved locally | macOS wheel artifact | Slim optimized CPython 3.12 macOS arm64 wheel built with `-mcpu=apple-m1`, Accelerate, oneDNN, OpenMP, OpenCV, and libjpeg-turbo; ONNX and MPS/GPU are excluded. | Artifact: `dist/mxnet-2.0.0+macos.arm64.20260520-cp312-cp312-macosx_11_0_arm64.whl`; SHA256 `3953e9ad44934259ab0518f2c00f29bd0bd7bff8d959c1093fd1d3c2371a20af`. The `dist/` directory is intentionally not part of the PR. |
 | O11 | In progress | Variant versioning | Source `python/mxnet/libinfo.py` still carries the prior CUDA local version suffix, but the primary and legacy wheel setup paths now honor `MXNET_PACKAGE_VERSION` so release/staging jobs can stamp an explicit package version without editing source. The GitHub release-wheel workflow now passes the resolved tag version through that variable, validates tag-derived and manual-dispatch package versions as PEP 440 versions, and gives manual staging builds commit-specific dev versions instead of reusing a stale tag. Focused wheel-runtime packaging tests passed `14 passed`. `tools/release_provenance.py` now validates wheel metadata, embedded native commit/features, source tree commit/dirty state, and expected CUDA/OpenCV feature flags; focused tests passed `3 passed`, and the helper validated the existing local CUDA artifact with `--allow-dirty --expect-cuda on --expect-opencv off`. Existing local artifacts still predate the workflow/versioning fix, and `auditwheel show` reported the raw old CUDA artifact as `linux_x86_64` constrained to `manylinux_2_39_x86_64`. | Rebuild artifacts with a source-specific local version in a controlled policy environment before publication, then rerun provenance validation on the fresh wheel. |
+| O12 | Deferred | ONNX Runtime refresh | ONNX is out of scope for the current Linux/CUDA cleanup PR, but the current upstream baseline was reviewed for later porting. ONNX Runtime `v1.26.0` was released on 2026-05-08, while current ONNX `1.21.0` maps to IR version 13 and ai.onnx opset 26. MXNet's ONNX surface is currently export-oriented through `python/mxnet/onnx/mx2onnx`, public `mxnet.onnx.export_model` / `get_operator_support`, a legacy `mxnet.contrib.onnx` alias, tests under `tests/python/onnx`, and TensorRT-side ONNX conversion through bundled `onnx-tensorrt`. CI/dependency pins are stale (`onnx==1.8.0`, `onnxruntime==1.7.0`, `protobuf==3.14.0`). The exporter currently follows `onnx.defs.onnx_opset_version()`, which would target opset 26 with modern ONNX even though most translations are opset 12/13 plus limited later shims. | Later ONNX port should refresh ONNX/ORT/protobuf/Python dependency floors, add an explicit validated target-opset policy instead of blindly using the installed ONNX default, audit schema changes after opset 13 (`Split`, `Resize`, `TopK`, reductions, quantization, `Cast`, `Transpose`, `Reshape`, `Pad`, pooling, and RNN helpers), migrate away from the `onnx.mapping` shim where practical, repair ONNX test collection, add ORT 1.26 CPU parity/checker smoke tests, and separately review the TensorRT ONNX C++ path. |
 
 ---
 
@@ -421,7 +422,7 @@ They stay here as context, not as active work.
 | NCCL single-process | Single-process 2-GPU NCCL KVStore tests passed; multi-process DDP-style NCCL is outside MXNet KVStore design. |
 | Test-source bugs | Several stale numpy/op tests were fixed or correctly skipped, freeing many blocked test invocations. |
 | GPU profiler symbolic test | oneDNN v3 node-name expectation updated; test passed. |
-| ONNX | Opset 18 reduction API change handled. |
+| ONNX | Opset 18 reduction API change handled; broader ONNX Runtime 1.26 / ONNX 1.21 refresh is deferred under O12. |
 | cuDNN 9.22 bump | Depthwise conv performance improved substantially on Blackwell; smoke tests stayed clean. |
 | cuDNN frontend autotune | Env-gated v9 frontend autotune path added; default remains conservative. |
 | sm_120 SASS | Confirmed `12.0+PTX` already emitted sm_120 SASS; SASS-only rebuild can shrink artifacts later. |

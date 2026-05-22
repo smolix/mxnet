@@ -43,6 +43,7 @@ from ..ndarray import NDArray, dtype_np_to_mx, get_dtype_type, get_dtype_name, b
 from . import lists
 from ..gluon import Block, HybridBlock, trainer
 from .. import base
+from .. import _deferred_compute as dc
 from ..base import (_NP_OP_PREFIX, _NP_OP_SUBMODULE_LIST, _NP_EXT_OP_PREFIX,
                     _NP_EXT_OP_SUBMODULE_LIST, _NP_INTERNAL_OP_PREFIX,
                     c_str_array, c_str, c_array_buf, SymbolHandle, check_call, _LIB)
@@ -102,6 +103,8 @@ def _cast_symbol_NDArray(s, dtype, is_numpy_module=False):
         amp_cast = ndarray.numpy._internal.amp_cast if is_numpy_module else ndarray.amp_cast
         if s.dtype != dtype and (s.dtype in float_types_gpu and s.context.device_type != 'cpu' or
                                  s.dtype in float_types_cpu and s.context.device_type == 'cpu'):
+            if dc.is_deferred_compute():
+                return amp_cast(s, dtype=dtype)
             # Cache key: identity + dtypes.  id() is stable while the source
             # NDArray is alive (it is owned by the Parameter).  dtype objects
             # are not always hashable by value, so convert to str.

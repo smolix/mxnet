@@ -135,6 +135,8 @@ void BatchNormForwardImpl(mshadow::Stream<cpu>*,
 
   AccReal* mean = meanVector.dptr<AccReal>();
   AccReal* var  = varianceVector.dptr<AccReal>();
+  AccReal* runningMeanDataPtr = runningMean.dptr<AccReal>();
+  AccReal* runningVarDataPtr  = runningVariance.dptr<AccReal>();
 
   const bool is_train_and_not_global_stats = ctx.is_train && !param_.use_global_stats;
   const size_t channelCount                = inputData.ChannelCount();
@@ -158,22 +160,23 @@ void BatchNormForwardImpl(mshadow::Stream<cpu>*,
       });
 
       const AccReal sum = var[channel];
+      const AccReal variance = sum / itemCountPerChannel;
+      runningMeanDataPtr[channel] =
+          runningMeanDataPtr[channel] * param_.momentum + thisMean * (AccReal(1) - param_.momentum);
+      runningVarDataPtr[channel] =
+          runningVarDataPtr[channel] * param_.momentum + variance * (AccReal(1) - param_.momentum);
 
       AccReal invstd;
       if (sum == 0 && param_.eps == 0.0) {
         // Nobody likes to divide by zero
         invstd = 0;
       } else {
-        const AccReal variance = sum / itemCountPerChannel;
         invstd                 = VARIANCE_TO_INVSTD(variance, param_.eps);
       }
       var[channel] = invstd;
     } else {
-      const AccReal* rm = runningMean.dptr<AccReal>();
-      const AccReal* rv = runningVariance.dptr<AccReal>();
-
-      mean[channel] = rm[channel];
-      var[channel]  = VARIANCE_TO_INVSTD(rv[channel], param_.eps);
+      mean[channel] = runningMeanDataPtr[channel];
+      var[channel]  = VARIANCE_TO_INVSTD(runningVarDataPtr[channel], param_.eps);
     }
 
     // compute output
@@ -263,14 +266,6 @@ void BatchNormBackwardImpl(mshadow::Stream<cpu>*,
     if (is_train_and_not_global_stats) {
       mean                   = saveMeanDataPtr[channel];
       invstd                 = saveInvStdDataPtr[channel];
-      const AccReal variance = INVSTD_TO_VARIANCE(invstd, param_.eps);
-
-      // update running averages
-      runningMeanDataPtr[channel] =
-          runningMeanDataPtr[channel] * param_.momentum + mean * (AccReal(1) - param_.momentum);
-
-      runningVarDataPtr[channel] =
-          runningVarDataPtr[channel] * param_.momentum + variance * (AccReal(1) - param_.momentum);
 
     } else {
       mean   = runningMeanDataPtr[channel];

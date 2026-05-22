@@ -1,8 +1,10 @@
 # MXNet Port Issues
 
-Updated: 2026-05-22 (P0/P1/P2 cleanup pass in progress)
-Current branch: `cleanup/p0-p1-p2-20260522` (forked from `master`)
-Current head: local cleanup commits on the feature branch; `master` is unchanged
+Updated: 2026-05-22 (P0/P1/P2 cleanup pass — wheel built, acceptance running)
+Current branch: `cleanup/p0-p1-p2-20260522` (forked from `master`; pushed to GitHub)
+Current head: `3ec9f9446` Trim XOP19 test to non-fragile quantized smoke
+Cleanup wheel: `dist/mxnet-2.0.0+cu13.bw.20260522-cp312-cp312-linux_x86_64.whl` (516MB)
+PR template URL: https://github.com/smolix/mxnet/pull/new/cleanup/p0-p1-p2-20260522
 Apple Silicon follow-up merge: PR #28 from `followup/full-sweep-macos-wheel`
 Linux validation host: 4x RTX 4090 Ada (`sm_89`), CUDA 13.0, cuDNN/NCCL
 host dependencies and submodules installed; CUDA `sm_89` build configured; first
@@ -68,7 +70,7 @@ the sections below; resolved items are retired to the appendix.
 | P1 | FS8, FS13 | 1 stale test file removed (`test_engine_import.py`, admittedly ineffective); 8 files updated with precise capability guards (LLVM-OpenMP probe replacing platform skip, BF16 runtime probe replacing env-dependent skip, GPU quantization xfail-strict-false with B4 reference, `test_conv2d_16c` skipif removed because it passes on Ada, etc.). | Done. |
 | P2 | CN2 | GCC 13+ flexible-tail policy: `-Wno-error=array-bounds` and `-Wno-error=stringop-overflow` added to RelWithDebInfo target_compile_options (warnings remain visible). | Done. |
 | P2 | CN9, L6 | Bundled dmlc queue u32 sentinel and oneDNN ITT executable-stack note: confirmed as upstream/submodule policy items, not appropriate to patch in this fork. | Defer indefinitely. |
-| P2 | O11 + wheel | Build Ampere-Blackwell wheel (sm_80/86/89/90/100/120+PTX is already in `MXNET_CUDA_ARCH` cache), validate provenance, then tag. | After unified rebuild + focused tests: run `tools/build_cleanup_wheel.sh` and tag. |
+| P2 | O11 + wheel | Wheel built and provenance-validated on commit `3ec9f9446`: sm_80/86/89/90/100/120+PTX, CUDA on, OpenCV off, NCCL off, oneDNN on. Clean-venv acceptance running; will tag on completion. | Tag `v2.0.0+cu13.bw.20260522` after acceptance finishes; Alex pushes the tag. |
 | P2 | C4, O1, O4, O7 | Release/build matrix + Linux wheel runtime bundling decisions stable. | No change in this cleanup pass. |
 | P2 | T2-T6, T11 | Ecosystem and cross-platform integration coverage is incomplete. | Out of scope for this cleanup. |
 | External | L4, D5-D8 | D2L notebook diagnostics. | Unchanged. |

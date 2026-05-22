@@ -87,7 +87,8 @@ class LeakyReLU(HybridBlock):
         - **out**: output tensor with the same shape as `data`.
     """
     def __init__(self, alpha, **kwargs):
-        assert alpha >= 0, "Slope coefficient for LeakyReLU must be no less than 0."
+        if alpha < 0:
+            raise ValueError("Slope coefficient for LeakyReLU must be no less than 0.")
         super(LeakyReLU, self).__init__(**kwargs)
         self._alpha = alpha
 

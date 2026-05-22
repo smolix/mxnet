@@ -367,10 +367,12 @@ class Conv2D(_Conv):
                  dilation=(1, 1), groups=1, layout='NCHW',
                  activation=None, use_bias=True, weight_initializer=None,
                  bias_initializer='zeros', in_channels=0, **kwargs):
-        assert layout in ('NCHW', 'NHWC'), "Only supports 'NCHW' and 'NHWC' layout for now"
+        if layout not in ('NCHW', 'NHWC'):
+            raise ValueError("Only supports 'NCHW' and 'NHWC' layout for now")
         if isinstance(kernel_size, numeric_types):
             kernel_size = (kernel_size,)*2
-        assert len(kernel_size) == 2, "kernel_size must be a number or a list of 2 ints"
+        if len(kernel_size) != 2:
+            raise ValueError("kernel_size must be a number or a list of 2 ints")
         op_name = 'convolution'
         super(Conv2D, self).__init__(
             channels, kernel_size, strides, padding, dilation, groups, layout,
@@ -625,13 +627,16 @@ class Conv2DTranspose(_Conv):
                  output_padding=(0, 0), dilation=(1, 1), groups=1, layout='NCHW',
                  activation=None, use_bias=True, weight_initializer=None,
                  bias_initializer='zeros', in_channels=0, **kwargs):
-        assert layout in ('NCHW', 'NHWC'), "Only supports 'NCHW' and 'NHWC' layout for now"
+        if layout not in ('NCHW', 'NHWC'):
+            raise ValueError("Only supports 'NCHW' and 'NHWC' layout for now")
         if isinstance(kernel_size, numeric_types):
             kernel_size = (kernel_size,)*2
         if isinstance(output_padding, numeric_types):
             output_padding = (output_padding,)*2
-        assert len(kernel_size) == 2, "kernel_size must be a number or a list of 2 ints"
-        assert len(output_padding) == 2, "output_padding must be a number or a list of 2 ints"
+        if len(kernel_size) != 2:
+            raise ValueError("kernel_size must be a number or a list of 2 ints")
+        if len(output_padding) != 2:
+            raise ValueError("output_padding must be a number or a list of 2 ints")
         op_name = 'deconvolution'
         super(Conv2DTranspose, self).__init__(
             channels, kernel_size, strides, padding, dilation, groups, layout,
@@ -853,11 +858,12 @@ class MaxPool2D(_Pooling):
     """
     def __init__(self, pool_size=(2, 2), strides=None, padding=0, layout='NCHW',
                  ceil_mode=False, **kwargs):
-        assert layout in ('NCHW', 'NHWC'),\
-            "Only NCHW and NHWC layouts are valid for 2D Pooling"
+        if layout not in ('NCHW', 'NHWC'):
+            raise ValueError("Only NCHW and NHWC layouts are valid for 2D Pooling")
         if isinstance(pool_size, numeric_types):
             pool_size = (pool_size,)*2
-        assert len(pool_size) == 2, "pool_size must be a number or a list of 2 ints"
+        if len(pool_size) != 2:
+            raise ValueError("pool_size must be a number or a list of 2 ints")
         super(MaxPool2D, self).__init__(
             pool_size, strides, padding, ceil_mode, False, 'max', layout, **kwargs)
 

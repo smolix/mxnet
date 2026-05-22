@@ -180,6 +180,66 @@ def _run_optimized_python(source):
     else:
         raise AssertionError('Group accepted non-callable batchify function')
     """,
+    """
+    from mxnet.gluon import nn
+    try:
+        nn.LeakyReLU(-0.1)
+    except ValueError as err:
+        if 'Slope coefficient for LeakyReLU' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('LeakyReLU accepted negative alpha')
+    """,
+    """
+    from mxnet.gluon import nn
+    try:
+        nn.Conv2D(1, 3, layout='BAD')
+    except ValueError as err:
+        if "Only supports 'NCHW' and 'NHWC' layout" not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Conv2D accepted invalid layout')
+    """,
+    """
+    from mxnet.gluon import nn
+    try:
+        nn.Conv2D(1, (3, 3, 3))
+    except ValueError as err:
+        if 'kernel_size must be a number or a list of 2 ints' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Conv2D accepted invalid kernel_size rank')
+    """,
+    """
+    from mxnet.gluon import nn
+    try:
+        nn.Conv2DTranspose(1, 3, output_padding=(0, 0, 0))
+    except ValueError as err:
+        if 'output_padding must be a number or a list of 2 ints' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Conv2DTranspose accepted invalid output_padding rank')
+    """,
+    """
+    from mxnet.gluon import nn
+    try:
+        nn.MaxPool2D(layout='BAD')
+    except ValueError as err:
+        if 'Only NCHW and NHWC layouts are valid for 2D Pooling' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('MaxPool2D accepted invalid layout')
+    """,
+    """
+    from mxnet.gluon import nn
+    try:
+        nn.MaxPool2D(pool_size=(2, 2, 2))
+    except ValueError as err:
+        if 'pool_size must be a number or a list of 2 ints' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('MaxPool2D accepted invalid pool_size rank')
+    """,
 ])
 def test_user_validation_survives_optimized_python(source):
     _run_optimized_python(source)

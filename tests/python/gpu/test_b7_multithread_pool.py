@@ -35,6 +35,11 @@ import mxnet as mx
 from mxnet import gluon
 from mxnet import np as mxnp
 
+# This regression measures retained GPU storage-pool growth. cuDNN autotune
+# allocates transient search workspaces that show up in gpu_memory_info and can
+# look like pool growth, especially with multiple worker threads.
+os.environ.setdefault("MXNET_CUDNN_AUTOTUNE_DEFAULT", "0")
+
 try:
     import pytest
 except ImportError:  # standalone repro mode

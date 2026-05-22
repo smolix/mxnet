@@ -736,7 +736,9 @@ def test_layernorm():
         layer.initialize()
         if hybridize:
             layer.hybridize()
-        pytest.raises(AssertionError, lambda: layer(mx.np.ones((2, 11))))
+        # Parameter shape mismatch now raises ValueError (was AssertionError
+        # under python -O-stripping); see XOP22 in commit 2aeee1473.
+        pytest.raises(ValueError, lambda: layer(mx.np.ones((2, 11))))
 
 def test_layernorm_disabled_affine_ignores_parameter_values():
     data = mx.np.array([[1.0, 2.0, 3.0]], dtype='float32')

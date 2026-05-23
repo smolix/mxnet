@@ -614,9 +614,19 @@ void NDArray::Chunk::SetDNNLMem(const mxnet::TShape& shape, int dtype) {
   }
 
   dnnl::memory::dims dims;
-  // These are shapes supprted by DNNL.
+  // oneDNN supports tensors with 1..MAX_ONEDNN_DIMS dimensions natively.
+  // MXNet's NumPy-semantics layer (`mx.np`) produces 0-dim NDArrays for
+  // reductions over the full input (e.g. `sum()`, `.item()`).  Those NDArrays
+  // hold a single element whose byte layout is identical to a 1-D length-1
+  // tensor.  Bind them as such so paths that route through oneDNN (e.g.
+  // MXNDArraySyncCopyToCPU) work uniformly instead of crashing in
+  // LOG(FATAL).  Caller-visible shape is unchanged because the NDArray's
+  // own `shape_` is the source of truth; this only affects the internal
+  // dnnl::memory descriptor used for transfers.
   const int MAX_ONEDNN_DIMS = 12;
-  if (shape.ndim() >= 1 && shape.ndim() <= MAX_ONEDNN_DIMS) {
+  if (shape.ndim() == 0) {
+    dims.assign(1, 1);
+  } else if (shape.ndim() >= 1 && shape.ndim() <= MAX_ONEDNN_DIMS) {
     dims.resize(shape.ndim());
     for (size_t i = 0; i < dims.size(); i++)
       dims[i] = shape[i];

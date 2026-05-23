@@ -322,6 +322,112 @@ def test_grad_req_add_accumulates(build_symbol, input_shape, input_filler):
         err_msg="grad_req='add' did not equal init + write gradient")
 
 
+# ----------------------------------------------------------------------
+# Aux-state preservation dimension.
+#
+# Some operators (BatchNorm, SyncBatchNorm, LSTM/GRU when using statefulness
+# helpers) have *aux states* — buffers like running_mean/running_var that
+# the executor updates in training mode and must NOT touch in inference
+# mode. A regression where inference-mode forward writes to running_mean
+# would silently shift the model's outputs over iterations.
+#
+# This is orthogonal to grad_req for the main parameters: aux states are
+# their own update channel. We exercise the contract for BatchNorm here.
+# ----------------------------------------------------------------------
+
+
+def test_batchnorm_inference_mode_does_not_mutate_running_stats():
+    """BatchNorm in inference mode (use_global_stats=True, autograd off)
+    must leave running_mean / running_var untouched."""
+    rng = np.random.RandomState(0)
+    x_np = rng.randn(8, 4, 16, 16).astype('float32')
+    gamma_np = np.ones(4, dtype='float32')
+    beta_np = np.zeros(4, dtype='float32')
+    running_mean_np = rng.randn(4).astype('float32')
+    running_var_np = (rng.rand(4) + 0.5).astype('float32')
+
+    rm_before = running_mean_np.copy()
+    rv_before = running_var_np.copy()
+
+    # Imperative inference-mode call.
+    data = mx.nd.array(x_np)
+    gamma = mx.nd.array(gamma_np)
+    beta = mx.nd.array(beta_np)
+    running_mean = mx.nd.array(running_mean_np)
+    running_var = mx.nd.array(running_var_np)
+    out = mx.nd.BatchNorm(
+        data=data, gamma=gamma, beta=beta,
+        moving_mean=running_mean, moving_var=running_var,
+        use_global_stats=True, fix_gamma=False)
+    out.wait_to_read()
+    np.testing.assert_array_equal(
+        running_mean.asnumpy(), rm_before,
+        err_msg="BatchNorm inference mode mutated running_mean")
+    np.testing.assert_array_equal(
+        running_var.asnumpy(), rv_before,
+        err_msg="BatchNorm inference mode mutated running_var")
+
+
+def test_batchnorm_training_mode_updates_running_stats():
+    """BatchNorm in training mode (use_global_stats=False) must update
+    running_mean / running_var (the inverse of the inference contract)."""
+    rng = np.random.RandomState(0)
+    x_np = rng.randn(8, 4, 16, 16).astype('float32')
+    gamma_np = np.ones(4, dtype='float32')
+    beta_np = np.zeros(4, dtype='float32')
+    running_mean_np = np.zeros(4, dtype='float32')
+    running_var_np = np.ones(4, dtype='float32')
+
+    data = mx.nd.array(x_np)
+    gamma = mx.nd.array(gamma_np)
+    beta = mx.nd.array(beta_np)
+    running_mean = mx.nd.array(running_mean_np)
+    running_var = mx.nd.array(running_var_np)
+    with mx.autograd.record():
+        out = mx.nd.BatchNorm(
+            data=data, gamma=gamma, beta=beta,
+            moving_mean=running_mean, moving_var=running_var,
+            use_global_stats=False, fix_gamma=False)
+    out.wait_to_read()
+    # Running stats must change away from their initial (0, 1).
+    assert not np.allclose(running_mean.asnumpy(), 0.0), \
+        "BatchNorm training mode did not update running_mean"
+    assert not np.allclose(running_var.asnumpy(), 1.0), \
+        "BatchNorm training mode did not update running_var"
+
+
+# ----------------------------------------------------------------------
+# kWriteInplace contract sanity check.
+#
+# kWriteInplace is set by the executor's storage allocator when input
+# and output of an op are scheduled to share a buffer. Pure Python can't
+# force kWriteInplace via Symbol._bind args_grad, but we can verify that
+# operators which declare inplace_pairs (Activation is the canonical one)
+# don't crash when imperative API computes them with the result reused
+# as the next input — the executor's storage planner reaches the same
+# kWriteInplace path.
+# ----------------------------------------------------------------------
+
+
+def test_activation_inplace_chain_does_not_corrupt_output():
+    """Chaining relu(relu(relu(x))) should produce the same result as a
+    single relu(x) for positive x — a regression where kWriteInplace
+    accidentally aliased an intermediate would show up as wrong values."""
+    rng = np.random.RandomState(0)
+    x_np = rng.randn(4, 8).astype('float32')
+    x = mx.nd.array(x_np)
+    chained = mx.nd.Activation(
+        mx.nd.Activation(mx.nd.Activation(x, act_type='relu'),
+                         act_type='relu'),
+        act_type='relu')
+    direct = mx.nd.Activation(x, act_type='relu')
+    chained.wait_to_read()
+    direct.wait_to_read()
+    np.testing.assert_array_equal(
+        chained.asnumpy(), direct.asnumpy(),
+        err_msg="kWriteInplace optimization corrupted Activation chain")
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

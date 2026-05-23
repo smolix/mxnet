@@ -350,9 +350,9 @@ void AddBiasGrad(const TBlob& in_grad,
   } else {
     small = ReduceAxesShapeImpl(grad_blob.shape_, dmlc::optional<mxnet::TShape>(x), true, false);
   }
-  const int N = small.Size();
+  const index_t N = small.Size();
   int ltype   = mxnet::common::cuda::get_load_type(N * sizeof(DType));
-  const int M = grad_blob.shape_.Size() / N;
+  const index_t M = grad_blob.shape_.Size() / N;
   MXNET_LOAD_TYPE_SWITCH(ltype, LType, {
     const unsigned int blocks_x = ceil_div(N * sizeof(DType), threads_per_warp * sizeof(LType));
     const unsigned int preferred_number_of_blocks = 2 * MultiprocessorCount(ctx.run_ctx.ctx.dev_id);

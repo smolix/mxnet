@@ -28,7 +28,10 @@ def _warpctc_symbol():
     if plugin_path and not hasattr(mx.sym, 'WarpCTC'):
         mx.library.load(plugin_path, verbose=False)
     if not hasattr(mx.sym, 'WarpCTC'):
-        pytest.skip('WarpCTC plugin is not registered')
+        pytest.skip(
+            'WarpCTC plugin is not registered.  Build the plugin and set '
+            'MXNET_WARPCTC_PLUGIN_PATH=/path/to/libwarpctc_plugin.so to '
+            'exercise the sentinel-rejection contract (XOP26).')
 
     data = mx.sym.Variable('data')
     label = mx.sym.Variable('label')

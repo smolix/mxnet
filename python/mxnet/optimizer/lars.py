@@ -82,11 +82,13 @@ class LARS(Optimizer):
                                    aggregate_num=aggregate_num,
                                    **kwargs)
         if not self.use_fused_step:
-            assert not lazy_update,\
-                'When use_fused_step is set to False, lazy_update has to be turned off.'
+            if lazy_update:
+                raise ValueError(
+                    'When use_fused_step is set to False, lazy_update has to be turned off.')
         if lazy_update:
-            assert not self.multi_precision, \
-                'When lazy_update is set to True, multi_precision has be turned off.'
+            if self.multi_precision:
+                raise ValueError(
+                    'When lazy_update is set to True, multi_precision has be turned off.')
         self.lazy_update = lazy_update
         self.momentum = momentum
         self.eta = eta

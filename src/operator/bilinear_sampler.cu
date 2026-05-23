@@ -25,6 +25,7 @@
 
 #include "./bilinear_sampler-inl.h"
 #include <algorithm>
+#include <limits>
 #include "../common/cuda/utils.h"
 #if MXNET_USE_CUDNN == 1
 #include "./cudnn_bilinear_sampler-inl.h"
@@ -176,7 +177,15 @@ inline void BilinearSamplerForward(const Tensor<gpu, 4, DType>& output,
   int o_n = output.size(0), o_c = output.size(1), o_h = output.size(2), o_w = output.size(3);
   int i_c = input.size(1), i_h = input.size(2), i_w = input.size(3);
   using namespace cuda_impl;
-  const int max_block  = (output.shape_.Size() + kMaxThreadsPerBlock - 1) / kMaxThreadsPerBlock;
+  // XOP21: guard the int-typed kernel launch block count against silent
+  // truncation when the output exceeds INT_MAX elements.
+  const index_t out_size = output.shape_.Size();
+  const index_t max_block_full =
+      (out_size + kMaxThreadsPerBlock - 1) / kMaxThreadsPerBlock;
+  CHECK_LE(max_block_full, static_cast<index_t>(std::numeric_limits<int>::max()))
+      << "BilinearSamplerForward output element count " << out_size
+      << " requires more blocks than the int grid-dim can express.";
+  const int max_block  = static_cast<int>(max_block_full);
   const int grid_dim_x = (max_block > kMaxGridDim) ? kMaxGridDim : max_block;
   const int grid_dim_y =
       (max_block > kMaxGridDim) ? (max_block + kMaxGridDim - 1) / kMaxGridDim : 1;

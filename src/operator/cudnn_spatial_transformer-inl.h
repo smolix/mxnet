@@ -26,6 +26,7 @@
 #define MXNET_OPERATOR_CUDNN_SPATIAL_TRANSFORMER_INL_H_
 
 #include <algorithm>
+#include <climits>
 #include <vector>
 #include "./spatial_transformer-inl.h"
 namespace mxnet {
@@ -173,6 +174,10 @@ class CuDNNSpatialTransformerOp : public Operator {
       CUDNN_CALL(cudnnSetTensor4dDescriptor(
           out_desc_, format_, dtype_, out.size(0), out.size(1), out.size(2), out.size(3)));
       if (param_.sampler_type == st::kBilinear) {
+        CHECK_LE(out.size(0), INT_MAX);
+        CHECK_LE(out.size(1), INT_MAX);
+        CHECK_LE(out.size(2), INT_MAX);
+        CHECK_LE(out.size(3), INT_MAX);
         int dim[] = {static_cast<int>(out.size(0)),
                      static_cast<int>(out.size(1)),
                      static_cast<int>(out.size(2)),

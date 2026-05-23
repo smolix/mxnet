@@ -26,6 +26,7 @@
 #include "operator/nn/dnnl/dnnl_act-inl.h"
 #include "operator/nn/dnnl/dnnl_base-inl.h"
 #include "operator/quantization/quantization_utils.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/tensor/matrix_op-inl.h"
 #include "operator/subgraph/common.h"
 #include "dnnl_common.h"
@@ -131,6 +132,14 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
                                  const std::vector<NDArray>& inputs,
                                  const std::vector<OpReqType>& req,
                                  const std::vector<NDArray>& outputs) {
+  // Primary-output req contract: kNullOp means caller does not want the value,
+  // so skip the entire forward. kAddTo would require an accumulation step on
+  // top of the cached primitive's direct dst binding; reject it explicitly
+  // rather than silently overwriting the output buffer.
+  if (req[kOut] == kNullOp)
+    return;
+  CHECK_NE(req[kOut], kAddTo)
+      << "kAddTo is not supported for the primary output of _sg_onednn_conv";
   // AMP / oneDNN v3 fallback: when the AMP pass converts a fused conv
   // subgraph to bf16 inputs+weights+output but the running CPU ISA lacks
   // native bf16 (e.g. AVX2), oneDNN v3 cannot create the convolution
@@ -173,11 +182,23 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
           out_was_bf16.push_back(false);
         }
       }
-      std::vector<OpReqType> f32_req(req.size(), kWriteTo);
+      // For outputs that are already non-BF16 the caller's req still applies
+      // because f32_out[i] aliases outputs[i]; for BF16 outputs we own a fresh
+      // f32 scratch buffer, so kWriteTo is the only sane inner req. The
+      // post-reorder loop below honors the caller's intent for those.
+      std::vector<OpReqType> f32_req;
+      f32_req.reserve(req.size());
+      for (size_t i = 0; i < req.size(); ++i) {
+        f32_req.push_back((i < out_was_bf16.size() && out_was_bf16[i]) ? kWriteTo : req[i]);
+      }
       this->Forward(ctx, f32_in, f32_req, f32_out);
       DNNLStream::Get()->Submit();
       for (size_t i = 0; i < outputs.size(); ++i) {
         if (!out_was_bf16[i]) continue;
+        if (req[i] == kNullOp) continue;
+        CHECK_NE(req[i], kAddTo)
+            << "kAddTo not supported for BF16 fallback path on output " << i
+            << " of _sg_onednn_conv";
         auto src_mem = f32_out[i].GetDNNLData();
         auto dst_mem = outputs[i].GetDNNLData();
         ReorderTo(src_mem, dst_mem);
@@ -504,12 +525,16 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
   }
 
   if (dnnl_param.quantized && !dnnl_param.enabled_float_output.has_value()) {
-    // S5: only write if the caller actually wants the value; outputs[kMin/kMax]
-    // may be uninitialized when req is kNullOp.
-    if (req[kMin] != kNullOp)
-      *outputs[kMin].data().dptr<float>() = cached_output_min_;
-    if (req[kMax] != kNullOp)
-      *outputs[kMax].data().dptr<float>() = cached_output_max_;
+    // Route through the shared helper so kAddTo accumulates rather than
+    // silently dropping the existing scalar.
+    AssignQuantizedRangeOutput(outputs[kMin].data().dptr<float>(),
+                               &cached_output_min_,
+                               req[kMin],
+                               "_sg_onednn_conv");
+    AssignQuantizedRangeOutput(outputs[kMax].data().dptr<float>(),
+                               &cached_output_max_,
+                               req[kMax],
+                               "_sg_onednn_conv");
   }
   if (dnnl_param.with_sum) {
     auto out          = const_cast<NDArray&>(outputs[kOut]);

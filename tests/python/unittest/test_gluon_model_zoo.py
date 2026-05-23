@@ -64,7 +64,14 @@ def parallel_download(model_name):
     model = get_model(model_name, pretrained=True, root='./parallel_download')
     print(type(model))
 
-@pytest.mark.skip(reason='MXNet is not yet safe for forking. Tracked in #17782.')
+@pytest.mark.skip(
+    reason='Parallel download stress test: 10 multiprocessing.Process workers '
+           'fetch pretrained model weights from gluon-cv hosted weights. '
+           'Network-dependent + flaky in CI. Fork-safety itself was '
+           'hardened in the apple-silicon work (A6/A7); the lingering risk '
+           'is the network download.  Run manually if you need to stress '
+           'parallel mp+native interop.  Tracked apache/mxnet#17782 (original '
+           'fork-safety report; superseded by current fork-safety hardening).')
 def test_parallel_download():
     processes = []
     name = 'mobilenetv2_0.25'

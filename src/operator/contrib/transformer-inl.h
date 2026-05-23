@@ -114,9 +114,9 @@ void SldWinAttenMaskLikeForward(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(inputs[2].type_flag_, kInt32);
   int32_t* val_length = inputs[2].dptr<int32_t>();
 
-  int seq_length  = inputs[0].shape_[1];
-  int num_heads   = inputs[0].shape_[2];
-  int num_threads = outputs[0].Size();
+  int seq_length    = inputs[0].shape_[1];
+  int num_heads     = inputs[0].shape_[2];
+  index_t num_threads = outputs[0].Size();
 
   mxnet_op::Kernel<SldWinAttenMaskLike, xpu>::Launch(
       s, num_threads, out, dilation, val_length, param.symmetric, param.w, seq_length, num_heads);
@@ -209,12 +209,12 @@ void DiagMMImpl(const OpContext& ctx,
   int32_t* dilation_data = dilation.dptr<int32_t>();
   float* out_data        = out.dptr<float>();
 
-  int batch_size   = lhs.shape_[0];
-  int seq_length   = lhs.shape_[1];
-  int num_heads    = lhs.shape_[2];
-  int lhs_last_dim = lhs.shape_[3];
-  int out_last_dim = out.shape_[3];
-  int num_threads  = out.Size();
+  int batch_size     = lhs.shape_[0];
+  int seq_length     = lhs.shape_[1];
+  int num_heads      = lhs.shape_[2];
+  int lhs_last_dim   = lhs.shape_[3];
+  int out_last_dim   = out.shape_[3];
+  index_t num_threads = out.Size();
 
   mxnet_op::Kernel<DiagMM, xpu>::Launch(s,
                                         num_threads,

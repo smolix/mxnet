@@ -271,10 +271,18 @@ inline dnnl_output_t DNNLDeconvBwd::WeightsGradMem(const uint32_t num_group,
   // CreateDNNLWeightGrad always creates a new tensor as IsDefaultFormat always fails (because
   // of the logical swap - explained in DNNLDeconvFwd::Execute). We try to reuse weights_grad
   // memory (which, when not swapped, is always in default format), so here we check if after a
-  // swap, weights_md will have a default format
+  // swap, weights_md will have a default format.  Only safe for kWriteTo because the other req
+  // types need accumulation / copy-back through CreateDNNLWeightGrad (which also now skips the
+  // write entirely for kNullOp).
   const auto& weights_md = bwd_weights_pd->diff_weights_desc();
   if (req == OpReqType::kWriteTo && IsDefaultFormat(IOLogicalSwapDesc(weights_md, num_group))) {
-    return {OutDataOp::Noop, const_cast<NDArray&>(weights_grad).CreateDNNLData(&weights_md)};
+    dnnl::memory* mem = const_cast<NDArray&>(weights_grad).CreateDNNLData(&weights_md);
+    // CreateDNNLData may return nullptr for views or storage that can't be
+    // bound to this descriptor; fall back to the temp/copyback path instead
+    // of returning a nullptr memory that CommitOutput would dereference.
+    if (mem != nullptr) {
+      return {OutDataOp::Noop, mem};
+    }
   }
   return CreateDNNLWeightGrad(weights_grad, weights_md, req);
 }

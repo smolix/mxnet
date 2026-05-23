@@ -112,6 +112,14 @@ NNVM_REGISTER_OP(_backward_contrib_box_nms)
     .set_num_outputs(1)
     .set_attr_parser(ParamParser<BoxNMSParam>)
     .set_attr<nnvm::TIsBackward>("TIsBackward", true)
+    // BoxNMSBackward's kAddTo branch reads ctx.requested[kTempSpace] for an
+    // accumulation buffer.  Without this resource request the backward op
+    // dereferences past the end of an empty requested-resource vector and
+    // segfaults on grad_req='add'.
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& attrs) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
     .set_attr<FCompute>("FCompute<cpu>", BoxNMSBackward<cpu>)
     .add_arguments(BoxNMSParam::__FIELDS__());
 

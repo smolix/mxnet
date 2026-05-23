@@ -64,11 +64,11 @@ def test_parameter():
     assert p.list_device() == [mx.cpu(1), mx.cpu(2)]
 
 def test_invalid_parameter_stype():
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         p = gluon.Parameter('weight', shape=(10, 10), stype='invalid')
 
 def test_invalid_parameter_grad_stype():
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         p = gluon.Parameter('weight', shape=(10, 10), grad_stype='invalid')
 
 def test_sparse_parameter():
@@ -736,7 +736,9 @@ def test_layernorm():
         layer.initialize()
         if hybridize:
             layer.hybridize()
-        pytest.raises(AssertionError, lambda: layer(mx.np.ones((2, 11))))
+        # Parameter shape mismatch now raises ValueError (was AssertionError
+        # under python -O-stripping); see XOP22 in commit 2aeee1473.
+        pytest.raises(ValueError, lambda: layer(mx.np.ones((2, 11))))
 
 def test_layernorm_disabled_affine_ignores_parameter_values():
     data = mx.np.array([[1.0, 2.0, 3.0]], dtype='float32')
@@ -1715,7 +1717,7 @@ def test_summary():
     pytest.raises(AssertionError, net.summary, mx.np.ones((32, 3, 224, 224)))
 
 @use_np
-@pytest.mark.skip(reason='Currently, sparse feature is not supported in Gluon2.0')
+@pytest.mark.skip(reason="Sparse not yet supported in Gluon 2.0 - tracked under T6/sparse-gluon gap")
 def test_sparse_hybrid_block_grad():
     class Embedding(mx.gluon.HybridBlock):
         def __init__(self, num_tokens, embedding_size):
@@ -1743,7 +1745,7 @@ def test_sparse_hybrid_block_grad():
     assert (grad[10:] == 0).all()
 
 @use_np
-@pytest.mark.skip(reason='Currently, sparse feature is not supported in Gluon2.0')
+@pytest.mark.skip(reason="Sparse not yet supported in Gluon 2.0 - tracked under T6/sparse-gluon gap")
 def test_sparse_hybrid_block():
     class Linear(mx.gluon.HybridBlock):
         def __init__(self, units):
@@ -1861,8 +1863,6 @@ def check_layer_forward_withinput(net, x):
     mx.test_utils.assert_almost_equal(out1.asnumpy(), out2.asnumpy(), rtol=1e-5, atol=1e-6)
 
 @use_np
-@pytest.mark.skipif(mx.device.num_gpus(), reason="Temporairly disabled on gpu due to failing centos-gpu CI " +
-                                          "tracked at https://github.com/apache/mxnet/issues/20978")
 @pytest.mark.parametrize('chn_num', [16, 256])
 @pytest.mark.parametrize('kernel', [1, 3, 224])
 def test_conv2d_16c(chn_num, kernel):

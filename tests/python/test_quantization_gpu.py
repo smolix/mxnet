@@ -36,14 +36,20 @@ def _gpu_default_device():
     set_default_device(prev)
 
 
-def _skip_unsupported_gpu_quantization(func):
-    return pytest.mark.skip(reason="quantization path is not implemented for GPU")(func)
+def _xfail_unsupported_gpu_quantization(func):
+    # No FCompute<gpu> registration for these quantized ops (bf16->int8 calibration,
+    # quantized transpose/reshape, quantize_model harness, RNN quantization).
+    # Tracked under B4: GPU quantization deferred.
+    return pytest.mark.xfail(
+        strict=False,
+        reason="GPU quantization path not implemented for this op; deferred (see B4)"
+    )(func)
 
 
-test_calibrated_quantize_v2_bfloat16_to_int8 = _skip_unsupported_gpu_quantization(
+test_calibrated_quantize_v2_bfloat16_to_int8 = _xfail_unsupported_gpu_quantization(
     test_calibrated_quantize_v2_bfloat16_to_int8)
-test_quantized_transpose = _skip_unsupported_gpu_quantization(test_quantized_transpose)
-test_quantized_reshape = _skip_unsupported_gpu_quantization(test_quantized_reshape)
-test_quantize_model = _skip_unsupported_gpu_quantization(test_quantize_model)
-test_rnn_quantization = _skip_unsupported_gpu_quantization(test_rnn_quantization)
-test_quantized_rnn = _skip_unsupported_gpu_quantization(test_quantized_rnn)
+test_quantized_transpose = _xfail_unsupported_gpu_quantization(test_quantized_transpose)
+test_quantized_reshape = _xfail_unsupported_gpu_quantization(test_quantized_reshape)
+test_quantize_model = _xfail_unsupported_gpu_quantization(test_quantize_model)
+test_rnn_quantization = _xfail_unsupported_gpu_quantization(test_rnn_quantization)
+test_quantized_rnn = _xfail_unsupported_gpu_quantization(test_quantized_rnn)

@@ -67,6 +67,18 @@ void QuantizedFullyConnectedForwardGPU(const nnvm::NodeAttrs& attrs,
   size_t num_inputs = param.no_bias ? 2 : 3;
   CHECK_EQ(inputs.size(), num_inputs * 3);
   CHECK_EQ(outputs.size(), 3U);
+  // XOP14: gate before any output write so the contract on req is observable.
+  // QuantizedFullyConnectedForwardGPU uses cublasGemmEx with a hardcoded
+  // beta=0 (kWriteTo semantics) and then a post-quantization kernel that
+  // reads back from `out`.  Implementing kAddTo end-to-end requires a temp
+  // accumulation buffer.  For now reject before any output write so the
+  // caller's sentinel is observable on kNullOp / kAddTo.
+  if (req[0] == kNullOp) {
+    return;
+  }
+  CHECK(req[0] == kWriteTo || req[0] == kWriteInplace)
+      << "QuantizedFullyConnected forward does not support req=kAddTo "
+         "(the cuBLAS GEMM beta is hardcoded for kWriteTo).";
   Stream<gpu>* s = ctx.get_stream<gpu>();
   CHECK_EQ(s->blas_handle_ownership_, Stream<gpu>::OwnHandle);
   const TBlob& data    = inputs[0];

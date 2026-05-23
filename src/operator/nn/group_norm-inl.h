@@ -32,6 +32,7 @@
 #include <mshadow/base.h>
 #include <map>
 #include <algorithm>
+#include <limits>
 #include <vector>
 #include <string>
 #include <utility>
@@ -123,7 +124,7 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
 
   mxnet::TShape red_src_shape, red_dst_shape;
   BroadcastReduceShapeCompact(temp_data_shape, moments_shape, &red_src_shape, &red_dst_shape);
-  int channel_size = red_src_shape.Size() / red_dst_shape.Size();
+  int64_t channel_size = red_src_shape.Size() / red_dst_shape.Size();
 
   TBlob data_        = data.reshape(red_src_shape);
   const TBlob& mean_ = mean.reshape(red_dst_shape);
@@ -364,7 +365,18 @@ void GroupNormGradCompute(const nnvm::NodeAttrs& attrs,
   BroadcastReduceShapeCompact(temp_dshape, mean_.shape_, &red_src_shape, &red_dst_shape);
   BroadcastReduceShapeCompact(dshape, gamma.shape_, &red_exclude_src_shape, &red_exclude_dst_shape);
 
-  int N = red_src_shape.Size() / red_dst_shape.Size();
+  // GroupNorm group-element count.  Promoted from int to int64_t and
+  // checked against INT_MAX so a > INT_MAX-sized group (channel * H * W
+  // > 2^31 — possible on 3-D / video features) does not silently
+  // truncate before the divisor enters the kernels below.  The
+  // scalar<DType>(N) sites take whatever integer type fits the DType.
+  int64_t N_full = static_cast<int64_t>(red_src_shape.Size()) /
+                   static_cast<int64_t>(red_dst_shape.Size());
+  CHECK_LE(N_full, static_cast<int64_t>(std::numeric_limits<int>::max()))
+      << "GroupNorm group element count " << N_full
+      << " exceeds INT_MAX; tensor is too large for the current kernel "
+         "integer width.";
+  int N = static_cast<int>(N_full);
 
   // Initialize the workspace + Construct the temporary TBlobs
   Tensor<xpu, 1, char> workspace;

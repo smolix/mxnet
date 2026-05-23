@@ -103,6 +103,11 @@ class MNIST(dataset._DownloadedDataset):
         with gzip.open(data_file, 'rb') as fin:
             struct.unpack(">IIII", fin.read(16))
             data = np.frombuffer(fin.read(), dtype=np.uint8)
+            if len(label) == 0:
+                raise ValueError(
+                    f"MNIST label file at {label_file!r} produced 0 labels — "
+                    "the file is empty or truncated. A silently-empty dataset "
+                    "would propagate as a length-0 data tensor.")
             data = data.reshape(len(label), 28, 28, 1)
 
         array_fn = _mx_np.array if is_np_array() else nd.array
@@ -443,7 +448,10 @@ class ImageListDataset(dataset.Dataset):
             fname = os.path.join(self._root, imglist)
             with open(fname, 'rt') as fin:
                 for line in iter(fin.readline, ''):
-                    line = line.strip().split('\t')
+                    stripped = line.strip()
+                    if not stripped:
+                        continue  # Skip blank lines instead of crashing on int('').
+                    line = stripped.split('\t')
                     label = array_fn(line[1:-1])
                     key = int(line[0])
                     self._imglist[key] = (label, os.path.join(self._root, line[-1]))
@@ -451,7 +459,13 @@ class ImageListDataset(dataset.Dataset):
         elif isinstance(imglist, list):
             index = 1
             for img in imglist:
-                key = str(index)
+                # Keep keys as int across both branches so callers that look
+                # up by integer index work regardless of how the dataset was
+                # constructed. Previously the file branch used `int(line[0])`
+                # while the list branch used `str(index)`, so the same
+                # ImageListDataset accessed two different keyspaces depending
+                # on its origin.
+                key = index
                 index += 1
                 if len(img) > 2:
                     label = array_fn(img[:-1])

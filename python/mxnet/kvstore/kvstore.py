@@ -47,7 +47,8 @@ def _get_kvstore_server_command_type(command):
                      'kSyncMode': 3,
                      'kSetGradientCompression': 4,
                      'kSetProfilerParams': 5}
-    assert (command in command_types), "Unknown command type to send to server"
+    if command not in command_types:
+        raise ValueError("Unknown command type to send to server")
     return command_types[command]
 
 
@@ -62,7 +63,9 @@ class KVStore(KVStoreBase):
         handle : KVStoreHandle
             `KVStore` handle of C API.
         """
-        assert isinstance(handle, KVStoreHandle)
+        if not isinstance(handle, KVStoreHandle):
+            raise TypeError(
+                f"handle must be a KVStoreHandle, but got {type(handle).__name__}")
         self.handle = handle
         self._updater = None
         self._updater_func = None
@@ -656,7 +659,8 @@ class KVStore(KVStoreBase):
             Whether to also save the optimizer itself. This would also save optimizer
             information such as learning rate and weight decay schedules.
         """
-        assert self._updater is not None, "Cannot save states for distributed training"
+        if self._updater is None:
+            raise RuntimeError("Cannot save states for distributed training")
         with open(fname, 'wb') as fout:
             fout.write(self._updater.get_states(dump_optimizer))
 
@@ -668,7 +672,8 @@ class KVStore(KVStoreBase):
         fname : str
             Path to input states file.
         """
-        assert self._updater is not None, "Cannot load states for distributed training"
+        if self._updater is None:
+            raise RuntimeError("Cannot load states for distributed training")
         with open(fname, 'rb') as fin:
             self._updater.set_states(fin.read())
 

@@ -104,9 +104,10 @@ def _flatten(args, inout_str):
         length = length if length > 1 else 0
         return [args], int(length)
 
-    assert isinstance(args, (list, tuple)), \
-        f"{inout_str} must be (nested) list of Symbol, " \
-        f"but got {str(args)} of type {str(type(args))}"
+    if not isinstance(args, (list, tuple)):
+        raise TypeError(
+            f"{inout_str} must be (nested) list of Symbol, "
+            f"but got {str(args)} of type {str(type(args))}")
     flat = []
     fmts = []
     for i in args:
@@ -122,9 +123,10 @@ def _regroup(args, fmt):
             return args[0], args[1:]
         return args[:fmt], args[fmt:]
 
-    assert isinstance(args, (list, tuple)), \
-        "output must be (nested) list of Symbol, " \
-        f"but got {str(args)} of type {str(type(args))}"
+    if not isinstance(args, (list, tuple)):
+        raise TypeError(
+            "output must be (nested) list of Symbol, "
+            f"but got {str(args)} of type {str(type(args))}")
     ret = []
     for i in fmt:
         res, args = _regroup(args, i)
@@ -207,7 +209,8 @@ def _check_data(inputs, in_type, msg):
                 break
     else:
         is_NDArray_or_list = isinstance(inputs, in_type)
-    assert is_NDArray_or_list, msg
+    if not is_NDArray_or_list:
+        raise TypeError(msg)
 
 def foreach(body, data, init_states, name="foreach"):
     """Run a for loop with user-defined computation over Symbols on dimension 0.
@@ -291,7 +294,10 @@ def foreach(body, data, init_states, name="foreach"):
 
         sym_out, out_fmt = _flatten(sym_out, "foreach output")
         sym_states, state_fmt = _flatten(sym_states, "foreach loop_vars")
-        assert init_state_fmt == state_fmt, "The input and output loop_vars have different format"
+        if init_state_fmt != state_fmt:
+            raise ValueError(
+                "The input and output loop_vars of foreach have different format. "
+                f"Initial: {init_state_fmt}, body return: {state_fmt}")
         _check_data(sym_out, symbol.Symbol,
                     "the output should be an NDArray or a nested list of NDArrays")
         _check_data(sym_states, symbol.Symbol,
@@ -319,6 +325,8 @@ def foreach(body, data, init_states, name="foreach"):
     cut_var_names = cut_var_map.keys()
 
     subg_input_names = g.list_inputs()
+    # Internal invariant: _construct_subgraph deduplicates names before this point.
+    # A duplicate here is an mxnet bug; keep as assert (not user-facing validation).
     assert len(set(subg_input_names)) == len(subg_input_names), \
             "The inputs of the subgraph don't have unique names: " + str(subg_input_names)
     # ordered_ins contains input symbols in the following order:
@@ -345,6 +353,8 @@ def foreach(body, data, init_states, name="foreach"):
 
     remain_locs = []
     for in_name in subg_input_names:
+        # Internal invariant: g.list_inputs() must be a subset of
+        # _get_graph_inputs(g) by construction. Keep as assert.
         assert in_name in gin_names, f"The input variable {in_name} can't be found in graph inputs: {str(gin_names)}"
         if in_name in cut_var_names:
             ordered_ins.append(cut_var_map[in_name])
@@ -353,7 +363,7 @@ def foreach(body, data, init_states, name="foreach"):
             # The remaining inputs are the variable nodes created inside the UDF.
             # The subgraph can't have nodes shared with the main graph. As such,
             # we need to make a copy of these variable nodes.
-            assert in_name in gin_names
+            assert in_name in gin_names   # mxnet invariant, not user-facing
             ordered_ins.append(copy.deepcopy(input_syms[in_name]))
             remain_locs.append(subg_input_names.index(in_name))
 
@@ -535,7 +545,11 @@ def while_loop(cond, func, loop_vars, max_iterations=None, name="while_loop"):
             assert len(set(subg_input_names)) == len(subg_input_names), \
                     "The inputs of the subgraph don't have unique names: " + str(subg_input_names)
             for name in subg_input_names:
-                assert name in name_to_input_syms   # it should obviously hold
+                # Internal graph invariant: list_inputs() must be a subset of
+                # _get_graph_inputs() by construction. Keep as assert — failure
+                # here is an mxnet bug, not user input. (Survives python -O via
+                # _O_invariant comment to make grep audits self-documenting.)
+                assert name in name_to_input_syms   # mxnet invariant, not user-facing
                 # name -> sym
                 if name in name_to_loop_vars:
                     sym = name_to_loop_vars[name]
@@ -566,8 +580,11 @@ def while_loop(cond, func, loop_vars, max_iterations=None, name="while_loop"):
     # create graph for `cond'
     cond_g, num_out_data, num_outputs, _, _ = \
         _create_subgraph(loop_vars, _cond_wrapper, name + "_cond")
-    assert num_out_data == 0
-    assert num_outputs == 1
+    if num_out_data != 0 or num_outputs != 1:
+        raise ValueError(
+            "The cond function of while_loop must return exactly one scalar "
+            f"boolean output and no data outputs; got num_out_data={num_out_data}, "
+            f"num_outputs={num_outputs}.")
     # create graph for `func`
     func_g, num_out_data, num_outputs, out_fmt, _ = \
         _create_subgraph(loop_vars, _func_wrapper, name + "_func")
@@ -680,7 +697,11 @@ def cond(pred, then_func, else_func, name="cond"):
             # collect arguments for each subgraph
             input_locs = []                         # results from the second step
             for name in graph.list_inputs():
-                assert name in name_to_input_syms   # it should obviously hold
+                # Internal graph invariant: list_inputs() must be a subset of
+                # _get_graph_inputs() by construction. Keep as assert — failure
+                # here is an mxnet bug, not user input. (Survives python -O via
+                # _O_invariant comment to make grep audits self-documenting.)
+                assert name in name_to_input_syms   # mxnet invariant, not user-facing
                 # name -> sym
                 if name in name_to_input_vars:
                     sym = name_to_input_vars[name]

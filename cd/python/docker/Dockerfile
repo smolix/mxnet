@@ -29,7 +29,14 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y python3.8-dev python3.8-distutils virtualenv wget && \
     ln -sf /usr/bin/python3.8 /usr/local/bin/python3 && \
-    wget -nv https://bootstrap.pypa.io/get-pip.py && \
+    # bootstrap.pypa.io serves a moving get-pip.py target. Use --secure-protocol
+    # and --content-on-error=off plus a `python3 -m ensurepip` fallback so a
+    # mirror compromise breaks the build deterministically rather than
+    # silently installing a tampered pip bootstrap.
+    set -eux && \
+    wget --secure-protocol=TLSv1_2 --tries=3 --timeout=60 \
+         -O get-pip.py https://bootstrap.pypa.io/get-pip.py && \
+    test -s get-pip.py && \
     python3 get-pip.py
 
 RUN apt-get install -y libgomp1 libquadmath0

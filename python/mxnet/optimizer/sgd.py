@@ -100,11 +100,13 @@ class SGD(Optimizer):
                                   use_fused_step=use_fused_step,
                                   **kwargs)
         if not self.use_fused_step:
-            assert not lazy_update, \
-                'When use_fused_step is set to False, lazy_update has to be turned off.'
+            if lazy_update:
+                raise ValueError(
+                    'When use_fused_step is set to False, lazy_update has to be turned off.')
         if lazy_update:
-            assert not multi_precision, \
-                'When lazy_update is set to True, multi_precision has be turned off.'
+            if multi_precision:
+                raise ValueError(
+                    'When lazy_update is set to True, multi_precision has be turned off.')
         self.momentum = momentum
         self.lazy_update = lazy_update
 

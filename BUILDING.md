@@ -316,6 +316,35 @@ expected — see [`issues.md`](issues.md).
    warmed drops to roughly 10-15 minutes. `CXX="ccache g++" CC="ccache
    gcc"` before cmake is enough.
 
+## Third-party / submodule warning policy (CN9)
+
+This fork carries vendored copies of `dmlc-core`, `onednn`, and `tvm` as
+submodules under `3rdparty/`.  Two specific build-time warnings come from
+inside those submodules and **are not patched in this repository**:
+
+- **Bundled dmlc concurrent queue** (`3rdparty/dmlc-core/include/dmlc/...`)
+  assigns `-1` into a `uint32_t` sentinel.  NVCC emits an
+  unsigned-conversion warning.  The behavior is intentional in dmlc; we
+  do not maintain a private dmlc-core fork.
+- **oneDNN vendored ITT assembly** (`3rdparty/onednn/.../ittptmark64.S.o`)
+  is built without a `.note.GNU-stack` section, so the linker emits an
+  executable-stack warning.  oneDNN owns the upstream fix; carrying a
+  private patch in our submodule pointer would dirty the detached tree
+  with no upstream PR to converge on.
+
+Both warnings are documented as **CN9** in `issues.md` (Resolved /
+informational) and are not blockers.  If you want to silence them
+locally:
+
+- Update the submodule pointer to a newer oneDNN/dmlc commit if upstream
+  fixes them later.
+- Apply the patch in your own working tree but **do not commit** it to
+  the fork — submodule pointer changes here imply an upstream
+  responsibility this project doesn't accept.
+
+If a future release of oneDNN or dmlc-core lands the upstream fix, the
+fork's next submodule bump will pick it up automatically.
+
 ## Cross-references
 
 - [`README.md`](README.md) — user-facing overview.

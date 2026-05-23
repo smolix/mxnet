@@ -129,10 +129,14 @@ class Parameter(object):
         self.init = init
         # sparse related storage type information
         valid_stypes = ['default', 'row_sparse', 'csr']
-        assert grad_stype in valid_stypes, "grad_stype for Parameter must be " \
-            f"one of 'default', 'row_sparse', or 'csr', but got '{grad_stype}'"
-        assert stype in valid_stypes, "stype for Parameter must be " \
-            f"one of 'default', 'row_sparse', or 'csr', but got '{stype}'"
+        if grad_stype not in valid_stypes:
+            raise ValueError(
+                "grad_stype for Parameter must be "
+                f"one of 'default', 'row_sparse', or 'csr', but got '{grad_stype}'")
+        if stype not in valid_stypes:
+            raise ValueError(
+                "stype for Parameter must be "
+                f"one of 'default', 'row_sparse', or 'csr', but got '{stype}'")
         self._grad_stype = grad_stype
         self._stype = stype
 
@@ -150,8 +154,9 @@ class Parameter(object):
 
     @grad_req.setter
     def grad_req(self, req):
-        assert req in ['write', 'add', 'null'], \
-            f"grad_req must be one of 'write', 'add', or 'null', but got '{req}'"
+        if req not in ['write', 'add', 'null']:
+            raise ValueError(
+                f"grad_req must be one of 'write', 'add', or 'null', but got '{req}'")
         if not self._differentiable:
             req = 'null'
         if self._grad_req == req:
@@ -198,10 +203,12 @@ class Parameter(object):
             self._shape = new_shape
             return
 
-        assert len(self._shape) == len(new_shape) and \
-            all(j in (-1, 0, i) for i, j in zip(new_shape, self._shape)), \
-            f"Expected shape {str(new_shape)} is incompatible with given shape {str(self._shape)} for Parameter {str(self.name)}." 
-            # -1 means unknown dim size in np_shape mode
+        # -1 means unknown dim size in np_shape mode
+        if not (len(self._shape) == len(new_shape) and
+                all(j in (-1, 0, i) for i, j in zip(new_shape, self._shape))):
+            raise ValueError(
+                f"Expected shape {str(new_shape)} is incompatible with given shape "
+                f"{str(self._shape)} for Parameter {str(self.name)}.")
 
         self._shape = new_shape
 
@@ -282,13 +289,16 @@ class Parameter(object):
             the parameters
         """
         if cast_dtype:
-            assert dtype_source in ['current', 'saved']
+            if dtype_source not in ['current', 'saved']:
+                raise ValueError(
+                    f"dtype_source must be one of 'current' or 'saved', but got '{dtype_source}'")
         if self.shape:
             unknown_dim_size = -1 if is_np_shape() else 0
             for self_dim, data_dim in zip(self.shape, data.shape):
-                assert self_dim in (unknown_dim_size, data_dim), \
-                    f"Failed loading Parameter '{self.name}' from saved params: " \
-                    f"shape incompatible expected {str(self.shape)} vs saved {str(data.shape)}"
+                if self_dim not in (unknown_dim_size, data_dim):
+                    raise ValueError(
+                        f"Failed loading Parameter '{self.name}' from saved params: "
+                        f"shape incompatible expected {str(self.shape)} vs saved {str(data.shape)}")
             self.shape = tuple(i if i != unknown_dim_size else j
                                for i, j in zip(self.shape, data.shape))
         if self.dtype:
@@ -298,27 +308,30 @@ class Parameter(object):
                 elif dtype_source == 'saved':
                     self.dtype = data.dtype
             else:
-                assert self.dtype == data.dtype, \
-                f"Failed loading Parameter '{self.name}' from saved params: " \
-                f"dtype incompatible expected {str(self.dtype)} vs saved {str(data.dtype)}. " \
-                "Set cast_dtype=True to cast the dtype of saved params."
+                if self.dtype != data.dtype:
+                    raise ValueError(
+                        f"Failed loading Parameter '{self.name}' from saved params: "
+                        f"dtype incompatible expected {str(self.dtype)} vs saved {str(data.dtype)}. "
+                        "Set cast_dtype=True to cast the dtype of saved params.")
         if self._stype != data.stype:
             data = data.tostype(self._stype)
         if isinstance(device, Device):
             device = [device]
         if self._data is None:
             if self._deferred_init:
-                assert device is None or set(device) == set(self._deferred_init[1]), \
-                    f"Failed to load Parameter '{self.name}' on {str(device)} because it was " \
-                    f"previous initialized on {str(self.list_device())}."
+                if device is not None and set(device) != set(self._deferred_init[1]):
+                    raise RuntimeError(
+                        f"Failed to load Parameter '{self.name}' on {str(device)} because "
+                        f"it was previous initialized on {str(self.list_device())}.")
                 device = self._deferred_init[1]
             elif device is None:
                 device = [cpu()]
             self._init_impl(data, device)
         else:
-            assert device is None or set(device) == set(self.list_device()), \
-                f"Failed to load Parameter '{self.name}' on {str(device)} because it was " \
-                f"previous initialized on {str(self.list_device())}."
+            if device is not None and set(device) != set(self.list_device()):
+                raise RuntimeError(
+                    f"Failed to load Parameter '{self.name}' on {str(device)} because "
+                    f"it was previous initialized on {str(self.list_device())}.")
             self.set_data(data)
         self._deferred_init = ()
 
@@ -329,10 +342,11 @@ class Parameter(object):
         init, device, default_init, data = self._deferred_init
         self._deferred_init = ()
 
-        assert shape_is_known(self.shape), \
-            f"Cannot initialize Parameter '{self.name}' because it has " \
-            f"invalid shape: {str(self.shape)}. Please specify in_units, " \
-            "in_channels, etc for `Block`s."
+        if not shape_is_known(self.shape):
+            raise RuntimeError(
+                f"Cannot initialize Parameter '{self.name}' because it has "
+                f"invalid shape: {str(self.shape)}. Please specify in_units, "
+                "in_channels, etc for `Block`s.")
 
         with autograd.pause(), dc.context(False):
             if data is None:
@@ -512,8 +526,9 @@ class Parameter(object):
         self.shape = data.shape
 
         if self._data is None:
-            assert self._deferred_init, \
-                f"Parameter '{self.name}' has not been initialized"
+            if not self._deferred_init:
+                raise RuntimeError(
+                    f"Parameter '{self.name}' has not been initialized")
             self._deferred_init = self._deferred_init[:3] + (data,)
             return
 
@@ -704,10 +719,11 @@ class Parameter(object):
                 elif k == 'dtype' and np.dtype(v) == np.dtype(existing):
                     continue
 
-                assert v is None or v == existing, \
-                    f"Cannot retrieve Parameter '{self.name}' because desired attribute " \
-                    f"does not match with stored for attribute '{k}': " \
-                    f"desired '{str(v)}' vs stored '{str(getattr(self, k))}'."
+                if v is not None and v != existing:
+                    raise ValueError(
+                        f"Cannot retrieve Parameter '{self.name}' because desired attribute "
+                        f"does not match with stored for attribute '{k}': "
+                        f"desired '{str(v)}' vs stored '{str(getattr(self, k))}'.")
             else:
                 setattr(self, k, v)
 

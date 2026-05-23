@@ -55,11 +55,24 @@ ENV ARCH=armv6l \
     HOSTCXX=g++ \
     TARGET=ARMV6
 
-# We use a toolchain from toolchains.bootlin.com instead of Debian / Ubunut
+# We use a toolchain from toolchains.bootlin.com instead of Debian / Ubuntu
 # crossbuild-essential-armel toolchain, as the latter targets ARM architecture
 # versions 4T, 5T, and 6, whereas we only wish to target ARMV6 and like to use
 # ARMV6 specific features. https://wiki.debian.org/ArmEabiPort
-RUN curl -o armv6-eabihf--glibc--stable-2020.02-2.tar.bz2 -L https://toolchains.bootlin.com/downloads/releases/toolchains/armv6-eabihf/tarballs/armv6-eabihf--glibc--stable-2020.02-2.tar.bz2 && \
+#
+# Defensive flags: --fail (exit non-zero on HTTP error), --proto/--tlsv1.2
+# (refuse non-HTTPS and ancient TLS). The maintainer should add a SHA256
+# pin via ARG ARMV6_TOOLCHAIN_SHA256 once a known-good local checksum
+# is computed; the bootlin archive is downstream-mirrored, so a strict
+# checksum is the only protection against a mirror compromise.
+ARG ARMV6_TOOLCHAIN_SHA256=""
+RUN set -eux && \
+    curl --fail --proto '=https' --tlsv1.2 --location --show-error --silent \
+        -o armv6-eabihf--glibc--stable-2020.02-2.tar.bz2 \
+        https://toolchains.bootlin.com/downloads/releases/toolchains/armv6-eabihf/tarballs/armv6-eabihf--glibc--stable-2020.02-2.tar.bz2 && \
+    if [ -n "${ARMV6_TOOLCHAIN_SHA256}" ]; then \
+        echo "${ARMV6_TOOLCHAIN_SHA256}  armv6-eabihf--glibc--stable-2020.02-2.tar.bz2" | sha256sum -c - ; \
+    fi && \
     tar xf armv6-eabihf--glibc--stable-2020.02-2.tar.bz2 && \
     rm armv6-eabihf--glibc--stable-2020.02-2.tar.bz2
 ENV CMAKE_TOOLCHAIN_FILE=/usr/local/armv6-eabihf--glibc--stable-2020.02-2/share/buildroot/toolchainfile.cmake

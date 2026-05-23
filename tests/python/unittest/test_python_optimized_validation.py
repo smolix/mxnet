@@ -240,6 +240,233 @@ def _run_optimized_python(source):
     else:
         raise AssertionError('MaxPool2D accepted invalid pool_size rank')
     """,
+    """
+    from mxnet.gluon import Parameter
+    try:
+        Parameter('w', shape=(2,), grad_req='bogus')
+    except ValueError as err:
+        if 'grad_req must be one of' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Parameter accepted invalid grad_req')
+    """,
+    """
+    from mxnet.gluon import Parameter
+    try:
+        Parameter('w', shape=(2,), stype='bogus')
+    except ValueError as err:
+        if 'stype for Parameter must be' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Parameter accepted invalid stype')
+    """,
+    """
+    from mxnet.gluon import Parameter
+    try:
+        Parameter('w', shape=(2,), grad_stype='bogus')
+    except ValueError as err:
+        if 'grad_stype for Parameter must be' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Parameter accepted invalid grad_stype')
+    """,
+    """
+    from mxnet.optimizer import SGD
+    try:
+        SGD(lazy_update=True, use_fused_step=False)
+    except ValueError as err:
+        if 'lazy_update has to be turned off' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('SGD accepted lazy_update with use_fused_step=False')
+    """,
+    """
+    from mxnet.optimizer import SGD
+    try:
+        SGD(lazy_update=True, multi_precision=True)
+    except ValueError as err:
+        if 'multi_precision has be turned off' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('SGD accepted lazy_update with multi_precision')
+    """,
+    """
+    from mxnet.optimizer import Adam
+    try:
+        Adam(lazy_update=True, use_fused_step=False)
+    except ValueError as err:
+        if 'lazy_update has to be turned off' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Adam accepted lazy_update with use_fused_step=False')
+    """,
+    """
+    from mxnet.optimizer import LANS
+    try:
+        LANS(aggregate_num=46)
+    except ValueError as err:
+        if 'aggregate_num <= 45' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('LANS accepted aggregate_num=46')
+    """,
+    """
+    from mxnet.optimizer import LAMB
+    try:
+        LAMB(aggregate_num=46)
+    except ValueError as err:
+        if 'aggregate_num <= 45' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('LAMB accepted aggregate_num=46')
+    """,
+    """
+    from mxnet.contrib.text.vocab import Vocabulary
+    from collections import Counter
+    try:
+        Vocabulary(counter=Counter({'a': 1}), min_freq=0)
+    except ValueError as err:
+        if 'min_freq' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Vocabulary accepted min_freq=0')
+    """,
+    """
+    from mxnet.kvstore.kvstore import _get_kvstore_server_command_type
+    try:
+        _get_kvstore_server_command_type('kBogus')
+    except ValueError as err:
+        if 'Unknown command type' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('_get_kvstore_server_command_type accepted unknown command')
+    """,
+    """
+    from mxnet.kvstore.kvstore import KVStore
+    try:
+        KVStore('not-a-handle')
+    except TypeError as err:
+        if 'KVStoreHandle' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('KVStore accepted non-handle')
+    """,
+    """
+    from mxnet.optimizer import Optimizer
+    try:
+        Optimizer(param_idx2name='not-a-dict')
+    except TypeError as err:
+        if 'param_idx2name' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Optimizer accepted non-dict param_idx2name')
+    """,
+    """
+    # XOP22 second wave: KVStore.save_optimizer_states must still reject the
+    # 'no updater' case under python -O.
+    from mxnet.kvstore.kvstore import KVStore
+    kv = object.__new__(KVStore)
+    kv._updater = None
+    try:
+        kv.save_optimizer_states('/tmp/should-not-be-written')
+    except RuntimeError as err:
+        if 'distributed training' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('save_optimizer_states accepted None updater')
+    """,
+    """
+    # XOP22 second wave: KVStore.load_optimizer_states symmetric guard.
+    from mxnet.kvstore.kvstore import KVStore
+    kv = object.__new__(KVStore)
+    kv._updater = None
+    try:
+        kv.load_optimizer_states('/tmp/should-not-be-read')
+    except RuntimeError as err:
+        if 'distributed training' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('load_optimizer_states accepted None updater')
+    """,
+    """
+    # XOP22 second wave: BytePS KVStore key type must still be checked under -O.
+    from mxnet.kvstore.byteps import BytePS
+    kv = object.__new__(BytePS)
+    try:
+        kv.pushpull(1.5, None)
+    except TypeError as err:
+        if 'key must be str or int' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('BytePS pushpull accepted float key')
+    """,
+    """
+    # XOP22 second wave: Gluon Parameter.set_data without prior init must
+    # still raise instead of silently corrupting state under -O.
+    from mxnet.gluon.parameter import Parameter
+    p = Parameter('test_p', shape=(2, 3))
+    # Don't initialize; deferred_init is empty by default.
+    p._deferred_init = ()
+    import mxnet as mx
+    try:
+        p.set_data(mx.nd.zeros((2, 3)))
+    except RuntimeError as err:
+        if 'has not been initialized' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Parameter.set_data accepted uninitialized parameter')
+    """,
+    """
+    # XOP22 contrib wave: text.vocab.Vocabulary rejects duplicate reserved tokens.
+    import mxnet as mx
+    from mxnet.contrib.text.vocab import Vocabulary
+    import collections
+    try:
+        Vocabulary(collections.Counter({'a': 1, 'b': 2}),
+                   reserved_tokens=['x', 'x'])  # duplicate
+    except ValueError as err:
+        if 'duplicate reserved tokens' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Vocabulary accepted duplicate reserved tokens')
+    """,
+    """
+    # XOP22 contrib wave: text.vocab.Vocabulary rejects non-Counter counter arg.
+    from mxnet.contrib.text.vocab import Vocabulary
+    try:
+        Vocabulary(counter={'a': 1})  # dict, not Counter
+    except TypeError as err:
+        if 'collections.Counter' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Vocabulary accepted non-Counter counter')
+    """,
+    """
+    # XOP22 contrib wave: contrib.quantization.get_optimal_thresholds requires
+    # a dict; the bare `assert isinstance(hist_dict, dict)` would have been
+    # stripped under -O.
+    from mxnet.contrib.quantization import _LayerHistogramCollector
+    try:
+        _LayerHistogramCollector.get_optimal_thresholds(
+            hist_dict='not-a-dict', quantized_dtype='int8')
+    except TypeError as err:
+        if 'must be a dict' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('get_optimal_thresholds accepted non-dict')
+    """,
+    """
+    # XOP22 contrib wave: symbol.contrib._flatten rejects bad arg type
+    # (used by foreach / while_loop / cond callers).
+    from mxnet.symbol.contrib import _flatten
+    try:
+        _flatten('not-a-symbol-or-list', 'inputs')
+    except TypeError as err:
+        if 'must be (nested) list of Symbol' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('symbol.contrib._flatten accepted non-list arg')
+    """,
 ])
 def test_user_validation_survives_optimized_python(source):
     _run_optimized_python(source)

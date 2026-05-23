@@ -20,7 +20,7 @@ using std::min;
 namespace mshadow {
 
 template <typename DType>
-inline void PSROIPoolForwardCPU(const int count,
+inline void PSROIPoolForwardCPU(const mxnet::index_t count,
                                 const DType* bottom_data,
                                 const DType spatial_scale,
                                 const int channels,
@@ -35,7 +35,7 @@ inline void PSROIPoolForwardCPU(const int count,
   const int omp_threads = mxnet::engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
   (void)omp_threads;
 #pragma omp parallel for num_threads(omp_threads)
-  for (int index = 0; index < count; index++) {
+  for (mxnet::index_t index = 0; index < count; index++) {
     // The output is in order (n, ctop, ph, pw)
     int pw   = index % pooled_width;
     int ph   = (index / pooled_width) % pooled_height;
@@ -99,7 +99,7 @@ inline void PSROIPoolForward(const Tensor<cpu, 4, DType>& out,
   const DType* bottom_data = data.dptr_;
   const DType* bottom_rois = bbox.dptr_;
   DType* top_data          = out.dptr_;
-  const int count          = out.shape_.Size();
+  const mxnet::index_t count = out.shape_.Size();
   const int channels       = data.size(1);
   const int height         = data.size(2);
   const int width          = data.size(3);
@@ -122,7 +122,7 @@ inline void PSROIPoolForward(const Tensor<cpu, 4, DType>& out,
 }
 
 template <typename DType>
-inline void PSROIPoolBackwardAccCPU(const int count,
+inline void PSROIPoolBackwardAccCPU(const mxnet::index_t count,
                                     const DType* top_diff,
                                     const int num_rois,
                                     const DType spatial_scale,
@@ -135,7 +135,7 @@ inline void PSROIPoolBackwardAccCPU(const int count,
                                     const int output_dim,
                                     DType* bottom_diff,
                                     const DType* bottom_rois) {
-  for (int index = 0; index < count; index++) {
+  for (mxnet::index_t index = 0; index < count; index++) {
     // The output is in order (n, ctop, ph, pw)
     int pw   = index % pooled_width;
     int ph   = (index / pooled_width) % pooled_height;
@@ -197,7 +197,7 @@ inline void PSROIPoolBackwardAcc(const Tensor<cpu, 4, DType>& in_grad,
   const DType* top_diff    = out_grad.dptr_;
   const DType* bottom_rois = bbox.dptr_;
   DType* bottom_diff       = in_grad.dptr_;
-  const int count          = out_grad.shape_.Size();
+  const mxnet::index_t count = out_grad.shape_.Size();
   const int num_rois       = bbox.size(0);
   const int channels       = in_grad.size(1);
   const int height         = in_grad.size(2);

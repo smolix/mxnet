@@ -142,7 +142,7 @@ def _verify_while_loop(cond, func, loop_var_shapes, free_var_shapes, is_train, m
         assert_almost_equal(imp_grad, sym_grad, rtol=1e-3, atol=1e-3)
 
 
-@pytest.mark.skip(reason="Bug in while loop op, tracked at incubator-mxnet/issues/18575")
+@pytest.mark.xfail(strict=False, reason="upstream issue apache/mxnet#18575, MXNet while-loop")
 def test_while_loop_for_foreach():
 
     def make_true_cond():

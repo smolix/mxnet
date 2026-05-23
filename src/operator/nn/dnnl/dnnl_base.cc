@@ -356,7 +356,13 @@ dnnl_output_t CreateDNNLMem(const NDArray& out_arr,
 dnnl_output_t CreateDNNLWeightGrad(const NDArray& out_arr,
                                    const dnnl::memory::desc& desc,
                                    OpReqType req) {
-  if (kAddTo == req) {
+  if (kNullOp == req) {
+    // kNullOp means the caller doesn't want this gradient written.  The
+    // primitive still needs an output memory to run into; allocate a
+    // throwaway tmp and skip the copy-back so out_arr stays untouched.
+    auto tmp = TmpMemMgr::Get()->Alloc(desc);
+    return dnnl_output_t(OutDataOp::Noop, tmp);
+  } else if (kAddTo == req) {
     auto tmp = TmpMemMgr::Get()->Alloc(desc);
     return dnnl_output_t(OutDataOp::AddBack, tmp);
   } else if (kWriteInplace == req) {
@@ -486,6 +492,11 @@ bool IsDNNL(const dnnl::memory::desc& desc) {
 
 dnnl_format_tag_t GetDefaultFormat(int num_dims) {
   switch (num_dims) {
+    // A 0-D NDArray holds a single element and has the same byte layout as
+    // a 1-D length-1 tensor.  Treat it as such so callers below the
+    // operator-level SupportDNNL gate (NDArray view binding, transfer
+    // paths) don't LOG(FATAL).  Mirrors the SetDNNLMem 0-D mapping.
+    case 0:
     case 1:
       return dnnl_a;
     case 2:
@@ -518,6 +529,8 @@ dnnl_format_tag_t GetDefaultFormat(int num_dims) {
 
 dnnl_format_tag_t GetPermutedFormat(int num_dims) {
   switch (num_dims) {
+    // 0-D handled the same way as in GetDefaultFormat above.
+    case 0:
     case 1:
       return dnnl_a;
     case 2:

@@ -26,6 +26,7 @@
 #define MXNET_OPERATOR_CUDNN_BILINEAR_SAMPLER_INL_H_
 
 #include <algorithm>
+#include <climits>
 #include <vector>
 #include "./bilinear_sampler-inl.h"
 namespace mxnet {
@@ -152,6 +153,10 @@ class CuDNNBilinearSamplerOp : public Operator {
           in_desc_, format_, dtype_, data.size(0), data.size(1), data.size(2), data.size(3)));
       CUDNN_CALL(cudnnSetTensor4dDescriptor(
           out_desc_, format_, dtype_, out.size(0), out.size(1), out.size(2), out.size(3)));
+      CHECK_LE(out.size(0), INT_MAX);
+      CHECK_LE(out.size(1), INT_MAX);
+      CHECK_LE(out.size(2), INT_MAX);
+      CHECK_LE(out.size(3), INT_MAX);
       int dim[] = {static_cast<int>(out.size(0)),
                    static_cast<int>(out.size(1)),
                    static_cast<int>(out.size(2)),

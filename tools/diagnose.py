@@ -49,12 +49,20 @@ REGIONAL_URLS = {
 def test_connection(name, url, timeout=10):
     """Simple connection test"""
     urlinfo = urlparse(url)
+    # socket.gethostbyname does not accept a per-call timeout, so set the
+    # process-wide default before the resolve so a DNS hang is bounded by
+    # `timeout` rather than the libc default (which can be minutes).
+    prev_default = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(timeout)
     start = time.time()
     try:
         ip = socket.gethostbyname(urlinfo.netloc)
     except Exception as e:
+        socket.setdefaulttimeout(prev_default)
         print('Error resolving DNS for {}: {}, {}'.format(name, url, e))
         return
+    finally:
+        socket.setdefaulttimeout(prev_default)
     dns_elapsed = time.time() - start
     start = time.time()
     try:

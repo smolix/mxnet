@@ -24,7 +24,10 @@
 #ifndef MXNET_STORAGE_POOLED_STORAGE_MANAGER_H_
 #define MXNET_STORAGE_POOLED_STORAGE_MANAGER_H_
 
+#include <chrono>
+#include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 #include <algorithm>
 #include <mutex>
@@ -43,6 +46,8 @@ typedef enum {
   round_linear_cutoff,
   pool_reserve,
   per_bucket_limit,
+  oom_retries,
+  oom_backoff_ms,
 } env_var_type;
 
 const std::string env_var_name(const char* dev_type, env_var_type type);
@@ -131,6 +136,23 @@ class PooledStorageManager : public StorageManager, public BucketingStrategy, pu
       const size_t total       = std::get<1>(contextHelper_->getMemoryInfo());
       memory_allocation_limit_ = total * reserve / 100;
     }
+
+    // OOM retry policy. d2l-neu observed cnn-design / sentiment-analysis-rnn
+    // OOM under 2-notebooks-per-GPU contention while PyTorch / JAX / TF on
+    // the same hardware survived: a transient cudaMalloc failure could be
+    // satisfied a moment later once the neighbor process flushes its own
+    // pool. Default 4 retries with 50ms exponential backoff (50, 100, 200,
+    // 400 ms) gives ~750ms total wait before LOG(FATAL). Backoff is capped
+    // at 1s per attempt to bound worst-case latency.
+    if (dev_type) {
+      const auto env_var_retries  = env_var_name(dev_type, oom_retries);
+      const auto env_var_backoff  = env_var_name(dev_type, oom_backoff_ms);
+      oom_retries_                = dmlc::GetEnv(env_var_retries.c_str(), 4);
+      oom_backoff_ms_             = dmlc::GetEnv(env_var_backoff.c_str(), 50);
+    } else {
+      oom_retries_    = 0;
+      oom_backoff_ms_ = 0;
+    }
   }
   /*!
    * \brief Default destructor.
@@ -195,6 +217,10 @@ class PooledStorageManager : public StorageManager, public BucketingStrategy, pu
   size_t memory_allocation_limit_ = 0;
   // max free chunks retained per bucket (0 = unlimited, legacy behavior)
   size_t per_bucket_limit_ = 0;
+  // additional cudaMalloc retries with backoff before LOG(FATAL) on OOM
+  size_t oom_retries_ = 0;
+  // initial backoff between OOM retries (doubled per attempt, capped at 1000ms)
+  size_t oom_backoff_ms_ = 0;
   // Pointer to the Helper, supporting some context-specific operations in GPU/CPU/CPUPinned context
   std::unique_ptr<ContextHelper> contextHelper_;
 };
@@ -219,6 +245,40 @@ void PooledStorageManager<BucketingStrategy, StoringMethod>::Alloc(Storage::Hand
       ReleaseAllNoLock(false);
       e = contextHelper_->Malloc(&ret, roundSize);
 #if MXNET_USE_CUDA
+      // Cross-process contention retry loop: when two MXNet processes share
+      // a GPU, both can race on a single cudaMalloc with neither having a
+      // pool to flush. Wait briefly and retry — the neighbor may release
+      // a chunk between iterations. Without this, the loser of the race
+      // hits LOG(FATAL) even though physical memory frees up moments later
+      // (this is what PyTorch's caching allocator does to survive the same
+      // condition; see d2l-ssd-bug.md Issue 2 / D2L-Bug-2).
+      if (e == cudaErrorMemoryAllocation && dev_type_ == Context::kGPU &&
+          oom_retries_ > 0) {
+        // Clear sticky error so subsequent cuda calls observe success state.
+        cudaGetLastError();
+        size_t backoff_ms = oom_backoff_ms_;
+        for (size_t attempt = 0; attempt < oom_retries_ && e; ++attempt) {
+          // Sync to drain any in-flight frees from this process before
+          // sleeping. cudaDeviceSynchronize itself does not error after
+          // a failed cudaMalloc; if it does, propagate that as the real
+          // failure rather than the OOM.
+          cudaError_t sync_err = cudaDeviceSynchronize();
+          if (sync_err != cudaSuccess && sync_err != cudaErrorMemoryAllocation) {
+            cudaGetLastError();
+            break;  // a real CUDA error; fall through to FATAL with original e
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+          // Flush our own pool again — a Free() may have landed in the cache
+          // while we slept.
+          ReleaseAllNoLock(false);
+          e = contextHelper_->Malloc(&ret, roundSize);
+          if (e == cudaErrorMemoryAllocation) {
+            cudaGetLastError();
+          }
+          // Exponential backoff capped at 1s.
+          backoff_ms = std::min<size_t>(backoff_ms * 2, 1000);
+        }
+      }
       if (failsafe && dev_type_ == Context::kGPU && e == cudaErrorMemoryAllocation) {
         // In failsafe mode, the only indication of the
         // failed allocation is a null dptr.  The used_memory_
@@ -237,7 +297,29 @@ void PooledStorageManager<BucketingStrategy, StoringMethod>::Alloc(Storage::Hand
 #endif
                                          std::strerror(errno));
 
-        LOG(FATAL) << "Memory allocation failed " << err;
+        // Include allocation context so a kernel that dies on this LOG(FATAL)
+        // from a worker thread (the path Jupyter surfaces as
+        // "DeadKernelError: Kernel died" with no traceback) leaves enough
+        // breadcrumbs in stderr for the user to diagnose. d2l-ssd-bug.md
+        // Issue 3 was a BERT NLI kernel that died after ~18 minutes with
+        // no message; without context the user had nothing to act on.
+        std::ostringstream context_msg;
+        context_msg << "Memory allocation failed " << err << " (requested "
+                    << roundSize << " bytes, pool used " << used_memory_;
+#if MXNET_USE_CUDA
+        if (dev_type_ == Context::kGPU) {
+          size_t free_b = 0, total_b = 0;
+          if (cudaMemGetInfo(&free_b, &total_b) == cudaSuccess) {
+            context_msg << ", device free " << free_b << "/" << total_b;
+          }
+          if (oom_retries_ > 0) {
+            context_msg << ", after " << oom_retries_ << " retries with "
+                        << oom_backoff_ms_ << "ms initial backoff";
+          }
+        }
+#endif
+        context_msg << ")";
+        LOG(FATAL) << context_msg.str();
       }
     }
 

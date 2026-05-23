@@ -134,14 +134,18 @@ def _quantize_symbol(sym, device, excluded_symbols=None, excluded_operators=None
     """
     num_excluded_symbols = 0
     if excluded_symbols is not None:
-        assert isinstance(excluded_symbols, list)
+        if not isinstance(excluded_symbols, list):
+            raise TypeError(
+                f"excluded_symbols must be a list, but got {type(excluded_symbols).__name__}")
         num_excluded_symbols = len(excluded_symbols)
     else:
         excluded_symbols = []
 
     num_excluded_ops = 0
     if excluded_operators is not None:
-        assert isinstance(excluded_operators, list)
+        if not isinstance(excluded_operators, list):
+            raise TypeError(
+                f"excluded_operators must be a list, but got {type(excluded_operators).__name__}")
         num_excluded_ops = len(excluded_operators)
     else:
         excluded_operators = []
@@ -269,7 +273,9 @@ class _LayerHistogramCollector(CalibrationCollector):
         """
         (hist, hist_edges, min_val, max_val, _) = hist_data
         num_bins = len(hist)
-        assert (num_bins % 2 == 1)
+        if num_bins % 2 != 1:
+            raise ValueError(f'Expected odd-length histogram (mid bin centered '
+                             f'at zero), got num_bins={num_bins}.')
         if min_val >= 0 and quantized_dtype in ['auto', 'uint8']:
             # We need to move negative bins to positive bins to fit uint8 range.
             num_quantized_bins = num_quantized_bins * 2 + 1
@@ -286,7 +292,9 @@ class _LayerHistogramCollector(CalibrationCollector):
     @staticmethod
     def get_optimal_thresholds(hist_dict, quantized_dtype, num_quantized_bins=255, logger=None):
         """Given a ndarray dict, find the optimal threshold for quantizing each value of the key."""
-        assert isinstance(hist_dict, dict)
+        if not isinstance(hist_dict, dict):
+            raise TypeError('`hist_dict` must be a dict mapping layer names to '
+                            'histogram tuples.')
         if logger is not None:
             logger.info('Calculating optimal thresholds for quantization using KL divergence'
                         f' with num_quantized_bins={num_quantized_bins}')
@@ -396,7 +404,11 @@ def _generate_list_of_data_desc(data_shapes, data_types):
     if all(isinstance(x, DataDesc) for x in flattened_data_shapes):
         return data_shapes
 
-    assert len(flattened_data_types) == len(flattened_data_shapes)
+    if len(flattened_data_types) != len(flattened_data_shapes):
+        raise ValueError(
+            f'Length mismatch between data_types ({len(flattened_data_types)}) '
+            f'and data_shapes ({len(flattened_data_shapes)}); each shape needs '
+            'a corresponding dtype.')
 
     # pass integral type as reference
     counter = [0]

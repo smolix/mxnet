@@ -198,8 +198,16 @@ void StorageImpl::Alloc(Storage::Handle* handle, bool failsafe) {
       }
     }
 
-    if (context)
-      LOG(INFO) << "Using " << storage_manager_type << " StorageManager for " << context;
+    if (context) {
+      // Demoted from unconditional LOG(INFO) so this banner does not appear
+      // in d2l notebook output cells (or any other application's stderr) at
+      // default verbosity.  Set MXNET_LOG_STORAGE_INIT=1 to surface it
+      // again for storage-manager debugging.
+      static bool log_storage_init = dmlc::GetEnv("MXNET_LOG_STORAGE_INIT", false);
+      if (log_storage_init) {
+        LOG(INFO) << "Using " << storage_manager_type << " StorageManager for " << context;
+      }
+    }
 
     return ptr;
   });
@@ -244,13 +252,15 @@ void StorageImpl::SharedIncrementRefCount(Storage::Handle handle) {
 }
 
 const std::string env_var_name(const char* dev_type, env_var_type type) {
-  static const std::array<std::string, 6> name = {
+  static const std::array<std::string, 8> name = {
       "MEM_POOL_TYPE",
       "POOL_PAGE_SIZE",
       "MEM_LARGE_ALLOC_ROUND_SIZE",
       "MEM_POOL_ROUND_LINEAR_CUTOFF",
       "MEM_POOL_RESERVE",
       "MEM_POOL_PER_BUCKET_LIMIT",
+      "MEM_POOL_OOM_RETRIES",
+      "MEM_POOL_OOM_BACKOFF_MS",
   };
 
   return std::string("MXNET_") + dev_type + "_" + name[type];

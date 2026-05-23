@@ -9,6 +9,7 @@
 #include <mshadow/tensor.h>
 #include <mshadow/cuda/reduce.cuh>
 #include <algorithm>
+#include <limits>
 #include <vector>
 #include "../../common/cuda/utils.h"
 #include "../mxnet_op.h"
@@ -100,7 +101,14 @@ inline void PSROIPoolForward(const Tensor<gpu, 4, DType>& out,
   const DType* bottom_data = data.dptr_;
   const DType* bottom_rois = bbox.dptr_;
   DType* top_data          = out.dptr_;
-  const int count          = out.shape_.Size();
+  // XOP21: guard int-typed kernel launch counter against silent overflow
+  // for > INT_MAX-output tensors.  The PSROI CUDA kernel uses a single int
+  // counter, so an overlarge launch would miscompute the suffix.
+  const index_t count_full = out.shape_.Size();
+  CHECK_LE(count_full, static_cast<index_t>(std::numeric_limits<int>::max()))
+      << "PSROIPool forward output element count " << count_full
+      << " exceeds INT_MAX; the int-typed CUDA kernel cannot launch this size.";
+  const int count          = static_cast<int>(count_full);
   const int channels       = data.size(1);
   const int height         = data.size(2);
   const int width          = data.size(3);
@@ -201,7 +209,12 @@ inline void PSROIPoolBackwardAcc(const Tensor<gpu, 4, DType>& in_grad,
   const DType* top_diff    = out_grad.dptr_;
   const DType* bottom_rois = bbox.dptr_;
   DType* bottom_diff       = in_grad.dptr_;
-  const int count          = out_grad.shape_.Size();
+  // XOP21: same INT_MAX guard as the forward path.
+  const index_t count_full = out_grad.shape_.Size();
+  CHECK_LE(count_full, static_cast<index_t>(std::numeric_limits<int>::max()))
+      << "PSROIPool backward grad-output element count " << count_full
+      << " exceeds INT_MAX; the int-typed CUDA kernel cannot launch this size.";
+  const int count          = static_cast<int>(count_full);
   const int num_rois       = bbox.size(0);
   const int channels       = in_grad.size(1);
   const int height         = in_grad.size(2);

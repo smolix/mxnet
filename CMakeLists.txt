@@ -929,6 +929,19 @@ if(UNIX)
     # Ignore erroneous compiler warnings:
     # 1) variables used in '#pragma omp parallel' are considered unused
     target_compile_options(mxnet PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=unused-variable>")
+    # CN2 policy: GCC 13 emits noisy -Warray-bounds false positives against
+    # the deliberate flexible-tail allocation used by InplaceArrayBase /
+    # SimpleObjAllocator (ADTObj, NNVM tuples, NDArray pimpls, etc.).  The
+    # arithmetic-overflow hardening for those allocations is already in place;
+    # demote this specific warning to non-error so release builds compile
+    # cleanly while leaving the warning text visible in logs.  See issues.md
+    # CN2 for context.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+       CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "13")
+      target_compile_options(mxnet PRIVATE
+        "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=array-bounds>"
+        "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=stringop-overflow>")
+    endif()
     if(USE_CUDA)
       # Note: "=" is required to avoid breaking ccache
       string(APPEND CMAKE_CUDA_FLAGS " -Werror=cross-execution-space-call")

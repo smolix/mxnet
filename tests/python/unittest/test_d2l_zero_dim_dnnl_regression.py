@@ -89,6 +89,32 @@ def test_nd_sum_keeps_one_dim_shape():
     assert s.asscalar() == pytest.approx(10.0)
 
 
+def test_np_zero_dim_view_does_not_crash():
+    # Sister crash class to SetDNNLMem: the IsView() branch in NDArray's
+    # oneDNN binding (src/ndarray/ndarray.cc:849-872) used to LOG(FATAL)
+    # via GetDefaultFormat(0).  A scalar reduction whose result is then
+    # accessed via a slice that retains 0-dim shape (or any 0-dim view)
+    # routes through that branch on transfer.  Guard against regression.
+    x = mx.np.array([1.0, 2.0, 3.0, 4.0])
+    s = x.sum()
+    # Pull the value out of a 0-dim NDArray that has been through the view
+    # path.  Chain enough ops that at least one intermediate is a view.
+    y = (s + s) - s  # still 0-dim, several oneDNN binds in between
+    assert y.shape == ()
+    assert y.item() == pytest.approx(10.0)
+
+
+def test_np_zero_dim_default_format_safe():
+    # Direct cover for the dnnl_base.cc GetDefaultFormat / GetPermutedFormat
+    # 0-D hardening: round-trip a scalar through several .item()/.asnumpy()
+    # calls so the helpers see ndim()==0 inputs.
+    for _ in range(4):
+        s = mx.np.array([1.0, 2.0]).sum()
+        assert s.shape == ()
+        assert s.asnumpy().shape == ()
+        assert float(s) == pytest.approx(3.0)
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

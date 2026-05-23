@@ -486,6 +486,11 @@ bool IsDNNL(const dnnl::memory::desc& desc) {
 
 dnnl_format_tag_t GetDefaultFormat(int num_dims) {
   switch (num_dims) {
+    // A 0-D NDArray holds a single element and has the same byte layout as
+    // a 1-D length-1 tensor.  Treat it as such so callers below the
+    // operator-level SupportDNNL gate (NDArray view binding, transfer
+    // paths) don't LOG(FATAL).  Mirrors the SetDNNLMem 0-D mapping.
+    case 0:
     case 1:
       return dnnl_a;
     case 2:
@@ -518,6 +523,8 @@ dnnl_format_tag_t GetDefaultFormat(int num_dims) {
 
 dnnl_format_tag_t GetPermutedFormat(int num_dims) {
   switch (num_dims) {
+    // 0-D handled the same way as in GetDefaultFormat above.
+    case 0:
     case 1:
       return dnnl_a;
     case 2:

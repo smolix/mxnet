@@ -854,12 +854,21 @@ const dnnl::memory* NDArray::GetDNNLData() const {
     // because we don't have the complete data type and shape information for
     // the chunk.
     void* off_addr = static_cast<char*>(ptr_->shandle.dptr) + byte_offset_;
-    // Create the primitive desc for the new dnnl memory.
-    dnnl::memory::dims dims(shape().ndim());
-    for (size_t i = 0; i < dims.size(); i++)
-      dims[i] = shape()[i];
+    // Create the primitive desc for the new dnnl memory.  A 0-D view (e.g.
+    // a scalar reduction result that's been sliced) has the same byte
+    // layout as a 1-D length-1 tensor; mapping it that way avoids
+    // LOG(FATAL) in GetDefaultFormat and keeps the caller-visible shape
+    // (NDArray::shape_) the source of truth.  Mirrors SetDNNLMem above.
+    dnnl::memory::dims dims;
+    if (shape().ndim() == 0) {
+      dims.assign(1, 1);
+    } else {
+      dims.resize(shape().ndim());
+      for (size_t i = 0; i < dims.size(); i++)
+        dims[i] = shape()[i];
+    }
 
-    const auto cpp_format = static_cast<dnnl::memory::format_tag>(GetDefaultFormat(shape().ndim()));
+    const auto cpp_format = static_cast<dnnl::memory::format_tag>(GetDefaultFormat(dims.size()));
     dnnl::memory::desc data_md(dims, get_dnnl_type(dtype_), cpp_format);
     std::shared_ptr<dnnl::memory> ret(
         new dnnl::memory(data_md, CpuEngine::Get()->get_engine(), off_addr));

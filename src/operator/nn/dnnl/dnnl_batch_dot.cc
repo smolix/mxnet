@@ -105,8 +105,12 @@ dnnl::primitive_attr GetQuantizationAttributes(const DNNLDotParam& param,
 namespace {
 
 dnnl::memory::dim GetBatchDotBatchDim(const mxnet::TShape& shape) {
+  // SupportDNNLBatchDot already requires ndim >= 2; keep the index signed
+  // so a future regression in the gate that lets a rank-1 tensor through
+  // can't silently underflow `size_t` to a huge value and segfault.
+  const int ndim = shape.ndim();
   dnnl::memory::dim big_dim = shape[0];
-  for (size_t i = 1; i < shape.ndim() - 2; ++i) {
+  for (int i = 1; i < ndim - 2; ++i) {
     big_dim *= shape[i];
   }
   return big_dim;

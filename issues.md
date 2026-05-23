@@ -1,9 +1,14 @@
 # MXNet Port Issues
 
-Updated: 2026-05-22 (P0/P1/P2 cleanup pass — wheel built, tagged, pushed)
+Updated: 2026-05-23 (d2l fixes — OpenCV bundled, 0-dim fixed, rev .1 pushed)
 Current branch: `cleanup/p0-p1-p2-20260522` (on GitHub)
-Current tag: `v2.0.0+cu13.bw.20260522` (pushed to GitHub)
-Cleanup wheel: `dist/mxnet-2.0.0+cu13.bw.20260522-cp312-cp312-linux_x86_64.whl` (516MB)
+Current tag: `v2.0.0+cu13.bw.20260522.1` (pushed to GitHub) — supersedes `.20260522`
+Cleanup wheel: `dist/mxnet-2.0.0+cu13.bw.20260522.1-cp312-cp312-linux_x86_64.whl` (522MB,
+USE_OPENCV=ON, libopencv bundled at python/mxnet/lib/, RUNPATH=$ORIGIN/lib)
+Previous wheel (`.20260522`, 516MB) shipped with USE_OPENCV=OFF and missed
+the 0-dim oneDNN fix; the d2l notebook run against it failed on 53/76
+notebooks (24× 0-dim LOG(FATAL), 29× "Build with USE_OPENCV=1"). Both are
+fixed in `.20260522.1`.
 PR template URL: https://github.com/smolix/mxnet/pull/new/cleanup/p0-p1-p2-20260522
 Clean-venv acceptance: 2000+ tests passed across 18 PASS shards; remaining
 failures (`cpu_unittest`, `dnnl_subgraphs_qat_backward` partial,
@@ -547,24 +552,28 @@ They stay here as context, not as active work.
 
 ## Suggested Triage Order
 
-Cleanup pass on `cleanup/p0-p1-p2-20260522` is closed — branch + tag
-`v2.0.0+cu13.bw.20260522` are on GitHub.  Next session:
+Cleanup pass on `cleanup/p0-p1-p2-20260522` is closed and the d2l-driven
+follow-up is also in: branch + tag `v2.0.0+cu13.bw.20260522.1` are on
+GitHub.  d2l-2026-05-22 wheel run failed on 53/76 notebooks for two
+reasons (24× oneDNN 0-dim LOG(FATAL), 29× missing OpenCV); both fixed
+in `.20260522.1`.  Next session:
 
-1. **Highest-leverage next bug**: the pre-existing `oneDNN doesn't support
-   0 dimensions` LOG(FATAL) at `ndarray.cc:624` — fixing it should reclaim
-   ~57 currently-failing tests in `cpu_unittest` and `dnnl_subgraphs_qat_backward`.
-   Add a default-format fallback for ndim==0 NDArrays.
-2. **Second**: `test_box_nms_backward_add_request` segfault on grad_req='add'.
+1. **Rerun d2l notebooks** against the `.20260522.1` wheel and triage the
+   remaining failures.  Expected residual:
+   - BoxNMS backward segfault on `grad_req='add'` (object detection chapter)
+   - any chapter that depends on scipy / pillow / matplotlib at notebook
+     scope rather than at the mxnet API boundary
+2. **`test_box_nms_backward_add_request` segfault** on `grad_req='add'`.
    Native BoxNMS backward path, pre-existing in `master`.
-3. **Test-harness gap**: pip-install `scipy` (and surface any other test deps)
-   in `tools/run_wheel_full_test.sh` so the GPU operator and test_random shards
-   don't collect-error in the clean venv.
-4. **XOP12** reusable operator contract harness — would have prevented both
-   findings above being silent.
+3. **Test-harness gap**: pip-install `scipy` (and surface any other test
+   deps) in `tools/run_wheel_full_test.sh` so the GPU operator and
+   test_random shards don't collect-error in the clean venv.
+4. **XOP12** reusable operator contract harness — would have prevented
+   the silent ND-0 + USE_OPENCV regressions.
 5. **XOP7 leftover**: DNNL deconv weight-grad fast path conversion.
 6. **Remote FP16 smoke**: when a Zen 4+ box is available, run
-   `tools/run_fp16_remote_smoke.sh` to ingest fresh BF16 findings (the Zen 2
-   dev host can't exercise the native BF16 path).
+   `tools/run_fp16_remote_smoke.sh` to ingest fresh BF16 findings (the
+   Zen 2 dev host can't exercise the native BF16 path).
 
 Long-term deferred:
 

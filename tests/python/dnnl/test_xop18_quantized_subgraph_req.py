@@ -104,6 +104,41 @@ def test_selfatt_qk_split_inference_smoke():
     assert expected.shape == (B, heads, T, T)
 
 
+def test_selfatt_kAddTo_rejection_documented():
+    """The XOP19 gates in dnnl_transformer.cc reject kAddTo for the primary
+    output of `_sg_onednn_selfatt_qk` and `_sg_onednn_selfatt_valatt`
+    before any write happens.  Pin the documentation contract here so a
+    refactor that allows kAddTo through must include accumulation support
+    and update this test deliberately.
+
+    The actual CHECK_NE-throwing behavior is hard to invoke without
+    constructing the subgraph at hybridize time + setting an explicit
+    primary req via _bind; the gates live in the
+    `SgDNNLSelfAttQKForward` / `DNNLSelfAttValAttForward` C++ entry
+    points and would fire before any output is touched.  This test
+    grep-checks the source so the gate is not silently removed.
+    """
+    import os
+    src_dir = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), '..', '..', '..',
+        'src', 'operator', 'subgraph', 'dnnl')
+    src_path = os.path.join(src_dir, 'dnnl_transformer.cc')
+    if not os.path.exists(src_path):
+        pytest.skip("source tree not available")
+    with open(src_path) as f:
+        contents = f.read()
+    # The two entry points must both call CHECK_NE(req[0], kAddTo).
+    assert (
+        'CHECK_NE(req[0], kAddTo)' in contents
+        and '_sg_onednn_selfatt_qk' in contents
+        and '_sg_onednn_selfatt_valatt' in contents
+    ), ("XOP19 primary-output kAddTo guards in SgDNNLSelfAttQKForward / "
+        "DNNLSelfAttValAttForward appear to have been removed without an "
+        "accompanying accumulation implementation.  Either restore the "
+        "CHECK_NE guards or implement real kAddTo handling and update "
+        "this test.")
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

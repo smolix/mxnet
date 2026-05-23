@@ -312,9 +312,13 @@ inline void RandomCropOpForward(const nnvm::NodeAttrs& attrs,
   if (req[0] == kNullOp) {
     return;
   }
+  // RandomCrop's output is a window of the input, not a per-element function,
+  // so kAddTo (accumulate into existing buffer) has no well-defined meaning.
+  // Reject before any RNG draw or output write so the caller's buffer is
+  // observably untouched on rejection.  (Mirrors the contract in image
+  // resize / crop_resize.)
+  CHECK_NE(req[0], kAddTo) << "image random crop does not support kAddTo requests.";
   const bool needs_resize = resize_size[0] != src_size[0] || resize_size[1] != src_size[1];
-  CHECK(!needs_resize || req[0] != kAddTo)
-      << "image random crop with resize does not support kAddTo requests.";
   Stream<cpu>* s    = ctx.get_stream<cpu>();
   Random<cpu>* prnd = ctx.requested[0].get_random<cpu, real_t>(s);
   // random left/top position

@@ -361,6 +361,61 @@ def _run_optimized_python(source):
     else:
         raise AssertionError('Optimizer accepted non-dict param_idx2name')
     """,
+    """
+    # XOP22 second wave: KVStore.save_optimizer_states must still reject the
+    # 'no updater' case under python -O.
+    from mxnet.kvstore.kvstore import KVStore
+    kv = object.__new__(KVStore)
+    kv._updater = None
+    try:
+        kv.save_optimizer_states('/tmp/should-not-be-written')
+    except RuntimeError as err:
+        if 'distributed training' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('save_optimizer_states accepted None updater')
+    """,
+    """
+    # XOP22 second wave: KVStore.load_optimizer_states symmetric guard.
+    from mxnet.kvstore.kvstore import KVStore
+    kv = object.__new__(KVStore)
+    kv._updater = None
+    try:
+        kv.load_optimizer_states('/tmp/should-not-be-read')
+    except RuntimeError as err:
+        if 'distributed training' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('load_optimizer_states accepted None updater')
+    """,
+    """
+    # XOP22 second wave: BytePS KVStore key type must still be checked under -O.
+    from mxnet.kvstore.byteps import BytePS
+    kv = object.__new__(BytePS)
+    try:
+        kv.pushpull(1.5, None)
+    except TypeError as err:
+        if 'key must be str or int' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('BytePS pushpull accepted float key')
+    """,
+    """
+    # XOP22 second wave: Gluon Parameter.set_data without prior init must
+    # still raise instead of silently corrupting state under -O.
+    from mxnet.gluon.parameter import Parameter
+    p = Parameter('test_p', shape=(2, 3))
+    # Don't initialize; deferred_init is empty by default.
+    p._deferred_init = ()
+    import mxnet as mx
+    try:
+        p.set_data(mx.nd.zeros((2, 3)))
+    except RuntimeError as err:
+        if 'has not been initialized' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Parameter.set_data accepted uninitialized parameter')
+    """,
 ])
 def test_user_validation_survives_optimized_python(source):
     _run_optimized_python(source)

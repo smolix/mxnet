@@ -137,14 +137,20 @@ class BytePS(KVStoreBase):
         # the most common operation operates on one NDArray as `value`, and
         # `out` is set to None, for inplace pushpull.
 
-        assert isinstance(key, (str, int))
+        if not isinstance(key, (str, int)):
+            raise TypeError(
+                f"BytePS KVStore key must be str or int, got {type(key).__name__}")
 
         # unpack the list if it contains just one NDArray
         value = value[0] if isinstance(
             value, list) and len(value) == 1 else value
-        assert isinstance(
-            value, NDArray), "The type of value can only be NDArray or list of NDArray which has only one element."
-        assert value.context.device_type == 'gpu', "Byteps KVStore only support GPU context for pushpull value"
+        if not isinstance(value, NDArray):
+            raise TypeError(
+                "The type of value can only be NDArray or list of NDArray which "
+                "has only one element.")
+        if value.context.device_type != 'gpu':
+            raise ValueError(
+                "Byteps KVStore only support GPU context for pushpull value")
 
         # optimzation when out = value or out = [value]
         if isinstance(out, (list, tuple)) and len(out) == 1:

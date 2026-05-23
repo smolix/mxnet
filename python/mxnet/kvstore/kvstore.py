@@ -659,7 +659,8 @@ class KVStore(KVStoreBase):
             Whether to also save the optimizer itself. This would also save optimizer
             information such as learning rate and weight decay schedules.
         """
-        assert self._updater is not None, "Cannot save states for distributed training"
+        if self._updater is None:
+            raise RuntimeError("Cannot save states for distributed training")
         with open(fname, 'wb') as fout:
             fout.write(self._updater.get_states(dump_optimizer))
 
@@ -671,7 +672,8 @@ class KVStore(KVStoreBase):
         fname : str
             Path to input states file.
         """
-        assert self._updater is not None, "Cannot load states for distributed training"
+        if self._updater is None:
+            raise RuntimeError("Cannot load states for distributed training")
         with open(fname, 'rb') as fin:
             self._updater.set_states(fin.read())
 

@@ -319,17 +319,19 @@ class Parameter(object):
             device = [device]
         if self._data is None:
             if self._deferred_init:
-                assert device is None or set(device) == set(self._deferred_init[1]), \
-                    f"Failed to load Parameter '{self.name}' on {str(device)} because it was " \
-                    f"previous initialized on {str(self.list_device())}."
+                if device is not None and set(device) != set(self._deferred_init[1]):
+                    raise RuntimeError(
+                        f"Failed to load Parameter '{self.name}' on {str(device)} because "
+                        f"it was previous initialized on {str(self.list_device())}.")
                 device = self._deferred_init[1]
             elif device is None:
                 device = [cpu()]
             self._init_impl(data, device)
         else:
-            assert device is None or set(device) == set(self.list_device()), \
-                f"Failed to load Parameter '{self.name}' on {str(device)} because it was " \
-                f"previous initialized on {str(self.list_device())}."
+            if device is not None and set(device) != set(self.list_device()):
+                raise RuntimeError(
+                    f"Failed to load Parameter '{self.name}' on {str(device)} because "
+                    f"it was previous initialized on {str(self.list_device())}.")
             self.set_data(data)
         self._deferred_init = ()
 
@@ -340,10 +342,11 @@ class Parameter(object):
         init, device, default_init, data = self._deferred_init
         self._deferred_init = ()
 
-        assert shape_is_known(self.shape), \
-            f"Cannot initialize Parameter '{self.name}' because it has " \
-            f"invalid shape: {str(self.shape)}. Please specify in_units, " \
-            "in_channels, etc for `Block`s."
+        if not shape_is_known(self.shape):
+            raise RuntimeError(
+                f"Cannot initialize Parameter '{self.name}' because it has "
+                f"invalid shape: {str(self.shape)}. Please specify in_units, "
+                "in_channels, etc for `Block`s.")
 
         with autograd.pause(), dc.context(False):
             if data is None:
@@ -523,8 +526,9 @@ class Parameter(object):
         self.shape = data.shape
 
         if self._data is None:
-            assert self._deferred_init, \
-                f"Parameter '{self.name}' has not been initialized"
+            if not self._deferred_init:
+                raise RuntimeError(
+                    f"Parameter '{self.name}' has not been initialized")
             self._deferred_init = self._deferred_init[:3] + (data,)
             return
 
@@ -715,10 +719,11 @@ class Parameter(object):
                 elif k == 'dtype' and np.dtype(v) == np.dtype(existing):
                     continue
 
-                assert v is None or v == existing, \
-                    f"Cannot retrieve Parameter '{self.name}' because desired attribute " \
-                    f"does not match with stored for attribute '{k}': " \
-                    f"desired '{str(v)}' vs stored '{str(getattr(self, k))}'."
+                if v is not None and v != existing:
+                    raise ValueError(
+                        f"Cannot retrieve Parameter '{self.name}' because desired attribute "
+                        f"does not match with stored for attribute '{k}': "
+                        f"desired '{str(v)}' vs stored '{str(getattr(self, k))}'.")
             else:
                 setattr(self, k, v)
 

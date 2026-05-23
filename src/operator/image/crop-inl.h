@@ -26,6 +26,7 @@
 #define MXNET_OPERATOR_IMAGE_CROP_INL_H_
 
 #include <algorithm>
+#include <mutex>
 #include <vector>
 
 #include "mxnet/base.h"
@@ -321,6 +322,9 @@ inline void RandomCropOpForward(const nnvm::NodeAttrs& attrs,
   const bool needs_resize = resize_size[0] != src_size[0] || resize_size[1] != src_size[1];
   Stream<cpu>* s    = ctx.get_stream<cpu>();
   Random<cpu>* prnd = ctx.requested[0].get_random<cpu, real_t>(s);
+  // d2l-mxnet-issues.md Issue 3: defensive lock around the shared
+  // ``kRandom`` resource — see mshadow::Random<cpu>::mutex().
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   // random left/top position
   float x = std::uniform_real_distribution<float>(param.xrange[0],
                                                   param.xrange[1])(prnd->GetRndEngine()) *
@@ -470,6 +474,11 @@ inline void RandomResizedCropOpForward(const nnvm::NodeAttrs& attrs,
   int64_t src_area                    = src_size[0] * src_size[1];
   Stream<cpu>* s                      = ctx.get_stream<cpu>();
   Random<cpu>* prnd                   = ctx.requested[0].get_random<cpu, real_t>(s);
+  // d2l-mxnet-issues.md Issue 3: lock the Random<cpu> mutex around our
+  // GetRndEngine() draws.  See ``mshadow::Random<cpu>::mutex()`` for the
+  // rationale (race observed under ThreadedEnginePerDevice + multi-GPU
+  // dispatch even though the engine should serialize via kRandom var).
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   for (int i = 0; i < param.max_trial; ++i) {
     float target_area =
         std::uniform_real_distribution<float>(param.area[0], param.area[1])(prnd->GetRndEngine()) *

@@ -29,6 +29,7 @@
 #include <climits>
 #include <cmath>
 #include <limits>
+#include <mutex>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -620,6 +621,10 @@ inline void RandomFlipLeftRight(const nnvm::NodeAttrs& attrs,
   const RandomFlipParam& param = nnvm::get<RandomFlipParam>(attrs.parsed);
   Stream<cpu>* s               = ctx.get_stream<cpu>();
   Random<cpu>* prnd            = ctx.requested[0].get_random<cpu, float>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   std::normal_distribution<float> dist(0, 1);
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
     if (dist(prnd->GetRndEngine()) > param.p) {
@@ -641,6 +646,10 @@ inline void RandomFlipTopBottom(const nnvm::NodeAttrs& attrs,
   const RandomFlipParam& param = nnvm::get<RandomFlipParam>(attrs.parsed);
   Stream<cpu>* s               = ctx.get_stream<cpu>();
   Random<cpu>* prnd            = ctx.requested[0].get_random<cpu, float>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   std::normal_distribution<float> dist(0, 1);
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
     if (dist(prnd->GetRndEngine()) > param.p) {
@@ -690,6 +699,10 @@ inline void RandomBrightness(const nnvm::NodeAttrs& attrs,
 
   Stream<cpu>* s    = ctx.get_stream<cpu>();
   Random<cpu>* prnd = ctx.requested[0].get_random<cpu, float>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   float alpha_b     = std::uniform_real_distribution<float>(param.min_factor,
                                                         param.max_factor)(prnd->GetRndEngine());
 
@@ -741,6 +754,10 @@ inline void RandomContrast(const nnvm::NodeAttrs& attrs,
 
   Stream<cpu>* s    = ctx.get_stream<cpu>();
   Random<cpu>* prnd = ctx.requested[0].get_random<cpu, real_t>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   float alpha_c     = std::uniform_real_distribution<float>(param.min_factor,
                                                         param.max_factor)(prnd->GetRndEngine());
 
@@ -793,6 +810,10 @@ inline void RandomSaturation(const nnvm::NodeAttrs& attrs,
 
   Stream<cpu>* s    = ctx.get_stream<cpu>();
   Random<cpu>* prnd = ctx.requested[0].get_random<cpu, real_t>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   float alpha_s     = std::uniform_real_distribution<float>(param.min_factor,
                                                         param.max_factor)(prnd->GetRndEngine());
 
@@ -925,6 +946,10 @@ inline void RandomHue(const nnvm::NodeAttrs& attrs,
 
   Stream<cpu>* s    = ctx.get_stream<cpu>();
   Random<cpu>* prnd = ctx.requested[0].get_random<cpu, real_t>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   float alpha       = std::uniform_real_distribution<float>(param.min_factor,
                                                       param.max_factor)(prnd->GetRndEngine());
 
@@ -953,6 +978,10 @@ inline void RandomColorJitter(const nnvm::NodeAttrs& attrs,
   const RandomColorJitterParam& param = nnvm::get<RandomColorJitterParam>(attrs.parsed);
   Stream<cpu>* s                      = ctx.get_stream<cpu>();
   Random<cpu>* prnd                   = ctx.requested[0].get_random<cpu, real_t>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
 
   int order[4] = {0, 1, 2, 3};
   std::shuffle(order, order + 4, prnd->GetRndEngine());
@@ -1063,6 +1092,10 @@ inline void RandomLighting(const nnvm::NodeAttrs& attrs,
   const RandomLightingParam& param = nnvm::get<RandomLightingParam>(attrs.parsed);
   Stream<cpu>* s                   = ctx.get_stream<cpu>();
   Random<cpu>* prnd                = ctx.requested[0].get_random<cpu, float>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   std::normal_distribution<float> dist(0, param.alpha_std);
   float alpha_r = dist(prnd->GetRndEngine());
   float alpha_g = dist(prnd->GetRndEngine());

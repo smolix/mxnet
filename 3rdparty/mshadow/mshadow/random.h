@@ -28,6 +28,7 @@
 
 #include <cstdlib>
 #include <algorithm>
+#include <mutex>
 #include <random>
 #include "./base.h"
 #include "./tensor.h"
@@ -59,10 +60,35 @@ class Random<cpu, DType> {
   ~Random(void) {
   }
   /*!
+   * \brief access to an internal mutex protecting concurrent access
+   * to ``rnd_engine_``.
+   *
+   * MXNet's resource system hands out one ``Random<cpu>`` per
+   * (Context.dev_id, kRandom-resource) tuple — so multiple ops
+   * requesting ``kRandom`` on the same CPU device share a single
+   * ``mshadow::Random<cpu>`` instance.  The engine *should* serialize
+   * those ops via the resource's write var, but under
+   * ``ThreadedEnginePerDevice`` with concurrent multi-GPU dispatch we
+   * observed a data race on the underlying ``std::mt19937`` (~26
+   * native threads SEGV at once when the d2l fine-tuning notebook ran
+   * with ``RandomResizedCrop`` in the augmentation pipeline; passed
+   * cleanly with ``MXNET_ENGINE_TYPE=NaiveEngine``).  Whatever the
+   * upstream engine flaw, exposing an explicit mutex here lets every
+   * op that touches the engine take its own lock as defense-in-depth.
+   *
+   * Callers should grab ``std::lock_guard<std::mutex>`` (or a
+   * ``std::unique_lock``) around blocks that draw from
+   * ``GetRndEngine()``.
+   */
+  inline std::mutex& mutex() {
+    return mtx_;
+  }
+  /*!
    * \brief seed random number generator using this seed
    * \param seed seed of prng
    */
   inline void Seed(int seed) {
+    std::lock_guard<std::mutex> _lk(mtx_);
     rnd_engine_.seed(seed);
     this->rseed_ = static_cast<unsigned>(seed);
   }
@@ -281,6 +307,9 @@ class Random<cpu, DType> {
   unsigned rseed_;
   /*! \brief temporal space used to store random numbers */
   TensorContainer<cpu, 1, DType> buffer_;
+  /*! \brief protects concurrent access to ``rnd_engine_``.  See
+   *  ``mutex()`` accessor above for the rationale. */
+  std::mutex mtx_;
 };  // class Random<cpu, DType>
 
 // only allow GPU PRNG when cuda is enabled

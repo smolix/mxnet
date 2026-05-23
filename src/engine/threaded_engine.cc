@@ -137,7 +137,14 @@ inline bool ThreadedVar::CompleteWriteDependency(Dispatcher dispatcher) {
     if (to_delete_) {
       VersionedVarBlock* head = pending_write_->next;
       VersionedVarBlock::Delete(pending_write_);
-      assert(head_ == head);
+      // XOP23: promote from `assert` to CHECK so the linked-list integrity
+      // invariant ('the pending_write_ head's next is also our tracked head')
+      // is not silently compiled out in release builds.  A stripped assert
+      // here would let us Delete(head) on a mis-aligned head and corrupt the
+      // var pool.
+      CHECK(head_ == head)
+          << "ThreadedVar pending-write head/head_ chain invariant violated"
+          << " in to_delete_ path";
       VersionedVarBlock::Delete(head);
       return true;
     }

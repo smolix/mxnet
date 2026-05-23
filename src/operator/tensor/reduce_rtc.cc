@@ -416,11 +416,19 @@ __global__ void reduce_kernel_M1(const int N,
   using IType1 = AccType<InputType1>;
   using IType2 = AccType<InputType2>;
   using OType = AccType<OutputType0>;
-  for (index_t index = threadIdx.x + blockIdx.x*blockDim.x;
-       index < N;
-       index += blockDim.x*gridDim.x) {
+  // `out_idx` is the flat output index this thread is responsible for.  The
+  // non-M1 kernel (above) instead loops a separate `index` variable over the
+  // reduction axis and references that inside the FUNC macro.  Here M == 1
+  // (the reduction axis has length 1) so the only valid reduction-axis
+  // position is 0 — keep the variable name `index` for FUNC and shadow the
+  // outer counter so FUNC's `AType(OP(...), index)` form sees 0 instead of
+  // the output coordinate.  Without the shadow, np.argmax along a size-1
+  // axis returns the output flat index rather than 0.
+  for (index_t out_idx = threadIdx.x + blockIdx.x*blockDim.x;
+       out_idx < N;
+       out_idx += blockDim.x*gridDim.x) {
     index_t coord[ndim];
-    util::unravel(index, params.small_shape, coord);
+    util::unravel(out_idx, params.small_shape, coord);
     index_t idx_big[1];
     idx_big[0] = util::ravel(coord, params.big_shape);
     index_t idx_lhs[1], idx_rhs[1];
@@ -431,14 +439,17 @@ __global__ void reduce_kernel_M1(const int N,
     AType val, residual;
     REDUCER.SetInitValue(val, residual);
     const int u = 0;
-    REDUCER.Reduce(val, FUNC, residual);
+    {
+      const index_t index = 0;
+      REDUCER.Reduce(val, FUNC, residual);
+    }
     REDUCER.Finalize(val, residual);
     if (req == OpReqType::kAddTo) {
       const auto temp = op::add(static_cast<typename OType::type>(val),
-                                OType::from(small[index]));
-      small[index] = OType::to(temp);
+                                OType::from(small[out_idx]));
+      small[out_idx] = OType::to(temp);
     } else {
-      small[index] = OType::to(static_cast<typename OType::type>(val));
+      small[out_idx] = OType::to(static_cast<typename OType::type>(val));
     }
   }
 }

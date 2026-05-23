@@ -98,6 +98,13 @@ $env:MXNET_STORAGE_FALLBACK_LOG_VERBOSE=0
   - Values: Int ```(default=2097152)```
   - When the rounded size of memory allocations calculated by the pool of *Naive* type is larger than this threshold, it will be rounded up to a multiple of this value.
   - The default was chosen to minimize global memory fragmentation within the GPU driver. Set this to 1 to disable.
+* MXNET_GPU_MEM_POOL_OOM_RETRIES
+  - Values: Int ```(default=4)```
+  - On `cudaErrorMemoryAllocation`, how many additional `cudaMalloc` retries to attempt (with exponential backoff and a flush of this process's own pool between attempts) before raising the fatal OOM error.
+  - This helps survive transient cross-process contention: when two MXNet processes share a GPU, the loser of a `cudaMalloc` race can succeed moments later once the neighbor releases a chunk. Set to 0 to restore the previous "fail fast" behavior.
+* MXNET_GPU_MEM_POOL_OOM_BACKOFF_MS
+  - Values: Int ```(default=50)```
+  - Initial backoff in milliseconds between OOM retries. Doubled per attempt and capped at 1000ms. With the default 4 retries this totals up to ~750ms of waiting before LOG(FATAL).
 * MXNET_GPU_MEM_POOL_ROUND_LINEAR_CUTOFF
   - Values: Int ```(default=24)```
   - The cutoff threshold used by *Round* strategy. Let's denote the threshold as T. If the memory size is smaller than `2 ** T` (by default, it's 2 ** 24 = 16MB), it rounds to the smallest `2 ** n` that is larger than the requested memory size; if the memory size is larger than `2 ** T`, it rounds to the next k * 2 ** T.

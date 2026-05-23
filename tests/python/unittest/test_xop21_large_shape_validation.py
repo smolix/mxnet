@@ -87,3 +87,42 @@ def test_layernorm_above_int_max_elements():
     layer.initialize()
     x = mx.np.zeros(shape, dtype="float32")
     layer(x).wait_to_read()
+
+
+# GPU-only large-shape kernel-launch guards (XOP21 second batch).
+# We can't easily exercise the > INT_MAX path without > 8 GiB allocations,
+# so the regressions here just confirm the small-shape path still works
+# after the guards were added.
+
+import pytest
+import mxnet as mx
+import numpy as np
+
+
+def _gpu_available():
+    return mx.runtime.Features().is_enabled("CUDA") and mx.context.num_gpus() > 0
+
+
+@pytest.mark.skipif(not _gpu_available(), reason="requires GPU for ROIAlign")
+def test_roialign_small_shape_after_int_max_guard():
+    """XOP21: ROIAlignForwardCompute now guards `count = out.Size()` against
+    silent int truncation.  Confirm the guard does not regress the standard
+    small-shape forward."""
+    data = mx.nd.array(np.random.randn(1, 3, 8, 8).astype('float32'), ctx=mx.gpu(0))
+    rois = mx.nd.array(np.array([[0, 0, 0, 4, 4]], dtype='float32'), ctx=mx.gpu(0))
+    out = mx.nd.contrib.ROIAlign(data, rois, pooled_size=(2, 2), spatial_scale=1.0)
+    assert out.shape == (1, 3, 2, 2)
+    mx.nd.waitall()
+
+
+@pytest.mark.skipif(not _gpu_available(), reason="requires GPU for GroupNorm CUDA path")
+def test_groupnorm_small_shape_after_int_max_guard():
+    """XOP21: GroupNormCompute now promotes the group element count to
+    int64_t before the INT_MAX check.  Confirm the guard does not regress
+    the standard small-shape forward."""
+    x = mx.nd.array(np.random.randn(2, 4, 4, 4).astype('float32'), ctx=mx.gpu(0))
+    gamma = mx.nd.ones((4,), ctx=mx.gpu(0))
+    beta = mx.nd.zeros((4,), ctx=mx.gpu(0))
+    out = mx.nd.GroupNorm(x, gamma, beta, num_groups=2)
+    assert out.shape == (2, 4, 4, 4)
+    mx.nd.waitall()

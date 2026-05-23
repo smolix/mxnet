@@ -22,6 +22,7 @@
  * \author Hang Zhang, Shesung
  * Adapted from Caffe2
  */
+#include <limits>
 #include "./roi_align-inl.h"
 #include "../mxnet_op.h"
 
@@ -344,7 +345,15 @@ void ROIAlignForwardCompute(const nnvm::NodeAttrs& attrs,
 
   const ROIAlignParam param = nnvm::get<ROIAlignParam>(attrs.parsed);
 
-  const int count         = out_data[roialign::kOut].Size();
+  // XOP21: guard the int-typed kernel launch count against silent
+  // truncation of the > INT_MAX output element case.  The RoIAlignForward
+  // CUDA kernel indexes per-element via a single int counter, so an
+  // overlarge tensor would otherwise quietly miscompute the suffix.
+  const index_t count_full = out_data[roialign::kOut].Size();
+  CHECK_LE(count_full, static_cast<index_t>(std::numeric_limits<int>::max()))
+      << "ROIAlign forward output element count " << count_full
+      << " exceeds INT_MAX; the int-typed CUDA kernel cannot launch this size.";
+  const int count         = static_cast<int>(count_full);
   const int num_rois      = in_data[roialign::kBox].size(0);
   const int channels      = out_data[roialign::kOut].size(1);  // channels of pooled output
   const int height        = in_data[roialign::kData].size(2);
@@ -396,7 +405,13 @@ void ROIAlignBackwardCompute(const nnvm::NodeAttrs& attrs,
 
   const ROIAlignParam param = nnvm::get<ROIAlignParam>(attrs.parsed);
 
-  const int count         = out_grad[0].Size();
+  // XOP21: same INT_MAX guard as the forward path, applied to the
+  // backward kernel's per-element launch counter.
+  const index_t count_full = out_grad[0].Size();
+  CHECK_LE(count_full, static_cast<index_t>(std::numeric_limits<int>::max()))
+      << "ROIAlign backward grad-output element count " << count_full
+      << " exceeds INT_MAX; the int-typed CUDA kernel cannot launch this size.";
+  const int count         = static_cast<int>(count_full);
   const int num_rois      = in_data[0].size(0);
   const int channels      = out_grad[0].size(1);  // channels of pooled output
   const int height        = outputs[0].size(2);

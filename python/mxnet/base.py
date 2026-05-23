@@ -774,12 +774,16 @@ def _generate_op_module_signature(root_namespace, module_name, op_code_gen_func)
         if not _is_np_op(op_name):
             op_names.append(op_name)
 
-    module_op_file = get_module_file(f"{root_namespace}.{module_name}.op")
-    module_op_all = []
-    module_internal_file = get_module_file(f"{root_namespace}.{module_name}._internal")
-    module_internal_all = []
+    # XOP22/GH4: open all module files inside the try so a failure on any
+    # subsequent get_module_file() does not leak the earlier handles.
+    module_op_file = None
+    module_internal_file = None
     submodule_dict = {}
     try:
+        module_op_file = get_module_file(f"{root_namespace}.{module_name}.op")
+        module_op_all = []
+        module_internal_file = get_module_file(f"{root_namespace}.{module_name}._internal")
+        module_internal_all = []
         for op_name_prefix in _OP_NAME_PREFIX_LIST:
             submodule_dict[op_name_prefix] =\
                 (get_module_file(f"{root_namespace}.{module_name}.{op_name_prefix[1:-1]}"), [])
@@ -811,8 +815,10 @@ def _generate_op_module_signature(root_namespace, module_name, op_code_gen_func)
     finally:
         for submodule_f, _ in submodule_dict.values():
             submodule_f.close()
-        module_op_file.close()
-        module_internal_file.close()
+        if module_op_file is not None:
+            module_op_file.close()
+        if module_internal_file is not None:
+            module_internal_file.close()
 
 ctypes.pythonapi.PyCapsule_New.restype = ctypes.py_object
 ctypes.pythonapi.PyCapsule_GetPointer.restype = ctypes.c_void_p

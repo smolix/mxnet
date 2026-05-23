@@ -162,3 +162,44 @@ TEST(Engine, RapidVarAllocDelete) {
     engine->WaitForAll();
   }
 }
+
+// XOP23: Repeatedly create, push trivial work onto, and delete a single
+// variable in tight rotation across multiple threads.  Stresses the
+// var-deletion fast path, which used to rely on assert() to guard the
+// "delete-while-busy" + "deletion-already-scheduled" invariants.  A real
+// double-delete or use-after-free would manifest as a sanitizer abort or
+// data corruption that the next iteration's pointer reuse exposes.
+TEST(Engine, ShutdownRaceCreateUseDeleteCycle) {
+  mxnet::Engine* engine = mxnet::engine::CreateThreadedEnginePooled();
+  constexpr int kThreads = 8;
+  constexpr int kCycles  = 256;
+
+  std::atomic<bool> start{false};
+  std::vector<std::thread> workers;
+  for (int t = 0; t < kThreads; ++t) {
+    workers.emplace_back([engine, &start]() {
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      for (int i = 0; i < kCycles; ++i) {
+        auto* var = engine->NewVariable();
+        // Mix push then immediate delete so the engine has to drain the
+        // pending op before reclaiming the var.
+        engine->PushAsync(NoOp,
+                          mxnet::Context::CPU(),
+                          {},
+                          {var},
+                          mxnet::FnProperty::kNormal,
+                          0,
+                          "ShutdownRaceWrite");
+        engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, var);
+      }
+    });
+  }
+
+  start.store(true, std::memory_order_release);
+  for (auto& th : workers) {
+    th.join();
+  }
+  engine->WaitForAll();
+}

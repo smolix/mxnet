@@ -24,6 +24,7 @@
  */
 #include "./multi_sum_sq-inl.h"
 #include <cub/cub.cuh>
+#include <limits>
 
 #define ILP         4
 #define BLOCK_LIMIT 320
@@ -172,7 +173,16 @@ void MultiSumSqRun<gpu>(const std::vector<TBlob>& inputs,
     for (int t = 0; t < n_inputs; t++, loc_tensor_info++) {  // array index in inputs
       param.sizes[loc_tensor_info]     = inputs[t].shape_.Size();
       param.addresses[loc_tensor_info] = inputs[t].FlatTo2D<gpu, DType>(s).dptr_;
-      const int chunks_this_tensor     = (inputs[t].shape_.Size() - 1) / chunk_size;
+      // XOP21: chunks_this_tensor narrows from index_t to int.  For a
+      // > INT_MAX-elements tensor we'd silently process the wrong number of
+      // chunks.  Guard before narrowing.
+      const index_t chunks_this_tensor_full =
+          (inputs[t].shape_.Size() - 1) / chunk_size;
+      CHECK_LE(chunks_this_tensor_full,
+               static_cast<index_t>(std::numeric_limits<int>::max()))
+          << "multi_sum_sq input " << t << " has " << inputs[t].shape_.Size()
+          << " elements, exceeding INT_MAX * chunk_size; cannot fit in int chunk index.";
+      const int chunks_this_tensor     = static_cast<int>(chunks_this_tensor_full);
       for (int chunk = 0; chunk <= chunks_this_tensor; ++chunk) {  // array chunk index
         param.block_to_tensor[loc_block_info] = loc_tensor_info;
         param.block_to_chunk[loc_block_info]  = chunk;

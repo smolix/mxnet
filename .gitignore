@@ -182,3 +182,7 @@ cudnn_local/
 
 # GPU memory profiling artifacts
 gpu_memory_profile-*.csv
+
+# Generated at wheel build time by python/setup.py; resolves
+# mxnet.__version__ to the actual MXNET_PACKAGE_VERSION used for the build.
+python/mxnet/_build_info.py

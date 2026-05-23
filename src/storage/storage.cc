@@ -198,8 +198,16 @@ void StorageImpl::Alloc(Storage::Handle* handle, bool failsafe) {
       }
     }
 
-    if (context)
-      LOG(INFO) << "Using " << storage_manager_type << " StorageManager for " << context;
+    if (context) {
+      // Demoted from unconditional LOG(INFO) so this banner does not appear
+      // in d2l notebook output cells (or any other application's stderr) at
+      // default verbosity.  Set MXNET_LOG_STORAGE_INIT=1 to surface it
+      // again for storage-manager debugging.
+      static bool log_storage_init = dmlc::GetEnv("MXNET_LOG_STORAGE_INIT", false);
+      if (log_storage_init) {
+        LOG(INFO) << "Using " << storage_manager_type << " StorageManager for " << context;
+      }
+    }
 
     return ptr;
   });

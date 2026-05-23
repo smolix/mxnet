@@ -356,7 +356,13 @@ dnnl_output_t CreateDNNLMem(const NDArray& out_arr,
 dnnl_output_t CreateDNNLWeightGrad(const NDArray& out_arr,
                                    const dnnl::memory::desc& desc,
                                    OpReqType req) {
-  if (kAddTo == req) {
+  if (kNullOp == req) {
+    // kNullOp means the caller doesn't want this gradient written.  The
+    // primitive still needs an output memory to run into; allocate a
+    // throwaway tmp and skip the copy-back so out_arr stays untouched.
+    auto tmp = TmpMemMgr::Get()->Alloc(desc);
+    return dnnl_output_t(OutDataOp::Noop, tmp);
+  } else if (kAddTo == req) {
     auto tmp = TmpMemMgr::Get()->Alloc(desc);
     return dnnl_output_t(OutDataOp::AddBack, tmp);
   } else if (kWriteInplace == req) {

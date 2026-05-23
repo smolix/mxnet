@@ -53,14 +53,27 @@ class IndexCreator(mx.recordio.MXRecordIO):
 
     def open(self):
         super(IndexCreator, self).open()
-        self.fidx = open(self.idx_path, 'w')
+        try:
+            self.fidx = open(self.idx_path, 'w')
+        except Exception:
+            # Index file creation failed; release the native RecordIO
+            # handle we just opened so we don't leak it on disk-full,
+            # permission, or path errors.
+            super(IndexCreator, self).close()
+            raise
 
     def close(self):
         """Closes the record and index files."""
         if not self.is_open:
             return
-        super(IndexCreator, self).close()
-        self.fidx.close()
+        try:
+            super(IndexCreator, self).close()
+        finally:
+            # Close the index file even if the native close raised so
+            # we don't leak the Python file handle on shutdown errors.
+            if self.fidx is not None:
+                self.fidx.close()
+                self.fidx = None
 
     def tell(self):
         """Returns the current position of read head.
@@ -102,5 +115,9 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     creator = IndexCreator(args.record, args.index)
-    creator.create_index()
-    creator.close()
+    try:
+        creator.create_index()
+    finally:
+        # Always close so partial indexes still get their file handle
+        # released even if create_index() raises midway through.
+        creator.close()

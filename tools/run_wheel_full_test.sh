@@ -77,7 +77,12 @@ section "Install wheel + test dependencies (clean venv)"
 python -m pip install "$WHEEL"
 # Test-time extras: pytest + xdist + timeout.  These are not part of the
 # wheel's install_requires intentionally.
-python -m pip install pytest pytest-xdist pytest-timeout
+#
+# scipy is consumed by several statistical-oracle nodes in test_random,
+# test_operator, and gpu_operator shards; without it pytest collect-errors
+# the file instead of running it, which makes acceptance summaries
+# unreadable.  matplotlib covers a handful of plotting-adjacent nodes.
+python -m pip install pytest pytest-xdist pytest-timeout scipy matplotlib
 
 section "Verify wheel-installed mxnet is the one we get"
 python - <<PY

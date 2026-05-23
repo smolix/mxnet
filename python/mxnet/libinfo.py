@@ -147,4 +147,19 @@ def find_conf_path(prefix='tvmop'):
 
 
 # current version
-__version__ = "2.0.0+cu13.bw.20260518.1"
+#
+# At wheel build time setup.py writes the resolved MXNET_PACKAGE_VERSION into
+# mxnet/_build_info.py so the in-Python version matches the wheel metadata.
+# When that file is absent (editable installs, source-tree imports during
+# build itself) we fall back to the hard-coded default below — keep this
+# string up-to-date when minting a new release tag, but the
+# `_build_info` import is the source of truth for installed wheels.
+try:
+    from ._build_info import __version__  # type: ignore[no-redef]
+except Exception:
+    # ImportError when _build_info.py is missing (editable install before
+    # the first wheel build); KeyError("'__name__' not in globals") when
+    # setup.py exec's this file as bare globals to read find_lib_path; any
+    # other failure should also fall through cleanly rather than break
+    # setup.py.
+    __version__ = "2.0.0+cu13.bw.20260518.1"

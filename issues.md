@@ -1,66 +1,24 @@
 # MXNet Port Issues
 
-Updated: 2026-05-23 (d2l fixes — OpenCV bundled, 0-dim fixed, rev .1 pushed)
-Current branch: `cleanup/p0-p1-p2-20260522` (on GitHub)
-Current tag: `v2.0.0+cu13.bw.20260522.1` (pushed to GitHub) — supersedes `.20260522`
-Cleanup wheel: `dist/mxnet-2.0.0+cu13.bw.20260522.1-cp312-cp312-linux_x86_64.whl` (522MB,
-USE_OPENCV=ON, libopencv bundled at python/mxnet/lib/, RUNPATH=$ORIGIN/lib)
-Previous wheel (`.20260522`, 516MB) shipped with USE_OPENCV=OFF and missed
-the 0-dim oneDNN fix; the d2l notebook run against it failed on 53/76
-notebooks (24× 0-dim LOG(FATAL), 29× "Build with USE_OPENCV=1"). Both are
-fixed in `.20260522.1`.
-PR template URL: https://github.com/smolix/mxnet/pull/new/cleanup/p0-p1-p2-20260522
-Clean-venv acceptance: 2000+ tests passed across 18 PASS shards; remaining
-failures (`cpu_unittest`, `dnnl_subgraphs_qat_backward` partial,
-`gpu_operator_numpy/classic`, `cpu_test_random`) are pre-existing — oneDNN
-0-dim LOG(FATAL) at `ndarray.cc:624`, BoxNMS segfault on `grad_req='add'`,
-or `scipy` missing in the clean-venv test harness — not regressions from
-this branch.
-Apple Silicon follow-up merge: PR #28 from `followup/full-sweep-macos-wheel`
-Linux validation host: 4x RTX 4090 Ada (`sm_89`), CUDA 13.0, cuDNN/NCCL
-host dependencies and submodules installed; CUDA `sm_89` build configured; first
-`mxnet` build exposed an avoidable `operator_tune.cc` compile in non-tuning
-builds. Validation builds with `USE_OPERATOR_TUNING=OFF` now exclude that source
-and link `build/libmxnet.so`;
-editable `.venv-mxnet` imports the local CUDA/oneDNN/NCCL/cuDNN library and
-reports all 4 GPUs. A oneDNN `batch_dot` descriptor bug found by the d2l
-transformer repro is fixed locally and covered by a focused regression test.
-Broad CPU/GPU sweeps were restarted under tmux on 2026-05-21. The CPU unittest
-lane completed once and its failures were reduced to optional extension artifacts
-and GPU-memory pressure in tests that pass in isolation; a later lower-concurrency
-CPU rerun was stopped after the rebuilt binary changed. The full GPU lane aborted
-in the fork-safety DataLoader test before producing a complete summary; that
-focused crash is fixed, and the first failed GPU files pass or skip cleanly in
-isolation. The DNNL adaptive-pooling numeric-gradient matrix has been reduced
-after the row-sparse timeout, and the focused adaptive-pooling check now passes.
-Local DNNL quantized conv+sum mitigation work is present and rebuilt, and its
-focused regression now passes. A host reboot realigned the NVIDIA 580
-server-open kernel/userspace stack at `580.159.03`; direct GPU pytest commands
-again reach CUDA devices, and focused GPU regressions for reducer, TF32 deconv,
-fusion, deferred compute, NumPy einsum, histogram, and Proposal/MultiProposal
-checked-arithmetic paths pass. The stale cuDNN stream regression now uses a
-deterministic NumPy oracle and passes locally. The broad CPU/DNNL/GPU reruns
-are still pending. Environment-prefixed commands can still run in a restricted
-tool context without `/dev/nvidia*`, so CUDA error 304 from those probes should
-be treated as a command-environment artifact unless it reproduces from the
-direct pytest/Python invocation shape.
-Local release tag: `macos-arm64-slim-wheel-20260520`
+Canonical work tracker for the fork.  Episodic build session detail belongs
+in git log, not here.
 
-This file is a status index, not a changelog. Historical details live in git
-commits and the retained investigation notes. Items are grouped by what a
-maintainer needs to decide next.
+**Branch:** `cleanup/p0-p1-p2-20260522`
+**Latest tag:** `v2.0.0+cu13.bw.20260522.1` on GitHub
+**Local wheel:** `dist/mxnet-2.0.0+cu13.bw.20260522.2-*.whl` (USE_OPENCV=ON,
+libopencv bundled at `python/mxnet/lib/`, RUNPATH `$ORIGIN/lib`)
+**Validation host:** 4× RTX 4090 (sm_89), CUDA 13.0, cuDNN 9, NCCL
+**macOS release tag:** `macos-arm64-slim-wheel-20260520`
 
 Status labels:
 
-- **Open**: known issue; no verified fix on the current branch.
-- **In progress**: local work exists but is not committed and verified yet.
-- **Deferred**: cannot be verified on the current machine or is deliberately out
-  of scope for the current validation pass.
-- **External**: owned by D2L, notebook infrastructure, or another project unless
-  a current MXNet runtime failure is reproduced.
-- **Informational**: retained context; not a work item.
-- **Resolved**: fix is committed or otherwise verified; retained here only when
-  it is useful context for future work.
+- **Open** — known issue; no verified fix on the current branch.
+- **In progress** — local work exists but is not committed and verified.
+- **Partial** — first slice fixed; broader audit/coverage still pending.
+- **Deferred** — cannot be verified here or out of scope for the current pass.
+- **External** — owned by D2L, notebook infra, or another project.
+- **Informational** — retained context, not a work item.
+- **Resolved** — fix committed/verified; kept only when useful as context.
 
 ---
 
@@ -69,54 +27,30 @@ Status labels:
 This is the short queue for what still needs action. Detailed context remains in
 the sections below; resolved items are retired to the appendix.
 
-### Cleanup pass closed (2026-05-22)
-
-The `cleanup/p0-p1-p2-20260522` branch and the `v2.0.0+cu13.bw.20260522`
-tag are both on GitHub.  The corresponding wheel
-`dist/mxnet-2.0.0+cu13.bw.20260522-cp312-cp312-linux_x86_64.whl` (516 MB)
-was built and clean-venv acceptance-tested before tagging.
-
-Items closed in this pass:
-
-| Tracker | Resolution |
-|---|---|
-| XOP19 | oneDNN output-request audit closed: masked_softmax kNullOp/kAddTo guards, BF16 fallback per-output req preservation in `_sg_onednn_conv` / selfatt_qk / selfatt_valatt, quantized FC/conv/transformer range outputs routed through `AssignQuantizedRangeOutput`, primary outputs in FC/conv early-return on kNullOp and reject kAddTo.  Commit `f97f9cab8` + smoke test in `tests/python/dnnl/test_xop19_onednn_req.py`. |
-| XOP21 | 24 large-shape int truncation sites hardened in LayerNorm, GroupNorm, ROIAlign, PSROIPool, depthwise conv, FC, transformer, linalg, image; cuDNN bilinear/spatial transformer add CHECK_LE per dim.  Commit `a07c27e2e` + `tests/python/unittest/test_xop21_large_shape_validation.py`. |
-| XOP22 | 26 public Python assert→exception conversions across KVStore, Gluon Parameter, all optimizers, contrib text/quantization/ndarray; 11 new subprocess `-O` regressions (31 passed, was 20).  Commit `2aeee1473`. |
-| XOP23 | 5 unsafe engine asserts promoted to CHECK in `threaded_engine.cc`, `threaded_engine_pooled.cc`, `kvstore_nccl.h`; new gtest stress file `tests/cpp/engine/threaded_engine_invariants_test.cc`.  Commit `3e7ea07b3`. |
-| FS13 | 1 stale test file removed (`test_engine_import.py`); 8 files updated with precise capability guards.  Commit `568ec1aba`. |
-| CN2 | GCC 13+ `-Wno-error=array-bounds` / `-Wno-error=stringop-overflow` in CMakeLists.txt for RelWithDebInfo.  Commit `e2b102404`. |
-| O11 + wheel | Wheel built, provenance-validated, tagged.  Tag `v2.0.0+cu13.bw.20260522`. |
-| Tooling | New helpers: `tools/build_cleanup_wheel.sh`, `tools/run_fp16_remote_smoke.sh` (remote target with BF16 capability), `tools/run_wheel_full_test.sh` (clean-venv acceptance).  Commit `aec700eca`. |
-
-### Carry-over for next session
+### Active queue
 
 | Priority | Tracker | Status | Next action |
 |---|---|---|---|
-| P0 | FS12 | Deferred — order-sensitive bus error around `test_randint_generator`; reproduces only in long direct shards. | Bisect predecessors under gdb if it ever recurs in CI; otherwise leave deferred. |
-| P0 | B4 / XOP18 | Architectural blocker confirmed: NNVM/CachedOp doesn't support custom backward referencing subgraph op inputs.  `tests/python/dnnl/subgraphs/test_quantized_backward.py` documents this with strict xfails. | Revisit only after the executor framework supports the required backward shape. |
-| P0 | Pre-existing oneDNN 0-dim LOG(FATAL) | New: `ndarray.cc:624` rejects ndim==0 NDArrays; bites `_mx_np.square(x).sum().item()` paths in clip_global_norm, loss code, sync_batchnorm, embedding accumulation, QAT composite forward.  Untouched since 2b08298b9 (pre-cleanup). | Add a default-format fallback in `NDArray::SetDNNLMem()` when ndim()==0 instead of LOG(FATAL); affects ~57 test cases. |
-| P0 | Pre-existing BoxNMS segfault | `tests/python/unittest/test_contrib_operator.py::test_box_nms_backward_add_request` segfaults on grad_req='add'.  Not from this branch (last touched in `8cf3410a4`). | Triage native BoxNMS backward request handling under sanitizers. |
-| P1 | XOP12 | Reusable operator contract tests still missing — would have caught both 0-dim and BoxNMS-add issues earlier. | Build the parameterized req/copyback/hidden-output/aux-state/backend-parity harness, then require new XOP fixes to use it. |
-| P1 | XOP7 leftovers | DNNL deconvolution weight-grad fast path uses raw `CreateDNNLData` (audit-flagged but not converted in this pass). | Convert to CreateDNNLMem + CommitOutput pattern; add focused regression. |
-| P1 | Wheel test harness | `tools/run_wheel_full_test.sh` doesn't pip-install scipy, so cpu_test_random and gpu_operator_* collect-error in the clean venv. | Add `scipy` (and any other transitive test deps surfaced) to the venv-install step. |
-| P2 | CN9 / L6 | Bundled dmlc queue u32 sentinel and oneDNN ITT executable-stack note remain submodule policy items. | Track upstream; not appropriate to commit private patches in this fork. |
-| P2 | C4, O1, O4, O7 | Release/build matrix + Linux wheel runtime bundling decisions stable. | No change planned. |
-| P2 | T2-T6, T11 | Ecosystem + cross-platform lifecycle coverage incomplete. | Pick after the next major MXNet refactor lands. |
-| External | L4, D5-D8 | D2L notebook diagnostics. | Wait for fresh notebook-run/output-audit artifacts. |
-| Remote | FP16 smoke | `tools/run_fp16_remote_smoke.sh` is ready for a Zen 4+ host with BF16 (e.g. Ryzen 7000-series + RTX 3070). | Run on the target; bundle the report and ingest fresh BF16 findings. |
+| P0 | B4 / XOP18 | Deferred (architectural) — NNVM/CachedOp can't reference subgraph op inputs in custom backward. | Revisit when the executor framework supports the required backward shape. |
+| P0 | FS12 | Deferred — order-sensitive bus error in `test_randint_generator`. | Bisect under gdb if it recurs. |
+| P0 | D2L-Bug-2 | GPU OOM when two large models share a 24 GB GPU (CNN-Design / Sentiment-RNN OOM next to BERT-pretraining; PyTorch/JAX/TF survive same workload). | Profile storage-pool fragmentation and idle-arena reclaim; defer until profile evidence in hand. |
+| P0 | D2L-Bug-3 | `natural-language-inference-bert.ipynb` dead kernel 1095s into training (no traceback). | Needs cuda-gdb + core dump; defer until host-side coredump capture available. |
+| P1 | XOP12 | Reusable operator contract test harness still missing. | Scaffold parameterized req/copyback/hidden-output tests; plug 3 representative operators in to anchor the pattern. |
+| P1 | XOP19 leftover | `dnnl_masked_softmax` writes output as scratch; quantized FC/conv/transformer subgraphs bind primary storage directly. | Convert to `CreateDNNLMem` + `CommitOutput` with explicit kNullOp/kAddTo handling. |
+| P1 | XOP22 second wave | KVStore/BytePS, NDArray/Symbol contrib, Gluon `Parameter` still have `assert()` for user-input validation. | Continue assert→exception conversion; extend the `-O` subprocess suite per surface. |
+| P2 | CN9 / L6 | Submodule policy items (dmlc queue, oneDNN ITT). | Track upstream; do not patch privately. |
+| P2 | C4, O1, O4, O7 | Release/build matrix and Linux wheel runtime bundling. | Strategic; revisit when needed. |
+| P2 | T2-T6, T11 | Ecosystem and cross-platform lifecycle coverage. | After the next major refactor. |
+| External | L4, D5-D8 | D2L-owned notebook diagnostics. | Wait for fresh artifacts. |
+| Remote | FP16 smoke | `tools/run_fp16_remote_smoke.sh` ready for a Zen 4+ host. | Run on target when available. |
 
 ## Immediate Linux/CUDA Execution Queue
 
-This is the ordered queue for the current Linux/Ada host. Blackwell-specific
-performance claims still need a later dedicated Blackwell run, but Linux/CUDA
-correctness and cuDNN/CUDA 13 behavior can be validated here.
-
 | ID | Status | Area | Issue | Next action |
 |---|---|---|---|---|
-| L4 | External | D2L artifact intake | The rebuilt `sm_89` runtime clears the standalone GPU probe gate, and the transformer standalone repro now passes after the oneDNN `batch_dot` descriptor fix. The old d2l notebook failures came from stale artifacts and should not reopen MXNet work by themselves. | Consume current D2L notebook-run/output-audit artifacts when available; reopen MXNet work only for concrete fresh runtime repros, not stale stamps or dead-kernel summaries. |
-| L6 | In progress | Compiler noise | GCC 13/NVCC CUDA 13 builds emit enough warning noise to hide real failures. The dmlc optional cluster, product/nanprod reduction cleanup, local MXNet tuple stack-initialization, runtime-handle cleanup, CN2 ADT initializer-list wrappers, CN4 min/max residual initialization, CN5 unsigned CUDA guards, CN6 local sentinel conversions, CN7 half parameter packing, mshadow packet allocation, einsum initialization, CTC include-boundary, half max-pool initialization, cheap local cleanup noise, and avoidable non-tuning `operator_tune.cc` compilation are now reduced locally. | Continue with remaining high-volume or policy clusters: GCC 13 tuple/ADT flexible-tail false positives, bundled dmlc queue offsets, and oneDNN ITT executable-stack note. |
-| L7 | In progress | Test scheduling | Parallel full-suite lanes can overload the host if CPU xdist, C++ gtest, oneDNN numeric-gradient tests, and GPU operator sweeps overlap. The target load envelope for this machine is about 48-64 runnable tasks. An uncapped `test_operator.py -n 12` run failed from OpenBLAS thread/process exhaustion, while the same lane with `OPENBLAS_NUM_THREADS=1`, `OMP_NUM_THREADS=4`, `MKL_NUM_THREADS=1`, `-n 4`, and no pytest faulthandler completed cleanly. | Keep one heavy CPU lane active at a time, cap BLAS/OpenMP threads inside Python for xdist lanes, add GPU shards when memory is idle, and pause/resume long DNNL work instead of killing it when load spikes. |
+| L4 | External | D2L artifact intake | Wait for fresh notebook-run/output-audit artifacts; reopen only for concrete fresh runtime repros. | — |
+| L6 | In progress | Compiler noise | Remaining clusters are submodule-policy items (CN9). Local source clusters cleared. | Track CN9 upstream. |
+| L7 | In progress | Test scheduling | Target load envelope: 48-64 runnable tasks; cap `OPENBLAS_NUM_THREADS=1`, `OMP_NUM_THREADS=2-4`, `MKL_NUM_THREADS=1` for xdist lanes. | Keep one heavy CPU lane at a time; add GPU shards when memory is idle. |
 
 ---
 
@@ -204,14 +138,14 @@ Resolved XOP rows have been retired to the appendix so this table stays focused 
 
 | ID | Status | Area | Finding | Next action |
 |---|---|---|---|---|
-| XOP7 | Partial | oneDNN output req/copyback | oneDNN LayerNorm mean/std and gamma/beta grad paths are fixed, including visible stat conversion and `kAddTo` accumulation. Other oneDNN paths still need the broader copyback audit. | DNNL LayerNorm regressions pass. Continue the reusable oneDNN output-req/view harness for BatchNorm, activation backward, masked softmax, softmax/log-softmax, deconvolution weight grad, quantized BatchNorm, and subgraph conv paths. |
+| XOP7 | Partial | oneDNN output req/copyback | oneDNN LayerNorm mean/std and gamma/beta grad paths are fixed (visible stat conversion + `kAddTo` accumulation).  Deconvolution weight-grad fast path now handles `kNullOp` and nullptr-falls-back from the direct-write optimization (commit `667498cb8`).  Remaining: reusable copyback harness for BatchNorm, activation backward, masked softmax, softmax/log-softmax, quantized BatchNorm, and subgraph conv paths. | Continue the harness for the listed remaining paths; converge with XOP12. |
 | XOP8 | Partial | Quantized range outputs | Native quantized reshape, quantize, quantize_v2, and oneDNN quantized activation/flatten/reshape/transpose/quantize/quantize_v2 now share req-aware scalar range-output handling for `kNullOp`, `kWriteTo`, `kWriteInplace`, and `kAddTo`. oneDNN quantized BatchNorm now also uses `AssignQuantizedRangeOutput` for min/max and `CreateDNNLMem`/`CommitOutput` for the primary output, including primary-output `kNullOp`/`kAddTo` and range-output mixed requests. | Continue applying the helper broadly and add parameterized sentinel tests for any remaining quantized range-output wrappers. Focused oneDNN quantized BatchNorm verification passed through `build/tests/mxnet_unit_tests --gtest_filter=IMPERATIVE.QuantizedBatchNormDNNLReq`, plus the combined reducer/quantized-BN filter. |
 | XOP9 | Partial | Stochastic/resource ops | Dropout backward now preserves `kNullOp`; MKL Dropout forward/backward honors `kAddTo`; cuDNN Dropout rejects unsupported `kAddTo` before writing. RNN dropout still relies on reserve-space state and needs add/null gradient coverage. | Focused native Dropout backward add/null regression passes. Continue with RNN dropout req tests and backend-specific Dropout forward req coverage where direct `out=` contracts can exercise cuDNN/MKL paths. |
 | XOP12 | Open | Regression-test infrastructure | The current test suite lacks reusable contract tests for operator `req` semantics, hidden-output metadata, aux-state timing, view/copyback behavior, and backend parity. This allowed the same bug shapes to persist across BatchNorm, LayerNorm, GroupNorm, InstanceNorm, Dropout, quantized range-output ops, and oneDNN wrappers. | Add parameterized contract tests that can be reused across operators/backends: `kNullOp` preserves sentinels, `kAddTo` accumulates, `kWriteInplace` is either correct or explicitly rejected before writing, hidden outputs are named and shaped, visible stats match documented semantics, aux state mutates during the documented phase, views copy back correctly, and CPU/native/GPU/oneDNN/cuDNN paths agree within tolerance. Gate every XOP fix with at least one focused regression and keep a small always-on contract subset in CI. |
 | XOP14 | Partial | cuDNN/library beta mapping | cuDNN activation, pooling, softmax-activation, LRN, bilinear sampler, and spatial transformer wrappers now skip or preserve hidden state on `kNullOp` and map supported `kAddTo` paths to library `beta=1` or temporary accumulation. Native LRN backward also honors `kNullOp` and `kAddTo`. Remaining suspect sites are lower-level cuBLAS/cuTensor wrappers not yet audited; convolution/deconvolution show the safer `req == kAddTo ? beta_add : beta` pattern. | Added GPU req regressions for activation, pooling, softmax-activation, LRN backward, and cuDNN spatial transformer gradients, plus CPU LRN parity. Narrow CUDA object builds pass for bilinear sampler and spatial transformer. A clean relink and focused GPU tests are still pending. Continue auditing lower-level cuBLAS/cuTensor wrapper beta/output-pointer sites. |
 | XOP16 | Partial | Quantized inference contracts | `_contrib_quantized_elemwise_mul` now fails type inference for unsupported lhs/rhs dtypes instead of logging and succeeding. Sparse/storage inference and quantized embedding row-sparse behavior remain open. | Focused elemwise-mul unsupported-dtype regression passes. Continue storage inference and embedding sparse tests. |
 | XOP18 | Open | Quantized subgraph req/backward | oneDNN self-attention QK/ValAtt subgraphs write quantized min/max outputs directly and override BF16 fallback temporary requests with all-`kWriteTo` vectors. The same transformer subgraph registrations use `MakeZeroGradNodes`, extending the full-QAT backward gap beyond FC/Conv to self-attention and batch-dot-style quantized subgraphs. | Cover `_sg_onednn_selfatt_qk{,_split}` and `_sg_onednn_selfatt_valatt` in req tests; include transformer/batch-dot subgraphs in the full QAT backward design tracked by B4. Tests must include quantized range-output sentinels, primary-output `kNullOp`/`kAddTo`, and backward tests that fail while gradients are silently zeroed. A read-only audit confirmed direct primary/range writes in `dnnl_transformer.cc` for QK, QK-split, and ValAtt; add direct small int8/uint8 subgraph req-contract tests before fixing. |
-| XOP19 | Partial | oneDNN descriptor/output handling | Additional oneDNN wrappers still bypass full output-request/copyback handling. `DNNLReduceForwardImpl` now honors `kAddTo` and routes scalar and non-scalar outputs through `CreateDNNLMem`/`CommitOutput`, with a focused C++ `_npi_sum` `FComputeEx` regression covering shape `(2,3,4)`, axis `(2,)`, and prefilled output accumulation. `DNNLSoftmaxForward` and `DNNLLogSoftmaxForward` still explicitly reject unsupported `kAddTo`, but their supported write/write-inplace paths now use `CreateDNNLMem`/`CommitOutput` instead of binding outputs directly. Quantized oneDNN batch-dot already used `CreateDNNLMem` for the primary output and now uses request-aware helpers for min/max range outputs. Remaining suspects: `DNNLMaskedSoftmax` accepts `req` but writes output memory directly as intermediate scratch; DNNL deconvolution weight-grad fast path returns direct `CreateDNNLData`; DNNL reshape uses raw/default memory paths without copyback; quantized oneDNN FC/conv/transformer subgraphs bind primary output storage directly. BF16 fallback paths in DNNL FC, subgraph conv, and transformer force temporary requests to all `kWriteTo`, losing caller `kNullOp`/`kAddTo` semantics. | Convert or explicitly gate the remaining paths with the same contract tests as XOP7: null/add, views, descriptor changes, scalar outputs, quantized primary/range outputs, and BF16 fallback copyback. Focused verification: reducer and quantized-BN C++ req regressions pass; `IMPERATIVE.SoftmaxOp` passes for oneDNN write/write-inplace output forms; Python `test_softmax`, `test_log_softmax`, DNNL batch-dot attention regression, and DNNL matmul subgraph batch-dot tests pass. |
+| XOP19 | Partial | oneDNN descriptor/output handling | Reducer, softmax/log-softmax, batch-dot, deconv weight-grad fast path, and dnnl_reshape entry (gates `kNullOp`/`kAddTo` at `DNNLReshapeForward`) are converted or properly gated.  Remaining suspects: `DNNLMaskedSoftmax` writes output memory directly as intermediate scratch; quantized oneDNN FC/conv/transformer subgraphs bind primary output storage directly; BF16 fallback paths in DNNL FC, subgraph conv, and transformer force temporary requests to all `kWriteTo`, losing caller `kNullOp`/`kAddTo` semantics. | Convert each with the same contract tests pattern. |
 | XOP21 | Partial | Large-tensor size truncation | A broad scan found repeated `TShape::Size()`/workspace-size casts to `int` without guards. `all_finite` CPU/GPU, `multi_all_finite`, `_contrib_allclose`, `SequenceReverse` flattening, and `_npi_repeat` scalar/vector-repeat shape inference now avoid or guard obvious truncation. Remaining examples include LayerNorm/GroupNorm channel-size calculations, ROI/PSROI paths, bilinear/spatial transformer paths, image-random kernels, NumPy indexing/linalg and remaining repeat kernel work sizes, fully connected/dot helpers, and several transformer helpers. | Continue auditing the remaining casts and either promote counters/workspace sizes to `index_t`/`size_t` or add explicit guards. Add no-allocation oversized-shape tests where feasible; current focused smoke covers the repaired all-finite/allclose paths, SequenceReverse has no-allocation coverage for a trailing dimension larger than `INT_MAX`, and `_npi_repeat` has no-allocation oversized shape-inference coverage. |
 | XOP22 | Partial | Python validation via assert | Many public Python APIs use `assert` for user-input validation, so running under `python -O` strips checks and lets bad arguments proceed into later native calls or silent behavior changes. Fixed representative slices now include AMP conversion/init helpers, KVStore base helpers, RecordIO mode/OpenCV helpers, RTC launch validation, learning-rate schedulers, Gluon data `ArrayDataset`/`Dataset.shard`/`batchify.Group`, and Gluon NN constructor validation for `LeakyReLU`, `Conv2D`, `Conv2DTranspose`, and `MaxPool2D`. The optimized-validation subprocess suite passes `19 passed`. Remaining surfaces include broader KVStore/BytePS, NDArray/Symbol contrib wrappers, Gluon `Parameter`, and optimizers. | Continue replacing user-facing asserts with explicit exceptions in the remaining public APIs. Extend `test_python_optimized_validation.py` as each surface is fixed. |
 | XOP23 | Open | Engine/runtime hardening | The non-operator scan found several internal lifecycle paths that rely on C/C++ `assert` or fatal-only branches for engine invariants and storage/topology failures. These are not user-facing validation bugs by themselves, but release builds compile out `assert` checks in critical engine list manipulation and KVStore NCCL root assumptions. | Convert invariants that protect memory ownership, queue/list integrity, or cross-device synchronization into checked runtime failures or debug-plus-release guards. Add focused engine/KVStore stress tests that exercise invalid duplicate vars, shutdown races, NCCL root/device mismatches, and after-fork cleanup under release-build settings. |
@@ -461,6 +395,14 @@ Rows in this appendix were removed from the active work tables on 2026-05-22 so 
 
 | Source section | ID | Status | Area | Retired issue | Retired action |
 |---|---|---|---|---|---|
+| Active queue | D2L-Bug-1 | Resolved | NumPy argmax GPU size-1 axis | `np.argmax(x, axis=k)` on GPU returned `[0,1,..,N-1]` instead of zeros when the k-axis had size 1 (bit d2l SSD via the (5444,1) jaccard reduction). Root cause: `reduce_kernel_M1` in `src/operator/tensor/reduce_rtc.cc` used the kernel's outer flat-output index as the `index` referenced by `FUNC = AType(OP(...), index)`. Commit `cb2cdff7a`. | Regression: `tests/python/gpu/test_d2l_argmax_size_one_axis_regression.py` (13 cases across axes/dims/keepdims/argmin). |
+| Active queue | D2L-Bug-4 | Resolved | Stale `mxnet.__version__` | `mx.__version__` reported `2.0.0+cu13.bw.20260518.1` for every wheel since 18 May because `python/mxnet/libinfo.py` hard-coded the literal while only the wheel METADATA picked up `MXNET_PACKAGE_VERSION`. `python/setup.py` now writes `mxnet/_build_info.py` from the resolved version; `libinfo.py` imports from it. Commit `667498cb8`. | Regression: `tests/python/unittest/test_d2l_packaging_regression.py::test_version_matches_wheel_metadata`. |
+| Active queue | D2L-Bug-5 | Resolved | Storage-manager log noise | `Using Pooled (Naive) StorageManager for ...` printed unconditionally on first allocation in each device context, polluting d2l notebook output cells. Now gated behind `MXNET_LOG_STORAGE_INIT=1`. Commit `667498cb8`. | Regression: `tests/python/unittest/test_d2l_packaging_regression.py::test_first_allocation_does_not_print_storage_manager_banner` plus opt-in variant. |
+| Active queue | BoxNMS `grad_req='add'` | Resolved | Native backward segfault | `_backward_contrib_box_nms` did not declare `FResourceRequest{kTempSpace}`, so the kAddTo branch in `BoxNMSBackward` dereferenced past the empty requested-resource vector. Added the resource request in `bounding_box.cc`. Commit `667498cb8`. | `test_box_nms_backward_add_request` now passes against the rebuilt binary. |
+| Carry-over | XOP7 leftover | Resolved | DNNL deconv weight-grad fast path | `CreateDNNLWeightGrad` now handles `kNullOp` (tmp + Noop, leaves out_arr untouched); `DNNLDeconvBwd::WeightsGradMem`'s kWriteTo fast path nullptr-checks `CreateDNNLData` and falls back to the helper for views/non-default layouts. Commit `667498cb8`. | Regression: `tests/python/dnnl/test_xop7_dnnl_deconv_req.py` (null/write/add). |
+| Carry-over | Wheel test harness scipy | Resolved | Clean-venv collect errors | `tools/run_wheel_full_test.sh` pip-installs `scipy` + `matplotlib` so cpu_test_random / gpu_operator shards no longer collect-error. Commit `667498cb8`. | — |
+| GH delta | GH4 rec2idx cleanup | Resolved | File-handle leak | `tools/rec2idx.py` closes the index file via try/finally in both `open()/close()` and `__main__` so partial indexes don't leak the FD on disk-full or interrupted runs. Commit `667498cb8`. | — |
+| CN2 | CN2 warning policy | Resolved | GCC 13 flexible-tail false positives | `RelWithDebInfo` retains `-Wno-error=array-bounds` / `-Wno-error=stringop-overflow` (GCC ≥ 13) with documenting comment in CMakeLists; the open "decide policy" item has been decided as warning-only-not-error. | — |
 | Immediate Linux/CUDA Execution Queue | L0 | Resolved | Build setup | Host toolchain/runtime packages are installed, submodules are initialized, and CUDA 13 `sm_89` validation builds with `USE_OPERATOR_TUNING=OFF` link `build/libmxnet.so` without compiling `operator_tune.cc`. `.venv-mxnet` imports the local library and reports CUDA, cuDNN, NCCL, oneDNN, and 4 visible GPUs. | Use this validation build for focused Linux/Ada tests; keep intentionally enabled operator tuning as a separate release-build policy choice. |
 | Immediate Linux/CUDA Execution Queue | L1 | Resolved locally | Apple fixes on x86 | Apple Silicon fixes for lifecycle, DataLoader, DLPack, quantization fallbacks, oneDNN test harnesses, and NumPy drift have now been validated on Linux x86 with oneDNN enabled. DataLoader fork-safety, BF16 skip policy, DNNL batch-dot coverage, OpenMP fork handling, extension optional-artifact behavior, DNNL adaptive-pooling triage, broad CPU unittest at `1752 passed, 91 skipped`, focused C++ lifecycle/DNNL/BatchNorm/operator filters, controlled CPU operator lane at `1092 passed, 1 skipped`, several focused GPU harness checks, DNNL core/subgraph/quantization serial reruns, the DNNL quantized conv+sum regression, the NumPy-heavy GPU operator shard at `3131 passed, 1 skipped`, and the classic GPU operator complement now pass locally after the TF32 parity-test harness fix. | Keep these shards in the release validation matrix; reopen only for a fresh Linux x86 regression. |
 | Immediate Linux/CUDA Execution Queue | L2 | Resolved | CUDA smoke | The d2l diagnostics were produced from a pre-Apple-port wheel that lacked Ada kernels. After rebuilding for `sm_89`, the standalone d2l GPU probes are OK across the 4-GPU host. | Treat the old no-kernel-image failures as stale for this host; use current D2L notebook-run/output-audit artifacts under L4 for any notebook follow-up. |
@@ -552,28 +494,23 @@ They stay here as context, not as active work.
 
 ## Suggested Triage Order
 
-Cleanup pass on `cleanup/p0-p1-p2-20260522` is closed and the d2l-driven
-follow-up is also in: branch + tag `v2.0.0+cu13.bw.20260522.1` are on
-GitHub.  d2l-2026-05-22 wheel run failed on 53/76 notebooks for two
-reasons (24× oneDNN 0-dim LOG(FATAL), 29× missing OpenCV); both fixed
-in `.20260522.1`.  Next session:
+Next session, in priority order:
 
-1. **Rerun d2l notebooks** against the `.20260522.1` wheel and triage the
-   remaining failures.  Expected residual:
-   - BoxNMS backward segfault on `grad_req='add'` (object detection chapter)
-   - any chapter that depends on scipy / pillow / matplotlib at notebook
-     scope rather than at the mxnet API boundary
-2. **`test_box_nms_backward_add_request` segfault** on `grad_req='add'`.
-   Native BoxNMS backward path, pre-existing in `master`.
-3. **Test-harness gap**: pip-install `scipy` (and surface any other test
-   deps) in `tools/run_wheel_full_test.sh` so the GPU operator and
-   test_random shards don't collect-error in the clean venv.
-4. **XOP12** reusable operator contract harness — would have prevented
-   the silent ND-0 + USE_OPENCV regressions.
-5. **XOP7 leftover**: DNNL deconv weight-grad fast path conversion.
-6. **Remote FP16 smoke**: when a Zen 4+ box is available, run
-   `tools/run_fp16_remote_smoke.sh` to ingest fresh BF16 findings (the
-   Zen 2 dev host can't exercise the native BF16 path).
+1. **D2L-Bug-2** GPU OOM when two large models share a 24 GB GPU
+   (CNN-Design / Sentiment-RNN OOM next to BERT-pretraining).  Storage-pool
+   fragmentation / idle-arena reclaim profiling; L-sized work.
+2. **D2L-Bug-3** NLI BERT dead kernel at 1095s.  Needs cuda-gdb + coredump
+   capture; XL.
+3. **XOP12** reusable operator contract harness — would have prevented the
+   ND-0, OpenCV, argmax-size-1, BoxNMS-add, and SetDNNLMem regressions.
+4. **XOP19 remaining slices**: `DNNLMaskedSoftmax` scratch-as-output;
+   quantized FC/conv/transformer subgraph primary-output binding; BF16
+   fallback per-output req preservation in DNNL FC / subgraph conv /
+   transformer.
+5. **XOP22 second wave**: KVStore/BytePS, NDArray/Symbol contrib, Gluon
+   `Parameter`.
+6. **Remote FP16 smoke**: `tools/run_fp16_remote_smoke.sh` on a Zen 4+
+   host when available.
 
 Long-term deferred:
 
@@ -583,5 +520,6 @@ Long-term deferred:
 
 Pointers:
 
-- `issues.md` is the canonical tracker. Stale root CUDA tracker markdown has
-  been removed after import; use git history for historical report details.
+- `issues.md` is the canonical tracker.  Resolved rows live in the
+  appendix above; keep the active tables short and let appendix entries
+  hold the verification detail and commit hashes.

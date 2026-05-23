@@ -60,29 +60,34 @@ import mxnet as mx
 # Backward goes through the symbolic head_grad of ones.
 # ----------------------------------------------------------------------
 
-def _rand_softmax_input(rng):
-    return rng.randn(4, 8).astype('float32')
+def _rand_default_input(shape):
+    def filler(rng):
+        return rng.randn(*shape).astype('float32')
+    return filler
 
 
-def _rand_sum_input(rng):
-    return rng.randn(3, 5).astype('float32')
-
-
-def _rand_layernorm_input(rng):
-    return rng.randn(2, 6).astype('float32')
+def _rand_positive_input(shape):
+    def filler(rng):
+        # log/sqrt operators want positive inputs to avoid NaNs that would
+        # mask a contract failure with a different failure.
+        return (rng.rand(*shape) + 0.1).astype('float32')
+    return filler
 
 
 OPS_UNDER_CONTRACT = [
     pytest.param(
         lambda x: mx.sym.softmax(data=x, axis=-1),
-        (4, 8),
-        _rand_softmax_input,
+        (4, 8), _rand_default_input((4, 8)),
         id='softmax_axis_last',
     ),
     pytest.param(
+        lambda x: mx.sym.log_softmax(data=x, axis=-1),
+        (4, 8), _rand_default_input((4, 8)),
+        id='log_softmax_axis_last',
+    ),
+    pytest.param(
         lambda x: mx.sym.sum(data=x, axis=1),
-        (3, 5),
-        _rand_sum_input,
+        (3, 5), _rand_default_input((3, 5)),
         id='sum_axis_1',
     ),
     pytest.param(
@@ -92,9 +97,48 @@ OPS_UNDER_CONTRACT = [
             gamma=mx.sym.Variable('_lngamma'),
             beta=mx.sym.Variable('_lnbeta'),
             axis=-1, eps=1e-5, output_mean_var=False),
-        (2, 6),
-        _rand_layernorm_input,
+        (2, 6), _rand_default_input((2, 6)),
         id='layernorm_axis_last',
+    ),
+    pytest.param(
+        lambda x: mx.sym.Activation(data=x, act_type='relu'),
+        (4, 5), _rand_default_input((4, 5)),
+        id='activation_relu',
+    ),
+    pytest.param(
+        lambda x: mx.sym.Activation(data=x, act_type='sigmoid'),
+        (4, 5), _rand_default_input((4, 5)),
+        id='activation_sigmoid',
+    ),
+    pytest.param(
+        lambda x: mx.sym.Activation(data=x, act_type='tanh'),
+        (4, 5), _rand_default_input((4, 5)),
+        id='activation_tanh',
+    ),
+    pytest.param(
+        lambda x: mx.sym.LeakyReLU(data=x, act_type='leaky', slope=0.01),
+        (4, 5), _rand_default_input((4, 5)),
+        id='leaky_relu',
+    ),
+    pytest.param(
+        lambda x: mx.sym.sqrt(data=x),
+        (4, 5), _rand_positive_input((4, 5)),
+        id='sqrt_positive',
+    ),
+    pytest.param(
+        lambda x: mx.sym.log(data=x),
+        (4, 5), _rand_positive_input((4, 5)),
+        id='log_positive',
+    ),
+    pytest.param(
+        lambda x: mx.sym.broadcast_add(lhs=x, rhs=mx.sym.Variable('_bcast_rhs')),
+        (4, 5), _rand_default_input((4, 5)),
+        id='broadcast_add',
+    ),
+    pytest.param(
+        lambda x: mx.sym.broadcast_mul(lhs=x, rhs=mx.sym.Variable('_bcast_rhs')),
+        (4, 5), _rand_default_input((4, 5)),
+        id='broadcast_mul',
     ),
 ]
 
@@ -128,6 +172,14 @@ def _run_backward(build_symbol, input_shape, input_filler,
         if name == '_lngamma' or name == '_lnbeta':
             extras = _layernorm_extras(input_shape)
             args[name] = extras[name]
+            args_grad[name] = mx.nd.zeros_like(args[name])
+            req_map[name] = 'null'
+        elif name == '_bcast_rhs':
+            # Broadcast helpers in OPS_UNDER_CONTRACT use a per-row scalar
+            # rhs so the broadcast actually does something but the gradient
+            # math stays simple.
+            rhs = np.full((1, input_shape[-1]), 0.5, dtype='float32')
+            args[name] = mx.nd.array(rhs)
             args_grad[name] = mx.nd.zeros_like(args[name])
             req_map[name] = 'null'
         else:

@@ -31,7 +31,7 @@ Status labels:
 
 | Priority | Tracker | Status | Issue | Next action |
 |---|---|---|---|---|
-| P1 | D2L-Issue-3 | Under investigation | `chapter_computer-vision/fine-tuning.ipynb` flaky DeadKernel on 4-GPU dispatch under `d2l.train_ch13`. NOT in autotune (also reproduces with autotune off). Single-GPU intermittently passes; synthetic 4-GPU 2-net repro is clean. Defense-in-depth `SelectPlan` mutex landed. | Reproduce outside `d2l.train_ch13` to isolate from the d2l notebook driver; suspect KVStore / parameter-broadcast / hybridize multi-GPU race. |
+| P1 | D2L-Issue-3 | **In progress (active)** | `chapter_computer-vision/fine-tuning.ipynb` flaky DeadKernel on multi-GPU dispatch. NOT in autotune (also reproduces with autotune off). Single-GPU intermittently passes; synthetic 4-GPU 2-net repro is clean. Defense-in-depth `SelectPlan` mutex landed but did not eliminate the flake. The only remaining open d2l item. | Tighten the synthetic repro toward the real notebook (real DataLoader workers, `d2l.train_ch13`, `evaluate_accuracy_gpus` between epochs, second `train_fine_tuning` call) one variable at a time until the crash reproduces in a minimal Python harness. Then bisect against engine / KVStore / hybridize / OpenCV-imdecode threads. |
 | P0 | FS12 | Deferred (architectural) | SIGBUS in `MXSetIsNumpyShape` thread_local ~21% through `test_numpy_op.py`; passes in isolation. Repro + ASAN runbook pinned in `tests/python/unittest/test_fs12_np_shape_bus_error_repro.py`. | Reopen when ASAN build is in the validation matrix. |
 | P0 | B4 / XOP18 | Deferred (architectural) | Real `_backward_sg_onednn_*` for QAT needs an NNVM/CachedOp framework refactor (multi-week scope). 20-test coverage in `test_quantized_backward.py` (14 passed, 6 xfailed) is the truthful production state. | Reopen with a concrete framework-refactor proposal. |
 | P1 | XOP9 | Partial | RNN dropout reserve-space req contract pinned (12 cases). Remaining: direct `out=` cuDNN / MKL Dropout forward path coverage. | Cover the backend-specific `out=` path; otherwise close. |
@@ -49,7 +49,6 @@ Status labels:
 | Strategic | O8, O9, O12 | Informational / Deferred | Apache MXNet archived 2023-11-17 — all fixes live in this fork (O8). Future oneDNN major releases will require porting (O9). ONNX Runtime 1.26 / opset 26 refresh is out of scope for current Linux/CUDA cleanup (O12). | — |
 | Strategic | P1, P3, P4, P5 | Deferred / Hardware | cuBLASLt default-on / stride-aware / INT8 (P1); topk K-independence (P3); softmax / LayerNorm small-op kernel pipelines (P4); BF16 CPU validation on AVX-512-BF16 hardware (P5). | Defer; benchmark harness driven. |
 | Deferred | GH7, GH8, GH9 | Deferred | Horovod KVStore barrier API (GH7); FlexiBLAS / THP / `parallel_for` grain (GH8); TensorRT upgrade (GH9). | Out of scope until specific drivers exist. |
-| External | L4, D5, D6, D7, D8 | External | Wait for fresh d2l notebook-run / output-audit artifacts. D5 dead-kernel batch (BERT NLI closed via D2L-Bug-3); D6 stamp/output mismatch; D7 import-time GPU probing; D8 artifact quality signal. | Wait for fresh artifacts. |
 | Remote | FP16 smoke | Remote | `tools/run_fp16_remote_smoke.sh` ready for a Zen 4+ host. | Run on target when available. |
 
 ### Cross-Platform Lifecycle Coverage TODO (T11)
@@ -59,24 +58,6 @@ Status labels:
 - [ ] Linux CUDA: re-run lifecycle tests against `NaiveEngine`, `ThreadedEnginePooled`, `ThreadedEnginePerDevice`.
 - [ ] Sanitizers: C++ engine/OpenMP/KVStore subset under TSAN; C++/Python lifecycle subset under ASAN/UBSAN.
 - [ ] CI: add a quick job that builds `mxnet_unit_tests` and runs the focused lifecycle filters before any expensive full-suite job.
-
----
-
-## D2L Diagnostics — External Wait State
-
-These items were imported from the prior d2l diagnostics reports and logs. They
-were observed with MXNet `2.0.0+cu13.bw.20260517` before the Apple Silicon merge
-and before an Ada-specific rebuild. Current triage treats D1 as resolved
-(OpenCV wheel-dependency bug), D2/D3/D4 as resolved (CUDA arch / scalar /
-transformer batch-dot), and D5-D8 as external D2L notebook infrastructure
-ownership unless a standalone MXNet crash repro appears.
-
-| ID | Issue | Disposition |
-|---|---|---|
-| D5 | `transformer.ipynb`, `natural-language-inference-bert.ipynb`, `sentiment-analysis-rnn.ipynb` ended as `DeadKernelError` in old diagnostics. BERT NLI verified alive on `.20260523.5` (cell timeout, not dead kernel — see D2L-Bug-3 in appendix). | Wait for fresh notebook-run artifacts; reopen only if a current runtime failure reproduces outside notebook infrastructure. |
-| D6 | `chapter_builders-guide/use-gpu.ipynb` had a passing stamp while stored outputs still contained GPU errors. | External D2L output-audit; reopen on fresh MXNet runtime failure. |
-| D7 | In restricted environments, `d2l.mxnet` queries GPUs at import time through default arguments such as `devices=d2l.try_all_gpus()`. | d2l-side lazy-default fix; not an MXNet runtime bug. |
-| D8 | Completed MXNet notebooks mostly had sane outputs; main issue was missing GPU runtime coverage, not bad convergence. | Artifact quality signal, not an MXNet defect. |
 
 ---
 
@@ -92,6 +73,7 @@ git log. Latest entries at the top.
 
 | Date | Tracker | Resolution |
 |---|---|---|
+| 2026-05-23 PM | **D2L Issues 5/6/7 + D5/D6/D7/D8 retired** | All d2l items now closed on the MXNet side except `D2L-Issue-3` (active in queue above). The d2l-side notebook fixes for `D2L-Issue-6` (`epoch_size=num_batches`) and `D2L-Issue-7` (`trainer.step(1)` vs PyTorch's no-rescale; or per-notebook `lr*N` bump) are handed off via `~/d2l-neu/MXNET-FIXES-ISSUES-6-AND-7.md`. Legacy d2l diagnostics D5 (DeadKernel batch, BERT NLI verified alive), D6 (use-gpu stale stamp), D7 (import-time GPU probing), D8 (artifact-quality signal) are external d2l notebook-infra ownership — no MXNet runtime failure currently reproduces outside notebook drivers, so they're retired from the queue. Reopen here only on a fresh MXNet-side crash repro. |
 | 2026-05-23 PM | **D2L-Issue-6** lr-scheduler step semantics | Measurement (`tests/python/unittest/test_d2l_lr_scheduler_epoch_size.py`) confirmed MXNet `MultiFactorScheduler` / `CosineScheduler`, PyTorch `MultiStepLR`, and `optax.piecewise_constant_schedule` are semantically equivalent — all count caller-supplied steps; none has an intrinsic epoch concept. The d2l-mxnet 2× train-loss gap is from `Trainer.step()` advancing per-minibatch while the d2l notebook passes epoch-scale milestones. Added `epoch_size=` kwarg to `FactorScheduler` / `MultiFactorScheduler` / `PolyScheduler` / `CosineScheduler` so callers can pass epoch indices and get PyTorch-equivalent decay. 10 regression tests. **D2L-side notebook fix outstanding** — note delivered to `~/d2l-neu/MXNET-FIXES-ISSUES-6-AND-7.md`. Commit `399a081a4`. |
 | 2026-05-23 PM | **D2L-Issue-7** FCN reduction gap | Measurement confirmed `gluon.loss.SoftmaxCrossEntropyLoss(axis=1)`, `F.cross_entropy`, and `optax.softmax_cross_entropy_with_integer_labels` produce **bit-identical** mean loss on FCN-shaped inputs. The real cause of the 3× higher d2l-mxnet train loss is `gluon.Trainer.step(N)` rescaling gradient by `1/N` while PyTorch's `optimizer.step()` does not — for `lr=0.001, batch_size=32`, MXNet's effective LR is 32× smaller. `Trainer.step()` docstring updated with explicit PyTorch comparison. 3 regression tests in `test_d2l_trainer_rescale_semantics.py`. **D2L-side notebook fix outstanding** — note delivered to `~/d2l-neu/MXNET-FIXES-ISSUES-6-AND-7.md` (Option A: `trainer.step(1)` global; Option B: bump FCN lr to `0.032`). Commit `399a081a4`. |
 | 2026-05-23 PM | **D2L-Issue-5** storage banner suppression | Banner gating (already in place at `src/storage/storage.cc:201-209` behind `MXNET_LOG_STORAGE_INIT=1`) pinned by `test_d2l_storage_banner_suppression.py` (2 tests: silent by default, visible on opt-in). Commit `399a081a4`. |

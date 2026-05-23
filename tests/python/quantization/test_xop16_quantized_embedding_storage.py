@@ -41,7 +41,7 @@ def _has_quantized_embedding():
 
 pytestmark = pytest.mark.skipif(
     not _has_quantized_embedding(),
-    reason="contrib quantized embedding op not registered in this build")
+    reason="XOP16: contrib quantized embedding op not registered in this build")
 
 
 def test_quantized_embedding_symbol_infers_default_storage():

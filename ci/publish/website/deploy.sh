@@ -72,11 +72,17 @@ cp -a $web_artifacts/* $web_dir
 
 fetch_artifacts() {
     api=$1
-    artifacts=https://mxnet-public.s3.us-east-2.amazonaws.com/docs/$version/$api-artifacts.tgz
+    artifacts="https://mxnet-public.s3.us-east-2.amazonaws.com/docs/$version/$api-artifacts.tgz"
     dir=mxnet-site/api/
-    wget -q $artifacts
-    mkdir -p $dir
-    tar xf $api-artifacts.tgz -C $dir
+    # Use defensive wget flags: secure TLS, bounded timeout, retries, and
+    # exit non-zero on HTTP error rather than silently producing a 0-byte
+    # output. Quote $api/$version so they're not word-split if the caller
+    # passes anything unexpected. Cleanup partial output on failure.
+    wget --secure-protocol=TLSv1_2 --timeout=60 --tries=3 \
+         -O "$api-artifacts.tgz" "$artifacts" || { rm -f "$api-artifacts.tgz"; return 1; }
+    test -s "$api-artifacts.tgz" || { rm -f "$api-artifacts.tgz"; return 1; }
+    mkdir -p "$dir"
+    tar xf "$api-artifacts.tgz" -C "$dir"
 }
 
 # Download and untar each of the API artifacts

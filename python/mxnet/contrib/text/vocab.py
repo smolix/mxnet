@@ -79,10 +79,10 @@ class Vocabulary(object):
 
         if reserved_tokens is not None:
             reserved_token_set = set(reserved_tokens)
-            assert unknown_token not in reserved_token_set, \
-                '`reserved_token` cannot contain `unknown_token`.'
-            assert len(reserved_token_set) == len(reserved_tokens), \
-                '`reserved_tokens` cannot contain duplicate reserved tokens.'
+            if unknown_token in reserved_token_set:
+                raise ValueError('`reserved_token` cannot contain `unknown_token`.')
+            if len(reserved_token_set) != len(reserved_tokens):
+                raise ValueError('`reserved_tokens` cannot contain duplicate reserved tokens.')
 
         self._index_unknown_and_reserved_tokens(unknown_token, reserved_tokens)
 
@@ -114,8 +114,8 @@ class Vocabulary(object):
         `min_freq`.
         """
 
-        assert isinstance(counter, collections.Counter), \
-            '`counter` must be an instance of collections.Counter.'
+        if not isinstance(counter, collections.Counter):
+            raise TypeError('`counter` must be an instance of collections.Counter.')
 
         unknown_and_reserved_tokens = set(reserved_tokens) if reserved_tokens is not None else set()
         unknown_and_reserved_tokens.add(unknown_token)

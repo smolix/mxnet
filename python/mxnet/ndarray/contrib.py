@@ -202,7 +202,8 @@ def foreach(body, data, init_states):
                     break
         else:
             is_NDArray_or_list = isinstance(inputs, in_type)
-        assert is_NDArray_or_list, msg
+        if not is_NDArray_or_list:
+            raise TypeError(msg)
 
     flatten, _ = _flatten(data, "foreach input")
     check_input(flatten, ndarray.NDArray,

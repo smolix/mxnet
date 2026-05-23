@@ -416,6 +416,57 @@ def _run_optimized_python(source):
     else:
         raise AssertionError('Parameter.set_data accepted uninitialized parameter')
     """,
+    """
+    # XOP22 contrib wave: text.vocab.Vocabulary rejects duplicate reserved tokens.
+    import mxnet as mx
+    from mxnet.contrib.text.vocab import Vocabulary
+    import collections
+    try:
+        Vocabulary(collections.Counter({'a': 1, 'b': 2}),
+                   reserved_tokens=['x', 'x'])  # duplicate
+    except ValueError as err:
+        if 'duplicate reserved tokens' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Vocabulary accepted duplicate reserved tokens')
+    """,
+    """
+    # XOP22 contrib wave: text.vocab.Vocabulary rejects non-Counter counter arg.
+    from mxnet.contrib.text.vocab import Vocabulary
+    try:
+        Vocabulary(counter={'a': 1})  # dict, not Counter
+    except TypeError as err:
+        if 'collections.Counter' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('Vocabulary accepted non-Counter counter')
+    """,
+    """
+    # XOP22 contrib wave: contrib.quantization.get_optimal_thresholds requires
+    # a dict; the bare `assert isinstance(hist_dict, dict)` would have been
+    # stripped under -O.
+    from mxnet.contrib.quantization import _LayerHistogramCollector
+    try:
+        _LayerHistogramCollector.get_optimal_thresholds(
+            hist_dict='not-a-dict', quantized_dtype='int8')
+    except TypeError as err:
+        if 'must be a dict' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('get_optimal_thresholds accepted non-dict')
+    """,
+    """
+    # XOP22 contrib wave: symbol.contrib._flatten rejects bad arg type
+    # (used by foreach / while_loop / cond callers).
+    from mxnet.symbol.contrib import _flatten
+    try:
+        _flatten('not-a-symbol-or-list', 'inputs')
+    except TypeError as err:
+        if 'must be (nested) list of Symbol' not in str(err):
+            raise AssertionError(str(err))
+    else:
+        raise AssertionError('symbol.contrib._flatten accepted non-list arg')
+    """,
 ])
 def test_user_validation_survives_optimized_python(source):
     _run_optimized_python(source)

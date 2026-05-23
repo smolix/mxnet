@@ -259,9 +259,11 @@ class _TokenEmbedding(vocab.Vocabulary):
                 line_num += 1
                 elems = line.rstrip().split(elem_delim)
 
-                assert len(elems) > 1, f'At line {line_num} of the pre-trained text embedding file: the ' \
-                                       f'data format of the pre-trained token embedding file {pretrained_file_path} ' \
-                                       'is unexpected.'
+                if len(elems) <= 1:
+                    raise ValueError(
+                        f'At line {line_num} of the pre-trained text embedding file: the '
+                        f'data format of the pre-trained token embedding file {pretrained_file_path} '
+                        'is unexpected.')
 
                 token, elems = elems[0], [float(i) for i in elems[1:]]
 
@@ -283,10 +285,11 @@ class _TokenEmbedding(vocab.Vocabulary):
                         # the unknown index is 0.
                         all_elems.extend([0] * vec_len)
                     else:
-                        assert len(elems) == vec_len, \
-                            f'At line {line_num} of the pre-trained token embedding file: the dimension ' \
-                            f'of token {token} is {len(elems)} but the dimension of previous tokens is {vec_len}. ' \
-                            'Dimensions of all the tokens must be the same.'
+                        if len(elems) != vec_len:
+                            raise ValueError(
+                                f'At line {line_num} of the pre-trained token embedding file: the dimension '
+                                f'of token {token} is {len(elems)} but the dimension of previous tokens is {vec_len}. '
+                                'Dimensions of all the tokens must be the same.')
                     all_elems.extend(elems)
                     self._idx_to_token.append(token)
                     self._token_to_idx[token] = len(self._idx_to_token) - 1
@@ -426,11 +429,15 @@ class _TokenEmbedding(vocab.Vocabulary):
             of multiple strings, it must be 2-D.
         """
 
-        assert self.idx_to_vec is not None, 'The property `idx_to_vec` has not been properly set.'
+        if self.idx_to_vec is None:
+            raise RuntimeError('The property `idx_to_vec` has not been properly set.')
 
         if not isinstance(tokens, list) or len(tokens) == 1:
-            assert isinstance(new_vectors, nd.NDArray) and len(new_vectors.shape) in [1, 2], \
-                '`new_vectors` must be a 1-D or 2-D NDArray if `tokens` is a singleton.'
+            if not (isinstance(new_vectors, nd.NDArray) and
+                    len(new_vectors.shape) in [1, 2]):
+                raise ValueError(
+                    '`new_vectors` must be a 1-D or 2-D NDArray if `tokens` is '
+                    'a singleton.')
             if not isinstance(tokens, list):
                 tokens = [tokens]
             if len(new_vectors.shape) == 1:
@@ -695,18 +702,21 @@ class CompositeEmbedding(_TokenEmbedding):
     def __init__(self, vocabulary, token_embeddings):
 
         # Sanity checks.
-        assert isinstance(vocabulary, vocab.Vocabulary), \
-            'The argument `vocabulary` must be an instance of ' \
-            'mxnet.contrib.text.indexer.Vocabulary.'
+        if not isinstance(vocabulary, vocab.Vocabulary):
+            raise TypeError(
+                'The argument `vocabulary` must be an instance of '
+                'mxnet.contrib.text.indexer.Vocabulary.')
 
         if not isinstance(token_embeddings, list):
             token_embeddings = [token_embeddings]
 
         for embed in token_embeddings:
-            assert isinstance(embed, _TokenEmbedding), \
-                'The argument `token_embeddings` must be an instance or a list of instances ' \
-                'of `mxnet.contrib.text.embedding.TextEmbedding` whose embedding vectors will be' \
-                'loaded or concatenated-then-loaded to map to the indexed tokens.'
+            if not isinstance(embed, _TokenEmbedding):
+                raise TypeError(
+                    'The argument `token_embeddings` must be an instance or a list of '
+                    'instances of `mxnet.contrib.text.embedding.TextEmbedding` whose '
+                    'embedding vectors will be loaded or concatenated-then-loaded to '
+                    'map to the indexed tokens.')
 
         # Index tokens.
         self._index_tokens_from_vocabulary(vocabulary)

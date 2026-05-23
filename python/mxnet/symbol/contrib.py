@@ -104,9 +104,10 @@ def _flatten(args, inout_str):
         length = length if length > 1 else 0
         return [args], int(length)
 
-    assert isinstance(args, (list, tuple)), \
-        f"{inout_str} must be (nested) list of Symbol, " \
-        f"but got {str(args)} of type {str(type(args))}"
+    if not isinstance(args, (list, tuple)):
+        raise TypeError(
+            f"{inout_str} must be (nested) list of Symbol, "
+            f"but got {str(args)} of type {str(type(args))}")
     flat = []
     fmts = []
     for i in args:
@@ -122,9 +123,10 @@ def _regroup(args, fmt):
             return args[0], args[1:]
         return args[:fmt], args[fmt:]
 
-    assert isinstance(args, (list, tuple)), \
-        "output must be (nested) list of Symbol, " \
-        f"but got {str(args)} of type {str(type(args))}"
+    if not isinstance(args, (list, tuple)):
+        raise TypeError(
+            "output must be (nested) list of Symbol, "
+            f"but got {str(args)} of type {str(type(args))}")
     ret = []
     for i in fmt:
         res, args = _regroup(args, i)
@@ -207,7 +209,8 @@ def _check_data(inputs, in_type, msg):
                 break
     else:
         is_NDArray_or_list = isinstance(inputs, in_type)
-    assert is_NDArray_or_list, msg
+    if not is_NDArray_or_list:
+        raise TypeError(msg)
 
 def foreach(body, data, init_states, name="foreach"):
     """Run a for loop with user-defined computation over Symbols on dimension 0.

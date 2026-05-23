@@ -140,6 +140,50 @@ OPS_UNDER_CONTRACT = [
         (4, 5), _rand_default_input((4, 5)),
         id='broadcast_mul',
     ),
+    # XOP14 coverage: library-mapped operators with backward.
+    pytest.param(
+        lambda x: mx.sym.Convolution(
+            data=x,
+            weight=mx.sym.Variable('_convw'),
+            bias=mx.sym.Variable('_convb'),
+            kernel=(3, 3), stride=(1, 1), pad=(1, 1),
+            num_filter=2),
+        (1, 2, 5, 5), _rand_default_input((1, 2, 5, 5)),
+        id='convolution_2d',
+    ),
+    pytest.param(
+        lambda x: mx.sym.FullyConnected(
+            data=x,
+            weight=mx.sym.Variable('_fcw'),
+            bias=mx.sym.Variable('_fcb'),
+            num_hidden=4, no_bias=False, flatten=True),
+        (3, 6), _rand_default_input((3, 6)),
+        id='fully_connected',
+    ),
+    pytest.param(
+        lambda x: mx.sym.Pooling(
+            data=x, kernel=(2, 2), stride=(2, 2), pool_type='avg'),
+        (1, 2, 4, 4), _rand_default_input((1, 2, 4, 4)),
+        id='pooling_avg_2x2',
+    ),
+    pytest.param(
+        lambda x: mx.sym.Pooling(
+            data=x, kernel=(2, 2), stride=(2, 2), pool_type='max'),
+        (1, 2, 4, 4), _rand_default_input((1, 2, 4, 4)),
+        id='pooling_max_2x2',
+    ),
+    pytest.param(
+        # Concat across axis 1: backward must produce a gradient for each
+        # input independently — exercises the concat-split copyback path.
+        lambda x: mx.sym.concat(
+            x, mx.sym.Variable('_concat_rhs'), dim=1),
+        (2, 3), _rand_default_input((2, 3)),
+        id='concat_axis_1',
+    ),
+    # Note: BatchNorm needs an aux-state-aware binding pass, Embedding
+    # rejects data gradient by design, and Dropout's stochastic backward
+    # would fail the "add == init + write" sanity check.  Each gets its
+    # own dedicated contract test alongside this harness.
 ]
 
 
@@ -180,6 +224,43 @@ def _run_backward(build_symbol, input_shape, input_filler,
             # math stays simple.
             rhs = np.full((1, input_shape[-1]), 0.5, dtype='float32')
             args[name] = mx.nd.array(rhs)
+            args_grad[name] = mx.nd.zeros_like(args[name])
+            req_map[name] = 'null'
+        elif name in ('_bngamma', '_bnbeta', '_bnmean', '_bnvar'):
+            # BatchNorm gamma/beta/moving-mean/moving-var; size = C (axis 1
+            # of the NCHW input).
+            c = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
+            if name in ('_bngamma', '_bnvar'):
+                buf = mx.nd.ones((c,), dtype='float32')
+            else:
+                buf = mx.nd.zeros((c,), dtype='float32')
+            args[name] = buf
+            args_grad[name] = mx.nd.zeros_like(args[name])
+            req_map[name] = 'null'
+        elif name in ('_convw', '_convb'):
+            # 2x2 stride-1 pad-1 conv with num_filter=2 and 2-channel input.
+            if name == '_convw':
+                args[name] = mx.nd.ones((2, input_shape[1], 3, 3), dtype='float32') * 0.1
+            else:
+                args[name] = mx.nd.zeros((2,), dtype='float32')
+            args_grad[name] = mx.nd.zeros_like(args[name])
+            req_map[name] = 'null'
+        elif name in ('_fcw', '_fcb'):
+            # FullyConnected: weight is (num_hidden, in_units).
+            in_units = int(np.prod(input_shape[1:])) if len(input_shape) > 1 \
+                else int(input_shape[0])
+            if name == '_fcw':
+                args[name] = mx.nd.ones((4, in_units), dtype='float32') * 0.1
+            else:
+                args[name] = mx.nd.zeros((4,), dtype='float32')
+            args_grad[name] = mx.nd.zeros_like(args[name])
+            req_map[name] = 'null'
+        elif name == '_embw':
+            args[name] = mx.nd.ones((10, 4), dtype='float32') * 0.1
+            args_grad[name] = mx.nd.zeros_like(args[name])
+            req_map[name] = 'null'
+        elif name == '_concat_rhs':
+            args[name] = mx.nd.ones(input_shape, dtype='float32') * 0.25
             args_grad[name] = mx.nd.zeros_like(args[name])
             req_map[name] = 'null'
         else:

@@ -23,6 +23,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <limits>
 #include <memory>
 #include <unordered_map>
 
@@ -89,11 +90,23 @@ DNNLDotFwd::DNNLDotFwd(const DotParam& param,
   // function.
   const bool differentNumpy = isNumpy && ndimRhs > 2;
   const int smallDimLhs     = param.transpose_a ? shapeLhs[0] : shapeLhs[ndimLhs - 1];
-  const int bigDimLhs       = shapeLhs.Size() / smallDimLhs;
+  // XOP21: guard big-dim products against silent int truncation before they
+  // become dnnl::memory::dims (which is int64_t internally but we narrow to
+  // int here for the cached descriptor).  shapeLhs.Size() is index_t; a
+  // > INT_MAX product would otherwise wrap.
+  const index_t bigDimLhs_full = shapeLhs.Size() / smallDimLhs;
+  CHECK_LE(bigDimLhs_full, static_cast<index_t>(std::numeric_limits<int>::max()))
+      << "DNNL dot lhs big-dim product " << bigDimLhs_full
+      << " exceeds INT_MAX; tensor too large for the int-narrowed cached desc.";
+  const int bigDimLhs       = static_cast<int>(bigDimLhs_full);
   const int smallDimRhs     = param.transpose_b ?
                               shapeRhs[ndimRhs - 1] :
                               (differentNumpy ? shapeRhs[ndimRhs - 2] : shapeRhs[0]);
-  const int bigDimRhs = shapeRhs.Size() / smallDimRhs;
+  const index_t bigDimRhs_full = shapeRhs.Size() / smallDimRhs;
+  CHECK_LE(bigDimRhs_full, static_cast<index_t>(std::numeric_limits<int>::max()))
+      << "DNNL dot rhs big-dim product " << bigDimRhs_full
+      << " exceeds INT_MAX; tensor too large for the int-narrowed cached desc.";
+  const int bigDimRhs = static_cast<int>(bigDimRhs_full);
 
   lhs_md = GetMemoryDesc(inputs[DotIn::lhs], bigDimLhs, smallDimLhs, param.transpose_a);
   rhs_md = GetMemoryDesc(

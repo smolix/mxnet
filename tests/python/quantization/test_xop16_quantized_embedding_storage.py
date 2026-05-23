@@ -49,17 +49,17 @@ def test_quantized_embedding_symbol_infers_default_storage():
     inference produce the expected outputs (1 primary + 2 range scalars)."""
     data = mx.sym.Variable('data', dtype='int32')
     weight = mx.sym.Variable('weight', dtype='int8')
-    weight_min = mx.sym.Variable('weight_min', dtype='float32')
-    weight_max = mx.sym.Variable('weight_max', dtype='float32')
+    min_weight = mx.sym.Variable('min_weight', dtype='float32')
+    max_weight = mx.sym.Variable('max_weight', dtype='float32')
     sym = mx.sym.contrib.quantized_embedding(
         data=data, weight=weight,
-        weight_min=weight_min, weight_max=weight_max,
+        min_weight=min_weight, max_weight=max_weight,
         input_dim=10, output_dim=4)
 
     # Shape inference: output is (data_shape..., output_dim); range outputs scalar.
     arg_shapes, out_shapes, _ = sym.infer_shape(
         data=(3, 2), weight=(10, 4),
-        weight_min=(1,), weight_max=(1,))
+        min_weight=(1,), max_weight=(1,))
     assert out_shapes[0] == (3, 2, 4), f"expected primary shape (3, 2, 4), got {out_shapes[0]}"
     assert out_shapes[1] == (1,), f"expected min scalar, got {out_shapes[1]}"
     assert out_shapes[2] == (1,), f"expected max scalar, got {out_shapes[2]}"
@@ -67,7 +67,7 @@ def test_quantized_embedding_symbol_infers_default_storage():
     # Type inference: primary is int8 (passthrough); range outputs float32.
     arg_types, out_types, _ = sym.infer_type(
         data=np.int32, weight=np.int8,
-        weight_min=np.float32, weight_max=np.float32)
+        min_weight=np.float32, max_weight=np.float32)
     assert out_types[0] == np.int8
     assert out_types[1] == np.float32
     assert out_types[2] == np.float32
@@ -80,12 +80,12 @@ def test_quantized_embedding_imperative_forward():
     weight = mx.nd.zeros((10, 4), dtype='int8')
     weight[1, :] = 5
     weight[2, :] = 7
-    weight_min = mx.nd.array([-128.0], dtype='float32')
-    weight_max = mx.nd.array([127.0], dtype='float32')
+    min_weight = mx.nd.array([-128.0], dtype='float32')
+    max_weight = mx.nd.array([127.0], dtype='float32')
 
     outputs = mx.nd.contrib.quantized_embedding(
         data=data, weight=weight,
-        weight_min=weight_min, weight_max=weight_max,
+        min_weight=min_weight, max_weight=max_weight,
         input_dim=10, output_dim=4)
     primary, out_min, out_max = outputs[0], outputs[1], outputs[2]
     assert primary.shape == (2, 2, 4)

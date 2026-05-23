@@ -22,6 +22,7 @@
  */
 #include <mxnet/op_attr_types.h>
 #include "../tensor/indexing_op.h"
+#include "./quantized_range_utils.h"
 
 namespace mxnet {
 namespace op {
@@ -122,10 +123,20 @@ void QuantizedEmbeddingOpForward(const nnvm::NodeAttrs& attrs,
                                  inputs[quantized_embedding::kWeight],
                                  req[quantized_embedding::kOut],
                                  outputs[quantized_embedding::kOut]);
+  // XOP8: route min/max scalar range outputs through the shared req-aware
+  // helper so kNullOp leaves the buffer untouched, kAddTo accumulates, and
+  // kWriteTo/kWriteInplace assign.  Previously this wrote directly to the
+  // output buffers, ignoring req.
   float min_weight = inputs[quantized_embedding::kWeightMin].dptr<float>()[0];
   float max_weight = inputs[quantized_embedding::kWeightMax].dptr<float>()[0];
-  outputs[quantized_embedding::kOutMin].dptr<float>()[0] = min_weight;
-  outputs[quantized_embedding::kOutMax].dptr<float>()[0] = max_weight;
+  AssignQuantizedRangeOutput(outputs[quantized_embedding::kOutMin].dptr<float>(),
+                             &min_weight,
+                             req[quantized_embedding::kOutMin],
+                             "_contrib_quantized_embedding");
+  AssignQuantizedRangeOutput(outputs[quantized_embedding::kOutMax].dptr<float>(),
+                             &max_weight,
+                             req[quantized_embedding::kOutMax],
+                             "_contrib_quantized_embedding");
 }
 
 NNVM_REGISTER_OP(_contrib_quantized_embedding)

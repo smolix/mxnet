@@ -26,6 +26,12 @@
 #include <gtest/gtest.h>
 #include "mxnet/base.h"
 
+#include <cstring>
+
+#ifndef MXNET_UNIT_TEST_DEFAULT_FILTER
+#define MXNET_UNIT_TEST_DEFAULT_FILTER ""
+#endif
+
 #ifdef USE_BREAKPAD
 #include <breakpad/client/linux/handler/exception_handler.h>
 
@@ -87,6 +93,14 @@ int main(int argc, char** argv) {
   google_breakpad::ExceptionHandler eh(descriptor, NULL, dumpCallback, NULL, true, -1);
 #endif
 
+  bool has_gtest_filter = false;
+  for (int x = 1; x < argc; ++x) {
+    const char* arg = argv[x];
+    if (!strncmp(arg, "--gtest_filter", strlen("--gtest_filter"))) {
+      has_gtest_filter = true;
+    }
+  }
+
   testing::InitGoogleTest(&argc, argv);
   testing::FLAGS_gtest_death_test_style = "threadsafe";
 
@@ -112,6 +126,10 @@ int main(int argc, char** argv) {
       backtrace_test();
       return 0;
     }
+  }
+  if (MXNET_UNIT_TEST_DEFAULT_FILTER[0] != '\0' && !has_gtest_filter) {
+    testing::GTEST_FLAG(filter) = MXNET_UNIT_TEST_DEFAULT_FILTER;
+    std::cout << "Default Google Test filter: " << MXNET_UNIT_TEST_DEFAULT_FILTER << std::endl;
   }
 
   std::cout << std::endl << std::flush;

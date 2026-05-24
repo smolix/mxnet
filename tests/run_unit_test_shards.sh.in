@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+jobs="${MXNET_UNIT_TEST_JOBS:-4}"
+if ! [[ "${jobs}" =~ ^[0-9]+$ ]] || [[ "${jobs}" -lt 1 ]]; then
+  echo "MXNET_UNIT_TEST_JOBS must be a positive integer, got: ${jobs}" >&2
+  exit 2
+fi
+
+entries=(
+@MXNET_UNIT_TEST_WRAPPER_ENTRIES@)
+
+total="${#entries[@]}"
+log_dir="${MXNET_UNIT_TEST_LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/mxnet-unit-tests.XXXXXX")}"
+mkdir -p "${log_dir}"
+
+echo "Running ${total} MXNet unit-test shards with ${jobs} parallel job(s)"
+echo "Logs: ${log_dir}"
+
+run_one() {
+  local entry="$1"
+  shift
+  local name exe
+  IFS='|' read -r name exe <<< "${entry}"
+  local log="${log_dir}/${name}.log"
+  echo "[START] ${name}"
+  if "${exe}" "$@" >"${log}" 2>&1; then
+    echo "[ OK  ] ${name}"
+    return 0
+  fi
+  local status="$?"
+  echo "[FAIL ] ${name} (exit ${status})"
+  echo "----- ${name} log -----"
+  cat "${log}"
+  echo "----- end ${name} log -----"
+  return "${status}"
+}
+
+failed=0
+index=0
+while [[ "${index}" -lt "${total}" ]]; do
+  pids=()
+  names=()
+  for ((slot = 0; slot < jobs && index < total; ++slot)); do
+    entry="${entries[index]}"
+    name="${entry%%|*}"
+    run_one "${entry}" "$@" &
+    pids+=("$!")
+    names+=("${name}")
+    index=$((index + 1))
+  done
+
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[i]}"; then
+      failed=1
+    fi
+  done
+done
+
+if [[ "${failed}" -ne 0 ]]; then
+  echo "One or more MXNet unit-test shards failed. Logs kept at: ${log_dir}" >&2
+  exit 1
+fi
+
+if [[ -z "${MXNET_UNIT_TEST_LOG_DIR:-}" ]]; then
+  rm -rf "${log_dir}"
+fi
+echo "All MXNet unit-test shards passed."

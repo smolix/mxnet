@@ -37,12 +37,7 @@ MXNET_REGISTER_API("_npi.slogdet")
       int num_outputs   = 0;
       NDArray* inputs[] = {args[0].operator mxnet::NDArray*()};
       auto ndoutputs    = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
-      std::vector<NDArrayHandle> ndarray_handles;
-      ndarray_handles.reserve(num_outputs);
-      for (int i = 0; i < num_outputs; ++i) {
-        ndarray_handles.emplace_back(ndoutputs[i]);
-      }
-      *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
+      *ret = CreateADTFromOutputVector(&ndoutputs, num_outputs);
     });
 
 }  // namespace mxnet

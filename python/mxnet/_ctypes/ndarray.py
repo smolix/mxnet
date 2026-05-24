@@ -30,7 +30,7 @@ from .. import _global_var
 
 class NDArrayBase(object):
     """Base data structure for ndarray"""
-    __slots__ = ["handle", "writable", "_alive"]
+    __slots__ = ["handle", "writable", "_alive", "__weakref__"]
     # pylint: disable= no-member
 
     def __init__(self, handle, writable=True):

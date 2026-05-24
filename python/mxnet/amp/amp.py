@@ -66,20 +66,23 @@ float_types_cpu = (bfloat16, np.float32)
 # loop and large weight matrices this exhausts GPU memory even on H100-class cards.
 #
 # Fix: maintain a per-(source-id, source-dtype, target-dtype) cache of the
-# already-cast NDArray together with a strong reference back to the *source*.
-# Keeping the source ref prevents id() reuse: Python may recycle the same integer
-# address for a new object if the old one is GC-ed, which would cause a stale hit.
-# The cache entry is only valid while the source NDArray is the exact same object.
+# already-cast NDArray together with a weak reference back to the *source*.
+# The weak ref lets ephemeral activation tensors disappear normally while still
+# proving that a cache hit belongs to the exact same live source object.
 #
 # Thread safety: a plain threading.Lock guards the dict.  The dict maps
 #   (id(source), source_dtype_str, target_dtype_str)
-#     -> (source_ref, cast_result)
-#
-# Note: NDArray does not support weak references, so we use strong refs and
-# rely on clear_weight_cache() to release them (e.g. after parameter updates).
+#     -> (weakref(source), cast_result)
 # ---------------------------------------------------------------------------
 _amp_cast_cache: dict = {}
 _amp_cast_cache_lock = threading.Lock()
+
+
+def _remove_amp_cast_cache_entry(cache_key):
+    def remove(_):
+        with _amp_cast_cache_lock:
+            _amp_cast_cache.pop(cache_key, None)
+    return remove
 
 
 def clear_weight_cache():
@@ -112,20 +115,22 @@ def _cast_symbol_NDArray(s, dtype, is_numpy_module=False):
             # Cache key: identity + dtypes.  id() is stable while the source
             # NDArray is alive (it is owned by the Parameter).  dtype objects
             # are not always hashable by value, so convert to str.
-            # We also store a strong ref to the source so that if a *different*
+            # We also store a weak ref to the source so that if a *different*
             # NDArray is later allocated at the same address we detect the mismatch
-            # via the stored ref (stored_src is s → same object → valid hit).
+            # via the stored ref (stored_ref() is s -> same object -> valid hit).
             cache_key = (id(s), str(s.dtype), str(dtype))
             with _amp_cast_cache_lock:
                 entry = _amp_cast_cache.get(cache_key)
                 if entry is not None:
-                    stored_src, cached_result = entry
+                    stored_ref, cached_result = entry
                     # Verify the cached source is still the same object (not an
                     # id-recycled impostor).
-                    if stored_src is s:
+                    if stored_ref() is s:
                         return cached_result
+                    _amp_cast_cache.pop(cache_key, None)
                 result = amp_cast(s, dtype=dtype)
-                _amp_cast_cache[cache_key] = (s, result)
+                _amp_cast_cache[cache_key] = (
+                    weakref.ref(s, _remove_amp_cast_cache_entry(cache_key)), result)
             return result
     return s
 

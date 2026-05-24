@@ -20,6 +20,13 @@ cd "$REPO_ROOT"
 
 DEFAULT_VERSION="2.0.0+cu13.bw.$(date -u +%Y%m%d)"
 VERSION="${1:-${MXNET_PACKAGE_VERSION:-$DEFAULT_VERSION}}"
+if [ -n "${PYTHON:-}" ]; then
+    PYTHON_BIN="$PYTHON"
+elif [ -x "$REPO_ROOT/.venv-mxnet/bin/python" ]; then
+    PYTHON_BIN="$REPO_ROOT/.venv-mxnet/bin/python"
+else
+    PYTHON_BIN="python3"
+fi
 
 # Toggle OpenCV bundling.  When the build was configured with USE_OPENCV=ON
 # we copy the system libopencv_*.so files into python/mxnet/lib/ and patch
@@ -123,7 +130,7 @@ mkdir -p dist
     MXNET_SETUP_EXCLUDE_ONNX=1 \
     MXNET_SETUP_ENABLE_OPENCV_DEPS="$OPENCV_DEPS_FLAG" \
     MXNET_SETUP_ENABLE_CUDA_DEPS=1 \
-    python -m build --wheel --outdir ../dist)
+    "$PYTHON_BIN" -m build --wheel --no-isolation --outdir ../dist)
 
 WHEEL=$(ls -1 dist/*.whl | head -n1)
 if [ -z "$WHEEL" ]; then
@@ -136,7 +143,7 @@ ls -lh "$WHEEL"
 echo "==> Validating provenance"
 EXPECT_OPENCV=off
 [ "$HAS_OPENCV" = 1 ] && [ "$BUNDLE_OPENCV" = 1 ] && EXPECT_OPENCV=on
-python tools/release_provenance.py "$WHEEL" \
+"$PYTHON_BIN" tools/release_provenance.py "$WHEEL" \
     --cmake-cache build/CMakeCache.txt \
     --package-version "$VERSION" \
     --expect-cuda on \

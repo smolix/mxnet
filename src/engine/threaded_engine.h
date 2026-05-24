@@ -41,6 +41,7 @@
 #include "./engine_impl.h"
 #include "../profiler/profiler.h"
 #include "./openmp.h"
+#include "../common/denorms.h"
 #include "../common/object_pool.h"
 #include "../profiler/custom_op_profiler.h"
 
@@ -384,6 +385,7 @@ class ThreadedEngine : public Engine {
           if ((!(threaded_opr->opr_exception && *threaded_opr->opr_exception) ||
                threaded_opr->prop == FnProperty::kNoSkip) ||
               threaded_opr->wait) {
+            common::denorms::ApplyConfiguredFlushDenormsToCurrentThread();
             threaded_opr->fn(run_ctx, on_start, callback);
           } else {
             on_start();

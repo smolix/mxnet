@@ -131,8 +131,10 @@ def test_resize():
         _test_resize_with_diff_type(dtype)
 
     for dtype in ['float16', 'int32', 'int64']:
-        invalid_data_in = np.random.uniform(0, 255, (30, 20, 3)).astype(dtype)
-        assertRaises(MXNetError, transforms.Resize(20), invalid_data_in)
+        data_in = np.random.uniform(0, 255, (30, 20, 3)).astype(dtype)
+        out_nd = transforms.Resize(20)(data_in)
+        assert out_nd.shape == (20, 20, 3)
+        assert out_nd.dtype == data_in.dtype
 
 
 @use_np

@@ -97,6 +97,25 @@ class TestAmpWeightCacheUnit:
                 "(apache/mxnet#19019 regression)"
             )
 
+    def test_cache_does_not_keep_ephemeral_inputs_alive(self):
+        """The cache must not retain one-shot activation NDArrays."""
+        clear_weight_cache()
+
+        def cast_temporary_input():
+            x = mx.nd.random.uniform(shape=(128, 128), ctx=CTX)
+            mx.nd.waitall()
+            _cast_symbol_NDArray(x, np.float16)
+            assert len(_amp_cast_cache) == 1
+
+        cast_temporary_input()
+        mx.nd.waitall()
+        gc.collect()
+
+        assert len(_amp_cast_cache) == 0, (
+            "AMP cast cache kept an ephemeral NDArray source alive after it "
+            "went out of scope"
+        )
+
     def test_cache_size_is_one_per_weight(self):
         """Each unique source NDArray gets exactly one cache entry."""
         clear_weight_cache()

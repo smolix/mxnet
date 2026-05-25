@@ -71,9 +71,15 @@ MXNET_REGISTER_API("_npx.dropout")
       attrs.parsed = param;
       attrs.op     = op;
       SetAttrDict<op::DropoutParam>(&attrs);
-      int num_outputs = 1;
-      auto ndoutputs  = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
-      *ret            = ndoutputs[0];
+      NDArray* out      = args.num_args > 5 ? args[5].operator mxnet::NDArray*() : nullptr;
+      NDArray** outputs = out == nullptr ? nullptr : &out;
+      int num_outputs   = out != nullptr;
+      auto ndoutputs    = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, outputs);
+      if (out) {
+        *ret = PythonArg(5);
+      } else {
+        *ret = ndoutputs[0];
+      }
     });
 
 }  // namespace mxnet

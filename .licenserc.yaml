@@ -76,6 +76,7 @@ header:
     - 'include/nnvm' # symlinks to 3rdparty/tvm/nnvm/include/nnvm
     # test/build data
     - 'tests/python/dnnl/data/test_dnnl_test_dnnl_model_model1.json'
+    - 'tools/dependencies/download_checksums.json'
     # Blackwell-port fork-local docs / scoping notes / bug reports.
     # Pattern matches `*_status.md`, `*_fix.md`, `*_followup.md`,
     # `*_investigation.md`, `*_review.md`, `*_audit.md`, `*_scope.md`,

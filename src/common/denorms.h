@@ -90,11 +90,19 @@ inline bool ApplyFlushDenormsToCurrentThread(bool value) {
 #endif
 }
 
-inline bool SetFlushDenorms(bool value) {
+inline bool ConfigureFlushDenorms(bool value) {
 #if MXNET_SUPPORT_FTZ_DAZ
   const int previous = ConfiguredFlushDenorms().exchange(value ? 1 : 0);
-  ApplyFlushDenormsToCurrentThread(value);
   return previous < 0 ? false : previous != 0;
+#else
+  return false;
+#endif
+}
+
+inline bool SetFlushDenorms(bool value) {
+#if MXNET_SUPPORT_FTZ_DAZ
+  ConfiguredFlushDenorms().store(value ? 1 : 0);
+  return ApplyFlushDenormsToCurrentThread(value);
 #else
   return false;
 #endif

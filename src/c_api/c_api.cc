@@ -1851,6 +1851,13 @@ int MXSetFlushDenorms(bool value, bool* prev_state) {
   API_END();
 }
 
+int MXConfigureFlushDenorms(bool value, bool* prev_state) {
+  API_BEGIN();
+  *prev_state = common::denorms::ConfigureFlushDenorms(value);
+
+  API_END();
+}
+
 int MXNotifyShutdown() {
   API_BEGIN();
   mxnet::op::custom::CustomOperator::Get()->Stop();

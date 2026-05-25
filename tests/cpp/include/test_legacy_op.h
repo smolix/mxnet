@@ -537,6 +537,7 @@ class LegacyOperatorExecutor : public OperatorDataInitializer<DType>,
 #if MXNET_USE_CUDNN == 1 && CUDNN_MAJOR >= 7
         case ResourceRequest::kCuDNNDropoutDesc: {
           opContext_.requested.push_back(ResourceManager::Get()->Request(ctx, req));
+          Engine::Get()->WaitForAll();
           break;
         }
 #endif  // MXNET_USE_CUDNN == 1 && CUDNN_MAJOR >= 7

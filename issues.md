@@ -6,10 +6,13 @@ the **RESOLVED / HISTORICAL** section below the divider holds everything
 already closed (kept for traceability and to avoid re-doing closed audits).
 
 **Branch:** `cleanup/p0-p1-p2-20260522`
-**Latest tag:** `v2.0.0+cu13.bw.20260522.1` on GitHub
-**Local wheel:** `dist/mxnet-2.0.0+cu13.bw.20260523.5-*.whl` (USE_OPENCV=ON,
+**Latest tag on GitHub:** `v2.0.0+cu13.bw.20260523.6` (release published with wheel)
+**Local wheel:** `dist/mxnet-2.0.0+cu13.bw.20260523.7-*.whl` (USE_OPENCV=ON,
 libopencv bundled at `python/mxnet/lib/`, RUNPATH `$ORIGIN/lib`, GPU OOM
-retry path included)
+retry path included, `lr_scheduler.epoch_size=` convenience, cuDNN autotune
+defense-in-depth lock). **Two commits ahead of `origin/cleanup/...`** —
+`399a081a4` (d2l Issues 1/3/5/6/7) and `9a5e60c8e` (d2l-mxnet-issues.md
+PM snapshot) await a push (Yubikey ssh-agent not currently reachable).
 **Validation host:** 4× RTX 4090 (sm_89), CUDA 13.0, cuDNN 9, NCCL
 **macOS release tag:** `macos-arm64-slim-wheel-20260520`
 
@@ -28,6 +31,7 @@ Status labels:
 
 | Priority | Tracker | Status | Issue | Next action |
 |---|---|---|---|---|
+| P1 | D2L-Issue-3 | **In progress — deeper than image-aug Random race** | Multi-GPU DeadKernel reproduces in `fine-tuning`, `cnn-design`, `alexnet`, `densenet`, `ssd` — any notebook using image augmentation under multi-GPU dispatch.  **Bisected** (`d2l-issues/repro_aug_chain.py` with `AUG_STAGE=0..4`): STAGE 0 (identity aug) PASS, STAGE 1 (any random image aug) CRASH.  **Engine matrix**: `NaiveEngine` PASS, `MXNET_ENGINE_TYPE=ThreadedEngine` (non-PerDevice) PASS, default `ThreadedEnginePerDevice` CRASH.  **Random<cpu>::mutex() fix shipped in commit `74084a529`** (covers `random_crop`, `random_resized_crop`, `random_flip_*`, `random_brightness`/`contrast`/`saturation`/`hue`/`color_jitter`/`lighting`).  **STILL CRASHES**: faulthandler now shows a clean single-thread stack at `MXNDArraySyncCopyToCPU` from `ndarray.py:2655 asnumpy()`, in the eval forward inside `train()`.  That means the corruption is at the engine variable-dependency or NDArray-storage-handle layer, not in the image-aug ops' RNG draws.  The bug surfaces when CPU image-aug ops feed multi-GPU `split_and_load` + forward concurrently under ThreadedEnginePerDevice, and the engine loses track of an intermediate NDArray's storage handle.  Defense-in-depth `Random<cpu>::mutex()` ships anyway. | **Workaround for users today**: set `MXNET_ENGINE_TYPE=ThreadedEngine` (non-PerDevice) — verified to clear the crash across all the affected notebooks.  **Real fix** needs engine-level investigation in `src/engine/threaded_engine_perdevice.cc` — specifically the CPU-worker → GPU-worker dependency hand-off when an op produced on a CPU worker is consumed by GPU workers via `split_and_load`. |
 | P0 | FS12 | Deferred (architectural) | SIGBUS in `MXSetIsNumpyShape` thread_local ~21% through `test_numpy_op.py`; passes in isolation. Repro + ASAN runbook pinned in `tests/python/unittest/test_fs12_np_shape_bus_error_repro.py`. | Reopen when ASAN build is in the validation matrix. |
 | P0 | B4 / XOP18 | Deferred (architectural) | Real `_backward_sg_onednn_*` for QAT needs an NNVM/CachedOp framework refactor (multi-week scope). 20-test coverage in `test_quantized_backward.py` (14 passed, 6 xfailed) is the truthful production state. | Reopen with a concrete framework-refactor proposal. |
 | P1 | XOP9 | Partial | RNN dropout reserve-space req contract pinned (12 cases). Remaining: direct `out=` cuDNN / MKL Dropout forward path coverage. | Cover the backend-specific `out=` path; otherwise close. |
@@ -45,7 +49,6 @@ Status labels:
 | Strategic | O8, O9, O12 | Informational / Deferred | Apache MXNet archived 2023-11-17 — all fixes live in this fork (O8). Future oneDNN major releases will require porting (O9). ONNX Runtime 1.26 / opset 26 refresh is out of scope for current Linux/CUDA cleanup (O12). | — |
 | Strategic | P1, P3, P4, P5 | Deferred / Hardware | cuBLASLt default-on / stride-aware / INT8 (P1); topk K-independence (P3); softmax / LayerNorm small-op kernel pipelines (P4); BF16 CPU validation on AVX-512-BF16 hardware (P5). | Defer; benchmark harness driven. |
 | Deferred | GH7, GH8, GH9 | Deferred | Horovod KVStore barrier API (GH7); FlexiBLAS / THP / `parallel_for` grain (GH8); TensorRT upgrade (GH9). | Out of scope until specific drivers exist. |
-| External | L4, D5, D6, D7, D8 | External | Wait for fresh d2l notebook-run / output-audit artifacts. D5 dead-kernel batch (BERT NLI closed via D2L-Bug-3); D6 stamp/output mismatch; D7 import-time GPU probing; D8 artifact quality signal. | Wait for fresh artifacts. |
 | Remote | FP16 smoke | Remote | `tools/run_fp16_remote_smoke.sh` ready for a Zen 4+ host. | Run on target when available. |
 
 ### Cross-Platform Lifecycle Coverage TODO (T11)
@@ -55,24 +58,6 @@ Status labels:
 - [ ] Linux CUDA: re-run lifecycle tests against `NaiveEngine`, `ThreadedEnginePooled`, `ThreadedEnginePerDevice`.
 - [ ] Sanitizers: C++ engine/OpenMP/KVStore subset under TSAN; C++/Python lifecycle subset under ASAN/UBSAN.
 - [ ] CI: add a quick job that builds `mxnet_unit_tests` and runs the focused lifecycle filters before any expensive full-suite job.
-
----
-
-## D2L Diagnostics — External Wait State
-
-These items were imported from the prior d2l diagnostics reports and logs. They
-were observed with MXNet `2.0.0+cu13.bw.20260517` before the Apple Silicon merge
-and before an Ada-specific rebuild. Current triage treats D1 as resolved
-(OpenCV wheel-dependency bug), D2/D3/D4 as resolved (CUDA arch / scalar /
-transformer batch-dot), and D5-D8 as external D2L notebook infrastructure
-ownership unless a standalone MXNet crash repro appears.
-
-| ID | Issue | Disposition |
-|---|---|---|
-| D5 | `transformer.ipynb`, `natural-language-inference-bert.ipynb`, `sentiment-analysis-rnn.ipynb` ended as `DeadKernelError` in old diagnostics. BERT NLI verified alive on `.20260523.5` (cell timeout, not dead kernel — see D2L-Bug-3 in appendix). | Wait for fresh notebook-run artifacts; reopen only if a current runtime failure reproduces outside notebook infrastructure. |
-| D6 | `chapter_builders-guide/use-gpu.ipynb` had a passing stamp while stored outputs still contained GPU errors. | External D2L output-audit; reopen on fresh MXNet runtime failure. |
-| D7 | In restricted environments, `d2l.mxnet` queries GPUs at import time through default arguments such as `devices=d2l.try_all_gpus()`. | d2l-side lazy-default fix; not an MXNet runtime bug. |
-| D8 | Completed MXNet notebooks mostly had sane outputs; main issue was missing GPU runtime coverage, not bad convergence. | Artifact quality signal, not an MXNet defect. |
 
 ---
 
@@ -88,6 +73,13 @@ git log. Latest entries at the top.
 
 | Date | Tracker | Resolution |
 |---|---|---|
+| 2026-05-23 PM (session 3) | **D2L-Issue-3** narrowed further — engine-layer bug | Bisection refined to STAGE=1 in `d2l-issues/repro_aug_chain.py`: ANY single CPU random image-aug op triggers the multi-GPU SEGV.  `NaiveEngine` and `MXNET_ENGINE_TYPE=ThreadedEngine` both PASS; only default `ThreadedEnginePerDevice` crashes.  Added `std::mutex` to `mshadow::Random<cpu>` and 10 image-aug FCompute sites (commit `74084a529`) — defense-in-depth, ships in the wheel.  This was **necessary but not sufficient**: under the new build, `AUG_STAGE=4` still crashes after the finetune→scratch transition (clean faulthandler trace: `MXNDArraySyncCopyToCPU` in `ndarray.py:2655 asnumpy()`).  Root cause is in the `ThreadedEnginePerDevice` CPU-worker → GPU-worker dependency hand-off, not in the image-aug ops themselves.  Active queue row above carries the workaround (`MXNET_ENGINE_TYPE=ThreadedEngine`) and pointer to `src/engine/threaded_engine_perdevice.cc` for the real fix. |
+| 2026-05-23 PM | **D2L Issues 5/6/7 + D5/D6/D7/D8 retired** | All d2l items now closed on the MXNet side except `D2L-Issue-3` (active in queue above). The d2l-side notebook fixes for `D2L-Issue-6` (`epoch_size=num_batches`) and `D2L-Issue-7` (`trainer.step(1)` vs PyTorch's no-rescale; or per-notebook `lr*N` bump) are handed off via `~/d2l-neu/MXNET-FIXES-ISSUES-6-AND-7.md`. Legacy d2l diagnostics D5 (DeadKernel batch, BERT NLI verified alive), D6 (use-gpu stale stamp), D7 (import-time GPU probing), D8 (artifact-quality signal) are external d2l notebook-infra ownership — no MXNet runtime failure currently reproduces outside notebook drivers, so they're retired from the queue. Reopen here only on a fresh MXNet-side crash repro. |
+| 2026-05-23 PM | **D2L-Issue-6** lr-scheduler step semantics | Measurement (`tests/python/unittest/test_d2l_lr_scheduler_epoch_size.py`) confirmed MXNet `MultiFactorScheduler` / `CosineScheduler`, PyTorch `MultiStepLR`, and `optax.piecewise_constant_schedule` are semantically equivalent — all count caller-supplied steps; none has an intrinsic epoch concept. The d2l-mxnet 2× train-loss gap is from `Trainer.step()` advancing per-minibatch while the d2l notebook passes epoch-scale milestones. Added `epoch_size=` kwarg to `FactorScheduler` / `MultiFactorScheduler` / `PolyScheduler` / `CosineScheduler` so callers can pass epoch indices and get PyTorch-equivalent decay. 10 regression tests. **D2L-side notebook fix outstanding** — note delivered to `~/d2l-neu/MXNET-FIXES-ISSUES-6-AND-7.md`. Commit `399a081a4`. |
+| 2026-05-23 PM | **D2L-Issue-7** FCN reduction gap | Measurement confirmed `gluon.loss.SoftmaxCrossEntropyLoss(axis=1)`, `F.cross_entropy`, and `optax.softmax_cross_entropy_with_integer_labels` produce **bit-identical** mean loss on FCN-shaped inputs. The real cause of the 3× higher d2l-mxnet train loss is `gluon.Trainer.step(N)` rescaling gradient by `1/N` while PyTorch's `optimizer.step()` does not — for `lr=0.001, batch_size=32`, MXNet's effective LR is 32× smaller. `Trainer.step()` docstring updated with explicit PyTorch comparison. 3 regression tests in `test_d2l_trainer_rescale_semantics.py`. **D2L-side notebook fix outstanding** — note delivered to `~/d2l-neu/MXNET-FIXES-ISSUES-6-AND-7.md` (Option A: `trainer.step(1)` global; Option B: bump FCN lr to `0.032`). Commit `399a081a4`. |
+| 2026-05-23 PM | **D2L-Issue-5** storage banner suppression | Banner gating (already in place at `src/storage/storage.cc:201-209` behind `MXNET_LOG_STORAGE_INIT=1`) pinned by `test_d2l_storage_banner_suppression.py` (2 tests: silent by default, visible on opt-in). Commit `399a081a4`. |
+| 2026-05-23 PM | **D2L-Issue-1** argmax regression (legacy nd.) | Extended `test_d2l_argmax_size_one_axis_regression.py` with 6 additional cases covering legacy `mx.nd.argmax` / `mx.nd.argmin` on size-1 GPU axes (the original report flagged checking whether legacy API shares the broken kernel; it does, and is also fixed by the `reduce_kernel_M1` shadow). 19 tests total, all green. Commit `399a081a4`. |
+| 2026-05-23 PM | **D2L-Issue-3** fine-tuning DeadKernel triage | Empirically confirmed NOT in autotune — same flaky DeadKernel reproduces under `MXNET_CUDNN_AUTOTUNE_DEFAULT=0` and under `MXNET_CUDNN_FORCE_NO_HEURISTIC_PLANS=1`. Single-GPU runs intermittently pass; multi-GPU is the flaky path. Synthetic two-net repro on 4 GPUs runs clean. Added defense-in-depth `std::mutex` around `SelectPlan` in `src/operator/cudnn_ops.cc` (disable via `MXNET_CUDNN_AUTOTUNE_SERIALIZE=0`). Root cause of the d2l-notebook-only multi-GPU crash still under investigation — likely in `d2l.train_ch13` / KVStore interaction, not in MXNet itself. Commit `399a081a4`. |
 | 2026-05-23 | **FS3 / FS5** | Sweeps green. Focused C++ sweep (`Engine.*:CAPI*.*:ThreadLocal.*:OMPBehaviour.*:EngineShutdown.*`) **21/21 passed**. GPU shard (8 files: batchnorm-running-stats, deconv-TF32, device-pushpull, fork-safe-dnnl, pool-dynamic-shape, reducer-regressions, d2l-bug-2, d2l-argmax) **51 passed** in 34.6s. Commit `175e3ed7b`. |
 | 2026-05-23 | **D2L-Bug-3** (BERT NLI dead kernel) | Closed by the D2L-Bug-2 retry path. Solo BERT NLI on `.20260523.5` survived past the original 1095s death point and ran for 1400s before hitting the cell timeout (`CellTimeoutError`, kernel alive). The original symptom was an OOM `LOG(FATAL)` from an engine worker (which exits via `abort()` without traceback). Commit `0f52a3d18`. |
 | 2026-05-23 | **D2L-Bug-2** (GPU OOM) | Bounded retry-with-backoff in `PooledStorageManager::Alloc` for `cudaErrorMemoryAllocation`. Default 4 retries × 50/100/200/400 ms (≤750 ms wall before FATAL), gated by `MXNET_GPU_MEM_POOL_OOM_{RETRIES,BACKOFF_MS}`. FATAL diagnostic now includes requested bytes / pool used / device free/total / retries. Coverage in `tests/python/gpu/test_d2l_bug_2_gpu_oom_retry.py` (8 tests, incl. 4 GB × 2-process concurrent smoke). Commit `1e5cb5019`. |

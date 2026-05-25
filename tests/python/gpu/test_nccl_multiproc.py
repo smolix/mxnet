@@ -70,6 +70,7 @@ import pytest
 import mxnet as mx
 
 NUM_GPUS_MAIN = mx.device.num_gpus()
+NCCL_ENABLED = mx.runtime.Features().is_enabled("NCCL")
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,10 @@ def _worker_nccl_per_rank(rank: int, result_queue: mp.Queue):
     NUM_GPUS_MAIN < 2,
     reason=f"Requires >= 2 GPUs, found {NUM_GPUS_MAIN}"
 )
+@pytest.mark.skipif(
+    not NCCL_ENABLED,
+    reason="MXNet was built without NCCL support"
+)
 def test_nccl_per_process_is_isolated():
     """Spawn one worker per GPU-rank; verify push/pull is local (not all-reduced).
 
@@ -151,14 +156,21 @@ def test_nccl_per_process_is_isolated():
     result_queue = ctx.Queue()
     procs = []
 
-    for rank in range(NUM_GPUS_MAIN):
-        p = ctx.Process(target=_worker_nccl_per_rank, args=(rank, result_queue))
-        p.start()
-        procs.append(p)
+    try:
+        for rank in range(NUM_GPUS_MAIN):
+            p = ctx.Process(target=_worker_nccl_per_rank, args=(rank, result_queue))
+            p.start()
+            procs.append(p)
 
-    for p in procs:
-        p.join(timeout=120)
-        assert p.exitcode == 0, f"Worker process exited with code {p.exitcode}"
+        for p in procs:
+            p.join(timeout=120)
+            assert p.exitcode == 0, f"Worker process exited with code {p.exitcode}"
+    finally:
+        for p in procs:
+            if p.is_alive():
+                p.terminate()
+        for p in procs:
+            p.join(timeout=10)
 
     results = {}
     while not result_queue.empty():
@@ -195,6 +207,10 @@ def test_nccl_per_process_is_isolated():
 @pytest.mark.skipif(
     NUM_GPUS_MAIN < 2,
     reason=f"Requires >= 2 GPUs, found {NUM_GPUS_MAIN}"
+)
+@pytest.mark.skipif(
+    not NCCL_ENABLED,
+    reason="MXNet was built without NCCL support"
 )
 def test_nccl_single_proc_multi_gpu_is_supported():
     """Positive control: the supported pattern works correctly.
@@ -255,7 +271,7 @@ def test_nccl_multiproc_not_builtin_is_documented():
 if __name__ == '__main__':
     # Quick standalone run
     import mxnet as mx
-    if mx.device.num_gpus() >= 2:
+    if mx.device.num_gpus() >= 2 and mx.runtime.Features().is_enabled("NCCL"):
         test_nccl_per_process_is_isolated()
         test_nccl_single_proc_multi_gpu_is_supported()
     test_nccl_multiproc_not_builtin_is_documented()

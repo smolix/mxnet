@@ -113,6 +113,37 @@ def test_np_argmax_3d_size_one_middle_axis():
     np.testing.assert_array_equal(got, np.zeros((4, 7), dtype=got.dtype))
 
 
+# ---- Legacy mx.nd.argmax coverage ----
+# The d2l-mxnet-issues.md report flagged that the legacy `mx.nd.argmax` may
+# share the broken kernel.  After the reduce_kernel_M1 fix in
+# src/operator/tensor/reduce_rtc.cc both API surfaces are covered by the same
+# kernel — so we pin the legacy surface too to catch a future split.
+
+@pytest.mark.parametrize("axis_size", [1, 2, 3, 5])
+def test_nd_argmax_axis_1_matches_numpy(axis_size):
+    rng = np.random.RandomState(7)
+    data_np = rng.rand(8, axis_size).astype('float32')
+    arr = mx.nd.array(data_np, ctx=mx.gpu(0))
+    got = mx.nd.argmax(arr, axis=1).asnumpy().astype(np.int64)
+    expected = data_np.argmax(axis=1)
+    np.testing.assert_array_equal(got, expected,
+        err_msg=f"nd.argmax(axis=1) mismatch at axis_size={axis_size}")
+
+
+def test_nd_argmax_size_one_axis_returns_zeros():
+    data_np = np.random.RandomState(8).rand(5444, 1).astype('float32')
+    arr = mx.nd.array(data_np, ctx=mx.gpu(0))
+    got = mx.nd.argmax(arr, axis=1).asnumpy().astype(np.int64)
+    np.testing.assert_array_equal(got, np.zeros(5444, dtype=got.dtype))
+
+
+def test_nd_argmin_size_one_axis_returns_zeros():
+    data_np = np.random.RandomState(9).rand(16, 1).astype('float32')
+    arr = mx.nd.array(data_np, ctx=mx.gpu(0))
+    got = mx.nd.argmin(arr, axis=1).asnumpy().astype(np.int64)
+    np.testing.assert_array_equal(got, np.zeros(16, dtype=got.dtype))
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

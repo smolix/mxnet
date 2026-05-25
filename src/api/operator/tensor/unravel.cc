@@ -51,12 +51,7 @@ MXNET_REGISTER_API("_npi.unravel_index")
       if (num_outputs == 1) {
         *ret = ndoutputs[0];
       } else {
-        std::vector<NDArrayHandle> ndarray_handles;
-        ndarray_handles.reserve(num_outputs);
-        for (int i = 0; i < num_outputs; ++i) {
-          ndarray_handles.emplace_back(ndoutputs[i]);
-        }
-        *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
+        *ret = CreateADTFromOutputVector(&ndoutputs, num_outputs);
       }
     });
 

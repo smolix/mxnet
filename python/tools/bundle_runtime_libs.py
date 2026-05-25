@@ -60,6 +60,7 @@ from pathlib import Path
 NVIDIA_PIP_DEPS = [
     ("nvidia/cudnn/lib", ["libcudnn.so.9"]),
     ("nvidia/nccl/lib", ["libnccl.so.2"]),
+    ("nvidia/cu13/lib", ["libnvrtc.so.13", "libcublas.so.13", "libcublasLt.so.13"]),
 ]
 
 # CUDA toolkit runtime libs that don't have pip wheels yet — fall back

@@ -183,8 +183,17 @@ inline bool InstanceNormShape(const nnvm::NodeAttrs& attrs,
   if (dshape.ndim() == 0)
     return false;
 
-  SHAPE_ASSIGN_CHECK(*in_shape, 1, mxnet::TShape(Shape1(dshape[1])));
-  SHAPE_ASSIGN_CHECK(*in_shape, 2, mxnet::TShape(Shape1(dshape[1])));
+  if (mxnet::shape_is_known(dshape) && dshape.Size() == 0 && dshape[1] == 0) {
+    if (in_shape->at(1).ndim() == 0) {
+      SHAPE_ASSIGN_CHECK(*in_shape, 1, mxnet::TShape(Shape1(0)));
+    }
+    if (in_shape->at(2).ndim() == 0) {
+      SHAPE_ASSIGN_CHECK(*in_shape, 2, mxnet::TShape(Shape1(0)));
+    }
+  } else {
+    SHAPE_ASSIGN_CHECK(*in_shape, 1, mxnet::TShape(Shape1(dshape[1])));
+    SHAPE_ASSIGN_CHECK(*in_shape, 2, mxnet::TShape(Shape1(dshape[1])));
+  }
   out_shape->clear();
   out_shape->push_back(dshape);
   out_shape->push_back(Shape2(dshape[0], dshape[1]));

@@ -131,8 +131,10 @@ def test_resize():
         _test_resize_with_diff_type(dtype)
 
     for dtype in ['float16', 'int32', 'int64']:
-        invalid_data_in = np.random.uniform(0, 255, (30, 20, 3)).astype(dtype)
-        assertRaises(MXNetError, transforms.Resize(20), invalid_data_in)
+        data_in = np.random.uniform(0, 255, (30, 20, 3)).astype(dtype)
+        out_nd = transforms.Resize(20)(data_in)
+        assert out_nd.shape == (20, 20, 3)
+        assert out_nd.dtype == data_in.dtype
 
 
 @use_np
@@ -205,6 +207,11 @@ def test_flip_left_right():
     data_trans = npx.image.flip_left_right(np.array(data_in, dtype='uint8'))
     assert_almost_equal(flip_in, data_trans.asnumpy())
 
+    batch_in = np.random.uniform(0, 255, (2, 30, 40, 3)).astype(dtype=np.uint8)
+    batch_flip = batch_in[:, :, ::-1, :]
+    batch_trans = npx.image.flip_left_right(np.array(batch_in, dtype='uint8'))
+    assert_almost_equal(batch_flip, batch_trans.asnumpy())
+
 
 @use_np
 def test_flip_top_bottom():
@@ -212,6 +219,29 @@ def test_flip_top_bottom():
     flip_in = data_in[::-1, :, :]
     data_trans = npx.image.flip_top_bottom(np.array(data_in, dtype='uint8'))
     assert_almost_equal(flip_in, data_trans.asnumpy())
+
+    batch_in = np.random.uniform(0, 255, (2, 30, 40, 3)).astype(dtype=np.uint8)
+    batch_flip = batch_in[:, ::-1, :, :]
+    batch_trans = npx.image.flip_top_bottom(np.array(batch_in, dtype='uint8'))
+    assert_almost_equal(batch_flip, batch_trans.asnumpy())
+
+
+@use_np
+def test_random_flip_batched_extreme_probabilities():
+    batch_in = np.arange(2 * 3 * 4 * 3).reshape((2, 3, 4, 3)).astype(dtype=np.uint8)
+    batch_nd = np.array(batch_in, dtype='uint8')
+
+    lr_no_flip = npx.image.random_flip_left_right(batch_nd, p=0.0)
+    assert_almost_equal(batch_in, lr_no_flip.asnumpy())
+
+    lr_flip = npx.image.random_flip_left_right(batch_nd, p=1.0)
+    assert_almost_equal(batch_in[:, :, ::-1, :], lr_flip.asnumpy())
+
+    tb_no_flip = npx.image.random_flip_top_bottom(batch_nd, p=0.0)
+    assert_almost_equal(batch_in, tb_no_flip.asnumpy())
+
+    tb_flip = npx.image.random_flip_top_bottom(batch_nd, p=1.0)
+    assert_almost_equal(batch_in[:, ::-1, :, :], tb_flip.asnumpy())
 
 
 @use_np
@@ -252,6 +282,37 @@ def test_random_resize_crop():
     x = mx.np.ones((245, 480, 3), dtype='uint8')
     y = mx.npx.image.random_resized_crop(x, width=100, height=100)
     assert y.shape == (100, 100, 3)
+
+@use_np
+@requires_opencv
+def test_random_resize_crop_fallback_uses_source_center():
+    data = _np.zeros((300, 500, 3), dtype='uint8')
+    data[..., 0] = _np.arange(300, dtype='uint16')[:, None] % 256
+    data[..., 1] = _np.arange(500, dtype='uint16')[None, :] % 256
+    data[..., 2] = 17
+    x = mx.np.array(data, dtype='uint8')
+
+    y = mx.npx.image.random_resized_crop(x, width=224, height=224, max_trial=0)
+    out = y.asnumpy()
+    x0 = (data.shape[1] - 224) // 2
+    y0 = (data.shape[0] - 224) // 2
+    assert out.shape == (224, 224, 3)
+    assert same(out[0, 0], data[y0, x0])
+    assert same(out[-1, -1], data[y0 + 223, x0 + 223])
+
+    xb = mx.np.array(_np.stack([data, data], axis=0), dtype='uint8')
+    yb = mx.npx.image.random_resized_crop(xb, width=224, height=224, max_trial=0)
+    outb = yb.asnumpy()
+    assert outb.shape == (2, 224, 224, 3)
+    assert same(outb[:, 0, 0], _np.stack([data[y0, x0], data[y0, x0]], axis=0))
+
+@use_np
+@requires_opencv
+def test_random_resize_crop_fallback_upsamples_small_source():
+    x = mx.np.ones((50, 100, 3), dtype='uint8')
+    y = mx.npx.image.random_resized_crop(x, width=224, height=224, max_trial=0)
+    assert y.shape == (224, 224, 3)
+    y.wait_to_read()
 
 @use_np
 @requires_opencv

@@ -204,6 +204,7 @@ class CoreOpExecutor : public test::op::OperatorDataInitializer<DType>,
 #if MXNET_USE_CUDNN == 1 && CUDNN_MAJOR >= 7
           case ResourceRequest::kCuDNNDropoutDesc: {
             requested.emplace_back(ResourceManager::Get()->Request(ctx->run_ctx.ctx, req));
+            Engine::Get()->WaitForAll();
             break;
           }
 #endif  // MXNET_USE_CUDNN == 1 && CUDNN_MAJOR >= 7

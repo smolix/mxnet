@@ -38,12 +38,7 @@ MXNET_REGISTER_API("_npi.eig").set_body([](runtime::MXNetArgs args, runtime::MXN
   NDArray* inputs[] = {args[0].operator mxnet::NDArray*()};
   int num_outputs   = 0;
   auto ndoutputs    = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
-  std::vector<NDArrayHandle> ndarray_handles;
-  ndarray_handles.reserve(num_outputs);
-  for (int i = 0; i < num_outputs; ++i) {
-    ndarray_handles.emplace_back(ndoutputs[i]);
-  }
-  *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
+  *ret = CreateADTFromOutputVector(&ndoutputs, num_outputs);
 });
 
 MXNET_REGISTER_API("_npi.eigh").set_body([](runtime::MXNetArgs args, runtime::MXNetRetValue* ret) {
@@ -59,12 +54,7 @@ MXNET_REGISTER_API("_npi.eigh").set_body([](runtime::MXNetArgs args, runtime::MX
   int num_outputs   = 0;
   NDArray* inputs[] = {args[0].operator mxnet::NDArray*()};
   auto ndoutputs    = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
-  std::vector<NDArrayHandle> ndarray_handles;
-  ndarray_handles.reserve(num_outputs);
-  for (int i = 0; i < num_outputs; ++i) {
-    ndarray_handles.emplace_back(ndoutputs[i]);
-  }
-  *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
+  *ret = CreateADTFromOutputVector(&ndoutputs, num_outputs);
 });
 
 }  // namespace mxnet

@@ -95,19 +95,33 @@ class FactorScheduler(LRScheduler):
     Parameters
     ----------
     step : int
-        Changes the learning rate for every n updates.
+        Changes the learning rate for every n updates.  If ``epoch_size`` is
+        provided, ``step`` is interpreted as a number of epochs and multiplied
+        by ``epoch_size`` to convert to update steps.
     factor : float, optional
         The factor to change the learning rate.
     stop_factor_lr : float, optional
         Stop updating the learning rate if it is less than this value.
+    epoch_size : int, optional
+        If set, treat ``step`` as an epoch count and multiply it by
+        ``epoch_size`` (typically ``len(train_iter)`` / batches per epoch) so
+        that the scheduler advances at epoch granularity even though
+        ``Trainer.step()`` is called per minibatch.  This matches the
+        convention used by ``torch.optim.lr_scheduler.MultiStepLR`` when its
+        ``step()`` is called once per epoch.
     """
     def __init__(self, step, factor=1, stop_factor_lr=1e-8, base_lr=0.01,
-                 warmup_steps=0, warmup_begin_lr=0, warmup_mode='linear'):
+                 warmup_steps=0, warmup_begin_lr=0, warmup_mode='linear',
+                 epoch_size=None):
         super(FactorScheduler, self).__init__(base_lr, warmup_steps, warmup_begin_lr, warmup_mode)
         if step < 1:
             raise ValueError("Schedule step must be greater or equal than 1 round")
         if factor > 1.0:
             raise ValueError("Factor must be no more than 1 to make lr reduce")
+        if epoch_size is not None:
+            if not isinstance(epoch_size, int) or epoch_size < 1:
+                raise ValueError("epoch_size must be a positive int")
+            step = step * epoch_size
         self.step = step
         self.factor = factor
         self.stop_factor_lr = stop_factor_lr
@@ -144,7 +158,10 @@ class MultiFactorScheduler(LRScheduler):
     Parameters
     ----------
     step: list of int
-        The list of steps to schedule a change
+        The list of steps to schedule a change.  Each value is an update
+        count (i.e. one ``trainer.step()`` invocation increments the counter
+        by one).  If ``epoch_size`` is provided, each entry is interpreted as
+        an epoch index and is multiplied by ``epoch_size`` internally.
     factor: float
         The factor to change the learning rate.
     warmup_steps: int
@@ -155,9 +172,15 @@ class MultiFactorScheduler(LRScheduler):
         warmup can be done in two modes.
         'linear' mode gradually increases lr with each step in equal increments
         'constant' mode keeps lr at warmup_begin_lr for warmup_steps
+    epoch_size : int, optional
+        If set, treat each entry of ``step`` as an epoch index and multiply
+        by ``epoch_size`` (typically ``len(train_iter)``).  This makes
+        ``MultiFactorScheduler(step=[15, 30], epoch_size=num_batches)``
+        behave like PyTorch's ``MultiStepLR(milestones=[15, 30])`` when
+        ``scheduler.step()`` is called once per epoch.
     """
     def __init__(self, step, factor=1, base_lr=0.01, warmup_steps=0, warmup_begin_lr=0,
-                 warmup_mode='linear'):
+                 warmup_mode='linear', epoch_size=None):
         super(MultiFactorScheduler, self).__init__(base_lr, warmup_steps,
                                                    warmup_begin_lr, warmup_mode)
         if not isinstance(step, list):
@@ -171,6 +194,10 @@ class MultiFactorScheduler(LRScheduler):
                 raise ValueError("Schedule step must be greater or equal than 1 round")
         if factor > 1.0:
             raise ValueError("Factor must be no more than 1 to make lr reduce")
+        if epoch_size is not None:
+            if not isinstance(epoch_size, int) or epoch_size < 1:
+                raise ValueError("epoch_size must be a positive int")
+            step = [s * epoch_size for s in step]
         self.step = step
         self.cur_step_ind = 0
         self.factor = factor
@@ -221,12 +248,17 @@ class PolyScheduler(LRScheduler):
     """
 
     def __init__(self, max_update, base_lr=0.01, pwr=2, final_lr=0,
-                 warmup_steps=0, warmup_begin_lr=0, warmup_mode='linear'):
+                 warmup_steps=0, warmup_begin_lr=0, warmup_mode='linear',
+                 epoch_size=None):
         super(PolyScheduler, self).__init__(base_lr, warmup_steps, warmup_begin_lr, warmup_mode)
         if not isinstance(max_update, int):
             raise TypeError("max_update must be an int")
         if max_update < 1:
             raise ValueError("maximum number of updates must be strictly positive")
+        if epoch_size is not None:
+            if not isinstance(epoch_size, int) or epoch_size < 1:
+                raise ValueError("epoch_size must be a positive int")
+            max_update = max_update * epoch_size
         self.power = pwr
         self.base_lr_orig = self.base_lr
         self.max_update = max_update
@@ -252,7 +284,9 @@ class CosineScheduler(LRScheduler):
     Parameters
     ----------
         max_update: int
-            maximum number of updates before the decay reaches 0
+            maximum number of updates before the decay reaches 0.  If
+            ``epoch_size`` is supplied, this is the number of epochs over
+            which to decay; otherwise it is a number of minibatch updates.
         base_lr: float
             base learning rate
         final_lr: float
@@ -265,15 +299,26 @@ class CosineScheduler(LRScheduler):
             warmup can be done in two modes.
             'linear' mode gradually increases lr with each step in equal increments
             'constant' mode keeps lr at warmup_begin_lr for warmup_steps
+        epoch_size: int, optional
+            If set, ``max_update`` is treated as an epoch count and multiplied
+            by ``epoch_size`` (typically ``len(train_iter)``) internally.  This
+            matches the convention used by the d2l book's PyTorch / JAX
+            ``CosineScheduler`` implementations, which call ``.step()`` once
+            per epoch.
     """
 
     def __init__(self, max_update, base_lr=0.01, final_lr=0,
-                 warmup_steps=0, warmup_begin_lr=0, warmup_mode='linear'):
+                 warmup_steps=0, warmup_begin_lr=0, warmup_mode='linear',
+                 epoch_size=None):
         super(CosineScheduler, self).__init__(base_lr, warmup_steps, warmup_begin_lr, warmup_mode)
         if not isinstance(max_update, int):
             raise TypeError("max_update must be an int")
         if max_update < 1:
             raise ValueError("maximum number of updates must be strictly positive")
+        if epoch_size is not None:
+            if not isinstance(epoch_size, int) or epoch_size < 1:
+                raise ValueError("epoch_size must be a positive int")
+            max_update = max_update * epoch_size
         self.base_lr_orig = base_lr
         self.max_update = max_update
         self.final_lr = final_lr

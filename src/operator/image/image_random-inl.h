@@ -29,6 +29,8 @@
 #include <climits>
 #include <cmath>
 #include <limits>
+#include <mutex>
+#include <random>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -558,6 +560,21 @@ inline bool ImageShape(const nnvm::NodeAttrs& attrs,
   return true;
 }
 
+inline bool ImageOrBatchShape(const nnvm::NodeAttrs& attrs,
+                              mxnet::ShapeVector* in_attrs,
+                              mxnet::ShapeVector* out_attrs) {
+  mxnet::TShape& dshape = (*in_attrs)[0];
+  CHECK(dshape.ndim() == 3 || dshape.ndim() == 4)
+      << "Input image must have shape (height, width, channels) or "
+      << "(batch, height, width, channels), but got " << dshape;
+  auto nchannels = dshape[dshape.ndim() - 1];
+  CHECK(nchannels == 3 || nchannels == 1)
+      << "The last dimension of input image must be the channel dimension with "
+      << "either 1 or 3 elements, but got input with shape " << dshape;
+  SHAPE_ASSIGN_CHECK(*out_attrs, 0, dshape);
+  return true;
+}
+
 template <typename DType, int axis>
 void FlipImpl(const mxnet::TShape& shape, DType* src, DType* dst) {
   int head = 1, mid = shape[axis], tail = 1;
@@ -581,6 +598,73 @@ void FlipImpl(const mxnet::TShape& shape, DType* src, DType* dst) {
   }
 }
 
+template <typename DType>
+void FlipLeftRightImpl(const mxnet::TShape& shape, DType* src, DType* dst) {
+  if (shape.ndim() == 3) {
+    FlipImpl<DType, 1>(shape, src, dst);
+  } else {
+    FlipImpl<DType, 2>(shape, src, dst);
+  }
+}
+
+template <typename DType>
+void FlipTopBottomImpl(const mxnet::TShape& shape, DType* src, DType* dst) {
+  if (shape.ndim() == 3) {
+    FlipImpl<DType, 0>(shape, src, dst);
+  } else {
+    FlipImpl<DType, 1>(shape, src, dst);
+  }
+}
+
+inline std::vector<char> RandomFlipDecision(const mxnet::TShape& shape,
+                                            Random<cpu>* prnd,
+                                            float p) {
+  CHECK_GE(p, 0.f) << "flip probability must be in [0, 1], got " << p;
+  CHECK_LE(p, 1.f) << "flip probability must be in [0, 1], got " << p;
+  const size_t num_images = shape.ndim() == 4 ? shape[0] : 1;
+  std::vector<char> flip(num_images, 0);
+  if (p <= 0.f) {
+    return flip;
+  }
+  if (p >= 1.f) {
+    std::fill(flip.begin(), flip.end(), 1);
+    return flip;
+  }
+  std::uniform_real_distribution<float> dist(0.f, 1.f);
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
+  for (size_t i = 0; i < num_images; ++i) {
+    flip[i] = dist(prnd->GetRndEngine()) < p;
+  }
+  return flip;
+}
+
+template <typename DType, int axis>
+void RandomFlipImpl(const mxnet::TShape& shape,
+                    DType* src,
+                    DType* dst,
+                    const std::vector<char>& flip) {
+  if (shape.ndim() == 3) {
+    if (flip[0]) {
+      FlipImpl<DType, axis>(shape, src, dst);
+    } else if (src != dst) {
+      std::copy(src, src + shape.Size(), dst);
+    }
+    return;
+  }
+
+  const auto sample_size = shape[1] * shape[2] * shape[3];
+  const mxnet::TShape image_shape({shape[1], shape[2], shape[3]});
+  for (size_t i = 0; i < flip.size(); ++i) {
+    DType* sample_src = src + i * sample_size;
+    DType* sample_dst = dst + i * sample_size;
+    if (flip[i]) {
+      FlipImpl<DType, axis>(image_shape, sample_src, sample_dst);
+    } else if (sample_src != sample_dst) {
+      std::copy(sample_src, sample_src + sample_size, sample_dst);
+    }
+  }
+}
+
 inline void FlipLeftRight(const nnvm::NodeAttrs& attrs,
                           const OpContext& ctx,
                           const std::vector<TBlob>& inputs,
@@ -588,7 +672,7 @@ inline void FlipLeftRight(const nnvm::NodeAttrs& attrs,
                           const std::vector<TBlob>& outputs) {
   using namespace mshadow;
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    FlipImpl<DType, 1>(inputs[0].shape_, inputs[0].dptr<DType>(), outputs[0].dptr<DType>());
+    FlipLeftRightImpl<DType>(inputs[0].shape_, inputs[0].dptr<DType>(), outputs[0].dptr<DType>());
   });
 }
 
@@ -599,7 +683,7 @@ inline void FlipTopBottom(const nnvm::NodeAttrs& attrs,
                           const std::vector<TBlob>& outputs) {
   using namespace mshadow;
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    FlipImpl<DType, 0>(inputs[0].shape_, inputs[0].dptr<DType>(), outputs[0].dptr<DType>());
+    FlipTopBottomImpl<DType>(inputs[0].shape_, inputs[0].dptr<DType>(), outputs[0].dptr<DType>());
   });
 }
 
@@ -607,7 +691,10 @@ struct RandomFlipParam : public dmlc::Parameter<RandomFlipParam> {
   float p;
 
   DMLC_DECLARE_PARAMETER(RandomFlipParam) {
-    DMLC_DECLARE_FIELD(p).set_default(0.5f).describe("The probablity of flipping the image.");
+    DMLC_DECLARE_FIELD(p)
+        .set_default(0.5f)
+        .set_range(0.f, 1.f)
+        .describe("The probablity of flipping the image.");
   }
 };
 
@@ -620,15 +707,10 @@ inline void RandomFlipLeftRight(const nnvm::NodeAttrs& attrs,
   const RandomFlipParam& param = nnvm::get<RandomFlipParam>(attrs.parsed);
   Stream<cpu>* s               = ctx.get_stream<cpu>();
   Random<cpu>* prnd            = ctx.requested[0].get_random<cpu, float>(s);
-  std::normal_distribution<float> dist(0, 1);
+  const std::vector<char> flip  = RandomFlipDecision(inputs[0].shape_, prnd, param.p);
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    if (dist(prnd->GetRndEngine()) > param.p) {
-      if (outputs[0].dptr_ != inputs[0].dptr_) {
-        std::memcpy(outputs[0].dptr_, inputs[0].dptr_, inputs[0].Size() * sizeof(DType));
-      }
-    } else {
-      FlipImpl<DType, 1>(inputs[0].shape_, inputs[0].dptr<DType>(), outputs[0].dptr<DType>());
-    }
+    RandomFlipImpl<DType, 1>(
+        inputs[0].shape_, inputs[0].dptr<DType>(), outputs[0].dptr<DType>(), flip);
   });
 }
 
@@ -641,15 +723,10 @@ inline void RandomFlipTopBottom(const nnvm::NodeAttrs& attrs,
   const RandomFlipParam& param = nnvm::get<RandomFlipParam>(attrs.parsed);
   Stream<cpu>* s               = ctx.get_stream<cpu>();
   Random<cpu>* prnd            = ctx.requested[0].get_random<cpu, float>(s);
-  std::normal_distribution<float> dist(0, 1);
+  const std::vector<char> flip  = RandomFlipDecision(inputs[0].shape_, prnd, param.p);
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    if (dist(prnd->GetRndEngine()) > param.p) {
-      if (outputs[0].dptr_ != inputs[0].dptr_) {
-        std::memcpy(outputs[0].dptr_, inputs[0].dptr_, inputs[0].Size() * sizeof(DType));
-      }
-    } else {
-      FlipImpl<DType, 0>(inputs[0].shape_, inputs[0].dptr<DType>(), outputs[0].dptr<DType>());
-    }
+    RandomFlipImpl<DType, 0>(
+        inputs[0].shape_, inputs[0].dptr<DType>(), outputs[0].dptr<DType>(), flip);
   });
 }
 
@@ -690,6 +767,10 @@ inline void RandomBrightness(const nnvm::NodeAttrs& attrs,
 
   Stream<cpu>* s    = ctx.get_stream<cpu>();
   Random<cpu>* prnd = ctx.requested[0].get_random<cpu, float>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   float alpha_b     = std::uniform_real_distribution<float>(param.min_factor,
                                                         param.max_factor)(prnd->GetRndEngine());
 
@@ -741,6 +822,10 @@ inline void RandomContrast(const nnvm::NodeAttrs& attrs,
 
   Stream<cpu>* s    = ctx.get_stream<cpu>();
   Random<cpu>* prnd = ctx.requested[0].get_random<cpu, real_t>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   float alpha_c     = std::uniform_real_distribution<float>(param.min_factor,
                                                         param.max_factor)(prnd->GetRndEngine());
 
@@ -793,6 +878,10 @@ inline void RandomSaturation(const nnvm::NodeAttrs& attrs,
 
   Stream<cpu>* s    = ctx.get_stream<cpu>();
   Random<cpu>* prnd = ctx.requested[0].get_random<cpu, real_t>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   float alpha_s     = std::uniform_real_distribution<float>(param.min_factor,
                                                         param.max_factor)(prnd->GetRndEngine());
 
@@ -925,6 +1014,10 @@ inline void RandomHue(const nnvm::NodeAttrs& attrs,
 
   Stream<cpu>* s    = ctx.get_stream<cpu>();
   Random<cpu>* prnd = ctx.requested[0].get_random<cpu, real_t>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   float alpha       = std::uniform_real_distribution<float>(param.min_factor,
                                                       param.max_factor)(prnd->GetRndEngine());
 
@@ -953,6 +1046,10 @@ inline void RandomColorJitter(const nnvm::NodeAttrs& attrs,
   const RandomColorJitterParam& param = nnvm::get<RandomColorJitterParam>(attrs.parsed);
   Stream<cpu>* s                      = ctx.get_stream<cpu>();
   Random<cpu>* prnd                   = ctx.requested[0].get_random<cpu, real_t>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
 
   int order[4] = {0, 1, 2, 3};
   std::shuffle(order, order + 4, prnd->GetRndEngine());
@@ -1063,6 +1160,10 @@ inline void RandomLighting(const nnvm::NodeAttrs& attrs,
   const RandomLightingParam& param = nnvm::get<RandomLightingParam>(attrs.parsed);
   Stream<cpu>* s                   = ctx.get_stream<cpu>();
   Random<cpu>* prnd                = ctx.requested[0].get_random<cpu, float>(s);
+
+  // d2l-mxnet-issues.md Issue 3: defensive lock around kRandom — see mshadow::Random<cpu>::mutex()
+
+  std::lock_guard<std::mutex> _rnd_lk(prnd->mutex());
   std::normal_distribution<float> dist(0, param.alpha_std);
   float alpha_r = dist(prnd->GetRndEngine());
   float alpha_g = dist(prnd->GetRndEngine());
@@ -1070,7 +1171,7 @@ inline void RandomLighting(const nnvm::NodeAttrs& attrs,
   AdjustLightingImpl({alpha_r, alpha_g, alpha_b}, ctx, inputs, req, outputs);
 }
 
-#define MXNET_REGISTER_IMAGE_AUG_OP(name)                                                \
+#define MXNET_REGISTER_IMAGE_AUG_OP_WITH_SHAPE(name, shape_func)                         \
   NNVM_REGISTER_OP(name)                                                                 \
       .set_num_inputs(1)                                                                 \
       .set_num_outputs(1)                                                                \
@@ -1078,16 +1179,22 @@ inline void RandomLighting(const nnvm::NodeAttrs& attrs,
                                       [](const NodeAttrs& attrs) {                       \
                                         return std::vector<std::pair<int, int>>{{0, 0}}; \
                                       })                                                 \
-      .set_attr<mxnet::FInferShape>("FInferShape", ImageShape)                           \
+      .set_attr<mxnet::FInferShape>("FInferShape", shape_func)                           \
       .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<1, 1>)                      \
       .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseNone{"_copy"})              \
       .add_argument("data", "NDArray-or-Symbol", "The input.")
 
-#define MXNET_REGISTER_IMAGE_RND_AUG_OP(name)                          \
-  MXNET_REGISTER_IMAGE_AUG_OP(name).set_attr<FResourceRequest>(        \
+#define MXNET_REGISTER_IMAGE_AUG_OP(name) MXNET_REGISTER_IMAGE_AUG_OP_WITH_SHAPE(name, ImageShape)
+
+#define MXNET_REGISTER_IMAGE_RND_AUG_OP_WITH_SHAPE(name, shape_func)   \
+  MXNET_REGISTER_IMAGE_AUG_OP_WITH_SHAPE(name, shape_func)             \
+      .set_attr<FResourceRequest>(                                     \
       "FResourceRequest", [](const NodeAttrs& attrs) {                 \
         return std::vector<ResourceRequest>{ResourceRequest::kRandom}; \
       })
+
+#define MXNET_REGISTER_IMAGE_RND_AUG_OP(name) \
+  MXNET_REGISTER_IMAGE_RND_AUG_OP_WITH_SHAPE(name, ImageShape)
 
 }  // namespace image
 }  // namespace op

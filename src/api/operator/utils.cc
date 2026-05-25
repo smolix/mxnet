@@ -22,6 +22,9 @@
  * \brief Utility functions for operator invoke
  */
 #include "utils.h"
+
+#include <mxnet/runtime/ndarray_handle.h>
+
 #include "../../imperative/imperative_utils.h"
 
 namespace mxnet {
@@ -110,6 +113,21 @@ std::vector<NDArray*> Invoke(const nnvm::Op* op,
   for (int i = *num_outputs; i < infered_num_outputs; ++i)
     delete ndoutputs[i];
   return ndoutputs;
+}
+
+runtime::ADT CreateADTFromOutputVector(std::vector<NDArray*>* ndoutputs, int num_outputs) {
+  CHECK_LE(num_outputs, static_cast<int>(ndoutputs->size()));
+  std::vector<NDArrayHandle> ndarray_handles;
+  ndarray_handles.reserve(num_outputs);
+  for (int i = 0; i < num_outputs; ++i) {
+    ndarray_handles.emplace_back((*ndoutputs)[i]);
+  }
+  runtime::ADT ret(0, ndarray_handles.begin(), ndarray_handles.end());
+  for (int i = 0; i < num_outputs; ++i) {
+    delete (*ndoutputs)[i];
+    (*ndoutputs)[i] = nullptr;
+  }
+  return ret;
 }
 
 }  // namespace mxnet

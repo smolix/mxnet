@@ -223,12 +223,7 @@ MXNET_REGISTER_API("_npi.split").set_body([](runtime::MXNetArgs args, runtime::M
 
   int num_outputs = 0;
   auto ndoutputs  = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
-  std::vector<NDArrayHandle> ndarray_handles;
-  ndarray_handles.reserve(num_outputs);
-  for (int i = 0; i < num_outputs; ++i) {
-    ndarray_handles.emplace_back(ndoutputs[i]);
-  }
-  *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
+  *ret = CreateADTFromOutputVector(&ndoutputs, num_outputs);
 });
 
 MXNET_REGISTER_API("_npi.roll").set_body([](runtime::MXNetArgs args, runtime::MXNetRetValue* ret) {
@@ -352,12 +347,7 @@ MXNET_REGISTER_API("_npi.array_split")
       int num_inputs    = 1;
       int num_outputs   = 0;
       auto ndoutputs    = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
-      std::vector<NDArrayHandle> ndarray_handles;
-      ndarray_handles.reserve(num_outputs);
-      for (int i = 0; i < num_outputs; ++i) {
-        ndarray_handles.emplace_back(ndoutputs[i]);
-      }
-      *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
+      *ret = CreateADTFromOutputVector(&ndoutputs, num_outputs);
     });
 
 MXNET_REGISTER_API("_npi.dsplit")
@@ -391,12 +381,7 @@ MXNET_REGISTER_API("_npi.dsplit")
       SetAttrDict<op::SplitParam>(&attrs);
       int num_outputs = 0;
       auto ndoutputs  = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
-      std::vector<NDArrayHandle> ndarray_handles;
-      ndarray_handles.reserve(num_outputs);
-      for (int i = 0; i < num_outputs; ++i) {
-        ndarray_handles.emplace_back(ndoutputs[i]);
-      }
-      *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
+      *ret = CreateADTFromOutputVector(&ndoutputs, num_outputs);
     });
 
 MXNET_REGISTER_API("_npi.hsplit")
@@ -428,12 +413,7 @@ MXNET_REGISTER_API("_npi.hsplit")
       SetAttrDict<op::SplitParam>(&attrs);
       int num_outputs = 0;
       auto ndoutputs  = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
-      std::vector<NDArrayHandle> ndarray_handles;
-      ndarray_handles.reserve(num_outputs);
-      for (int i = 0; i < num_outputs; ++i) {
-        ndarray_handles.emplace_back(ndoutputs[i]);
-      }
-      *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
+      *ret = CreateADTFromOutputVector(&ndoutputs, num_outputs);
     });
 
 MXNET_REGISTER_API("_npi.vsplit")
@@ -467,12 +447,7 @@ MXNET_REGISTER_API("_npi.vsplit")
       SetAttrDict<op::SplitParam>(&attrs);
       int num_outputs = 0;
       auto ndoutputs  = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
-      std::vector<NDArrayHandle> ndarray_handles;
-      ndarray_handles.reserve(num_outputs);
-      for (int i = 0; i < num_outputs; ++i) {
-        ndarray_handles.emplace_back(ndoutputs[i]);
-      }
-      *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
+      *ret = CreateADTFromOutputVector(&ndoutputs, num_outputs);
     });
 
 MXNET_REGISTER_API("_npi.diag").set_body([](runtime::MXNetArgs args, runtime::MXNetRetValue* ret) {
@@ -664,12 +639,7 @@ MXNET_REGISTER_API("_npi.tril_indices")
 
       int num_outputs = 0;
       auto ndoutputs  = Invoke(op, &attrs, 0, nullptr, &num_outputs, nullptr);
-      std::vector<NDArrayHandle> ndarray_handles;
-      ndarray_handles.reserve(num_outputs);
-      for (int i = 0; i < num_outputs; ++i) {
-        ndarray_handles.emplace_back(ndoutputs[i]);
-      }
-      *ret = ADT(0, ndarray_handles.begin(), ndarray_handles.end());
+      *ret = CreateADTFromOutputVector(&ndoutputs, num_outputs);
     });
 
 MXNET_REGISTER_API("_npi.vstack")

@@ -194,24 +194,24 @@ NNVM_REGISTER_OP(_backward_image_normalize)
     .set_attr<nnvm::TIsBackward>("TIsBackward", true)
     .set_attr<FCompute>("FCompute<cpu>", NormalizeOpBackward<cpu>);
 
-MXNET_REGISTER_IMAGE_AUG_OP(_image_flip_left_right)
+MXNET_REGISTER_IMAGE_AUG_OP_WITH_SHAPE(_image_flip_left_right, ImageOrBatchShape)
     .add_alias("_npx__image_flip_left_right")
     .describe(R"code()code" ADD_FILELINE)
     .set_attr<FCompute>("FCompute<cpu>", FlipLeftRight);
 
-MXNET_REGISTER_IMAGE_RND_AUG_OP(_image_random_flip_left_right)
+MXNET_REGISTER_IMAGE_RND_AUG_OP_WITH_SHAPE(_image_random_flip_left_right, ImageOrBatchShape)
     .add_alias("_npx__image_random_flip_left_right")
     .set_attr_parser(ParamParser<RandomFlipParam>)
     .describe(R"code()code" ADD_FILELINE)
     .add_arguments(RandomFlipParam::__FIELDS__())
     .set_attr<FCompute>("FCompute<cpu>", RandomFlipLeftRight);
 
-MXNET_REGISTER_IMAGE_AUG_OP(_image_flip_top_bottom)
+MXNET_REGISTER_IMAGE_AUG_OP_WITH_SHAPE(_image_flip_top_bottom, ImageOrBatchShape)
     .add_alias("_npx__image_flip_top_bottom")
     .describe(R"code()code" ADD_FILELINE)
     .set_attr<FCompute>("FCompute<cpu>", FlipTopBottom);
 
-MXNET_REGISTER_IMAGE_RND_AUG_OP(_image_random_flip_top_bottom)
+MXNET_REGISTER_IMAGE_RND_AUG_OP_WITH_SHAPE(_image_random_flip_top_bottom, ImageOrBatchShape)
     .add_alias("_npx__image_random_flip_top_bottom")
     .set_attr_parser(ParamParser<RandomFlipParam>)
     .describe(R"code()code" ADD_FILELINE)

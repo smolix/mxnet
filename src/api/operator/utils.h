@@ -25,6 +25,7 @@
 #define MXNET_API_OPERATOR_UTILS_H_
 
 #include <mxnet/base.h>
+#include <mxnet/runtime/container.h>
 #include <nnvm/c_api.h>
 #include <vector>
 #include <string>
@@ -46,6 +47,8 @@ std::vector<NDArray*> Invoke(const nnvm::Op* op,
                              NDArray** inputs,
                              int* num_outputs,
                              NDArray** outputs);
+
+runtime::ADT CreateADTFromOutputVector(std::vector<NDArray*>* ndoutputs, int num_outputs);
 
 bool is_recording();
 bool is_deferred_compute();

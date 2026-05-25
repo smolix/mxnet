@@ -31,6 +31,10 @@ sys.path.insert(0, os.path.join(curr_path, '../unittest'))
 # They will be detected by test framework, as long as the current file has a different filename
 from test_profiler import *
 
+test_custom_operator_profiling_naive_engine = pytest.mark.skip(
+    reason="requires NaiveEngine process isolation; CPU profiler coverage runs in tests/python/unittest/test_profiler.py"
+)(test_custom_operator_profiling_naive_engine)
+
 
 # Autouse fixture: tests imported from test_profiler use legacy nd APIs
 # (mx.nd.array, mx.nd.zeros, mx.nd.Custom etc.) and break in numpy mode

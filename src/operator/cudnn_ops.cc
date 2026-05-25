@@ -33,6 +33,7 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -659,6 +660,31 @@ Descriptor SelectPlan(const OpContext& ctx,
                       const std::vector<void*>& tensor_ptrs,
                       int64_t out_size,
                       const std::string& excl_engines_var) {
+  // Serialize all autotune plan selection across the process as
+  // defense-in-depth against multi-thread cuDNN backend races.  The
+  // cuDNN backend descriptor finalize + heuristic enumeration API
+  // surface has historically not been documented as concurrent-safe
+  // across handles, so we serialize the heuristic-enumeration and
+  // workspace-prep phases here.  FindTopPlans already grabs the
+  // storage GPU mutex internally for timing.
+  //
+  // Note: this lock did NOT resolve the intermittent multi-GPU
+  // SIGSEGV observed in the d2l fine-tuning notebook (4× RTX 4090).
+  // That crash reproduces with autotune disabled, so its root cause
+  // is outside this dispatcher and remains under investigation.
+  //
+  // Cost is small: each shape is autotuned exactly once and the
+  // result is cached by the per-Op<> mutex in Exec<> (see
+  // cudnn_ops.h).  Set MXNET_CUDNN_AUTOTUNE_SERIALIZE=0 to disable
+  // this lock on platforms where the defense is not needed.
+  static std::mutex autotune_mtx;
+  static const bool serialize_autotune =
+      dmlc::GetEnv("MXNET_CUDNN_AUTOTUNE_SERIALIZE", true);
+  std::unique_lock<std::mutex> autotune_lock;
+  if (serialize_autotune) {
+    autotune_lock = std::unique_lock<std::mutex>(autotune_mtx);
+  }
+
   auto s = ctx.get_stream<gpu>();
   auto op_graph = MakeOpGraph(s->dnn_handle_, std::move(op));
 

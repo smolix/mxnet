@@ -231,7 +231,33 @@ def test_nccl_bandwidth(size_mib, request):
 
 
 # ---------------------------------------------------------------------------
-# Test 9: int8 NOT supported (MUST BE LAST — see warning below)
+# Test 9: optimizer after a single-device pre-optimizer push
+# ---------------------------------------------------------------------------
+def test_nccl_updater_preserves_merge_root_after_single_device_push():
+    kv = _make_kv()
+    shape = (16,)
+    key = 1
+
+    kv.init(key, mx.nd.zeros(shape, mx.gpu(1)))
+    kv.push(key, [mx.nd.ones(shape, mx.gpu(1))])
+    mx.nd.waitall()
+
+    kv.set_optimizer(mx.optimizer.SGD(learning_rate=0.0))
+    kv.push(key, [
+        mx.nd.ones(shape, mx.gpu(0)),
+        mx.nd.ones(shape, mx.gpu(1)) * 2,
+    ])
+
+    res = [mx.nd.zeros(shape, mx.gpu(g)) for g in range(2)]
+    kv.pull(key, res)
+    mx.nd.waitall()
+
+    for g in range(2):
+        assert np.allclose(res[g].asnumpy(), 1.0, rtol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Test 10: int8 NOT supported (MUST BE LAST — see warning below)
 #
 # Pushing a dtype not in kvstore_nccl.h's GetNCCLType() switch causes an
 # async error that is raised at waitall() time.  This error corrupts the

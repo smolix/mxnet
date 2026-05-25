@@ -24,8 +24,11 @@ import json
 import os
 import re
 import runpy
+import shutil
 import subprocess
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
@@ -128,6 +131,82 @@ def read_cmake_features(repo_root, cmake_cache=None):
     return report
 
 
+def _readelf_dynamic_section(library_path):
+    result = subprocess.run(
+        ["readelf", "-d", str(library_path)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
+    return result.stdout
+
+
+def _parse_dynamic_section(dynamic_section):
+    needed = []
+    runpath = None
+    for line in dynamic_section.splitlines():
+        needed_match = re.search(r"Shared library: \[([^\]]+)\]", line)
+        if needed_match:
+            needed.append(needed_match.group(1))
+            continue
+        runpath_match = re.search(r"Library (?:rpath|runpath): \[([^\]]*)\]", line)
+        if runpath_match:
+            runpath = runpath_match.group(1)
+    return {"needed": needed, "runpath": runpath}
+
+
+def inspect_wheel_payload(wheel_path):
+    payload = {
+        "inspected": False,
+        "error": None,
+        "has_libmxnet": False,
+        "needed": [],
+        "opencv_needed": [],
+        "opencv_bundled": [],
+        "opencv_bundled_sonames": [],
+        "runpath": None,
+        "runpath_has_origin_lib": False,
+    }
+    if not wheel_path.exists():
+        return payload
+
+    try:
+        with zipfile.ZipFile(wheel_path) as wheel:
+            names = wheel.namelist()
+            payload["opencv_bundled"] = sorted(
+                name for name in names if name.startswith("mxnet/lib/libopencv_")
+            )
+            payload["opencv_bundled_sonames"] = sorted(
+                {Path(name).name for name in payload["opencv_bundled"]}
+            )
+            libmxnet_name = "mxnet/libmxnet.so"
+            if libmxnet_name not in names:
+                payload["error"] = "{} not found in wheel".format(libmxnet_name)
+                return payload
+
+            payload["has_libmxnet"] = True
+            with tempfile.TemporaryDirectory(prefix="mxnet-wheel-provenance-") as tmpdir:
+                libmxnet_path = Path(tmpdir) / "libmxnet.so"
+                with wheel.open(libmxnet_name) as src, libmxnet_path.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                dynamic = _parse_dynamic_section(_readelf_dynamic_section(libmxnet_path))
+
+            payload["needed"] = dynamic["needed"]
+            payload["opencv_needed"] = sorted(
+                soname for soname in dynamic["needed"] if soname.startswith("libopencv_")
+            )
+            payload["runpath"] = dynamic["runpath"]
+            payload["runpath_has_origin_lib"] = (
+                dynamic["runpath"] is not None
+                and "$ORIGIN/lib" in dynamic["runpath"].split(":")
+            )
+            payload["inspected"] = True
+    except (OSError, zipfile.BadZipFile, subprocess.CalledProcessError) as err:
+        payload["error"] = str(err)
+    return payload
+
+
 def read_wheels(wheel_paths, package_version, package_name):
     expected_name = canonicalize_name(package_name)
     rows = []
@@ -145,6 +224,7 @@ def read_wheels(wheel_paths, package_version, package_name):
             "exists": wheel_path.exists(),
             "distribution_matches_package": canonicalize_name(str(name)) == expected_name,
             "version_matches_package": _version(str(version)) == package_version,
+            "payload": inspect_wheel_payload(wheel_path),
         })
     return rows
 
@@ -219,6 +299,7 @@ def validate_provenance(
             errors.append("{} expected {}, found {}".format(
                 name, "ON" if expected else "OFF", features[name]["raw"] or "unknown"))
 
+    expected_opencv = _expected_flag(expect_opencv)
     for wheel in report["wheels"]:
         if not wheel["exists"]:
             errors.append("wheel file does not exist: {}".format(wheel["path"]))
@@ -228,6 +309,36 @@ def validate_provenance(
         if not wheel["version_matches_package"]:
             errors.append("{} version {} does not match package version {}".format(
                 wheel["filename"], wheel["version"], report["package"]["version"]))
+        payload = wheel.get("payload")
+        if payload is None:
+            if expected_opencv is not None:
+                errors.append("{} payload was not inspected".format(wheel["filename"]))
+            continue
+        if payload["error"] is not None:
+            errors.append("{} payload inspection failed: {}".format(
+                wheel["filename"], payload["error"]))
+            continue
+        if expected_opencv is True:
+            if not payload["has_libmxnet"]:
+                errors.append("{} does not contain mxnet/libmxnet.so".format(
+                    wheel["filename"]))
+            if not payload["opencv_needed"]:
+                errors.append("{} libmxnet.so has no libopencv_* NEEDED entries".format(
+                    wheel["filename"]))
+            if not payload["opencv_bundled"]:
+                errors.append("{} does not bundle mxnet/lib/libopencv_*".format(
+                    wheel["filename"]))
+            for soname in payload["opencv_needed"]:
+                if soname not in payload["opencv_bundled_sonames"]:
+                    errors.append("{} needs {} but does not bundle that SONAME".format(
+                        wheel["filename"], soname))
+            if not payload["runpath_has_origin_lib"]:
+                errors.append("{} libmxnet.so RUNPATH does not include $ORIGIN/lib".format(
+                    wheel["filename"]))
+        elif expected_opencv is False and payload["opencv_needed"]:
+            errors.append("{} libmxnet.so has OpenCV NEEDED entries despite "
+                          "--expect-opencv off: {}".format(
+                              wheel["filename"], ", ".join(payload["opencv_needed"])))
     return errors
 
 
@@ -261,6 +372,18 @@ def format_text_report(report, errors):
                 wheel["path"], wheel["distribution"], wheel["version"],
                 "yes" if wheel["version_matches_package"] else "no",
                 "yes" if wheel["exists"] else "no"))
+        payload = wheel.get("payload")
+        if payload is not None:
+            if payload["error"] is not None:
+                lines.append("      payload: error={}".format(payload["error"]))
+            else:
+                lines.append(
+                    "      payload: libmxnet={} opencv_needed={} "
+                    "opencv_bundled={} origin_lib_runpath={}".format(
+                        "yes" if payload["has_libmxnet"] else "no",
+                        ",".join(payload["opencv_needed"]) or "none",
+                        len(payload["opencv_bundled"]),
+                        "yes" if payload["runpath_has_origin_lib"] else "no"))
 
     lines.append("Validation: {}".format("failed" if errors else "ok"))
     lines.extend("  - {}".format(error) for error in errors)

@@ -59,6 +59,21 @@ def test_collect_provenance_reports_release_staging_fields(monkeypatch, tmp_path
         raise AssertionError("unexpected git args: {}".format(args))
 
     monkeypatch.setattr(release_provenance, "_git_output", fake_git_output)
+    monkeypatch.setattr(
+        release_provenance,
+        "inspect_wheel_payload",
+        lambda wheel_path: {
+            "inspected": True,
+            "error": None,
+            "has_libmxnet": True,
+            "needed": [],
+            "opencv_needed": [],
+            "opencv_bundled": [],
+            "opencv_bundled_sonames": [],
+            "runpath": None,
+            "runpath_has_origin_lib": False,
+        },
+    )
 
     report = release_provenance.collect_provenance(
         repo_root=tmp_path,
@@ -141,3 +156,117 @@ def test_validate_provenance_checks_expected_feature_flags(monkeypatch, tmp_path
 
     assert any("USE_CUDA expected OFF, found ON" in error for error in errors)
     assert not any("USE_OPENCV expected OFF" in error for error in errors)
+
+
+def test_validate_provenance_checks_opencv_wheel_payload():
+    release_provenance = _load_release_provenance()
+    report = {
+        "expected_package_name": "mxnet",
+        "git": {
+            "commit": "fedcba9876543210fedcba9876543210fedcba98",
+            "short_commit": "fedcba987654",
+            "dirty": False,
+            "tracked_change_count": 0,
+            "untracked_count": 0,
+        },
+        "package": {"version": "2.0.0"},
+        "features": {
+            "cache_found": True,
+            "cache_path": "build/CMakeCache.txt",
+            "USE_CUDA": {"enabled": True, "raw": "ON"},
+            "USE_OPENCV": {"enabled": True, "raw": "ON"},
+        },
+        "wheels": [
+            {
+                "filename": "mxnet-2.0.0-cp312-cp312-linux_x86_64.whl",
+                "path": "dist/mxnet-2.0.0-cp312-cp312-linux_x86_64.whl",
+                "exists": True,
+                "distribution": "mxnet",
+                "distribution_matches_package": True,
+                "version": "2.0.0",
+                "version_matches_package": True,
+                "payload": {
+                    "inspected": True,
+                    "error": None,
+                    "has_libmxnet": True,
+                    "needed": ["libcudart.so.13"],
+                    "opencv_needed": [],
+                    "opencv_bundled": [],
+                    "opencv_bundled_sonames": [],
+                    "runpath": "$ORIGIN/../nvidia/cu13/lib",
+                    "runpath_has_origin_lib": False,
+                },
+            }
+        ],
+    }
+
+    errors = release_provenance.validate_provenance(
+        report,
+        expect_cuda="on",
+        expect_opencv="on",
+    )
+
+    assert any("has no libopencv_* NEEDED entries" in error for error in errors)
+    assert any("does not bundle mxnet/lib/libopencv_*" in error for error in errors)
+    assert any("RUNPATH does not include $ORIGIN/lib" in error for error in errors)
+
+
+def test_validate_provenance_accepts_opencv_wheel_payload():
+    release_provenance = _load_release_provenance()
+    report = {
+        "expected_package_name": "mxnet",
+        "git": {
+            "commit": "0123456789abcdef0123456789abcdef01234567",
+            "short_commit": "0123456789ab",
+            "dirty": False,
+            "tracked_change_count": 0,
+            "untracked_count": 0,
+        },
+        "package": {"version": "2.0.0"},
+        "features": {
+            "cache_found": True,
+            "cache_path": "build/CMakeCache.txt",
+            "USE_CUDA": {"enabled": True, "raw": "ON"},
+            "USE_OPENCV": {"enabled": True, "raw": "ON"},
+        },
+        "wheels": [
+            {
+                "filename": "mxnet-2.0.0-cp312-cp312-linux_x86_64.whl",
+                "path": "dist/mxnet-2.0.0-cp312-cp312-linux_x86_64.whl",
+                "exists": True,
+                "distribution": "mxnet",
+                "distribution_matches_package": True,
+                "version": "2.0.0",
+                "version_matches_package": True,
+                "payload": {
+                    "inspected": True,
+                    "error": None,
+                    "has_libmxnet": True,
+                    "needed": [
+                        "libopencv_imgcodecs.so.406",
+                        "libopencv_imgproc.so.406",
+                    ],
+                    "opencv_needed": [
+                        "libopencv_imgcodecs.so.406",
+                        "libopencv_imgproc.so.406",
+                    ],
+                    "opencv_bundled": [
+                        "mxnet/lib/libopencv_imgcodecs.so.406",
+                        "mxnet/lib/libopencv_imgproc.so.406",
+                    ],
+                    "opencv_bundled_sonames": [
+                        "libopencv_imgcodecs.so.406",
+                        "libopencv_imgproc.so.406",
+                    ],
+                    "runpath": "$ORIGIN/lib:$ORIGIN/../nvidia/cu13/lib",
+                    "runpath_has_origin_lib": True,
+                },
+            }
+        ],
+    }
+
+    assert release_provenance.validate_provenance(
+        report,
+        expect_cuda="on",
+        expect_opencv="on",
+    ) == []

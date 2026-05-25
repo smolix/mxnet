@@ -64,7 +64,8 @@ if [ "$HAS_OPENCV" = 1 ] && [ "$BUNDLE_OPENCV" = 1 ]; then
     needed=$(readelf -d build/libmxnet.so \
         | awk '/NEEDED/ && /libopencv_/ { gsub(/[][]/, "", $5); print $5 }')
     if [ -z "$needed" ]; then
-        echo "WARNING: libmxnet.so has no libopencv_ NEEDED entries despite USE_OPENCV=ON" >&2
+        echo "ERROR: libmxnet.so has no libopencv_ NEEDED entries despite USE_OPENCV=ON" >&2
+        exit 5
     fi
     for soname in $needed; do
         # Find the system file the dynamic linker would resolve.  Avoid

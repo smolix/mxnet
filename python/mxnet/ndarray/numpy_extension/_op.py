@@ -824,7 +824,8 @@ def dropout(data, p=0.5, mode="training", axes=None, cudnn_off=False, **kwargs):
     out : NDArray or list of NDArrays
         The output of this function.
     """
-    return _api_internal.dropout(data, p, mode, axes, cudnn_off)
+    out = kwargs.pop('out', None)
+    return _api_internal.dropout(data, p, mode, axes, cudnn_off, out)
 
 
 # pylint: disable=too-many-arguments

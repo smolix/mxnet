@@ -130,8 +130,9 @@ class KVStoreNCCL : public KVStoreLocal {
       NDArray& local = local_[key];
       if (updater_ != nullptr) {
         CHECK(!local.is_none()) << "key " << key << " has not been inited";
-        // if merged is on gpu, we may need copy weight from cpu to gpu
-        if (merged.ctx().dev_mask() != cpu::kDevMask && local.ctx().dev_mask() == cpu::kDevMask) {
+        // Keep the local weight on the NCCL merge root.  It may already be
+        // on a different GPU after a pre-optimizer single-device push.
+        if (merged.ctx().dev_mask() != cpu::kDevMask && local.ctx() != merged.ctx()) {
           local = local.Copy(merged.ctx());
         }
       }
@@ -511,13 +512,13 @@ class KVStoreNCCL : public KVStoreLocal {
     MXNET_NCCL_CALL(ncclCommInitAll(&(comms[0]), devs.size(), &(device_ids_[0])));
     mxnet::common::cuda::DeviceStore device_store;
     for (size_t i = 0; i < devs.size(); ++i) {
-      NCCLEntry e;
-      e.dev_id = device_ids_[i];
-      e.comm   = comms[i];
-      e.rank   = i;
-      device_store.SetDevice(e.dev_id);
-      CUDA_CALL(cudaStreamCreate(&(e.stream)));
-      nccl_data_[device_ids_[i]] = e;
+      NCCLEntry entry;
+      entry.dev_id = device_ids_[i];
+      entry.comm   = comms[i];
+      entry.rank   = i;
+      device_store.SetDevice(entry.dev_id);
+      CUDA_CALL(cudaStreamCreate(&(entry.stream)));
+      nccl_data_[device_ids_[i]] = entry;
     }
   }
 

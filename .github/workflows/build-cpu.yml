@@ -85,6 +85,7 @@ jobs:
             -DUSE_NCCL=OFF \
             -DUSE_ONEDNN=ON \
             -DUSE_OPENMP=ON \
+            -DUSE_OPERATOR_TUNING=OFF \
             -DUSE_OPENCV=ON \
             -DUSE_BLAS=open \
             -DUSE_DIST_KVSTORE=OFF \
@@ -131,7 +132,7 @@ jobs:
           "$VENV_DIR/bin/python" -c "import mxnet; import mxnet.numpy as np; x = np.array([1,2,3]); print(x*2)"
 
       - name: Upload libmxnet.so artefact
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: libmxnet-cpu-${{ github.sha }}

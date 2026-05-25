@@ -320,8 +320,12 @@ __version__ = libinfo.__version__
 # library instance of mxnet
 _LIB = _load_lib()
 
-check_call(_LIB.MXSetFlushDenorms(ctypes.c_bool(True),
-                                  ctypes.byref(ctypes.c_bool())))
+# Keep MXNet's engine worker threads in the default fast denormal mode without
+# changing the Python import thread.  Changing the import thread's MXCSR makes
+# NumPy's finfo probe report bogus zero subnormal values and pollutes notebook
+# output with warnings.
+check_call(_LIB.MXConfigureFlushDenorms(ctypes.c_bool(True),
+                                        ctypes.byref(ctypes.c_bool())))
 # type definitions
 mx_int = ctypes.c_int
 mx_uint = ctypes.c_uint

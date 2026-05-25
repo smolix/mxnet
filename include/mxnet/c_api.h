@@ -294,6 +294,18 @@ MXNET_DLL int MXRandomSeedContext(int seed, int dev_type, int dev_id);
 MXNET_DLL int MXSetFlushDenorms(bool value, bool* prev_state);
 
 /*!
+ * \brief Configure the default denormal handling used by MXNet worker threads.
+ * Currently this option is only supported in CPU backend. Unlike
+ * MXSetFlushDenorms, this does not change the floating-point mode of the
+ * calling thread.
+ *
+ * \param value state of flush-to-zero and denormals-are-zero to apply in MXNet worker threads.
+ * \param prev_state previously configured state, or false if no explicit state was configured.
+ * \return 0 when success, -1 when failure happens.
+ */
+MXNET_DLL int MXConfigureFlushDenorms(bool value, bool* prev_state);
+
+/*!
  * \brief Notify the engine about a shutdown,
  *  This can help engine to print less messages into display.
  *

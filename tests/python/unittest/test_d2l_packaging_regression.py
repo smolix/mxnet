@@ -118,5 +118,26 @@ def test_storage_manager_banner_opt_in_with_env_flag():
     )
 
 
+def test_import_does_not_trigger_numpy_subnormal_warning():
+    """Importing MXNet must not leave NumPy's finfo probe in FTZ/DAZ mode."""
+    script = (
+        "import mxnet as mx\n"
+        "import numpy as np\n"
+        "_ = np.finfo(np.float32).smallest_subnormal\n"
+        "_ = np.finfo(np.float64).smallest_subnormal\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-W", "default", "-c", script],
+        capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, (
+        "subprocess crashed (rc={}):\nSTDOUT:\n{}\nSTDERR:\n{}"
+        .format(proc.returncode, proc.stdout, proc.stderr))
+    assert "smallest subnormal" not in proc.stderr, (
+        "MXNet import changed the Python thread's floating-point mode before "
+        "NumPy finfo was initialized.  Captured stderr:\n{}"
+        .format(proc.stderr)
+    )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

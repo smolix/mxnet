@@ -1,95 +1,20 @@
 name: continuous build
 
-# Blackwell-port fork: macOS x86_64 isn't a target for this branch
-# (the build assumes CUDA 13 + cuDNN 9 on linux x86_64). Restrict to
-# master so it doesn't fire on every port commit.
 on:
   push:
-    branches: [master]
+    branches: [master, onednn-v3-port]
   pull_request:
-    branches: [master]
+    branches: [master, onednn-v3-port]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: continuous-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  macosx-x86_64:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Compilation cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          # We include the commit sha in the cache key, as new cache entries are
-          # only created if there is no existing entry for the key yet.
-          key: ${{ runner.os }}-ccache-${{ github.sha }}
-          # Restore any ccache cache entry, if none for
-          # ${{ runner.os }}-ccache-${{ github.sha }} exists
-          restore-keys: |
-            ${{ runner.os }}-ccache
-
-      - name: Setup python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.8'
-          architecture: x64
-
-      - name: Install Dependencies
-        run: |
-          brew install nasm automake ninja libtool cmake pkgconfig protobuf hdf5 zlib ccache
-          ccache -M 500M  # Limit the ccache size; Github's overall cache limit is 5GB
-          python -m pip install -r ci/docker/install/requirements
-        shell: bash
-
-      - name: Build project
-        run: |
-          CMAKE_STATICBUILD=1 ./tools/staticbuild/build.sh cpu
-
-      - name: Setup Python
-        run: |
-          python -m pip install --user -e python
-
-      - name: Build with Cython
-        run: |
-          cd python
-          python setup.py build_ext --inplace --with-cython
-
-      - name: Test project
-        env:
-          MXNET_ENABLE_CYTHON: 1
-        run: |
-          python3 -m pytest -n 4 --durations=50 --verbose tests/python/unittest/ -k 'not test_operator and not (test_subgraph or test_custom_op or test_external_op or test_recordimage_dataset_with_data_loader_multiworker or test_multi_worker or test_multi_worker_shape or test_multi_worker_forked_data_loader or test_multi_worker_dataloader_release_pool)' -m 'not serial'
-          MXNET_ENGINE_TYPE=NaiveEngine python3 -m pytest -n 4 --durations=50 --verbose tests/python/unittest/ -k 'test_operator and not (test_subgraph or test_custom_op or test_external_op or test_recordimage_dataset_with_data_loader_multiworker or test_multi_worker or test_multi_worker_shape or test_multi_worker_forked_data_loader or test_multi_worker_dataloader_release_pool)' -m 'not serial'
-          python3 -m pytest --durations=50 --verbose tests/python/unittest/ -k 'not (test_subgraph or test_custom_op or test_external_op or test_recordimage_dataset_with_data_loader_multiworker or test_multi_worker or test_multi_worker_shape or test_multi_worker_forked_data_loader or test_multi_worker_dataloader_release_pool)' -m 'serial'
-
-      - name: Test Array API
-        env:
-          MXNET_ENABLE_CYTHON: 1
-        run: |
-          cd ..
-          git clone https://github.com/data-apis/array-api-tests.git
-          cd array-api-tests
-          git checkout c1dba80a196a03f880d2e0a998a272fb3867b720
-          export ARRAY_API_TESTS_MODULE=mxnet.numpy pytest
-          export DMLC_LOG_STACK_TRACE_DEPTH=100
-          python3 -m pytest --reruns 3 --durations=50 --verbose array_api_tests/test_creation_functions.py
-          python3 -m pytest --reruns 3 --durations=50 --verbose array_api_tests/test_indexing.py
-          python3 -m pytest --reruns 3 --durations=50 --verbose array_api_tests/test_constants.py
-          python3 -m pytest --reruns 3 --durations=50 --verbose array_api_tests/test_elementwise_functions.py
-          python3 -m pytest --reruns 3 --durations=50 --verbose array_api_tests/test_broadcasting.py
-          python3 -m pytest --reruns 3 --durations=50 --verbose \
-              array_api_tests/test_type_promotion.py::test_elementwise_function_two_arg_bool_type_promotion
-          python3 -m pytest --reruns 3 --durations=50 --verbose \
-              array_api_tests/test_type_promotion.py::test_elementwise_function_two_arg_promoted_type_promotion
-          python3 -m pytest --reruns 3 --durations=50 --verbose \
-              array_api_tests/test_type_promotion.py::test_elementwise_function_one_arg_bool
-          python3 -m pytest --reruns 3 --durations=50 --verbose \
-              array_api_tests/test_type_promotion.py::test_elementwise_function_one_arg_type_promotion
-          python3 -m pytest --reruns 3 --durations=50 --verbose \
-              array_api_tests/test_type_promotion.py::test_operator_one_arg_type_promotion
-          python3 -m pytest --reruns 3 --durations=50 --verbose \
-              array_api_tests/test_type_promotion.py::test_operator_two_arg_bool_promotion
-          python3 -m pytest --reruns 3 --durations=50 --verbose \
-              array_api_tests/test_type_promotion.py::test_operator_two_arg_promoted_promotion
-          python3 -m pytest --reruns 3 --durations=50 --verbose \
-              array_api_tests/test_type_promotion.py::test_operator_inplace_two_arg_promoted_promotion
+  apple-silicon:
+    name: Apple Silicon continuous build
+    uses: ./.github/workflows/macos-arm64-cpu.yml

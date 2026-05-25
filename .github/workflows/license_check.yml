@@ -2,6 +2,9 @@ name: license check
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 defaults:
   run:
     shell: bash
@@ -13,11 +16,7 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
-
-      - name: Update Submodules
-        run: |
-          git submodule update --init --recursive
+        uses: actions/checkout@v4
 
       - name: Check License Header
         uses: apache/skywalking-eyes@main

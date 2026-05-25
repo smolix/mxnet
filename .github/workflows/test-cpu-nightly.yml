@@ -79,6 +79,7 @@ jobs:
             -DUSE_NCCL=OFF \
             -DUSE_ONEDNN=ON \
             -DUSE_OPENMP=ON \
+            -DUSE_OPERATOR_TUNING=OFF \
             -DUSE_OPENCV=ON \
             -DUSE_BLAS=open \
             -DUSE_DIST_KVSTORE=OFF \

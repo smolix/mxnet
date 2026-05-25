@@ -92,7 +92,7 @@ to the given size. Upsample result if `src` is smaller than `size`. Example:
                                                                       ResourceRequest::kTempSpace};
                                 })
     .add_argument("data", "NDArray-or-Symbol", "The input.")
-    .add_arguments(RandomResizedCropParam::__FIELDS__());
+    .add_arguments(RandomCropParam::__FIELDS__());
 
 NNVM_REGISTER_OP(_backward_random_image_crop)
     .set_attr_parser(ParamParser<RandomCropParam>)
@@ -126,7 +126,7 @@ Example:
                                                                       ResourceRequest::kTempSpace};
                                 })
     .add_argument("data", "NDArray-or-Symbol", "The input.")
-    .add_arguments(RandomCropParam::__FIELDS__());
+    .add_arguments(RandomResizedCropParam::__FIELDS__());
 
 NNVM_REGISTER_OP(_backward_random_resized_image_crop)
     .set_attr_parser(ParamParser<RandomResizedCropParam>)

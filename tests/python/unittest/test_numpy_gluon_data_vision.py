@@ -285,6 +285,22 @@ def test_random_resize_crop():
 
 @use_np
 @requires_opencv
+def test_random_resized_crop_accepts_area_ratio_kwargs():
+    from mxnet.gluon.data.vision import transforms
+
+    x = mx.np.ones((100, 100, 3), dtype='uint8')
+    y = mx.npx.image.random_resized_crop(
+        x, width=64, height=64, area=(0.5, 0.5), ratio=(1.0, 1.0), max_trial=1)
+    assert y.shape == (64, 64, 3)
+    y.wait_to_read()
+
+    out = transforms.RandomResizedCrop(
+        64, scale=(0.5, 0.5), ratio=(1.0, 1.0))(x)
+    assert out.shape == (64, 64, 3)
+    out.wait_to_read()
+
+@use_np
+@requires_opencv
 def test_random_resize_crop_fallback_uses_source_center():
     data = _np.zeros((300, 500, 3), dtype='uint8')
     data[..., 0] = _np.arange(300, dtype='uint16')[:, None] % 256

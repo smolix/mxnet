@@ -29,6 +29,7 @@ import platform
 import numpy as _np
 
 from . import libinfo
+from ._cuda_runtime import repair_nvidia_cudnn_soname_aliases
 
 __all__ = ['MXNetError']
 #----------------------------
@@ -285,6 +286,7 @@ def _load_lib():
     """Load library by searching possible path."""
     lib_path = libinfo.find_lib_path()
     try:
+        repair_nvidia_cudnn_soname_aliases()
         if sys.version_info >= (3, 8) and os.name == "nt":
             # use LOAD_WITH_ALTERED_SEARCH_PATH, For simplicity, let's just fill the numbers.
             # pylint: disable=E1123

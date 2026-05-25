@@ -107,15 +107,16 @@ if [ "$HAS_OPENCV" = 1 ] && [ "$BUNDLE_OPENCV" = 1 ]; then
         done
         [ "$added" = 0 ] && break
     done
-    echo "==> Patching libmxnet.so RUNPATH to include \$ORIGIN/lib"
-    old_runpath=$(patchelf --print-rpath python/mxnet/libmxnet.so || echo "")
-    new_runpath='$ORIGIN/lib'
-    if [ -n "$old_runpath" ]; then
-        new_runpath="\$ORIGIN/lib:$old_runpath"
-    fi
-    patchelf --set-rpath "$new_runpath" python/mxnet/libmxnet.so
-    echo "    new RUNPATH: $new_runpath"
 fi
+
+echo "==> Patching libmxnet.so RUNPATH to include bundled and pip CUDA libraries"
+old_runpath=$(patchelf --print-rpath python/mxnet/libmxnet.so || echo "")
+new_runpath='$ORIGIN/lib:$ORIGIN/../nvidia/cudnn/lib:$ORIGIN/../nvidia/nccl/lib:$ORIGIN/../nvidia/cu13/lib'
+if [ -n "$old_runpath" ]; then
+    new_runpath="$new_runpath:$old_runpath"
+fi
+patchelf --set-rpath "$new_runpath" python/mxnet/libmxnet.so
+echo "    new RUNPATH: $new_runpath"
 
 OPENCV_DEPS_FLAG="${OPENCV_DEPS_FLAG:-1}"
 if [ "$HAS_OPENCV" != 1 ]; then

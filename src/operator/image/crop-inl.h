@@ -100,6 +100,19 @@ inline void CropImpl(int x,
   CHECK_GT(height, 0) << "height <= 0";
   const TBlob& data = inputs[0];
   const TBlob& out  = outputs[0];
+  const bool is_batched = data.ndim() == 4;
+  const int h_axis      = is_batched ? static_cast<int>(kH) : static_cast<int>(H);
+  const int w_axis      = is_batched ? static_cast<int>(kW) : static_cast<int>(W);
+  const auto src_h      = data.shape_[h_axis];
+  const auto src_w      = data.shape_[w_axis];
+  CHECK_GE(x, 0) << "crop x offset must be non-negative";
+  CHECK_GE(y, 0) << "crop y offset must be non-negative";
+  CHECK_LE(static_cast<int64_t>(x) + width, src_w)
+      << "crop x + width exceeds input width: x=" << x << ", width=" << width
+      << ", input width=" << src_w;
+  CHECK_LE(static_cast<int64_t>(y) + height, src_h)
+      << "crop y + height exceeds input height: y=" << y << ", height=" << height
+      << ", input height=" << src_h;
   MXNET_NDIM_SWITCH(data.ndim(), ndim, {
     Stream<xpu>* s                           = ctx.get_stream<xpu>();
     common::StaticArray<index_t, ndim> begin = {0}, step = {1};
@@ -237,19 +250,21 @@ inline Tuple<int> GetSourceSize(const TShape& in_shape) {
 }
 
 inline Tuple<int> ScaleDown(const Tuple<int>& src_shape, const Tuple<int>& shape) {
-  float sw = src_shape[0];
-  float sh = src_shape[1];
-  float w  = shape[0];
-  float h  = shape[1];
+  const float sw = src_shape[0];
+  const float sh = src_shape[1];
+  float w        = shape[0];
+  float h        = shape[1];
   if (sh < h) {
-    w = w * sh / h;
+    const float scale = sh / h;
+    w *= scale;
     h = sh;
   }
   if (sw < w) {
+    const float scale = sw / w;
+    h *= scale;
     w = sw;
-    h = h * sw / w;
   }
-  return Tuple<int>({static_cast<int>(w), static_cast<int>(h)});
+  return Tuple<int>({std::max(1, static_cast<int>(w)), std::max(1, static_cast<int>(h))});
 }
 
 inline bool RandomCropShape(const nnvm::NodeAttrs& attrs,
@@ -429,6 +444,17 @@ inline void CropResizeImpl(const OpContext& ctx,
         resize_height > 0)
       << "Invalid crop resize arguments: " << x0 << ", " << y0 << ", " << crop_width << ", "
       << crop_height << ", " << resize_width << ", " << resize_height;
+  const bool is_batched = dshape.ndim() == 4;
+  const int h_axis      = is_batched ? static_cast<int>(kH) : static_cast<int>(H);
+  const int w_axis      = is_batched ? static_cast<int>(kW) : static_cast<int>(W);
+  const auto src_h      = dshape[h_axis];
+  const auto src_w      = dshape[w_axis];
+  CHECK_LE(static_cast<int64_t>(x0) + crop_width, src_w)
+      << "crop resize x + width exceeds input width: x=" << x0 << ", width=" << crop_width
+      << ", input width=" << src_w;
+  CHECK_LE(static_cast<int64_t>(y0) + crop_height, src_h)
+      << "crop resize y + height exceeds input height: y=" << y0
+      << ", height=" << crop_height << ", input height=" << src_h;
   MSHADOW_TYPE_SWITCH_WITH_BOOL(inputs[0].type_flag_, DType, {
     if (dshape.ndim() == 3) {
       Tensor<xpu, 3, DType> workspace = ctx.requested[1].get_space_typed<xpu, 3, DType>(
@@ -515,8 +541,8 @@ inline void RandomResizedCropOpForward(const nnvm::NodeAttrs& attrs,
   }
   // fallback to center crop
   auto scaled_shape = ScaleDown(src_size, Tuple<int>({param.width, param.height}));
-  int x0            = (param.width - scaled_shape[0]) / 2;
-  int y0            = (param.height - scaled_shape[1]) / 2;
+  int x0            = (src_size[0] - scaled_shape[0]) / 2;
+  int y0            = (src_size[1] - scaled_shape[1]) / 2;
   CHECK(x0 >= 0 && y0 >= 0) << "Invalid center crop: " << x0 << ", " << y0;
   if (scaled_shape[0] == param.width && scaled_shape[1] == param.height) {
     // no need to resize

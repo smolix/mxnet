@@ -455,7 +455,7 @@ class RandomFlipLeftRight(HybridBlock):
     of p(0.5 by default).
 
     Inputs:
-        - **data**: input tensor with (H x W x C) shape.
+        - **data**: input tensor with (H x W x C) or (N x H x W x C) shape.
 
     Outputs:
         - **out**: output tensor with same shape as `data`.
@@ -479,7 +479,7 @@ class RandomFlipTopBottom(HybridBlock):
     of p(0.5 by default).
 
     Inputs:
-        - **data**: input tensor with (H x W x C) shape.
+        - **data**: input tensor with (H x W x C) or (N x H x W x C) shape.
 
     Outputs:
         - **out**: output tensor with same shape as `data`.

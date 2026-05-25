@@ -63,8 +63,11 @@ jobs:
             -DBUILD_CPP_EXAMPLES=OFF
 
       - name: Build libmxnet
-        timeout-minutes: 60
-        run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j"$(nproc)"
+        timeout-minutes: 90
+        run: |
+          jobs="$(getconf _NPROCESSORS_ONLN)"
+          echo "Building with ${jobs} parallel jobs"
+          cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j"${jobs}"
 
       - name: Stage libmxnet.so into python package
         run: |

@@ -1,38 +1,14 @@
 name: macos-arm64-cpu
 
 on:
-  push:
-    branches: [master, onednn-v3-port]
-    paths:
-      - ".github/workflows/macos-arm64-cpu.yml"
-      - "CMakeLists.txt"
-      - "cmake/**"
-      - "config/**"
-      - "include/**"
-      - "python/**"
-      - "src/**"
-      - "tests/python/dnnl/**"
-      - "tests/python/apple_silicon_cpu_smoke"
-      - "tests/python/unittest/**"
-  pull_request:
-    paths:
-      - ".github/workflows/macos-arm64-cpu.yml"
-      - "CMakeLists.txt"
-      - "cmake/**"
-      - "config/**"
-      - "include/**"
-      - "python/**"
-      - "src/**"
-      - "tests/python/dnnl/**"
-      - "tests/python/apple_silicon_cpu_smoke"
-      - "tests/python/unittest/**"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-arm64-cpu-${{ github.ref }}
+  group: macos-arm64-cpu-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

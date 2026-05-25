@@ -114,6 +114,10 @@ header:
     - 'storage_pool_bench.md'
     # Investigations directory (patches, repros, notes — not shipped).
     - '.investigations/**'
+    - 'd2l-issues/**'
+    - 'd2l-diagnostics/**'
+    - 'd2l-mxnet-issues.md'
+    - 'd2l-ssd-bug.md'
     # Fork-local regression tests (GPU pool / dtype tests added during port).
     - 'tests/python/gpu/test_b7_multithread_pool.py'
     - 'tests/python/gpu/test_pool_dynamic_shape.py'

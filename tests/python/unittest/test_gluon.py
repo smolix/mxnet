@@ -1524,7 +1524,7 @@ def test_zero_grad():
 @pytest.mark.parametrize('static_shape', [False, True])
 def test_hybrid_static_memory(static_alloc, static_shape):
     if static_shape and not static_alloc:
-        pytest.skip()
+        pytest.skip("static_shape requires static_alloc")
     x = mx.np.random.uniform(size=(2, 3, 32, 32))
     x.attach_grad()
 
@@ -1555,7 +1555,7 @@ def test_hybrid_static_memory(static_alloc, static_shape):
 @pytest.mark.parametrize('static_shape', [False, True])
 def test_hybrid_static_memory_switching(static_alloc, static_shape):
     if static_shape and not static_alloc:
-        pytest.skip()
+        pytest.skip("static_shape requires static_alloc")
     net = gluon.model_zoo.vision.get_resnet(
         1, 18, pretrained=False, device=mx.device.current_device())
     net.initialize()

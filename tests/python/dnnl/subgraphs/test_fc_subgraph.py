@@ -468,6 +468,6 @@ def test_add_quantized(add_op, quantize_mode, out_type, relu, broadcast, calib_m
   broadcastB = (broadcast ==  'broadcast')
   if broadcastB and add_op == 'ele_add':
     # elemwise_Add doesn't support broadcasting
-    pytest.skip()
+    pytest.skip("elemwise_add broadcasting capability unavailable")
   data_shape = DATA_SHAPE[0]
   function_add_quantized(data_shape, add_op, quantize_mode, relu, out_type, broadcastB, calib_mode)

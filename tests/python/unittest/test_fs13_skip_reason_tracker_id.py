@@ -19,9 +19,10 @@
 
 issues.md FS13 calls for a "small meta-test or lint that requires new
 broad skips/xfails to name a tracker ID".  This file is that lint: it
-walks the source for `@pytest.mark.skip(reason=...)` and
-`@pytest.mark.xfail(reason=...)` decorators inside the in-tree test
-directories and asserts that each reason references either a known
+walks the source for `@pytest.mark.skip(reason=...)`,
+`@pytest.mark.xfail(reason=...)`, `pytest.skip(...)`, and
+`pytest.xfail(...)` calls inside the in-tree test directories and
+asserts that each reason references either a known
 internal tracker prefix (XOP, FS, GH, CN, T, R, D, B, C, O, P, L, A
 followed by digits), a GitHub/Linear issue URL, or a structural reason
 (platform/capability/dtype/env-dependent) that doesn't need a tracker.
@@ -119,7 +120,8 @@ ALLOWED_PATTERNS = [
 ]
 
 
-SKIP_DECORATOR_NAMES = {'skip', 'skipif', 'xfail'}
+SKIP_MARK_NAMES = {'skip', 'skipif', 'xfail'}
+SKIP_CALL_NAMES = {'skip', 'xfail'}
 
 
 def _iter_test_files(root):
@@ -129,7 +131,13 @@ def _iter_test_files(root):
                 yield os.path.join(dirpath, fname)
 
 
-def _extract_reason(call_node):
+def _literal_string(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _extract_reason(call_node, kind):
     """Best-effort extraction of `reason=` from a pytest.mark.skip(..) call.
 
     Returns the reason string if it's a literal, or None if the reason is
@@ -141,10 +149,21 @@ def _extract_reason(call_node):
             value = kw.value.value
             if isinstance(value, str):
                 return value
+    # Direct pytest.skip("reason") / pytest.xfail("reason").
+    if kind in ('skip', 'xfail') and call_node.args:
+        reason = _literal_string(call_node.args[0])
+        if reason is not None:
+            return reason
+    # Positional pytest.mark.skip("reason").
+    if kind == 'mark.skip' and call_node.args:
+        reason = _literal_string(call_node.args[0])
+        if reason is not None:
+            return reason
     # Positional second arg for skipif(condition, "msg"): also accepted.
     for arg in call_node.args[1:]:
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            return arg.value
+        reason = _literal_string(arg)
+        if reason is not None:
+            return reason
     return None
 
 
@@ -161,38 +180,49 @@ def _reason_is_tracked(reason):
     return False
 
 
-def _walk_skip_decorators(tree, path):
+def _pytest_skip_kind(call_node):
+    """Return skip/xfail kind for pytest mark or runtime calls, else None."""
+    func = call_node.func
+    if not isinstance(func, ast.Attribute):
+        return None
+    if func.attr in SKIP_MARK_NAMES:
+        mark = func.value
+        if (isinstance(mark, ast.Attribute) and mark.attr == 'mark'
+                and isinstance(mark.value, ast.Name)
+                and mark.value.id == 'pytest'):
+            return 'mark.' + func.attr
+    if func.attr in SKIP_CALL_NAMES:
+        value = func.value
+        if isinstance(value, ast.Name) and value.id == 'pytest':
+            return func.attr
+    return None
+
+
+def _walk_skip_calls(tree, path):
     findings = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         # Match `pytest.mark.skip(...)` / `pytest.mark.skipif(...)` /
-        # `pytest.mark.xfail(...)`.  The func chain is
+        # `pytest.mark.xfail(...)`.  The mark func chain is
         # Attribute(value=Attribute(value=Name('pytest'), attr='mark'),
-        #           attr='skip'|'skipif'|'xfail').
-        func = node.func
-        if not isinstance(func, ast.Attribute):
+        #           attr='skip'|'skipif'|'xfail').  Runtime calls are
+        # Attribute(value=Name('pytest'), attr='skip'|'xfail').
+        kind = _pytest_skip_kind(node)
+        if kind is None:
             continue
-        if func.attr not in SKIP_DECORATOR_NAMES:
-            continue
-        mark = func.value
-        if not isinstance(mark, ast.Attribute) or mark.attr != 'mark':
-            continue
-        if not isinstance(mark.value, ast.Name) or mark.value.id != 'pytest':
-            continue
-        reason = _extract_reason(node)
+        reason = _extract_reason(node, kind)
         if reason is None and not node.args and not node.keywords:
-            # @pytest.mark.skip with no args at all — that's already a flag.
-            findings.append((path, node.lineno,
-                             '<empty>', func.attr))
+            # Empty skip/xfail with no reason at all.
+            findings.append((path, node.lineno, '<empty>', kind))
             continue
         if not _reason_is_tracked(reason):
-            findings.append((path, node.lineno, reason or '<empty>', func.attr))
+            findings.append((path, node.lineno, reason or '<empty>', kind))
     return findings
 
 
 def test_skip_reasons_reference_tracker_or_capability():
-    """Every pytest.mark.skip*/xfail reason must reference a tracker or capability.
+    """Every pytest skip/xfail reason must reference a tracker or capability.
 
     This is permissive — the ALLOWED_PATTERNS list above accepts internal
     tracker IDs, GitHub issue URLs, and a list of common structural
@@ -207,15 +237,15 @@ def test_skip_reasons_reference_tracker_or_capability():
             tree = ast.parse(source, filename=path)
         except (SyntaxError, UnicodeDecodeError):
             continue
-        bad.extend(_walk_skip_decorators(tree, path))
+        bad.extend(_walk_skip_calls(tree, path))
 
     if bad:
         rendered = '\n'.join(
-            f'  {os.path.relpath(p, TEST_ROOT)}:{ln}  @pytest.mark.{kind}({reason!r})'
+            f'  {os.path.relpath(p, TEST_ROOT)}:{ln}  pytest.{kind}({reason!r})'
             for (p, ln, reason, kind) in bad
         )
         pytest.fail(
-            "FS13 lint: the following pytest.mark.skip/xfail reasons do not "
+            "FS13 lint: the following pytest skip/xfail reasons do not "
             "reference a known tracker, capability, or platform gate. Add a "
             "tracker ID (XOP12, apache/mxnet#17782, etc.) or move the test "
             "to a precise @pytest.mark.skipif gate:\n" + rendered)

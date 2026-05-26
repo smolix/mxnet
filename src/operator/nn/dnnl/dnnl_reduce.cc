@@ -174,6 +174,11 @@ DNNLReduceFwd::DNNLReduceFwd(const NumpyReduceAxesParam& param,
   const size_t out_ndim = tensors.out.shape().ndim();
   const auto out_dtype  = get_dnnl_type(tensors.out.dtype());
   dnnl::memory::desc out_md;
+  auto default_reduce_dst = [out_dtype](const dnnl::memory::dims& dims) {
+    const auto format =
+        static_cast<dnnl::memory::format_tag>(GetDefaultFormat(dims.size()));
+    return dnnl::memory::desc(dims, out_dtype, format);
+  };
 
   if (in_ndim == out_ndim) {
     auto out_mem = tensors.out.GetDNNLData();
@@ -191,12 +196,12 @@ DNNLReduceFwd::DNNLReduceFwd(const NumpyReduceAxesParam& param,
           out_shape[i] = in_shape[i];
         }
       }
-      out_md = dnnl::memory::desc(out_shape, out_dtype, dnnl::memory::format_tag::any);
+      out_md = default_reduce_dst(out_shape);
 
     } else {
       // global reduction
       dnnl::memory::dims out_shape(in_ndim, 1);
-      out_md = dnnl::memory::desc(out_shape, out_dtype, dnnl::memory::format_tag::any);
+      out_md = default_reduce_dst(out_shape);
     }
   }
 

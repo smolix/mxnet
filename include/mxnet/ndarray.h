@@ -590,9 +590,14 @@ class NDArray {
     // We can't reuse memory in a view.
     CHECK(!IsView());
     NDArray ret = *this;
-    ret.shape_  = shape;
-    ret.dtype_  = dtype;
-    ret.reuse_  = true;
+#if MXNET_USE_ONEDNN == 1
+    if (ret.ptr_->dnnl_mem_ && (ret.shape_ != shape || ret.dtype_ != dtype)) {
+      ret.ptr_->dnnl_mem_ = nullptr;
+    }
+#endif
+    ret.shape_ = shape;
+    ret.dtype_ = dtype;
+    ret.reuse_ = true;
     return ret;
   }
 
@@ -604,6 +609,11 @@ class NDArray {
     // We can't reuse memory in a view.
     CHECK(!src.IsView());
     *this  = src;
+#if MXNET_USE_ONEDNN == 1
+    if (ptr_->dnnl_mem_ && (shape_ != shape || dtype_ != dtype)) {
+      ptr_->dnnl_mem_ = nullptr;
+    }
+#endif
     shape_ = shape;
     dtype_ = dtype;
     reuse_ = true;
@@ -710,7 +720,13 @@ class NDArray {
   void ReshapeAndAlloc(const mxnet::TShape& shape) {
     CHECK_EQ(storage_type(), kDefaultStorage);
     CHECK(!is_none());
+#if MXNET_USE_ONEDNN == 1
+    if (ptr_->dnnl_mem_ && ptr_->storage_shape != shape) {
+      ptr_->dnnl_mem_ = nullptr;
+    }
+#endif
     shape_ = shape;
+    ptr_->storage_shape = shape;
     ptr_->CheckAndAlloc(shape.Size() * mshadow::mshadow_sizeof(dtype_));
   }
 
@@ -1053,6 +1069,11 @@ class NDArray {
     void CheckAndAlloc(uint64_t dbytes) {
       CHECK_EQ(kDefaultStorage, storage_type)
           << "CheckAndAlloc(dbytes) is only intended for kDefaultStorage";
+#if MXNET_USE_ONEDNN == 1
+      if (dnnl_mem_ && shandle.size != dbytes) {
+        dnnl_mem_ = nullptr;
+      }
+#endif
       dbytes = std::max(dbytes, static_cast<uint64_t>(shandle.size));
       if (delay_alloc) {
         shandle.size = dbytes;

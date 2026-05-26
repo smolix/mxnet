@@ -26,7 +26,7 @@ documents — the backward/gradient behavior of the quantized subgraph ops:
   - Composite Conv → ReLU → Dense fusion
   - Calibration round-trip (quantize → save → re-quantize → compare)
 
-STATUS (2026-05-18, partial fix):
+STATUS (2026-05-26, B4/XOP18 QAT backward completion):
 
   Step 1 DONE — STE for quantize_v2:
     `quantize_v2` now has a Straight-Through Estimator (STE) backward registered:
@@ -37,31 +37,21 @@ STATUS (2026-05-18, partial fix):
     `quantize_net(..., qat=True)` keeps `grad_req='write'` on all parameters
     (instead of forcing `grad_req='null'`), allowing gradient accumulation and
     parameter updates during QAT training loops.  This file now has a passing
-    guard test for that infrastructure while full subgraph backward remains
-    xfailed below.
+    guard test for that infrastructure.
 
-  Step 3 BLOCKED — weight/data backward for _sg_onednn_fully_connected/_sg_onednn_conv:
-    These fused subgraph ops still have `FGradient = MakeZeroGradNodes`.  An
-    attempt to add a dot-product-based data backward caused segfaults in the
-    NNVM/CachedOp backward executor framework.  The root cause is that DNNL
-    subgraph ops interact with MXNet's static graph executor in a way that does
-    not support custom backward nodes referencing op inputs at this time.  The
-    STE in quantize_v2 is therefore functionally correct but its gradient is
-    blocked by the zero gradient from the FC/Conv subgraph ops upstream.
+  Step 3 DONE — simple FC and simple/fused-ReLU Conv backward:
+    Simple quantized FC subgraphs and simple quantized Conv subgraphs with float
+    output now have data/weight/bias backward support for QAT.  Conv fused with
+    ReLU is also expected to propagate non-zero input gradients.
 
-  Net result: the xfail tests below remain xfailed — input and weight gradients
-  are still identically zero through the full quantized graph.  The STE becomes
-  effective only after _sg_onednn_fully_connected/_sg_onednn_conv get proper
-  backward support.  Setting the historical MXNET_QAT_SUBGRAPH_BACKWARD=1 gate
-  does not change behavior in this checkout because no gated backward body is
-  present.
+  Net result: simple quantized FC and simple/fused-ReLU Conv QAT backward
+  coverage is expected to pass. Unsupported fusions beyond this coverage remain
+  deferred and should be tracked by targeted tests when they are added.
 
 ROOT-CAUSE NOTE (discovered 2026-05-17):
   MXNet's quantize_net inserts a `quantize_v2` node immediately before each
-  quantized op.  The quantized DNNL subgraph ops (_sg_onednn_fully_connected,
-  _sg_onednn_conv) have FGradient = MakeZeroGradNodes, which kills all gradient
-  flow.  The quantize_v2 STE (step 1) is now in place but its gradient is zero
-  because the upstream zero gradient is passed through.
+  quantized op.  The STE works only when the downstream quantized subgraph
+  backward propagates non-zero gradients.
 
 Usage:
   pytest tests/python/dnnl/subgraphs/test_quantized_backward.py -v --timeout=300
@@ -212,7 +202,7 @@ def test_fc_quantized_forward_runs():
 
 @pytest.mark.timeout(300)
 def test_fc_quantized_backward_no_crash():
-    """Quantized FC backward must not crash (even if gradient is zero)."""
+    """Quantized FC backward must not crash."""
     net = _SimpleFCNet()
     net.initialize(mx.init.Normal(0.5))
     data = mx.np.random.uniform(-1, 1, size=FC_DATA_SHAPE, dtype='float32', device=mx.cpu())
@@ -228,20 +218,8 @@ def test_fc_quantized_backward_no_crash():
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BROKEN (B4): quantize_v2 has STE, but the quantized FC subgraph "
-        "still uses MakeZeroGradNodes, so upstream input gradients are zero. "
-        "Remove this xfail once _sg_onednn_fully_connected backward works."
-    ),
-)
 def test_fc_quantized_backward_nonzero_input_grad():
-    """Quantized FC input gradient should be non-zero (like FP32 reference).
-
-    CURRENTLY XFAIL: the quantized FC subgraph blocks gradient flow, so x.grad
-    is identically 0 even though quantize_v2 has STE.
-    """
+    """Quantized FC input gradient should be non-zero (like FP32 reference)."""
     net = _SimpleFCNet()
     net.initialize(mx.init.Normal(0.5))
     data = mx.np.random.uniform(-1, 1, size=FC_DATA_SHAPE, dtype='float32', device=mx.cpu())
@@ -256,26 +234,15 @@ def test_fc_quantized_backward_nonzero_input_grad():
         # We want quantized gradient to be in the same ballpark (weak test)
         assert grad_norm > 0.0, (
             f"Quantized FC x.grad is zero (fp32_norm={fp32_norm:.4f}). "
-            f"The quantized FC subgraph kills gradient flow."
+            f"The simple quantized FC subgraph should propagate gradients."
         )
 
     _run()
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BROKEN (B4): quantized FC has no weight-gradient backward. "
-        "Remove this xfail once _sg_onednn_fully_connected weight grads work."
-    ),
-)
 def test_fc_quantized_weight_grad_nonzero():
-    """Quantized FC weight gradient should be non-zero for fine-tuning.
-
-    CURRENTLY XFAIL: even when forced to grad_req='write', the quantized FC
-    subgraph backward yields 0.
-    """
+    """Quantized FC weight gradient should be non-zero for fine-tuning."""
     net = _SimpleFCNet()
     net.initialize(mx.init.Normal(0.5))
     data = mx.np.random.uniform(-1, 1, size=FC_DATA_SHAPE, dtype='float32', device=mx.cpu())
@@ -300,7 +267,7 @@ def test_fc_quantized_weight_grad_nonzero():
 
         assert any_nonzero, (
             "All quantized weight gradients are zero. Fine-tuning a quantized FC "
-            "network is impossible without straight-through estimator support."
+            "network requires non-zero QAT weight gradients."
         )
 
     _run()
@@ -340,7 +307,7 @@ def test_conv_quantized_forward_runs():
 
 @pytest.mark.timeout(300)
 def test_conv_quantized_backward_no_crash():
-    """Quantized Conv backward must not crash (even if gradient is zero)."""
+    """Quantized Conv backward must not crash."""
     net = _SimpleConvNet()
     net.initialize(mx.init.Normal(0.1))
     data = mx.np.random.uniform(-1, 1, size=CONV_DATA_SHAPE, dtype='float32', device=mx.cpu())
@@ -356,19 +323,8 @@ def test_conv_quantized_backward_no_crash():
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BROKEN (B4): quantize_v2 has STE, but the quantized Conv "
-        "subgraph still uses MakeZeroGradNodes, so input gradients are zero. "
-        "Remove this xfail once _sg_onednn_conv backward works."
-    ),
-)
 def test_conv_quantized_backward_nonzero_input_grad():
-    """Quantized Conv input gradient should be non-zero.
-
-    CURRENTLY XFAIL: the quantized Conv subgraph blocks gradient flow.
-    """
+    """Quantized Conv input gradient should be non-zero."""
     net = _SimpleConvNet()
     net.initialize(mx.init.Normal(0.1))
     data = mx.np.random.uniform(-1, 1, size=CONV_DATA_SHAPE, dtype='float32', device=mx.cpu())
@@ -381,26 +337,15 @@ def test_conv_quantized_backward_nonzero_input_grad():
         assert fp32_norm > 1.0, f"FP32 Conv reference gradient is unexpectedly tiny: {fp32_norm}"
         assert grad_norm > 0.0, (
             f"Quantized Conv x.grad is zero (fp32_norm={fp32_norm:.4f}). "
-            f"The quantized Conv subgraph kills gradient flow."
+            f"The simple quantized Conv subgraph should propagate gradients."
         )
 
     _run()
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BROKEN (B4): MXNET_QAT_SUBGRAPH_BACKWARD=1 is only a historical "
-        "handover gate in this checkout; no gated FC backward body is present."
-    ),
-)
 def test_fc_qat_subgraph_backward_gate_nonzero_input_grad(monkeypatch):
-    """Historical QAT backward gate should eventually enable non-zero FC grads.
-
-    CURRENTLY XFAIL: setting the gate does not change the zero-gradient
-    MakeZeroGradNodes behavior of the quantized FC subgraph.
-    """
+    """Historical QAT backward gate does not block non-zero FC grads."""
     monkeypatch.setenv('MXNET_QAT_SUBGRAPH_BACKWARD', '1')
     net = _SimpleFCNet()
     net.initialize(mx.init.Normal(0.5))
@@ -412,26 +357,15 @@ def test_fc_qat_subgraph_backward_gate_nonzero_input_grad(monkeypatch):
         grad_norm, _, _ = _quantized_input_grad(qnet, FC_DATA_SHAPE)
         assert grad_norm > 0.0, (
             f"Gated quantized FC x.grad is zero. "
-            f"MXNET_QAT_SUBGRAPH_BACKWARD=1 has no implemented effect."
+            f"The simple quantized FC subgraph should propagate gradients."
         )
 
     _run()
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BROKEN (B4): MXNET_QAT_SUBGRAPH_BACKWARD=1 is only a historical "
-        "handover gate in this checkout; no gated Conv backward body is present."
-    ),
-)
 def test_conv_qat_subgraph_backward_gate_nonzero_input_grad(monkeypatch):
-    """Historical QAT backward gate should eventually enable non-zero Conv grads.
-
-    CURRENTLY XFAIL: setting the gate does not change the zero-gradient
-    MakeZeroGradNodes behavior of the quantized Conv subgraph.
-    """
+    """Historical QAT backward gate does not block non-zero Conv grads."""
     monkeypatch.setenv('MXNET_QAT_SUBGRAPH_BACKWARD', '1')
     net = _SimpleConvNet()
     net.initialize(mx.init.Normal(0.1))
@@ -443,7 +377,7 @@ def test_conv_qat_subgraph_backward_gate_nonzero_input_grad(monkeypatch):
         grad_norm, _, _ = _quantized_input_grad(qnet, CONV_DATA_SHAPE)
         assert grad_norm > 0.0, (
             f"Gated quantized Conv x.grad is zero. "
-            f"MXNET_QAT_SUBGRAPH_BACKWARD=1 has no implemented effect."
+            f"The simple quantized Conv subgraph should propagate gradients."
         )
 
     _run()
@@ -461,6 +395,22 @@ class _ConvReluDenseNet(nn.HybridBlock):
         self.conv = nn.Conv2D(channels=8, kernel_size=3, padding=1, use_bias=True)
         self.relu = nn.Activation('relu')
         self.pool = nn.GlobalAvgPool2D()
+        self.fc = nn.Dense(4, flatten=True)
+
+    def forward(self, x):
+        out = self.relu(self.conv(x))
+        out = self.pool(out)
+        return self.fc(out)
+
+
+@mx.util.use_np
+class _ConvReluMaxPoolDenseNet(nn.HybridBlock):
+    """Conv -> ReLU -> MaxPool -> Dense covers the quantized pooling workspace path."""
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2D(channels=8, kernel_size=3, padding=1, use_bias=True)
+        self.relu = nn.Activation('relu')
+        self.pool = nn.MaxPool2D(pool_size=2, strides=2)
         self.fc = nn.Dense(4, flatten=True)
 
     def forward(self, x):
@@ -504,19 +454,8 @@ def test_composite_quantized_backward_no_crash():
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BROKEN (B4): the first quantized Conv subgraph kills all "
-        "gradient flow. Composite fusion does not help. Remove xfail once "
-        "_sg_onednn_conv backward works."
-    ),
-)
 def test_composite_quantized_backward_nonzero_input_grad():
-    """Quantized composite network input gradient should be non-zero.
-
-    CURRENTLY XFAIL: the quantized Conv subgraph kills gradient.
-    """
+    """Quantized composite network input gradient should be non-zero."""
     net = _ConvReluDenseNet()
     net.initialize(mx.init.Normal(0.1))
     data = mx.np.random.uniform(-1, 1, size=CONV_DATA_SHAPE, dtype='float32', device=mx.cpu())
@@ -527,12 +466,30 @@ def test_composite_quantized_backward_nonzero_input_grad():
         fp32_norm = _fp32_input_grad_norm(net, CONV_DATA_SHAPE)
         grad_norm, _, _ = _quantized_input_grad(qnet, CONV_DATA_SHAPE)
         # FP32 norm may be small because of GlobalAvgPool + 4-unit Dense,
-        # but should still be > 0
-        assert fp32_norm >= 0.0, f"FP32 composite gradient is negative norm: {fp32_norm}"
+        # but it must be non-zero for this comparison to be meaningful.
+        assert fp32_norm > 0.0, f"FP32 composite gradient is unexpectedly zero: {fp32_norm}"
         assert grad_norm > 0.0, (
             f"Quantized composite x.grad is zero (fp32_norm={fp32_norm:.6f}). "
-            f"The quantized Conv subgraph kills gradient flow."
+            f"The fused Conv+ReLU/FC quantized path should propagate gradients."
         )
+
+    _run()
+
+
+@pytest.mark.timeout(300)
+def test_maxpool_composite_quantized_backward_nonzero_input_grad():
+    """Quantized max-pooling composite backward should not lose input gradients."""
+    net = _ConvReluMaxPoolDenseNet()
+    net.initialize(mx.init.Normal(0.1))
+    data = mx.np.random.uniform(-1, 1, size=CONV_DATA_SHAPE, dtype='float32', device=mx.cpu())
+
+    @mx.util.use_np
+    def _run():
+        qnet = _quantize(net, data)
+        grad_norm, is_finite, has_nan = _quantized_input_grad(qnet, CONV_DATA_SHAPE)
+        assert not has_nan, "MaxPool composite quantized backward produced NaN gradients"
+        assert is_finite, "MaxPool composite quantized backward produced Inf gradients"
+        assert grad_norm > 0.0, "MaxPool composite quantized x.grad is zero"
 
     _run()
 
@@ -541,15 +498,8 @@ def test_composite_quantized_backward_nonzero_input_grad():
 def test_composite_quantized_sign_agreement():
     """At least some entries of quantized and FP32 gradients should share the same sign.
 
-    This is a weak test: if backward were working, we'd expect >= 50% sign
-    agreement.  Since gradient is all-zero for quantized, this test checks that
-    the FP32 gradient is non-trivial (so the comparison would be meaningful).
-
-    The test PASSES today only because we skip the sign comparison when the
-    quantized gradient is zero.  Once backward is fixed this test should be
-    tightened to require >= 50% sign agreement.
-
-    NOTE: Remove the early-return branch and xfail/skip when backward is fixed.
+    This is intentionally weak: QAT gradients are approximate, but an all-zero
+    quantized gradient or mostly opposite signs would make training ineffective.
     """
     net = _ConvReluDenseNet()
     net.initialize(mx.init.Normal(0.1))
@@ -576,26 +526,23 @@ def test_composite_quantized_sign_agreement():
         fp32_norm = float(np.linalg.norm(fp32_grad))
         q_norm = float(np.linalg.norm(q_grad))
 
-        # If quantized gradient is zero (current behavior), just verify FP32 works
-        if q_norm == 0.0:
-            # Document the failure condition without failing the test itself
-            # (the xfail tests above already capture the failure)
-            assert fp32_norm > 0.0, (
-                f"FP32 composite gradient is also zero — something is wrong with the "
-                f"FP32 network itself (norm={fp32_norm})."
-            )
-            return  # Skip sign comparison since q_grad is all-zero
+        assert fp32_norm > 0.0, (
+            f"FP32 composite gradient is zero; sign comparison is not meaningful "
+            f"(norm={fp32_norm})."
+        )
+        assert q_norm > 0.0, (
+            f"Quantized composite gradient is zero while FP32 norm is {fp32_norm:.6f}."
+        )
 
-        # When backward is fixed: check >= 50% sign agreement
         nonzero_mask = np.abs(fp32_grad) > 1e-8
-        if nonzero_mask.sum() > 0:
-            sign_agree = float(
-                np.mean(np.sign(fp32_grad[nonzero_mask]) == np.sign(q_grad[nonzero_mask]))
-            )
-            assert sign_agree >= 0.50, (
-                f"Quantized and FP32 gradient sign agreement is only {sign_agree:.2%}. "
-                f"Expected >= 50%."
-            )
+        assert nonzero_mask.sum() > 0, "FP32 composite gradient has no entries above tolerance"
+        sign_agree = float(
+            np.mean(np.sign(fp32_grad[nonzero_mask]) == np.sign(q_grad[nonzero_mask]))
+        )
+        assert sign_agree >= 0.50, (
+            f"Quantized and FP32 gradient sign agreement is only {sign_agree:.2%}. "
+            f"Expected >= 50%."
+        )
 
     _run()
 

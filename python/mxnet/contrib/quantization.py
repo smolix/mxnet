@@ -626,7 +626,8 @@ def quantize_graph(sym, arg_params, aux_params, device=cpu(),
                    excluded_sym_names=None, excluded_op_names=None,
                    calib_mode='entropy', quantized_dtype='int8',
                    quantize_mode='full', quantize_granularity='tensor-wise',
-                   LayerOutputCollector=None, logger=None):
+                   LayerOutputCollector=None, logger=None,
+                   offline_params=None):
     """User-level API for generating a quantized model from a FP32 model w/o calibration
     and a collector for naive or entropy calibration.
     The backend quantized operators are only enabled for Linux systems. Please do not run
@@ -696,9 +697,11 @@ def quantize_graph(sym, arg_params, aux_params, device=cpu(),
     if quantize_granularity not in ('tensor-wise', 'channel-wise'):
         raise ValueError(f'unkonwn quantize_granularity {quantize_granularity} received,'
                          ' expected `tensor-wise` or `channel-wise`.')
+    if offline_params is None:
+        offline_params = list(arg_params.keys())
     qsym, calib_layers = _quantize_symbol(sym, device, excluded_symbols=excluded_sym_names,
                                           excluded_operators=excluded_op_names,
-                                          offline_params=list(arg_params.keys()),
+                                          offline_params=offline_params,
                                           quantized_dtype=quantized_dtype,
                                           quantize_mode=quantize_mode,
                                           quantize_granularity=quantize_granularity)
@@ -966,7 +969,7 @@ def quantize_net(network, quantized_dtype='auto', quantize_mode='full', quantize
         excluded_sym_names=exclude_layers, excluded_op_names=exclude_operators,
         calib_mode=calib_mode, quantized_dtype=quantized_dtype, quantize_mode=quantize_mode,
         quantize_granularity=quantize_granularity, LayerOutputCollector=LayerOutputCollector,
-        logger=logger)
+        logger=logger, offline_params=[] if qat else None)
 
     if calib_mode is not None and calib_mode != 'none':
         if not isinstance(device, Device):

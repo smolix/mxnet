@@ -39,6 +39,176 @@ namespace op {
 
 DMLC_REGISTER_PARAMETER(DNNLSelfAttParam);
 
+static bool SgDNNLSelfAttSupportsBackward(const DNNLSelfAttParam& param) {
+  if (!param.quantized) {
+    return !param.enabled_float_output.has_value() ||
+           param.enabled_float_output.value() == mshadow::kFloat32;
+  }
+  return param.enabled_float_output.has_value() &&
+         param.enabled_float_output.value() == mshadow::kFloat32;
+}
+
+static NDArray SelfAttToDefault(const NDArray& data) {
+  return data.IsDNNLData() ? data.Reorder2Default() : data;
+}
+
+static NDArray DequantizeSelfAttTensorCPU(const NDArray& data,
+                                          const NDArray& data_min,
+                                          const NDArray& data_max,
+                                          const char* op_name) {
+  const NDArray default_data = SelfAttToDefault(data);
+  CHECK(default_data.dtype() == mshadow::kInt8 || default_data.dtype() == mshadow::kUint8)
+      << op_name << " expects int8/uint8 quantized input, got " << default_data.dtype();
+  NDArray ret(default_data.shape(), default_data.ctx(), false, mshadow::kFloat32);
+  const float min_range = data_min.data().dptr<float>()[0];
+  const float max_range = data_max.data().dptr<float>()[0];
+  float* out            = ret.data().dptr<float>();
+  const size_t size     = default_data.shape().Size();
+  const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+
+  if (default_data.dtype() == mshadow::kInt8) {
+    const int8_t* in = default_data.data().dptr<int8_t>();
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = QuantizedToFloat<int8_t>(in[i], min_range, max_range);
+    }
+  } else {
+    const uint8_t* in = default_data.data().dptr<uint8_t>();
+    const float scale = (max_range - min_range) / 255.0f;
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = static_cast<float>(in[i]) * scale + min_range;
+    }
+  }
+  return ret;
+}
+
+static NDArray FloatSelfAttTensorCPU(const NDArray& data,
+                                     const NDArray* data_min,
+                                     const NDArray* data_max,
+                                     const char* op_name) {
+  const NDArray default_data = SelfAttToDefault(data);
+  if (default_data.dtype() == mshadow::kFloat32) {
+    return default_data;
+  }
+  CHECK(data_min != nullptr && data_max != nullptr)
+      << op_name << " received quantized input without min/max ranges";
+  return DequantizeSelfAttTensorCPU(default_data, *data_min, *data_max, op_name);
+}
+
+static NDArray CastSelfAttGradToFloatCPU(const NDArray& grad, const char* op_name) {
+  const NDArray default_grad = SelfAttToDefault(grad);
+  if (default_grad.dtype() == mshadow::kFloat32) {
+    return default_grad;
+  }
+  CHECK(default_grad.dtype() == mshadow::kInt8 || default_grad.dtype() == mshadow::kUint8 ||
+        default_grad.dtype() == mshadow::kInt32)
+      << op_name << " expects float32/int8/uint8/int32 output gradients, got "
+      << default_grad.dtype();
+  NDArray ret(default_grad.shape(), default_grad.ctx(), false, mshadow::kFloat32);
+  float* out        = ret.data().dptr<float>();
+  const size_t size = default_grad.shape().Size();
+  const int nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+
+  if (default_grad.dtype() == mshadow::kInt8) {
+    const int8_t* in = default_grad.data().dptr<int8_t>();
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = static_cast<float>(in[i]);
+    }
+  } else if (default_grad.dtype() == mshadow::kUint8) {
+    const uint8_t* in = default_grad.data().dptr<uint8_t>();
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = static_cast<float>(in[i]);
+    }
+  } else {
+    const int32_t* in = default_grad.data().dptr<int32_t>();
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = static_cast<float>(in[i]);
+    }
+  }
+  return ret;
+}
+
+template <typename DType>
+static void ZeroSelfAttOutputCPUImpl(const NDArray& out) {
+  DType* ptr       = out.data().dptr<DType>();
+  const size_t len = out.shape().Size();
+#pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
+  for (index_t i = 0; i < static_cast<index_t>(len); ++i) {
+    ptr[i] = DType(0);
+  }
+}
+
+static void PrepareDefaultSelfAttOutputCPU(const NDArray& out, OpReqType req) {
+  if (req == kNullOp) {
+    return;
+  }
+  const_cast<NDArray&>(out).InvalidateDNNLData();
+  (void)out.GetDNNLData();
+}
+
+static void ZeroLikeSelfAttOutputCPU(const NDArray& out, OpReqType req) {
+  if (req == kNullOp) {
+    return;
+  }
+  if (req == kAddTo) {
+    PrepareDefaultSelfAttOutputCPU(out, req);
+    return;
+  }
+  CHECK(req == kWriteTo || req == kWriteInplace)
+      << "Unsupported zero-gradient request type " << req;
+  PrepareDefaultSelfAttOutputCPU(out, req);
+  MSHADOW_TYPE_SWITCH(out.dtype(), DType, {
+    ZeroSelfAttOutputCPUImpl<DType>(out);
+  });
+}
+
+static void SelfAttRowMajorSgemm(bool trans_a,
+                                 bool trans_b,
+                                 index_t m,
+                                 index_t n,
+                                 index_t k,
+                                 float alpha,
+                                 const float* a,
+                                 index_t lda,
+                                 const float* b,
+                                 index_t ldb,
+                                 float beta,
+                                 float* c,
+                                 index_t ldc) {
+#if (MSHADOW_USE_CBLAS == 1 || MSHADOW_USE_MKL == 1)
+  cblas_sgemm(CblasRowMajor,
+              trans_a ? CblasTrans : CblasNoTrans,
+              trans_b ? CblasTrans : CblasNoTrans,
+              m,
+              n,
+              k,
+              alpha,
+              a,
+              lda,
+              b,
+              ldb,
+              beta,
+              c,
+              ldc);
+#else
+  for (index_t row = 0; row < m; ++row) {
+    for (index_t col = 0; col < n; ++col) {
+      float acc = 0.f;
+      for (index_t inner = 0; inner < k; ++inner) {
+        const float av = trans_a ? a[inner * lda + row] : a[row * lda + inner];
+        const float bv = trans_b ? b[col * ldb + inner] : b[inner * ldb + col];
+        acc += av * bv;
+      }
+      c[row * ldc + col] = alpha * acc + beta * c[row * ldc + col];
+    }
+  }
+#endif
+}
+
 template <bool with_split>
 static bool SgDNNLSelfAttShape(const NodeAttrs& attrs,
                                mxnet::ShapeVector* in_shape,
@@ -75,10 +245,12 @@ static bool SgDNNLSelfAttShape(const NodeAttrs& attrs,
       SHAPE_ASSIGN_CHECK(*in_shape, 5, mxnet::TShape({1}));
     }
 
-    out_shape->resize(3);
     if (!params.enabled_float_output.has_value()) {
+      out_shape->resize(3);
       SHAPE_ASSIGN_CHECK(*out_shape, 1, mxnet::TShape({1}));  // min output
       SHAPE_ASSIGN_CHECK(*out_shape, 2, mxnet::TShape({1}));  // max output
+    } else {
+      out_shape->resize(1);
     }
   } else {
     CHECK_EQ(in_shape->size(), in_shape_num)
@@ -477,6 +649,297 @@ nnvm::ObjectPtr SgDNNLSelfAttQKQuantizedOp(const NodeAttrs& attrs) {
   return node;
 }
 
+template <bool with_split>
+static size_t SgDNNLSelfAttQKNumForwardInputs(const DNNLSelfAttParam& param) {
+  if (param.quantized) {
+    return with_split ? 3U : 6U;
+  }
+  return with_split ? 1U : 2U;
+}
+
+template <bool with_split>
+static void SgDNNLSelfAttQKBackward(const nnvm::NodeAttrs& attrs,
+                                    const OpContext& ctx,
+                                    const std::vector<NDArray>& inputs,
+                                    const std::vector<OpReqType>& req,
+                                    const std::vector<NDArray>& outputs) {
+  const auto& param = nnvm::get<DNNLSelfAttParam>(attrs.parsed);
+  CHECK(SgDNNLSelfAttSupportsBackward(param))
+      << "_backward_sg_onednn_selfatt_qk currently supports float32 oneDNN self-attention "
+         "backward and quantized QAT backward with enabled_float_output=float32";
+  const size_t fwd_inputs = SgDNNLSelfAttQKNumForwardInputs<with_split>(param);
+  CHECK_EQ(inputs.size(), fwd_inputs + 1);
+  CHECK_EQ(outputs.size(), fwd_inputs);
+  CHECK_EQ(req.size(), fwd_inputs);
+
+  const NDArray output_grad =
+      CastSelfAttGradToFloatCPU(inputs[0], "_backward_sg_onednn_selfatt_qk");
+  const float* grad_ptr = output_grad.data().dptr<float>();
+  const size_t base     = 1;
+
+  if constexpr (with_split) {
+    const NDArray qkv =
+        FloatSelfAttTensorCPU(inputs[base],
+                              param.quantized ? &inputs[base + 1] : nullptr,
+                              param.quantized ? &inputs[base + 2] : nullptr,
+                              "_backward_sg_onednn_selfatt_qk_split qkv");
+    const auto qkv_shape = qkv.shape();
+    CHECK_EQ(qkv_shape.ndim(), 3U);
+    CHECK_EQ(qkv_shape[2] % QKV_NUM, 0U);
+    const index_t batch_size = qkv_shape[0];
+    const index_t seq_len    = qkv_shape[1];
+    const index_t embed_dim  = qkv_shape[2] / QKV_NUM;
+    CHECK_EQ(embed_dim % param.heads, 0);
+    const index_t head_dim = embed_dim / param.heads;
+    CHECK_EQ(output_grad.shape()[0], batch_size);
+    CHECK_EQ(output_grad.shape()[1], param.heads);
+    CHECK_EQ(output_grad.shape()[2], seq_len);
+    CHECK_EQ(output_grad.shape()[3], seq_len);
+
+    if (req[0] != kNullOp) {
+      PrepareDefaultSelfAttOutputCPU(outputs[0], req[0]);
+      if (req[0] == kWriteTo || req[0] == kWriteInplace) {
+        MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
+          ZeroSelfAttOutputCPUImpl<DType>(outputs[0]);
+        });
+      }
+      CHECK_EQ(outputs[0].dtype(), mshadow::kFloat32);
+      const float* qkv_ptr = qkv.data().dptr<float>();
+      float* qkv_grad      = outputs[0].data().dptr<float>();
+      const float beta     = req[0] == kAddTo ? 1.f : 0.f;
+      const index_t qkv_row_stride = qkv_shape[2];
+      for (index_t b = 0; b < batch_size; ++b) {
+        for (int h = 0; h < param.heads; ++h) {
+          const size_t q_offset = (b * seq_len * qkv_row_stride) + h * head_dim;
+          const size_t k_offset = (b * seq_len * qkv_row_stride) + embed_dim + h * head_dim;
+          const float* query    = qkv_ptr + q_offset;
+          const float* key      = qkv_ptr + k_offset;
+          const float* grad     = grad_ptr + ((b * param.heads + h) * seq_len * seq_len);
+          float* query_grad     = qkv_grad + q_offset;
+          float* key_grad       = qkv_grad + k_offset;
+          SelfAttRowMajorSgemm(false,
+                               false,
+                               seq_len,
+                               head_dim,
+                               seq_len,
+                               1.f,
+                               grad,
+                               seq_len,
+                               key,
+                               qkv_row_stride,
+                               beta,
+                               query_grad,
+                               qkv_row_stride);
+          SelfAttRowMajorSgemm(true,
+                               false,
+                               seq_len,
+                               head_dim,
+                               seq_len,
+                               1.f,
+                               grad,
+                               seq_len,
+                               query,
+                               qkv_row_stride,
+                               beta,
+                               key_grad,
+                               qkv_row_stride);
+        }
+      }
+    }
+    for (size_t i = 1; i < fwd_inputs; ++i) {
+      ZeroLikeSelfAttOutputCPU(outputs[i], req[i]);
+    }
+  } else {
+    const NDArray queries =
+        FloatSelfAttTensorCPU(inputs[base],
+                              param.quantized ? &inputs[base + 2] : nullptr,
+                              param.quantized ? &inputs[base + 3] : nullptr,
+                              "_backward_sg_onednn_selfatt_qk queries");
+    const NDArray keys =
+        FloatSelfAttTensorCPU(inputs[base + 1],
+                              param.quantized ? &inputs[base + 4] : nullptr,
+                              param.quantized ? &inputs[base + 5] : nullptr,
+                              "_backward_sg_onednn_selfatt_qk keys");
+    const auto query_shape = queries.shape();
+    const auto key_shape   = keys.shape();
+    CHECK_EQ(query_shape.ndim(), 3U);
+    CHECK_EQ(key_shape.ndim(), 3U);
+    CHECK_EQ(query_shape[0], key_shape[0]);
+    CHECK_EQ(query_shape[2], key_shape[2]);
+    CHECK_EQ(query_shape[2] % param.heads, 0);
+    const index_t batch_size = query_shape[0];
+    const index_t query_len  = query_shape[1];
+    const index_t key_len    = key_shape[1];
+    const index_t embed_dim  = query_shape[2];
+    const index_t head_dim   = embed_dim / param.heads;
+    CHECK_EQ(output_grad.shape()[0], batch_size);
+    CHECK_EQ(output_grad.shape()[1], param.heads);
+    CHECK_EQ(output_grad.shape()[2], query_len);
+    CHECK_EQ(output_grad.shape()[3], key_len);
+
+    const float* query_ptr = queries.data().dptr<float>();
+    const float* key_ptr   = keys.data().dptr<float>();
+    float* query_grad      = nullptr;
+    float* key_grad        = nullptr;
+    if (req[0] != kNullOp) {
+      CHECK_EQ(outputs[0].dtype(), mshadow::kFloat32);
+      PrepareDefaultSelfAttOutputCPU(outputs[0], req[0]);
+      query_grad = outputs[0].data().dptr<float>();
+    }
+    if (req[1] != kNullOp) {
+      CHECK_EQ(outputs[1].dtype(), mshadow::kFloat32);
+      PrepareDefaultSelfAttOutputCPU(outputs[1], req[1]);
+      key_grad = outputs[1].data().dptr<float>();
+    }
+    const float query_beta = req[0] == kAddTo ? 1.f : 0.f;
+    const float key_beta   = req[1] == kAddTo ? 1.f : 0.f;
+    for (index_t b = 0; b < batch_size; ++b) {
+      for (int h = 0; h < param.heads; ++h) {
+        const size_t q_offset = (b * query_len * embed_dim) + h * head_dim;
+        const size_t k_offset = (b * key_len * embed_dim) + h * head_dim;
+        const float* query    = query_ptr + q_offset;
+        const float* key      = key_ptr + k_offset;
+        const float* grad     = grad_ptr + ((b * param.heads + h) * query_len * key_len);
+        if (query_grad != nullptr) {
+          SelfAttRowMajorSgemm(false,
+                               false,
+                               query_len,
+                               head_dim,
+                               key_len,
+                               1.f,
+                               grad,
+                               key_len,
+                               key,
+                               embed_dim,
+                               query_beta,
+                               query_grad + q_offset,
+                               embed_dim);
+        }
+        if (key_grad != nullptr) {
+          SelfAttRowMajorSgemm(true,
+                               false,
+                               key_len,
+                               head_dim,
+                               query_len,
+                               1.f,
+                               grad,
+                               key_len,
+                               query,
+                               embed_dim,
+                               key_beta,
+                               key_grad + k_offset,
+                               embed_dim);
+        }
+      }
+    }
+    for (size_t i = 2; i < fwd_inputs; ++i) {
+      ZeroLikeSelfAttOutputCPU(outputs[i], req[i]);
+    }
+  }
+}
+
+template <bool with_split>
+static bool SgDNNLSelfAttQKBackwardShape(const nnvm::NodeAttrs& attrs,
+                                         mxnet::ShapeVector* in_shapes,
+                                         mxnet::ShapeVector* out_shapes) {
+  const auto& param = nnvm::get<DNNLSelfAttParam>(attrs.parsed);
+  const size_t fwd_inputs = SgDNNLSelfAttQKNumForwardInputs<with_split>(param);
+  CHECK_EQ(in_shapes->size(), fwd_inputs + 1);
+  CHECK_EQ(out_shapes->size(), fwd_inputs);
+  for (size_t i = 0; i < fwd_inputs; ++i) {
+    SHAPE_ASSIGN_CHECK(*out_shapes, i, (*in_shapes)[i + 1]);
+  }
+  return true;
+}
+
+static bool SgDNNLSelfAttValidBackwardGradType(int type_flag) {
+  return type_flag == mshadow::kFloat32 || type_flag == mshadow::kInt8 ||
+         type_flag == mshadow::kUint8 || type_flag == mshadow::kInt32;
+}
+
+template <bool with_split>
+static bool SgDNNLSelfAttQKBackwardType(const nnvm::NodeAttrs& attrs,
+                                        std::vector<int>* in_types,
+                                        std::vector<int>* out_types) {
+  const auto& param = nnvm::get<DNNLSelfAttParam>(attrs.parsed);
+  CHECK(SgDNNLSelfAttSupportsBackward(param));
+  const size_t fwd_inputs = SgDNNLSelfAttQKNumForwardInputs<with_split>(param);
+  CHECK_EQ(in_types->size(), fwd_inputs + 1);
+  CHECK_EQ(out_types->size(), fwd_inputs);
+  if (in_types->at(0) == -1) {
+    TYPE_ASSIGN_CHECK(*in_types, 0, mshadow::kFloat32);
+  } else {
+    CHECK(SgDNNLSelfAttValidBackwardGradType(in_types->at(0)))
+        << "_backward_sg_onednn_selfatt_qk expects float32/int8/uint8/int32 output gradients";
+  }
+
+  const size_t base = 1;
+  if (param.quantized) {
+    TYPE_ASSIGN_CHECK(*in_types, base, mshadow::kInt8);
+    if constexpr (with_split) {
+      TYPE_ASSIGN_CHECK(*in_types, base + 1, mshadow::kFloat32);
+      TYPE_ASSIGN_CHECK(*in_types, base + 2, mshadow::kFloat32);
+    } else {
+      TYPE_ASSIGN_CHECK(*in_types, base + 1, mshadow::kInt8);
+      for (size_t i = base + 2; i < base + fwd_inputs; ++i) {
+        TYPE_ASSIGN_CHECK(*in_types, i, mshadow::kFloat32);
+      }
+    }
+  } else {
+    TYPE_ASSIGN_CHECK(*in_types, base, mshadow::kFloat32);
+    if constexpr (!with_split) {
+      TYPE_ASSIGN_CHECK(*in_types, base + 1, mshadow::kFloat32);
+    }
+  }
+
+  for (size_t i = 0; i < fwd_inputs; ++i) {
+    TYPE_ASSIGN_CHECK(*out_types, i, mshadow::kFloat32);
+  }
+  return true;
+}
+
+static bool SgDNNLSelfAttBackwardStorageType(const nnvm::NodeAttrs& attrs,
+                                             const int dev_mask,
+                                             DispatchMode* dispatch_mode,
+                                             std::vector<int>* in_attrs,
+                                             std::vector<int>* out_attrs) {
+  for (auto& attr : *out_attrs) {
+    type_assign(&attr, mxnet::kDefaultStorage);
+  }
+  *dispatch_mode = DispatchMode::kFComputeEx;
+  return true;
+}
+
+template <bool with_split>
+struct SgDNNLSelfAttQKGrad {
+  std::vector<nnvm::NodeEntry> operator()(const nnvm::ObjectPtr& n,
+                                          const std::vector<nnvm::NodeEntry>& ograds) const {
+    const auto& param = nnvm::get<DNNLSelfAttParam>(n->attrs.parsed);
+    if (!SgDNNLSelfAttSupportsBackward(param)) {
+      return MakeZeroGradNodes(n, ograds);
+    }
+    std::vector<nnvm::NodeEntry> heads;
+    heads.reserve(n->inputs.size() + 1);
+    heads.emplace_back(ograds[0]);
+    heads.insert(heads.end(), n->inputs.begin(), n->inputs.end());
+    auto p        = nnvm::Node::Create();
+    p->attrs.op   = nnvm::Op::Get(with_split ? "_backward_sg_onednn_selfatt_qk_split" :
+                                               "_backward_sg_onednn_selfatt_qk");
+    p->attrs.name = n->attrs.name + "_backward";
+    p->attrs.dict = n->attrs.dict;
+    p->inputs     = std::move(heads);
+    p->control_deps.emplace_back(n);
+    if (p->op()->attr_parser != nullptr) {
+      p->op()->attr_parser(&(p->attrs));
+    }
+    CHECK_EQ(p->num_inputs(), p->inputs.size())
+        << "Number of inputs to operator " << p->op()->name << " (" << p->num_inputs()
+        << ") does not match the actual number of inputs provided to operator "
+        << p->attrs.name << " (" << p->inputs.size() << ").";
+    return CreateNodeEntries(p);
+  }
+};
+
 #define MXNET_OPERATOR_REGISTER_SELFATT_QK(name)                                                 \
   NNVM_REGISTER_OP(name)                                                                         \
       .set_num_outputs([](const NodeAttrs& attrs) {                                              \
@@ -502,7 +965,6 @@ nnvm::ObjectPtr SgDNNLSelfAttQKQuantizedOp(const NodeAttrs& attrs) {
       .set_attr<FInferStorageType>("FInferStorageType", SgDNNLSelfAttStorageType)                \
       .set_attr<FCreateOpState>("FCreateOpState", CreateSgDNNLSelfAttQKState)                    \
       .set_attr<bool>("TIsDNNL", true)                                                           \
-      .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)                                 \
       .set_attr<FQuantizable>("FQuantizable",                                                    \
                               [](const NodeAttrs& attrs) { return QuantizeType::kMust; })        \
       .set_attr<FNeedRequantize>("FNeedRequantize", [](const NodeAttrs& attrs) { return true; }) \
@@ -523,7 +985,7 @@ MXNET_OPERATOR_REGISTER_SELFATT_QK(_sg_onednn_selfatt_qk)
                                        auto const& param =
                                            nnvm::get<DNNLSelfAttParam>(attrs.parsed);
                                        std::vector<std::string> input_names{"queries"};
-                                       input_names.emplace_back("keys");
+                                       input_names.emplace_back("key_data");
                                        if (param.quantized) {
                                          input_names.emplace_back("min_q");
                                          input_names.emplace_back("max_q");
@@ -535,9 +997,14 @@ MXNET_OPERATOR_REGISTER_SELFATT_QK(_sg_onednn_selfatt_qk)
     .set_attr<mxnet::FInferShape>("FInferShape", SgDNNLSelfAttShape<false>)
     .set_attr<nnvm::FInferType>("FInferType", SgDNNLSelfAttQKInferType<false>)
     .set_attr<FStatefulComputeEx>("FStatefulComputeEx<cpu>", SgDNNLSelfAttQKForward<false>)
+    .set_attr<nnvm::FGradient>("FGradient", SgDNNLSelfAttQKGrad<false>{})
     .set_attr<FQuantizedOp>("FQuantizedOp", SgDNNLSelfAttQKQuantizedOp<false>)
     .add_argument("queries", "NDArray-or-Symbol", "Interleaved queries, keys and values")
-    .add_argument("keys", "NDArray-or-Symbol", "Interleaved queries, keys and values");
+    .add_argument("key_data", "NDArray-or-Symbol", "Interleaved queries, keys and values")
+    .add_argument("min_q", "NDArray-or-Symbol", "Minimum value of queries.")
+    .add_argument("max_q", "NDArray-or-Symbol", "Maximum value of queries.")
+    .add_argument("min_k", "NDArray-or-Symbol", "Minimum value of keys.")
+    .add_argument("max_k", "NDArray-or-Symbol", "Maximum value of keys.");
 
 MXNET_OPERATOR_REGISTER_SELFATT_QK(_sg_onednn_selfatt_qk_split)
     .add_alias("_sg_mkldnn_selfatt_qk")
@@ -564,8 +1031,43 @@ MXNET_OPERATOR_REGISTER_SELFATT_QK(_sg_onednn_selfatt_qk_split)
     .set_attr<mxnet::FInferShape>("FInferShape", SgDNNLSelfAttShape<true>)
     .set_attr<nnvm::FInferType>("FInferType", SgDNNLSelfAttQKInferType<true>)
     .set_attr<FStatefulComputeEx>("FStatefulComputeEx<cpu>", SgDNNLSelfAttQKForward<true>)
+    .set_attr<nnvm::FGradient>("FGradient", SgDNNLSelfAttQKGrad<true>{})
     .set_attr<FQuantizedOp>("FQuantizedOp", SgDNNLSelfAttQKQuantizedOp<true>)
-    .add_argument("query_keys_values", "NDArray-or-Symbol", "Interleaved queries, keys and values");
+    .add_argument("query_keys_values", "NDArray-or-Symbol", "Interleaved queries, keys and values")
+    .add_argument("min_qkv", "NDArray-or-Symbol", "Minimum value of queries, keys and values.")
+    .add_argument("max_qkv", "NDArray-or-Symbol", "Maximum value of queries, keys and values.");
+
+NNVM_REGISTER_OP(_backward_sg_onednn_selfatt_qk)
+    .set_num_inputs([](const NodeAttrs& attrs) {
+      return SgDNNLSelfAttQKNumForwardInputs<false>(
+                 nnvm::get<DNNLSelfAttParam>(attrs.parsed)) +
+             1;
+    })
+    .set_num_outputs([](const NodeAttrs& attrs) {
+      return SgDNNLSelfAttQKNumForwardInputs<false>(
+          nnvm::get<DNNLSelfAttParam>(attrs.parsed));
+    })
+    .set_attr_parser(ParamParser<DNNLSelfAttParam>)
+    .set_attr<mxnet::FInferShape>("FInferShape", SgDNNLSelfAttQKBackwardShape<false>)
+    .set_attr<nnvm::FInferType>("FInferType", SgDNNLSelfAttQKBackwardType<false>)
+    .set_attr<FInferStorageType>("FInferStorageType", SgDNNLSelfAttBackwardStorageType)
+    .set_attr<FComputeEx>("FComputeEx<cpu>", SgDNNLSelfAttQKBackward<false>);
+
+NNVM_REGISTER_OP(_backward_sg_onednn_selfatt_qk_split)
+    .set_num_inputs([](const NodeAttrs& attrs) {
+      return SgDNNLSelfAttQKNumForwardInputs<true>(
+                 nnvm::get<DNNLSelfAttParam>(attrs.parsed)) +
+             1;
+    })
+    .set_num_outputs([](const NodeAttrs& attrs) {
+      return SgDNNLSelfAttQKNumForwardInputs<true>(
+          nnvm::get<DNNLSelfAttParam>(attrs.parsed));
+    })
+    .set_attr_parser(ParamParser<DNNLSelfAttParam>)
+    .set_attr<mxnet::FInferShape>("FInferShape", SgDNNLSelfAttQKBackwardShape<true>)
+    .set_attr<nnvm::FInferType>("FInferType", SgDNNLSelfAttQKBackwardType<true>)
+    .set_attr<FInferStorageType>("FInferStorageType", SgDNNLSelfAttBackwardStorageType)
+    .set_attr<FComputeEx>("FComputeEx<cpu>", SgDNNLSelfAttQKBackward<true>);
 
 /**********************************_sg_onednn_selfatt_valatt**********************************/
 
@@ -592,7 +1094,7 @@ static bool SgDNNLSelfAttValShape(const NodeAttrs& attrs,
       SHAPE_ASSIGN_CHECK(*in_shape, i, mxnet::TShape({1}));
     }
 
-    out_shape->resize(3);
+    out_shape->resize(params.enabled_float_output.has_value() ? 1 : 3);
     SHAPE_ASSIGN_CHECK(
         *out_shape,
         0,
@@ -989,6 +1491,210 @@ void DNNLSelfAttValAttOp::Forward(const OpContext& ctx,
   }
 }
 
+static size_t SgDNNLSelfAttValAttNumForwardInputs(const DNNLSelfAttParam& param) {
+  return param.quantized ? 6U : 2U;
+}
+
+static void SgDNNLSelfAttValAttBackward(const nnvm::NodeAttrs& attrs,
+                                        const OpContext& ctx,
+                                        const std::vector<NDArray>& inputs,
+                                        const std::vector<OpReqType>& req,
+                                        const std::vector<NDArray>& outputs) {
+  const auto& param = nnvm::get<DNNLSelfAttParam>(attrs.parsed);
+  CHECK(SgDNNLSelfAttSupportsBackward(param))
+      << "_backward_sg_onednn_selfatt_valatt currently supports float32 oneDNN "
+         "self-attention backward and quantized QAT backward with enabled_float_output=float32";
+  const size_t fwd_inputs = SgDNNLSelfAttValAttNumForwardInputs(param);
+  CHECK_EQ(inputs.size(), fwd_inputs + 1);
+  CHECK_EQ(outputs.size(), fwd_inputs);
+  CHECK_EQ(req.size(), fwd_inputs);
+
+  const NDArray output_grad =
+      CastSelfAttGradToFloatCPU(inputs[0], "_backward_sg_onednn_selfatt_valatt");
+  const size_t base = 1;
+  const NDArray attention =
+      FloatSelfAttTensorCPU(inputs[base],
+                            param.quantized ? &inputs[base + 2] : nullptr,
+                            param.quantized ? &inputs[base + 3] : nullptr,
+                            "_backward_sg_onednn_selfatt_valatt attention");
+  const NDArray qkv =
+      FloatSelfAttTensorCPU(inputs[base + 1],
+                            param.quantized ? &inputs[base + 4] : nullptr,
+                            param.quantized ? &inputs[base + 5] : nullptr,
+                            "_backward_sg_onednn_selfatt_valatt qkv");
+  const auto att_shape = attention.shape();
+  const auto qkv_shape = qkv.shape();
+  CHECK_EQ(att_shape.ndim(), 4U);
+  CHECK_EQ(qkv_shape.ndim(), 3U);
+  CHECK_EQ(qkv_shape[2] % QKV_NUM, 0U);
+  const index_t batch_size = att_shape[0];
+  const index_t heads      = att_shape[1];
+  const index_t query_len  = att_shape[2];
+  const index_t key_len    = att_shape[3];
+  const index_t embed_dim  = qkv_shape[2] / QKV_NUM;
+  CHECK_EQ(heads, param.heads);
+  CHECK_EQ(qkv_shape[0], batch_size);
+  CHECK_EQ(qkv_shape[1], key_len);
+  CHECK_EQ(query_len, key_len)
+      << "_sg_onednn_selfatt_valatt backward currently supports self-attention square maps";
+  CHECK_EQ(embed_dim % heads, 0);
+  const index_t head_dim = embed_dim / heads;
+  CHECK_EQ(output_grad.shape()[0], batch_size);
+  CHECK_EQ(output_grad.shape()[1], query_len);
+  CHECK_EQ(output_grad.shape()[2], embed_dim);
+
+  float* attention_grad = nullptr;
+  float* qkv_grad       = nullptr;
+  if (req[0] != kNullOp) {
+    CHECK_EQ(outputs[0].dtype(), mshadow::kFloat32);
+    PrepareDefaultSelfAttOutputCPU(outputs[0], req[0]);
+    attention_grad = outputs[0].data().dptr<float>();
+  }
+  if (req[1] != kNullOp) {
+    CHECK_EQ(outputs[1].dtype(), mshadow::kFloat32);
+    PrepareDefaultSelfAttOutputCPU(outputs[1], req[1]);
+    if (req[1] == kWriteTo || req[1] == kWriteInplace) {
+      MSHADOW_TYPE_SWITCH(outputs[1].dtype(), DType, {
+        ZeroSelfAttOutputCPUImpl<DType>(outputs[1]);
+      });
+    }
+    qkv_grad = outputs[1].data().dptr<float>();
+  }
+
+  const float* grad_ptr = output_grad.data().dptr<float>();
+  const float* att_ptr  = attention.data().dptr<float>();
+  const float* qkv_ptr  = qkv.data().dptr<float>();
+  const float att_beta  = req[0] == kAddTo ? 1.f : 0.f;
+  const float qkv_beta  = req[1] == kAddTo ? 1.f : 0.f;
+  const index_t qkv_row_stride = qkv_shape[2];
+  for (index_t b = 0; b < batch_size; ++b) {
+    for (index_t h = 0; h < heads; ++h) {
+      const float* att = att_ptr + ((b * heads + h) * query_len * key_len);
+      const float* out_grad =
+          grad_ptr + (b * query_len * embed_dim) + h * head_dim;
+      const float* value =
+          qkv_ptr + (b * key_len * qkv_row_stride) + 2 * embed_dim + h * head_dim;
+      if (qkv_grad != nullptr) {
+        float* value_grad =
+            qkv_grad + (b * key_len * qkv_row_stride) + 2 * embed_dim + h * head_dim;
+        SelfAttRowMajorSgemm(true,
+                             false,
+                             key_len,
+                             head_dim,
+                             query_len,
+                             1.f,
+                             att,
+                             key_len,
+                             out_grad,
+                             embed_dim,
+                             qkv_beta,
+                             value_grad,
+                             qkv_row_stride);
+      }
+      if (attention_grad != nullptr) {
+        float* att_grad = attention_grad + ((b * heads + h) * query_len * key_len);
+        SelfAttRowMajorSgemm(false,
+                             true,
+                             query_len,
+                             key_len,
+                             head_dim,
+                             1.f,
+                             out_grad,
+                             embed_dim,
+                             value,
+                             qkv_row_stride,
+                             att_beta,
+                             att_grad,
+                             key_len);
+      }
+    }
+  }
+  for (size_t i = 2; i < fwd_inputs; ++i) {
+    ZeroLikeSelfAttOutputCPU(outputs[i], req[i]);
+  }
+}
+
+static bool SgDNNLSelfAttValAttBackwardShape(const nnvm::NodeAttrs& attrs,
+                                             mxnet::ShapeVector* in_shapes,
+                                             mxnet::ShapeVector* out_shapes) {
+  const auto& param = nnvm::get<DNNLSelfAttParam>(attrs.parsed);
+  const size_t fwd_inputs = SgDNNLSelfAttValAttNumForwardInputs(param);
+  CHECK_EQ(in_shapes->size(), fwd_inputs + 1);
+  CHECK_EQ(out_shapes->size(), fwd_inputs);
+  for (size_t i = 0; i < fwd_inputs; ++i) {
+    SHAPE_ASSIGN_CHECK(*out_shapes, i, (*in_shapes)[i + 1]);
+  }
+  return true;
+}
+
+static bool SgDNNLSelfAttValAttBackwardType(const nnvm::NodeAttrs& attrs,
+                                            std::vector<int>* in_types,
+                                            std::vector<int>* out_types) {
+  const auto& param = nnvm::get<DNNLSelfAttParam>(attrs.parsed);
+  CHECK(SgDNNLSelfAttSupportsBackward(param));
+  const size_t fwd_inputs = SgDNNLSelfAttValAttNumForwardInputs(param);
+  CHECK_EQ(in_types->size(), fwd_inputs + 1);
+  CHECK_EQ(out_types->size(), fwd_inputs);
+  if (in_types->at(0) == -1) {
+    TYPE_ASSIGN_CHECK(*in_types, 0, mshadow::kFloat32);
+  } else {
+    CHECK(SgDNNLSelfAttValidBackwardGradType(in_types->at(0)))
+        << "_backward_sg_onednn_selfatt_valatt expects float32/int8/uint8/int32 "
+           "output gradients";
+  }
+
+  const size_t base = 1;
+  if (param.quantized) {
+    TYPE_ASSIGN_CHECK(*in_types, base, mshadow::kUint8);
+    if (in_types->at(base + 1) == -1) {
+      TYPE_ASSIGN_CHECK(*in_types, base + 1, mshadow::kInt8);
+    } else {
+      CHECK(in_types->at(base + 1) == mshadow::kInt8 ||
+            in_types->at(base + 1) == mshadow::kUint8)
+          << "_backward_sg_onednn_selfatt_valatt expects int8/uint8 quantized qkv input";
+    }
+    for (size_t i = base + 2; i < base + fwd_inputs; ++i) {
+      TYPE_ASSIGN_CHECK(*in_types, i, mshadow::kFloat32);
+    }
+  } else {
+    TYPE_ASSIGN_CHECK(*in_types, base, mshadow::kFloat32);
+    TYPE_ASSIGN_CHECK(*in_types, base + 1, mshadow::kFloat32);
+  }
+
+  for (size_t i = 0; i < fwd_inputs; ++i) {
+    TYPE_ASSIGN_CHECK(*out_types, i, mshadow::kFloat32);
+  }
+  return true;
+}
+
+struct SgDNNLSelfAttValAttGrad {
+  std::vector<nnvm::NodeEntry> operator()(const nnvm::ObjectPtr& n,
+                                          const std::vector<nnvm::NodeEntry>& ograds) const {
+    const auto& param = nnvm::get<DNNLSelfAttParam>(n->attrs.parsed);
+    if (!SgDNNLSelfAttSupportsBackward(param)) {
+      return MakeZeroGradNodes(n, ograds);
+    }
+    std::vector<nnvm::NodeEntry> heads;
+    heads.reserve(n->inputs.size() + 1);
+    heads.emplace_back(ograds[0]);
+    heads.insert(heads.end(), n->inputs.begin(), n->inputs.end());
+    auto p        = nnvm::Node::Create();
+    p->attrs.op   = nnvm::Op::Get("_backward_sg_onednn_selfatt_valatt");
+    p->attrs.name = n->attrs.name + "_backward";
+    p->attrs.dict = n->attrs.dict;
+    p->inputs     = std::move(heads);
+    p->control_deps.emplace_back(n);
+    if (p->op()->attr_parser != nullptr) {
+      p->op()->attr_parser(&(p->attrs));
+    }
+    CHECK_EQ(p->num_inputs(), p->inputs.size())
+        << "Number of inputs to operator " << p->op()->name << " (" << p->num_inputs()
+        << ") does not match the actual number of inputs provided to operator "
+        << p->attrs.name << " (" << p->inputs.size() << ").";
+    return CreateNodeEntries(p);
+  }
+};
+
 NNVM_REGISTER_OP(_sg_onednn_selfatt_valatt)
     .add_alias("_sg_mkldnn_selfatt_valatt")
     .describe(R"code(_sg_onednn_selfatt_valatt)code" ADD_FILELINE)
@@ -1041,7 +1747,7 @@ NNVM_REGISTER_OP(_sg_onednn_selfatt_valatt)
     .set_attr<FCreateOpState>("FCreateOpState", CreateDNNLSelfAttValAttState)
     .set_attr<FStatefulComputeEx>("FStatefulComputeEx<cpu>", DNNLSelfAttValAttForward)
     .set_attr<bool>("TIsDNNL", true)
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)
+    .set_attr<nnvm::FGradient>("FGradient", SgDNNLSelfAttValAttGrad{})
     .set_attr<FQuantizable>("FQuantizable",
                             [](const NodeAttrs& attrs) { return QuantizeType::kMust; })
     .set_attr<FQuantizedOp>("FQuantizedOp", SgDNNLSelfAttValAttQuantizedOp)
@@ -1050,7 +1756,27 @@ NNVM_REGISTER_OP(_sg_onednn_selfatt_valatt)
     .add_argument("queries_keys_values",
                   "NDArray-or-Symbol",
                   "Queries, keys and values interleaved")
+    .add_argument("min_attention", "NDArray-or-Symbol", "Minimum value of attention maps.")
+    .add_argument("max_attention", "NDArray-or-Symbol", "Maximum value of attention maps.")
+    .add_argument("min_qkv", "NDArray-or-Symbol", "Minimum value of queries, keys and values.")
+    .add_argument("max_qkv", "NDArray-or-Symbol", "Maximum value of queries, keys and values.")
     .add_arguments(DNNLSelfAttParam::__FIELDS__());
+
+NNVM_REGISTER_OP(_backward_sg_onednn_selfatt_valatt)
+    .set_num_inputs([](const NodeAttrs& attrs) {
+      return SgDNNLSelfAttValAttNumForwardInputs(
+                 nnvm::get<DNNLSelfAttParam>(attrs.parsed)) +
+             1;
+    })
+    .set_num_outputs([](const NodeAttrs& attrs) {
+      return SgDNNLSelfAttValAttNumForwardInputs(
+          nnvm::get<DNNLSelfAttParam>(attrs.parsed));
+    })
+    .set_attr_parser(ParamParser<DNNLSelfAttParam>)
+    .set_attr<mxnet::FInferShape>("FInferShape", SgDNNLSelfAttValAttBackwardShape)
+    .set_attr<nnvm::FInferType>("FInferType", SgDNNLSelfAttValAttBackwardType)
+    .set_attr<FInferStorageType>("FInferStorageType", SgDNNLSelfAttBackwardStorageType)
+    .set_attr<FComputeEx>("FComputeEx<cpu>", SgDNNLSelfAttValAttBackward);
 
 }  // namespace op
 }  // namespace mxnet

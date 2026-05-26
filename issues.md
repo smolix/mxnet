@@ -41,8 +41,8 @@ Status labels:
 
 | Priority | Tracker | Status | Issue | Next action |
 |---|---|---|---|---|
-| P0 | B4 / XOP18 | Deferred (architectural) | Real `_backward_sg_onednn_*` for QAT needs an NNVM/CachedOp framework refactor (multi-week scope). 20-test coverage in `test_quantized_backward.py` (14 passed, 6 xfailed) is the truthful production state. | Reopen with a concrete framework-refactor proposal. |
-| P1 | XOP18 | Partial | Quantized self-attention subgraph forward contract pinned. Backward zero-grad behavior remains under B4. | Close alongside B4 framework refactor. |
+| P0 | B4 / XOP18 | Fixed locally | Local QAT backward now covers simple `_sg_onednn_conv`, simple `_sg_onednn_fully_connected`, fused Conv+ReLU, quantized avg/max pooling, Conv -> ReLU -> Pool -> FC composite, and quantized oneDNN self-attention QK/QK-split/ValAtt. `tests/python/dnnl/subgraphs/test_quantized_backward.py` passes (`21 passed`) and `tests/python/dnnl/test_xop18_quantized_subgraph_req.py` passes (`9 passed`, also under `NaiveEngine`). The oneDNN reduce destination descriptor bug exposed by this path is fixed locally. | Keep broader full-suite/wheel validation before release. |
+| P1 | XOP18 | Fixed locally | Quantized self-attention subgraph backward now uses real CPU gradients instead of `MakeZeroGradNodes`; direct int8/uint8 QAT tests compare QK, QK-split, and ValAtt gradients against NumPy references. | Re-run in wheel acceptance sweep. |
 | P2 | CN9 / L6 | Open (track upstream) | Bundled dmlc concurrent queue still assigns `-1` into a `uint32_t` sentinel under NVCC; oneDNN's vendored ITT assembly still lacks a non-executable-stack note. | Do not commit private submodule-local fixes; track as upstream/submodule policy. |
 | P2 | C4 | Open | CUDA build matrix CI for Ada/Hopper/Blackwell + CUDA 12.x compatibility. | Validate `sm_89` here; leave CUDA 12.x and dedicated Blackwell to later runners. |
 | P2 | L7 | In progress | Target load envelope: 48-64 runnable tasks; cap `OPENBLAS_NUM_THREADS=1`, `OMP_NUM_THREADS=2-4`, `MKL_NUM_THREADS=1` for xdist lanes. | Keep one heavy CPU lane at a time. |
@@ -155,7 +155,7 @@ in the appendix below for traceability.
 | XOP15 | Quantized primary-output req | `_contrib_quantized_elemwise_mul`, native + oneDNN quantize/quantize_v2/dequantize honor kNullOp/kAddTo for primary, shared helpers for ranges. |
 | XOP16 | Quantized inference contracts | Quantized embedding storage contract (shape+dtype+range value) pinned. |
 | XOP17 | Quantized metadata | Quantized RNN lists `statecell_output` when `state_outputs=True`. |
-| XOP18 | Quantized subgraph forward | Forward contract anchor (registration + shape) for `_sg_onednn_selfatt_qk{,_split,_valatt}`. (Backward remains under B4.) |
+| XOP18 | Quantized self-attention backward | Forward and backward contract anchors for `_sg_onednn_selfatt_qk{,_split}` and `_sg_onednn_selfatt_valatt`; QAT gradients are checked against NumPy references. |
 | XOP19 | oneDNN descriptor/output handling | Reducer, softmax, batch-dot, deconv weight-grad, dnnl_reshape, `DNNLMaskedSoftmax`, BF16 fallback paths in selfatt + conv all converted or gated. Primary writes in quantized subgraphs use cached dst pattern (audit-closed). |
 | XOP20 | Image dtype validation | `resize-inl.h` int32/int64 guard fixed; image resize preserves `kNullOp` and rejects `kAddTo`. |
 | XOP21 | Large-tensor size truncation | LayerNorm, GroupNorm, ROIAlign, PSROIPool, BilinearSampler, SpatialTransformer, dnnl_dot, multi_sum_sq all INT_MAX-guarded. |

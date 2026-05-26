@@ -158,6 +158,64 @@ def test_validate_provenance_checks_expected_feature_flags(monkeypatch, tmp_path
     assert not any("USE_OPENCV expected OFF" in error for error in errors)
 
 
+def test_validate_provenance_rejects_stale_cmake_commit_stamp():
+    release_provenance = _load_release_provenance()
+    report = {
+        "expected_package_name": "mxnet",
+        "git": {
+            "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "short_commit": "aaaaaaaaaaaa",
+            "dirty": False,
+            "tracked_change_count": 0,
+            "untracked_count": 0,
+        },
+        "package": {"version": "2.0.0"},
+        "features": {
+            "cache_found": True,
+            "cache_path": "build/CMakeCache.txt",
+            "USE_CUDA": {"enabled": True, "raw": "ON"},
+            "USE_OPENCV": {"enabled": False, "raw": "OFF"},
+        },
+        "build": {
+            "build_dir": "build",
+            "metadata_found": True,
+            "commit_hashes": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+            "sources": [],
+        },
+        "wheels": [],
+    }
+
+    errors = release_provenance.validate_provenance(report)
+
+    assert any("does not match git HEAD" in error for error in errors)
+
+
+def test_collect_provenance_reads_cmake_commit_stamp(monkeypatch, tmp_path):
+    release_provenance = _load_release_provenance()
+    version = "2.0.0"
+    _write_minimal_repo(tmp_path, version)
+    build_ninja = tmp_path / "build" / "build.ninja"
+    build_ninja.write_text(
+        'DEFINES = -DMXNET_COMMIT_HASH=\\"'
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        '\\" -DMXNET_BRANCH=\\"main\\"\n'
+    )
+
+    def fake_git_output(repo_root, args):
+        if args == ["rev-parse", "HEAD"]:
+            return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        return ""
+
+    monkeypatch.setattr(release_provenance, "_git_output", fake_git_output)
+    report = release_provenance.collect_provenance(repo_root=tmp_path)
+
+    assert report["build"]["metadata_found"] is True
+    assert report["build"]["commit_hashes"] == [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+    assert release_provenance.validate_provenance(report) == []
+
+
 def test_validate_provenance_checks_opencv_wheel_payload():
     release_provenance = _load_release_provenance()
     report = {

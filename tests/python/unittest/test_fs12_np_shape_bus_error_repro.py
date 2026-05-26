@@ -17,31 +17,30 @@
 
 """FS12 reproduction harness — SIGBUS in MXSetIsNumpyShape during long shard.
 
-The bug: running `tests/python/unittest/test_numpy_op.py` in full order
+The original symptom: running `tests/python/unittest/test_numpy_op.py` in full order
 crashes with SIGBUS at ~21% through the file, specifically when
 `test_np_sum[False-int64-int64-int64-False-1-shape1]` enters its
 `_NumpyShapeScope.__enter__()`, which calls into the `MXSetIsNumpyShape`
-C API. The crash happens on a thread_local atomic-flag write — strong
-evidence that the page backing the thread_local was unmapped/protected
-by an earlier test.
+C API. The same test passes when run in isolation.
 
-The same test passes when run in isolation. Bisection points to a
-test-sequence-dependent corruption of an mxnet engine global. ASAN is
-the obvious next step; without it, we can't tell which earlier test
-trips the corruption.
+The root cause identified here is an ABI mismatch in the Python wrapper:
+`MXIsNumpyShape` writes an `int*`, but `mxnet.util.is_np_shape()` used to
+pass a one-byte `ctypes.c_bool` out-parameter. That overwrote adjacent
+ctypes storage and made the later C API call fail in an unrelated-looking
+place. `MXNDArrayIsDeferredCompute` had the same Python-side bug.
 
-This file pins the diagnostic surface so a future ASAN run reuses the
-exact known-bad sequence without re-deriving it:
+This file pins the diagnostic surface:
 
 1. The known crash anchor: a single-test invocation that PASSES in
    isolation (regression sentinel — if this ever fails on its own,
    the bug has shifted).
 2. A skipped "test" that documents how to reproduce the crash under
    ASAN (skipped because ASAN isn't in the default validation matrix).
-3. A source-grep regression confirming the `_NumpyShapeScope`
-   implementation still calls the same C API that crashes.
+3. ABI contract tests confirming the Python wrappers allocate int-sized
+   out-parameters for int* C API functions.
 """
 
+import ctypes
 import os
 import sys
 
@@ -122,6 +121,42 @@ def test_fs12_source_anchor_present():
         ("FS12: the documented crash anchor (_NumpyShapeScope / set_np_shape) "
          "is no longer present in util.py — issues.md FS12 row needs to be "
          "updated with the new code path.")
+
+
+def _write_int_out_param(out_param, value):
+    obj = getattr(out_param, "_obj", None)
+    assert obj is not None
+    assert ctypes.sizeof(obj) == ctypes.sizeof(ctypes.c_int)
+    ctypes.cast(out_param, ctypes.POINTER(ctypes.c_int))[0] = value
+    return 0
+
+
+def test_is_np_shape_uses_int_sized_c_api_out_param(monkeypatch):
+    import mxnet.util as util
+
+    class FakeLib:
+        @staticmethod
+        def MXIsNumpyShape(curr):
+            return _write_int_out_param(curr, 2)
+
+    monkeypatch.setattr(util, "_LIB", FakeLib())
+    monkeypatch.setattr(util, "check_call", lambda status: None)
+
+    assert util.is_np_shape() is True
+
+
+def test_is_deferred_compute_uses_int_sized_c_api_out_param(monkeypatch):
+    import mxnet._deferred_compute as deferred_compute
+
+    class FakeLib:
+        @staticmethod
+        def MXNDArrayIsDeferredCompute(curr):
+            return _write_int_out_param(curr, 1)
+
+    monkeypatch.setattr(deferred_compute, "_LIB", FakeLib())
+    monkeypatch.setattr(deferred_compute, "check_call", lambda status: None)
+
+    assert deferred_compute.is_deferred_compute() is True
 
 
 if __name__ == "__main__":

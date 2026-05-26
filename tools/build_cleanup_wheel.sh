@@ -20,11 +20,13 @@
 # Build the cleaned-up Ampere-through-Blackwell Linux/CUDA wheel.
 #
 # Re-uses the already-configured build/ directory (CUDA on, oneDNN on,
-# OpenCV on, NCCL off, sm_80/86/89/90/100/120+PTX).  Stages libmxnet.so +
-# libopencv_*.so into python/mxnet/, patches the RUNPATH so the loader
-# finds the bundled OpenCV at $ORIGIN/lib, and invokes setup.py with
-# MXNET_PACKAGE_VERSION so the wheel metadata matches the intended tag.
-# Runs release_provenance.py at the end and exits non-zero on any failure.
+# OpenCV on, NCCL off, sm_80/86/89/90/100/120+PTX), but refreshes CMake
+# metadata first so the binary commit stamp matches the current checkout.
+# Stages libmxnet.so + libopencv_*.so into python/mxnet/, patches the
+# RUNPATH so the loader finds the bundled OpenCV at $ORIGIN/lib, and invokes
+# setup.py with MXNET_PACKAGE_VERSION so the wheel metadata matches the
+# intended tag.  Runs release_provenance.py at the end and exits non-zero on
+# any failure.
 #
 # Usage:
 #   tools/build_cleanup_wheel.sh [<version>]
@@ -56,8 +58,19 @@ echo "==> Repo: $REPO_ROOT"
 echo "==> Version: $VERSION"
 echo "==> BUNDLE_OPENCV: $BUNDLE_OPENCV"
 
+if [ ! -f build/CMakeCache.txt ]; then
+    echo "build/CMakeCache.txt missing — configure build/ with CMake first" >&2
+    exit 2
+fi
+
+jobs="${MXNET_BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 64)}"
+echo "==> Refreshing CMake metadata"
+cmake -S . -B build
+echo "==> Building libmxnet.so with $jobs jobs"
+cmake --build build --target mxnet --parallel "$jobs"
+
 if [ ! -f build/libmxnet.so ]; then
-    echo "build/libmxnet.so missing — run 'cmake --build build --target mxnet -j' first" >&2
+    echo "build/libmxnet.so missing after build" >&2
     exit 2
 fi
 

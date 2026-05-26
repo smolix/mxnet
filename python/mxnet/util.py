@@ -134,9 +134,9 @@ def is_np_shape():
     >>> print(mx.is_np_shape())
     True
     """
-    curr = ctypes.c_bool()
+    curr = ctypes.c_int()
     check_call(_LIB.MXIsNumpyShape(ctypes.byref(curr)))
-    return curr.value
+    return bool(curr.value)
 
 
 class _NumpyShapeScope(object):

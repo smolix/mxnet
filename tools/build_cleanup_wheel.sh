@@ -19,9 +19,10 @@
 #
 # Build the cleaned-up Ampere-through-Blackwell Linux/CUDA wheel.
 #
-# Re-uses the already-configured build/ directory (CUDA on, oneDNN on,
-# OpenCV on, NCCL off, sm_80/86/89/90/100/120+PTX), but refreshes CMake
-# metadata first so the binary commit stamp matches the current checkout.
+# Re-uses the already-configured build/ directory, but pins the CUDA release
+# wheel feature set (CUDA/cuDNN/NCCL/oneDNN/OpenCV on,
+# sm_80/86/89/90/100/120+PTX) and refreshes CMake metadata first so the binary
+# commit stamp matches the current checkout.
 # Stages libmxnet.so + libopencv_*.so into python/mxnet/, patches the
 # RUNPATH so the loader finds the bundled OpenCV at $ORIGIN/lib, and invokes
 # setup.py with MXNET_PACKAGE_VERSION so the wheel metadata matches the
@@ -65,7 +66,12 @@ fi
 
 jobs="${MXNET_BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 64)}"
 echo "==> Refreshing CMake metadata"
-cmake -S . -B build
+cmake -S . -B build \
+    -DUSE_CUDA=ON \
+    -DUSE_CUDNN=ON \
+    -DUSE_NCCL=ON \
+    -DUSE_ONEDNN=ON \
+    -DUSE_OPENCV=ON
 echo "==> Building libmxnet.so with $jobs jobs"
 cmake --build build --target mxnet --parallel "$jobs"
 
@@ -179,6 +185,9 @@ EXPECT_OPENCV=off
     --cmake-cache build/CMakeCache.txt \
     --package-version "$VERSION" \
     --expect-cuda on \
+    --expect-cudnn on \
+    --expect-nccl on \
+    --expect-onednn on \
     --expect-opencv "$EXPECT_OPENCV"
 
 echo "==> Wheel build OK: $WHEEL"

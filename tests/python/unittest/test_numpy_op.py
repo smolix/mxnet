@@ -11650,6 +11650,32 @@ def test_np_can_cast(input1, input2):
 
 
 @use_np
+def test_np_floor_divide_mixed_int_float16_boundary():
+    class FloorDivideBlock(HybridBlock):
+        def forward(self, a, b):
+            return np.floor_divide(a, b)
+
+    cases = [
+        (onp.array([[7]], dtype=onp.int16),
+         onp.array([[onp.float16(2.334)]], dtype=onp.float16)),
+        (onp.array([[onp.float16(5.996)]], dtype=onp.float16),
+         onp.array([[2]], dtype=onp.int16)),
+    ]
+
+    for hybridize in [False, True]:
+        block = FloorDivideBlock()
+        if hybridize:
+            block.hybridize()
+        for lhs, rhs in cases:
+            mx_lhs = np.array(lhs, dtype=lhs.dtype)
+            mx_rhs = np.array(rhs, dtype=rhs.dtype)
+            out = block(mx_lhs, mx_rhs)
+            expected = onp.floor_divide(lhs, rhs).astype(out.dtype)
+            assert_almost_equal(out.asnumpy(), expected, rtol=1e-3, atol=1e-5,
+                                use_broadcast=False)
+
+
+@use_np
 @pytest.mark.parametrize('nums', [1, 2, 3, 4, 10, 100])
 def test_np_result_type(nums):
     PICK_LIST = np.numeric_dtypes + np.boolean_dtypes + [np.ones((1,), dtype=d) for d in np.numeric_dtypes + np.boolean_dtypes]

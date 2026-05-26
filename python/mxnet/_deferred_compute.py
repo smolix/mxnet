@@ -26,9 +26,9 @@ __all__ = []
 
 def is_deferred_compute():
     """Get status of deferred compute mode."""
-    curr = ctypes.c_bool()
+    curr = ctypes.c_int()
     check_call(_LIB.MXNDArrayIsDeferredCompute(ctypes.byref(curr)))
-    return curr.value
+    return bool(curr.value)
 
 def set_deferred_compute(state):
     """Enable / Disable deferred compute mode.

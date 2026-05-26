@@ -297,7 +297,8 @@ struct rfloor_divide : public mxnet_op::tunable {
 struct mixed_floor_divide {
   template <typename DType, typename std::enable_if<std::is_integral<DType>::value, int>::type = 0>
   MSHADOW_XINLINE static mshadow::half::half_t Map(DType a, mshadow::half::half_t b) {
-    return ::floor(a / static_cast<mshadow::half::half_t>(b));
+    return static_cast<mshadow::half::half_t>(
+        ::floor(static_cast<float>(a) / static_cast<float>(b)));
   }
 
   template <typename DType,
@@ -323,7 +324,8 @@ struct mixed_floor_divide {
 struct mixed_rfloor_divide {
   template <typename DType, typename std::enable_if<std::is_integral<DType>::value, int>::type = 0>
   MSHADOW_XINLINE static mshadow::half::half_t Map(DType a, mshadow::half::half_t b) {
-    return ::floor(b / static_cast<mshadow::half::half_t>(a));
+    return static_cast<mshadow::half::half_t>(
+        ::floor(static_cast<float>(b) / static_cast<float>(a)));
   }
 
   template <typename DType,

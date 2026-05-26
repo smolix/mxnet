@@ -39,6 +39,9 @@ FEATURES = ("USE_CUDA", "USE_OPENCV")
 TRUE_VALUES = {"1", "ON", "TRUE", "YES"}
 FALSE_VALUES = {"0", "OFF", "FALSE", "NO"}
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+BUILD_COMMIT_RE = re.compile(
+    r"MXNET_COMMIT_HASH\s*=\s*(?:\\*[\"'])?([0-9a-f]{40}|Unavailable)"
+)
 
 
 class ProvenanceError(RuntimeError):
@@ -128,6 +131,49 @@ def read_cmake_features(repo_root, cmake_cache=None):
         if key in FEATURES:
             raw = raw.strip()
             report[key] = {"enabled": _bool_value(raw), "raw": raw}
+    return report
+
+
+def _build_dir_from_cache(repo_root, cmake_cache=None):
+    cache = cmake_cache or repo_root / "build" / "CMakeCache.txt"
+    if cache.name == "CMakeCache.txt":
+        return cache.parent
+    return repo_root / "build"
+
+
+def _extract_build_commit_hashes(path):
+    hashes = []
+    try:
+        with path.open("r", errors="ignore") as handle:
+            for line in handle:
+                hashes.extend(BUILD_COMMIT_RE.findall(line))
+    except OSError:
+        return []
+    return sorted(set(hashes))
+
+
+def read_build_metadata(repo_root, cmake_cache=None):
+    build_dir = _build_dir_from_cache(repo_root, cmake_cache)
+    report = {
+        "build_dir": str(build_dir),
+        "metadata_found": False,
+        "commit_hashes": [],
+        "sources": [],
+    }
+    commit_hashes = set()
+    for path in (build_dir / "build.ninja", build_dir / "compile_commands.json"):
+        source = {
+            "path": str(path),
+            "exists": path.exists(),
+            "commit_hashes": [],
+        }
+        if path.exists():
+            source["commit_hashes"] = _extract_build_commit_hashes(path)
+            commit_hashes.update(source["commit_hashes"])
+        report["sources"].append(source)
+
+    report["commit_hashes"] = sorted(commit_hashes)
+    report["metadata_found"] = bool(report["commit_hashes"])
     return report
 
 
@@ -244,6 +290,7 @@ def collect_provenance(
         "git": read_git_state(root),
         "package": package,
         "features": read_cmake_features(root, cmake_cache),
+        "build": read_build_metadata(root, cmake_cache),
         "wheels": read_wheels(wheel_paths or [], package["version"], package_name),
     }
 
@@ -299,6 +346,24 @@ def validate_provenance(
             errors.append("{} expected {}, found {}".format(
                 name, "ON" if expected else "OFF", features[name]["raw"] or "unknown"))
 
+    build = report.get("build")
+    if build and build["metadata_found"]:
+        build_commits = build["commit_hashes"]
+        if len(build_commits) != 1:
+            errors.append(
+                "CMake build metadata contains multiple MXNET_COMMIT_HASH values: "
+                "{}".format(", ".join(build_commits))
+            )
+        elif build_commits[0] == "Unavailable":
+            errors.append("CMake build metadata has MXNET_COMMIT_HASH=Unavailable")
+        elif build_commits[0] != git["commit"]:
+            errors.append(
+                "CMake build metadata commit {} does not match git HEAD {}; "
+                "rerun CMake configure and rebuild before packaging".format(
+                    build_commits[0][:12], git["short_commit"]
+                )
+            )
+
     expected_opencv = _expected_flag(expect_opencv)
     for wheel in report["wheels"]:
         if not wheel["exists"]:
@@ -348,6 +413,7 @@ def _flag_text(value):
 
 def format_text_report(report, errors):
     git, package, features = report["git"], report["package"], report["features"]
+    build = report.get("build")
     lines = [
         "Release provenance:",
         "  commit: {}".format(git["commit"]),
@@ -364,6 +430,11 @@ def format_text_report(report, errors):
     for name in FEATURES:
         raw = "" if features[name]["raw"] is None else " [{}]".format(features[name]["raw"])
         lines.append("  {}: {}{}".format(name, _flag_text(features[name]["enabled"]), raw))
+
+    if build:
+        lines.append("  CMake build metadata: {}".format(
+            ",".join(build["commit_hashes"]) if build["metadata_found"] else "not found"
+        ))
 
     lines.append("  wheels:" if report["wheels"] else "  wheels: none")
     for wheel in report["wheels"]:

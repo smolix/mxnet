@@ -110,7 +110,7 @@ def test_fs12_source_anchor_present():
         os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
         "python", "mxnet", "util.py")
     if not os.path.exists(src):
-        pytest.skip("util.py not found at expected path")
+        pytest.skip("source tree unavailable: util.py not found at expected path")
     with open(src) as f:
         contents = f.read()
     # MXSetIsNumpyShape is the documented crash C API; the python wrapper

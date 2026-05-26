@@ -55,11 +55,12 @@ def _is_installed_wheel():
 def test_version_matches_wheel_metadata():
     """`mxnet.__version__` must match the installed wheel's METADATA version."""
     if not _is_installed_wheel():
-        pytest.skip("editable install: METADATA version is the source-tree default")
+        pytest.skip(
+            "source-tree/editable install: wheel METADATA version is unavailable")
     try:
         wheel_version = importlib.metadata.version("mxnet")
     except importlib.metadata.PackageNotFoundError:
-        pytest.skip("mxnet wheel metadata not discoverable")
+        pytest.skip("mxnet wheel metadata unavailable in this environment")
     assert mx.__version__ == wheel_version, (
         "mxnet.__version__ ({}) disagrees with the installed wheel's METADATA "
         "Version ({}).  setup.py should write `_build_info.py` at build time so "

@@ -6344,7 +6344,7 @@ def test_np_linalg_svd(shape, dtype, hybridize):
     data_np = onp.array(data_np, dtype=dtype)
     data = np.array(data_np, dtype=dtype)
     if effective_dtype(data) == onp.dtype(np.float16):
-        pytest.skip()
+        pytest.skip("SVD float16 capability unavailable on this platform")
     data.attach_grad()
     with mx.autograd.record():
         ret = test_svd(data)
@@ -6407,7 +6407,7 @@ def test_np_linalg_svdvals(shape, dtype, hybridize):
     data_np = onp.array(data_np, dtype=dtype)
     data = np.array(data_np, dtype=dtype)
     if effective_dtype(data) == onp.dtype(np.float16):
-        pytest.skip()
+        pytest.skip("SVD values float16 capability unavailable on this platform")
     mx_out = test_svd(data)
     np_out = onp.linalg.svd(data, compute_uv=False)
     # check svdvals validity
@@ -6537,7 +6537,7 @@ def test_np_linalg_qr():
         data = np.array(data_np, dtype=dtype)
         if effective_dtype(data) == onp.dtype(np.float16):
             print('Skipping test on this platform: {} has a float16 effective dtype'.format(dtype))
-            pytest.skip()
+            pytest.skip("QR float16 capability unavailable on this platform")
 
         data.attach_grad()
         with mx.autograd.record():

@@ -197,7 +197,9 @@ def test_cublaslt_strided_matches_legacy(config_name, config_code,
              "mx.nd.dot(a,b).wait_to_read()"],
             capture_output=True, timeout=120)
         if probe.returncode != 0:
-            pytest.skip('bfloat16 mx.nd.dot not supported in this build')
+            pytest.skip(
+                'bfloat16 mx.nd.dot capability unavailable in this build; '
+                'cuBLASLt bf16 parity case cannot run')
     legacy = _runner(0, config_code, dtype)
     lt     = _runner(1, config_code, dtype)
     for legv, ltv, name in zip(legacy, lt,

@@ -45,7 +45,7 @@ def test_warpctc_rejects_add_grad_req_before_overwriting_data_grad():
         [0.1, 0.2, 0.3, 0.22, 0.123],
         [-15, -14, -13, -12, -11],
     ], dtype=np.float32))
-    label = mx.nd.array(np.asarray([[2, 3, 0]], dtype=np.int32))
+    label = mx.nd.array(np.asarray([2, 3, 0], dtype=np.int32))
     data_grad = mx.nd.full(data.shape, 17)
 
     exe = sym._bind(
@@ -57,5 +57,6 @@ def test_warpctc_rejects_add_grad_req_before_overwriting_data_grad():
 
     with pytest.raises(mx.MXNetError, match='WarpCTC only supports write requests'):
         exe.backward()
+        mx.nd.waitall()
 
     np.testing.assert_equal(data_grad.asnumpy(), np.full(data.shape, 17))

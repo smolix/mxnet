@@ -24,7 +24,10 @@ import numpy as np
 
 from mxnet.base import string_types
 from mxnet import symbol
-from ._export_onnx import MXNetGraph
+from ._export_onnx import (
+    MXNetGraph,
+    get_effective_onnx_opset_version,
+)
 from ._export_helper import load_module
 
 
@@ -32,12 +35,11 @@ def get_operator_support(opset_version=None):
     """Return a list of MXNet operators supported by the current/specified opset
     """
     try:
-        from onnx.defs import onnx_opset_version
+        import onnx as _  # pylint: disable=unused-import
     except ImportError:
         raise ImportError("Onnx and protobuf need to be installed. "
                           + "Instructions to install - https://github.com/onnx/onnx")
-    if opset_version is None:
-        opset_version = onnx_opset_version()
+    opset_version = get_effective_onnx_opset_version(opset_version)
     all_versions = range(opset_version, 11, -1)
     ops = set()
     for ver in all_versions:
@@ -51,7 +53,7 @@ def get_operator_support(opset_version=None):
 def export_model(sym, params, in_shapes=None, in_types=np.float32,
                  onnx_file_path='model.onnx', verbose=False, dynamic=False,
                  dynamic_input_shapes=None, run_shape_inference=False, input_type=None,
-                 input_shape=None, large_model=False):
+                 input_shape=None, large_model=False, opset_version=None):
     """Exports the MXNet model file, passed as a parameter, into ONNX model.
     Accepts both symbol,parameter objects as well as json and params filepaths as input.
     Operator support and coverage -
@@ -86,6 +88,10 @@ def export_model(sym, params, in_shapes=None, in_types=np.float32,
     large_model : Boolean
         Whether to export a model that is larger than 2 GB. If true will save param tensors in separate
         files along with .onnx model file. This feature is supported since onnx 1.8.0
+    opset_version : int or None
+        ONNX operator set version to target. Defaults to MXNet's tested default
+        opset, currently 13, rather than the newest opset in the installed ONNX
+        package.
 
     Returns
     -------
@@ -101,7 +107,6 @@ def export_model(sym, params, in_shapes=None, in_types=np.float32,
     try:
         import onnx
         from onnx import helper, mapping, shape_inference
-        from onnx.defs import onnx_opset_version
     except ImportError:
         raise ImportError("Onnx and protobuf need to be installed. "
                           + "Instructions to install - https://github.com/onnx/onnx")
@@ -113,7 +118,7 @@ def export_model(sym, params, in_shapes=None, in_types=np.float32,
         in_shapes = input_shape
 
     converter = MXNetGraph()
-    opset_version = onnx_opset_version()
+    opset_version = get_effective_onnx_opset_version(opset_version)
 
     if not isinstance(in_types, list):
         in_types = [in_types for _ in range(len(in_shapes))]
@@ -145,7 +150,9 @@ def export_model(sym, params, in_shapes=None, in_types=np.float32,
         raise ValueError("Input sym and params should either be files or objects")
 
     # Create the model (ModelProto)
-    onnx_model = helper.make_model(onnx_graph)
+    onnx_model = helper.make_model(
+        onnx_graph,
+        opset_imports=[helper.make_opsetid("", opset_version)])
 
     # Run shape inference on the model. Due to ONNX bug/incompatibility this may or may not crash
     if run_shape_inference:

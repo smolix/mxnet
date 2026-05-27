@@ -257,6 +257,7 @@ _NUMPY_ARRAY_UFUNC_LIST = [
     'logaddexp',
     'subtract',
     'multiply',
+    'divide',
     'floor_divide',
     'true_divide',
     'negative',

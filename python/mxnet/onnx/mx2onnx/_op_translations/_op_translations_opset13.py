@@ -155,9 +155,6 @@ def create_const_scalar_node(input_name, value, kwargs):
     from onnx.helper import make_tensor
     initializer = kwargs["initializer"]
     dtype = value.dtype
-    if dtype == 'float16':
-        # when using float16, we must convert it to np.uint16 view first
-        value = np.float16(value).view(np.uint16)
     input_type = onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[dtype]
     tensor_node = make_tensor(input_name, input_type, (), ([value]))
     initializer.append(tensor_node)
@@ -168,9 +165,6 @@ def create_const_node(input_name, value, kwargs):
     from onnx.helper import make_tensor
     initializer = kwargs["initializer"]
     dtype = value.dtype
-    if dtype == 'float16':
-        # when using float16, we must convert it to np.uint16 view first
-        value = np.float16(value).view(np.uint16)
     input_type = onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[dtype]
     input_shape = value.shape
     tensor_node = make_tensor(input_name, input_type, input_shape, value)
@@ -182,8 +176,6 @@ def create_tensor(tensor_list, tensor_name, initializer, dtype='int64'):
     tensor_np = np.array(tensor_list, dtype=dtype)
     data_type = onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[tensor_np.dtype]
     dims = np.shape(tensor_np)
-    if dtype == np.float16:
-        tensor_np = tensor_np.view(dtype=np.uint16)
     tensor = onnx.helper.make_tensor(
         name=tensor_name,
         data_type=data_type,

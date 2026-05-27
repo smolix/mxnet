@@ -1403,6 +1403,8 @@ def _add_workload_degrees():
 
 def _add_workload_true_divide():
     for dt in [np.float32, np.float64, np.float16]:
+        OpArgMngr.add_workload('divide', np.array([10, 10, -10, -10], dt), np.array([20, -20, 20, -20], dt))
+        OpArgMngr.add_workload('divide', _np.array(20, dt)[()], np.array([10, 10, -10, -10], dt))
         OpArgMngr.add_workload('true_divide', np.array([10, 10, -10, -10], dt), np.array([20, -20, 20, -20], dt))
 
 

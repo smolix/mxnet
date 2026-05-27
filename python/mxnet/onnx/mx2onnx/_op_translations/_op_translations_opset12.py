@@ -154,9 +154,6 @@ def create_const_scalar_node(input_name, value, kwargs):
     from onnx.helper import make_tensor
     initializer = kwargs["initializer"]
     dtype = value.dtype
-    if dtype == 'float16':
-        # when using float16, we must convert it to np.uint16 view first
-        value = np.float16(value).view(np.uint16)
     input_type = onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[dtype]
     tensor_node = make_tensor(input_name, input_type, (), ([value]))
     initializer.append(tensor_node)
@@ -167,9 +164,6 @@ def create_const_node(input_name, value, kwargs):
     from onnx.helper import make_tensor
     initializer = kwargs["initializer"]
     dtype = value.dtype
-    if dtype == 'float16':
-        # when using float16, we must convert it to np.uint16 view first
-        value = np.float16(value).view(np.uint16)
     input_type = onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[dtype]
     input_shape = value.shape
     tensor_node = make_tensor(input_name, input_type, input_shape, value)
@@ -181,8 +175,6 @@ def create_tensor(tensor_list, tensor_name, initializer, dtype='int64'):
     tensor_np = np.array(tensor_list, dtype=dtype)
     data_type = onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[tensor_np.dtype]
     dims = np.shape(tensor_np)
-    if dtype == np.float16:
-        tensor_np = tensor_np.view(dtype=np.uint16)
     tensor = onnx.helper.make_tensor(
         name=tensor_name,
         data_type=data_type,
@@ -191,6 +183,27 @@ def create_tensor(tensor_list, tensor_name, initializer, dtype='int64'):
         raw=False
     )
     initializer.append(tensor)
+
+
+def get_pooling_full_extra_output_pads(input_shape, kernel, stride, pad):
+    """Return trailing output pads needed for MXNet full-pooling semantics."""
+    if not input_shape:
+        return [0] * len(kernel)
+    pad = pad or [0] * len(kernel)
+    stride = stride or [1] * len(kernel)
+    spatial_shape = input_shape[-len(kernel):]
+    extra_pads = []
+    for dim, kernel_dim, stride_dim, pad_dim in zip(spatial_shape, kernel, stride, pad):
+        if dim is None:
+            extra_pads.append(0)
+            continue
+        output_dim = int(np.ceil(float(dim + 2 * pad_dim - kernel_dim) / stride_dim)) + 1
+        if output_dim <= 0:
+            extra_pads.append(0)
+            continue
+        last_window_start = (output_dim - 1) * stride_dim - pad_dim
+        extra_pads.append(1 if last_window_start >= dim else 0)
+    return extra_pads
 
 
 @mx_op.register("null")
@@ -762,16 +775,22 @@ def convert_pooling(node, **kwargs):
 
     ceil_mode = 1 if pooling_convention == 'full' else 0
     count_include_pad = 1 if count_include_pad == 'True' else 0
+    input_shape = kwargs["outputs_lookup"][node["inputs"][0][0]][node["inputs"][0][1]].shape
+    extra_output_pads = [0] * len(kernel)
+    if pooling_convention == 'full' and not global_pool:
+        extra_output_pads = get_pooling_full_extra_output_pads(input_shape, kernel, stride, pad)
+    needs_output_pad = any(extra_output_pads)
+    pool_output_name = name + '_pool' if needs_output_pad else name
 
     nodes = []
     if pool_type == 'avg' and not global_pool:
         nodes += [
-            make_node('AveragePool', [input_nodes[0]], [name], ceil_mode=ceil_mode,
+            make_node('AveragePool', [input_nodes[0]], [pool_output_name], ceil_mode=ceil_mode,
                       count_include_pad=count_include_pad, **kwargs_)
         ]
     elif pool_type == 'max' and not global_pool:
         nodes += [
-            make_node('MaxPool', [input_nodes[0]], [name], ceil_mode=ceil_mode, **kwargs_)
+            make_node('MaxPool', [input_nodes[0]], [pool_output_name], ceil_mode=ceil_mode, **kwargs_)
         ]
     elif pool_type == 'lp' and not global_pool:
         nodes += [
@@ -791,6 +810,21 @@ def convert_pooling(node, **kwargs):
         ]
     else:
         raise NotImplementedError('Unknown pool_type in Pooling')
+
+    if needs_output_pad:
+        rank = 2 + len(extra_output_pads)
+        pad_values = [0] * rank + [0, 0] + extra_output_pads
+        create_tensor(pad_values, name + '_full_pool_output_pads', kwargs['initializer'])
+        pad_inputs = [pool_output_name, name + '_full_pool_output_pads']
+        if pool_type == 'max':
+            input_dtype = get_input_dtypes(node, kwargs)[0]
+            if np.issubdtype(input_dtype, np.floating):
+                pad_value = np.array(np.finfo(input_dtype).min, dtype=input_dtype)
+            else:
+                pad_value = np.array(np.iinfo(input_dtype).min, dtype=input_dtype)
+            create_const_scalar_node(name + '_full_pool_output_pad_value', pad_value, kwargs)
+            pad_inputs.append(name + '_full_pool_output_pad_value')
+        nodes.append(make_node('Pad', pad_inputs, [name], mode='constant'))
 
     return nodes
 
@@ -1228,9 +1262,7 @@ def scalar_op_helper(node, op_name, reverse=False, **kwargs):
         else:
             scalar_value = int(scalar_value)
     else:
-        if dtype == 'float16':
-            # when using float16, we must convert it to np.uint16 view first
-            scalar_value = np.float16(scalar_value).view(np.uint16)
+        scalar_value = np.dtype(dtype).type(scalar_value)
     scalar_value = [scalar_value]
 
     initializer = kwargs["initializer"]
@@ -3709,9 +3741,7 @@ def convert_greater_scalar(node, **kwargs):
     if str(dtype).startswith('int'):
         scalar = int(scalar)
     else:
-        if dtype == 'float16':
-            # when using float16, we must convert it to np.uint16 view first
-            scalar = np.float16(scalar).view(np.uint16)
+        scalar = np.dtype(dtype).type(scalar)
     tensor_value = make_tensor(name+"_scalar", dtype_t, [1], [scalar])
     nodes = [
         make_node("Constant", [], [name+"_rhs"], value=tensor_value),
@@ -3737,9 +3767,7 @@ def convert_lesser_scalar(node, **kwargs):
     if str(dtype).startswith('int'):
         scalar = int(scalar)
     else:
-        if dtype == 'float16':
-            # when using float16, we must convert it to np.uint16 view first
-            scalar = np.float16(scalar).view(np.uint16)
+        scalar = np.dtype(dtype).type(scalar)
 
     tensor_value = make_tensor(name+"_scalar", dtype_t, [1], [scalar])
     nodes = [
@@ -3765,9 +3793,7 @@ def convert_equal_scalar(node, **kwargs):
     if str(dtype).startswith('int'):
         scalar = int(scalar)
     else:
-        if dtype == 'float16':
-            # when using float16, we must convert it to np.uint16 view first
-            scalar = np.float16(scalar).view(np.uint16)
+        scalar = np.dtype(dtype).type(scalar)
 
     tensor_value = make_tensor(name+"_scalar", dtype_t, [1], [scalar])
     nodes = [
@@ -4432,8 +4458,6 @@ def convert_log2(node, **kwargs):
     dtype_t = onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[dtype]
 
     ln2 = np.array([0.693147180559945309], dtype=dtype)
-    if dtype == 'float16':
-        ln2 = ln2.view(dtype=np.uint16)
     ln2v = make_tensor(name+'_ln2', dtype_t, [1], ln2)
 
     nodes = [

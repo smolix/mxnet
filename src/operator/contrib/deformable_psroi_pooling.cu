@@ -22,6 +22,32 @@
 
 namespace mshadow {
 namespace cuda_impl {
+
+template <typename DType>
+inline void ValidateDeformablePSROIPoolROIsGPU(const Tensor<gpu, 2, DType>& bbox,
+                                               const index_t batch_size) {
+  std::vector<DType> rois(bbox.shape_.Size());
+  if (rois.empty()) {
+    return;
+  }
+  cudaStream_t stream = Stream<gpu>::GetStream(bbox.stream_);
+  CUDA_CALL(cudaMemcpyAsync(rois.data(),
+                            bbox.dptr_,
+                            rois.size() * sizeof(DType),
+                            cudaMemcpyDeviceToHost,
+                            stream));
+  CUDA_CALL(cudaStreamSynchronize(stream));
+  for (index_t i = 0; i < bbox.size(0); ++i) {
+    const index_t roi_batch_ind = static_cast<index_t>(rois[i * bbox.size(1)]);
+    CHECK_GE(roi_batch_ind, 0)
+        << "DeformablePSROIPooling roi batch index " << roi_batch_ind << " at row " << i
+        << " is out of bounds for batch size " << batch_size;
+    CHECK_LT(roi_batch_ind, batch_size)
+        << "DeformablePSROIPooling roi batch index " << roi_batch_ind << " at row " << i
+        << " is out of bounds for batch size " << batch_size;
+  }
+}
+
 template <typename DType>
 __device__ DType bilinear_interp(const DType* data,
                                  const DType x,
@@ -169,6 +195,7 @@ inline void DeformablePSROIPoolForward(const Tensor<gpu, 4, DType>& out,
   const index_t channels_each_class = no_trans ? output_dim : output_dim / num_classes;
 
   cudaStream_t stream = Stream<gpu>::GetStream(out.stream_);
+  ValidateDeformablePSROIPoolROIsGPU(bbox, data.size(0));
   DeformablePSROIPoolForwardKernel<DType>
       <<<mxnet::op::mxnet_op::cuda_get_num_blocks(count), kBaseThreadNum, 0, stream>>>(
           count,
@@ -362,6 +389,7 @@ inline void DeformablePSROIPoolBackwardAcc(const Tensor<gpu, 4, DType>& in_grad,
   const index_t channels_each_class = no_trans ? output_dim : output_dim / num_classes;
 
   cudaStream_t stream = Stream<gpu>::GetStream(in_grad.stream_);
+  ValidateDeformablePSROIPoolROIsGPU(bbox, in_grad.size(0));
   DeformablePSROIPoolBackwardAccKernel<DType>
       <<<mxnet::op::mxnet_op::cuda_get_num_blocks(count), kBaseThreadNum, 0, stream>>>(
           count,

@@ -61,6 +61,7 @@ using NvmlProcessInfo    = std::remove_pointer_t<NvmlProcessInfoPtr>;
 
 void GpuDeviceStorageProfiler::DumpProfile() const {
   size_t current_pid = common::current_process_id();
+  std::lock_guard<std::mutex> lock(gpu_mem_alloc_entries_mutex_);
   std::ofstream fout((filename_prefix_ + "-pid_" + std::to_string(current_pid) + ".csv").c_str());
   if (!fout.is_open()) {
     return;

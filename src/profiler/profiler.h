@@ -1346,6 +1346,7 @@ class ProfilerScope {
   std::string GetCurrentProfilerScope() const;
 
  private:
+  mutable std::mutex mutex_;
   std::string current_profiler_scope_ = MXNET_STORAGE_DEFAULT_PROFILER_SCOPE_CSTR;
 };
 

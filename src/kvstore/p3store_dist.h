@@ -84,7 +84,11 @@ class P3StoreDist : public KVStoreDist {
       on_start();
       const int dtype = send_buf.dtype();
       // convert to ps keys
-      const size_t size = send_buf.shape().Size() * mshadow::mshadow_sizeof(dtype);
+      const int num_bytes = mshadow::mshadow_sizeof(dtype);
+      CHECK_LE(send_buf.shape().Size(),
+               std::numeric_limits<size_t>::max() / static_cast<size_t>(num_bytes))
+          << "P3Store byte size overflow";
+      const size_t size = send_buf.shape().Size() * static_cast<size_t>(num_bytes);
       char* data        = static_cast<char*>(send_buf.data().dptr_);
       // do push. false means no delete
       ps::SArray<char> vals(data, size, false);
@@ -135,7 +139,7 @@ class P3StoreDist : public KVStoreDist {
       size_t size         = recv_buf.shape().Size();
       const int dtype     = recv_buf.dtype();
       const int num_bytes = mshadow::mshadow_sizeof(dtype);
-      PSKV& pskv          = EncodeDefaultKey(key, size, num_bytes);
+      PSKV pskv           = EncodeDefaultKey(key, size, num_bytes);
       char* data          = static_cast<char*>(recv_buf.data().dptr_);
       // issue pull
       const int cmd = GetCommandType(RequestType::kDefaultPushPull, dtype);
@@ -192,7 +196,7 @@ class P3StoreDist : public KVStoreDist {
       const int num_bytes = mshadow::mshadow_sizeof(dtype);
       const int cmd       = GetCommandType(RequestType::kDefaultPushPull, dtype);
 
-      PSKV& pskv = EncodeDefaultKey(key, size, num_bytes);
+      PSKV pskv = EncodeDefaultKey(key, size, num_bytes);
       char* data = static_cast<char*>(comm_buf.data().dptr_);
 
       size_t off   = 0;
@@ -230,23 +234,27 @@ class P3StoreDist : public KVStoreDist {
                     "P3StoreDistDefaultStoragePushPull");
   }
 
-  inline PSKV& EncodeDefaultKey(const int key,
-                                const size_t num_arr_elems,
-                                const int num_bytes) override {
-    mu_.lock();
+  inline PSKV EncodeDefaultKey(const int key,
+                               const size_t num_arr_elems,
+                               const int num_bytes) override {
+    CHECK_GT(num_bytes, 0);
+    CHECK_LE(num_arr_elems, std::numeric_limits<size_t>::max() / static_cast<size_t>(num_bytes))
+        << "P3Store byte size overflow";
+    const size_t pskv_size = num_arr_elems * static_cast<size_t>(num_bytes);
+    std::lock_guard<std::mutex> lock(mu_);
     PSKV& pskv = ps_kv_[key];
-    mu_.unlock();
-    size_t pskv_size = num_arr_elems * num_bytes;
     if (!pskv.keys.empty()) {
-      CHECK_EQ(static_cast<size_t>(pskv.size), pskv_size)
+      CHECK_EQ(pskv.size, pskv_size)
           << "The value size cannot be changed " << pskv_size << ". Key is " << key;
     } else {
       auto krs              = ps::Postoffice::Get()->GetServerKeyRanges();
       const int num_servers = krs.size();
       CHECK_GT(num_servers, 0);
 
-      int64_t num_params   = num_arr_elems * num_bytes;
-      int64_t slice_bound  = slice_threshold_ * num_bytes;
+      size_t num_params = pskv_size;
+      CHECK_LE(slice_threshold_, std::numeric_limits<size_t>::max() / static_cast<size_t>(num_bytes))
+          << "P3Store slice bound overflow";
+      const size_t slice_bound = slice_threshold_ * static_cast<size_t>(num_bytes);
       static size_t server = 0;
       while (num_params > 0) {
         ps::Key ps_key = krs[server % num_servers].begin() + (ps::Key)(key + server / num_servers);
@@ -254,14 +262,17 @@ class P3StoreDist : public KVStoreDist {
         pskv.keys.push_back(ps_key);
         const size_t part_size =
             static_cast<size_t>((num_params > slice_bound) ? slice_bound : num_params);
-        pskv.lens.push_back(part_size);
+        CHECK_LE(part_size, static_cast<size_t>(std::numeric_limits<int>::max()))
+            << "P3Store ps-lite value length exceeds int range: " << part_size;
+        pskv.lens.push_back(static_cast<int>(part_size));
         pskv.size += part_size;
 
         num_params -= part_size;
         server++;
       }
+      CHECK_EQ(pskv.size, pskv_size);
     }
-    return pskv;
+    return ClonePSKV(pskv);
   }
 
   /**

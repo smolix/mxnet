@@ -37,6 +37,25 @@ def _monitor_callback_wrapper(callback):
         callback(name, opr_name, array)
     return callback_handle
 
+
+def _make_ndarray_outputs(output_vars, out_stypes, num_output, create_ndarray_fn):
+    """Create Python NDArrays and free unwrapped handles if wrapping raises."""
+    wrapped_count = 0
+    try:
+        ret = []
+        for i in range(num_output):
+            ret.append(create_ndarray_fn(ctypes.cast(output_vars[i], NDArrayHandle),
+                                         stype=out_stypes[i]))
+            wrapped_count += 1
+        if num_output == 1:
+            return ret[0]
+        return ret
+    except Exception:
+        for i in range(wrapped_count, num_output):
+            check_call(_LIB.MXNDArrayFree(output_vars[i]))
+        raise
+
+
 class CachedOp(object):
     """Cached operator handle."""
     __slots__ = ["handle", "is_np_sym", "_monitor_callback"]
@@ -138,12 +157,8 @@ class CachedOp(object):
             if original_output is not None:
                 return original_output
             create_ndarray_fn = _global_var._ndarray_cls
-            if num_output.value == 1:
-                return create_ndarray_fn(ctypes.cast(output_vars[0], NDArrayHandle),
-                                         stype=out_stypes[0])
-            else:
-                return [create_ndarray_fn(ctypes.cast(output_vars[i], NDArrayHandle),
-                                          stype=out_stypes[i]) for i in range(num_output.value)]
+            return _make_ndarray_outputs(output_vars, out_stypes, num_output.value,
+                                         create_ndarray_fn)
 
     def _register_op_hook(self, callback, monitor_all=False):
         """Install callback for monitor.

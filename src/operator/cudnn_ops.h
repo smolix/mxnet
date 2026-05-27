@@ -139,7 +139,7 @@ bool Exec(const OpContext& ctx, const typename Op::Param& param, Args&&... args)
   static std::mutex mx;
   std::unique_lock<std::mutex> lk(mx);
   static std::unordered_multimap<decltype(key), const cudnn_cxx::Descriptor> op_map;
-  auto match_it = [&]() {
+  const cudnn_cxx::Descriptor* plan = [&]() {
     // Some cuDNN Op implementations require that the thread's cuDNN handle
     // (used in cudnnBackendExecute()) matches the one used in making the plan.
     const bool ignore_handles = false;
@@ -148,19 +148,19 @@ bool Exec(const OpContext& ctx, const typename Op::Param& param, Args&&... args)
     for (auto it = range.first; it != range.second; ++it) {
       if (ignore_handles || handle == cudnn_cxx::GetAttr<cudnnHandle_t>(
                                           it->second, CUDNN_ATTR_EXECUTION_PLAN_HANDLE)) {
-        return it;
+        return &it->second;
       }
     }
     // No Op exists with this handle. Make a new op, cloning from an existing op if possible.
     auto op = (range.first == range.second) ?
                   Op::Make(ctx, param, std::forward<Args>(args)...) :
                   Op::Clone(range.first->second, ctx, param, std::forward<Args>(args)...);
-    return op_map.emplace(key, std::move(op));
+    return &op_map.emplace(key, std::move(op))->second;
   }();
   lk.unlock();
-  if (!match_it->second)
+  if (!*plan)
     return false;
-  Op::Exec(match_it->second, ctx, std::forward<Args>(args)...);
+  Op::Exec(*plan, ctx, std::forward<Args>(args)...);
   return true;
 }
 

@@ -69,6 +69,9 @@ class ThreadedEnginePerDevice : public ThreadedEngine {
   }
 
   void StopNoWait() {
+    if (stopped_.exchange(true)) {
+      return;
+    }
     SignalQueuesForKill();
     gpu_normal_workers_.Clear();
     gpu_priority_workers_.Clear();
@@ -82,7 +85,7 @@ class ThreadedEnginePerDevice : public ThreadedEngine {
   }
 
   void Stop() override {
-    if (is_worker_)
+    if (is_worker_ || stopped_.load())
       return;
     WaitForAll();
     StopNoWait();
@@ -100,6 +103,9 @@ class ThreadedEnginePerDevice : public ThreadedEngine {
   void Start() override {
     if (is_worker_)
       return;
+    if (!stopped_.exchange(false)) {
+      return;
+    }
     gpu_worker_nthreads_ = common::GetNumThreadsPerGPU();
     // MXNET_CPU_WORKER_NTHREADS
     cpu_worker_nthreads_ = LibraryInitializer::Get()->cpu_worker_nthreads_;
@@ -245,6 +251,8 @@ class ThreadedEnginePerDevice : public ThreadedEngine {
 
   /*! \brief whether this is a worker thread. */
   static MX_THREAD_LOCAL bool is_worker_;
+  /*! \brief whether workers have been stopped and need Start to recreate queues. */
+  std::atomic<bool> stopped_{true};
   /*! \brief number of concurrent thread cpu worker uses */
   size_t cpu_worker_nthreads_;
   /*! \brief number of concurrent thread each gpu worker uses */

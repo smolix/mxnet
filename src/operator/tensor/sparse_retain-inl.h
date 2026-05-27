@@ -43,6 +43,25 @@ enum SparseRetainOpInputs { kArr, kIdx };
 enum SparseRetainOpOutputs { kOut };
 }  // namespace sr
 
+template <typename IType>
+void SparseRetainValidateIndices(mshadow::Stream<cpu>* s,
+                                 const TBlob& idx_data,
+                                 const index_t num_rows) {
+  const IType* idx = idx_data.dptr<IType>();
+  for (index_t i = 0; i < idx_data.Size(); ++i) {
+    const index_t row = static_cast<index_t>(idx[i]);
+    CHECK_GE(row, 0) << "sparse_retain index " << row << " at position " << i
+                     << " is out of bounds for axis 0 with size " << num_rows;
+    CHECK_LT(row, num_rows) << "sparse_retain index " << row << " at position " << i
+                            << " is out of bounds for axis 0 with size " << num_rows;
+  }
+}
+
+template <typename IType>
+void SparseRetainValidateIndices(mshadow::Stream<gpu>* s,
+                                 const TBlob& idx_data,
+                                 const index_t num_rows);
+
 inline bool SparseRetainOpShape(const nnvm::NodeAttrs& attrs,
                                 mxnet::ShapeVector* in_attrs,
                                 mxnet::ShapeVector* out_attrs) {
@@ -289,6 +308,10 @@ void SparseRetainOpForwardRspImpl(mshadow::Stream<xpu>* s,
   CHECK_EQ(output_nd->storage_type(), kRowSparseStorage)
       << "SparseRetainOpForwardRspImpl operator only outputs row sparse NDArray";
 
+  MSHADOW_TYPE_SWITCH(idx_data.type_flag_, IType, {
+    SparseRetainValidateIndices<IType>(s, idx_data, input_nd.shape()[0]);
+  });
+
   if (!input_nd.storage_initialized() || idx_data.Size() == 0U || input_nd.shape()[0] == 0) {
     FillZerosRspImpl(s, *output_nd);
     return;
@@ -423,13 +446,15 @@ void SparseRetainOpBackwardEx(const nnvm::NodeAttrs& attrs,
   using namespace mxnet_op;
   using namespace mshadow;
   Stream<xpu>* s       = ctx.get_stream<xpu>();
-  const TBlob idx_data = inputs[sr::kIdx].data();
+  const TBlob idx_data      = inputs[sr::kIdx].data();
+  const TBlob out_grad_data = inputs[sr::kOut].data();
+  MSHADOW_TYPE_SWITCH(idx_data.type_flag_, IType, {
+    SparseRetainValidateIndices<IType>(s, idx_data, out_grad_data.shape_[0]);
+  });
   if (idx_data.Size() == 0U) {
     FillZerosRspImpl(s, outputs[sr::kArr]);
     return;
   }
-
-  const TBlob out_grad_data = inputs[sr::kOut].data();
 
   NDArray in_grad_nd = outputs[sr::kArr];
   in_grad_nd.CheckAndAlloc({mshadow::Shape1(idx_data.Size())});

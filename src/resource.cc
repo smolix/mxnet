@@ -39,6 +39,16 @@
 namespace mxnet {
 namespace resource {
 
+namespace {
+
+inline int GetPositiveEnv(const char* name, int default_value) {
+  const int value = dmlc::GetEnv(name, default_value);
+  CHECK_GT(value, 0) << name << " must be positive, but got " << value;
+  return value;
+}
+
+}  // namespace
+
 // internal structure for space allocator
 struct SpaceAllocator {
   // internal context
@@ -93,12 +103,12 @@ struct SpaceAllocator {
 class ResourceManagerImpl : public ResourceManager {
  public:
   ResourceManagerImpl() noexcept(false) {
-    cpu_temp_space_copy_  = dmlc::GetEnv("MXNET_CPU_TEMP_COPY", 4);
-    gpu_temp_space_copy_  = dmlc::GetEnv("MXNET_GPU_TEMP_COPY", 1);
-    cpu_native_rand_copy_ = dmlc::GetEnv("MXNET_CPU_PARALLEL_RAND_COPY", 1);
-    gpu_native_rand_copy_ = dmlc::GetEnv("MXNET_GPU_PARALLEL_RAND_COPY", 1);
+    cpu_temp_space_copy_  = GetPositiveEnv("MXNET_CPU_TEMP_COPY", 4);
+    gpu_temp_space_copy_  = GetPositiveEnv("MXNET_GPU_TEMP_COPY", 1);
+    cpu_native_rand_copy_ = GetPositiveEnv("MXNET_CPU_PARALLEL_RAND_COPY", 1);
+    gpu_native_rand_copy_ = GetPositiveEnv("MXNET_GPU_PARALLEL_RAND_COPY", 1);
 #if MXNET_USE_CUDNN == 1
-    gpu_cudnn_dropout_state_copy_ = dmlc::GetEnv("MXNET_GPU_CUDNN_DROPOUT_STATE_COPY", 1);
+    gpu_cudnn_dropout_state_copy_ = GetPositiveEnv("MXNET_GPU_CUDNN_DROPOUT_STATE_COPY", 1);
 #endif  // MXNET_USE_CUDNN == 1
     engine_ref_  = Engine::_GetSharedRef();
     storage_ref_ = Storage::_GetSharedRef();

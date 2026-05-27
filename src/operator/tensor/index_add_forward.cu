@@ -23,6 +23,8 @@
  */
 
 #include <cub/cub.cuh>
+#include <vector>
+#include "../../common/cuda/utils.h"
 #include "./index_add-inl.h"
 #include "../tensor/util/tensor_util-inl.cuh"
 #include "../tensor/util/tensor_util-inl.h"
@@ -39,6 +41,7 @@ struct IndexAddForwardGPUKernel {
                                   const mshadow::Shape<MXNET_SPECIAL_MAX_NDIM> a_pre_stride,
                                   const mshadow::Shape<MXNET_SPECIAL_MAX_NDIM> val_stride,
                                   const mshadow::Shape<MXNET_SPECIAL_MAX_NDIM> val_shape,
+                                  const mshadow::Shape<MXNET_SPECIAL_MAX_NDIM> a_shape,
                                   const int a_tail_size,
                                   const int ind_num,
                                   const int ind_ndim,
@@ -47,7 +50,11 @@ struct IndexAddForwardGPUKernel {
     index_t id = 0;
     int seg    = MXNET_SPECIAL_MAX_NDIM - a_ndim;
     for (int dim = 0; dim < ind_ndim; ++dim) {
-      id += a_pre_stride[seg + dim] * ind[dim * ind_num + i];
+      const int ind_value = ind[dim * ind_num + i];
+      if (ind_value < 0 || ind_value >= a_shape[seg + dim]) {
+        return;
+      }
+      id += a_pre_stride[seg + dim] * ind_value;
     }
     id *= a_tail_size;
     for (int _i = 0; _i < a_tail_size; ++_i) {
@@ -79,6 +86,27 @@ void IndexAddForwardCalc(mshadow::Stream<xpu>* s,
                          const int a_ndim) {
   using namespace mxnet_op;
   using namespace mshadow;
+  int seg = MXNET_SPECIAL_MAX_NDIM - a_ndim;
+  std::vector<int> ind_host(static_cast<size_t>(ind_num) * ind_ndim);
+  if (!ind_host.empty()) {
+    cudaStream_t stream = mshadow::Stream<xpu>::GetStream(s);
+    CUDA_CALL(cudaMemcpyAsync(ind_host.data(),
+                              ind,
+                              ind_host.size() * sizeof(int),
+                              cudaMemcpyDeviceToHost,
+                              stream));
+    CUDA_CALL(cudaStreamSynchronize(stream));
+    for (int i = 0; i < ind_num; ++i) {
+      for (int dim = 0; dim < ind_ndim; ++dim) {
+        const int ind_value = ind_host[dim * ind_num + i];
+        CHECK_GE(ind_value, 0) << "index_add index " << ind_value << " at dimension " << dim
+                               << " is out of bounds for axis size " << a_shape[seg + dim];
+        CHECK_LT(ind_value, a_shape[seg + dim])
+            << "index_add index " << ind_value << " at dimension " << dim
+            << " is out of bounds for axis size " << a_shape[seg + dim];
+      }
+    }
+  }
   Kernel<IndexAddForwardGPUKernel<DType>, xpu>::Launch(s,
                                                        ind_num,
                                                        out,
@@ -87,6 +115,7 @@ void IndexAddForwardCalc(mshadow::Stream<xpu>* s,
                                                        a_pre_stride,
                                                        val_stride,
                                                        val_shape,
+                                                       a_shape,
                                                        a_tail_size,
                                                        ind_num,
                                                        ind_ndim,

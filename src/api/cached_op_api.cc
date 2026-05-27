@@ -46,14 +46,15 @@ MXNET_REGISTER_GLOBAL("cached_op.invoke")
 
       std::vector<NDArray*> ndoutputs;
       ndoutputs.reserve(op->num_outputs());
-      if (args[num_inputs + 4].type_code() == kNull) {
+      const bool caller_provided_outputs = args[num_inputs + 4].type_code() != kNull;
+      if (!caller_provided_outputs) {
         for (int i = 0; i < op->num_outputs(); ++i)
           ndoutputs.push_back(new NDArray());
       } else {
         int array_size = args_size - num_inputs - 4;
         CHECK_EQ(array_size, op->num_outputs()) << "CachedOp expects " << op->num_outputs()
                                                 << " outputs, but " << array_size << " was given.";
-        for (int i = num_inputs + 4; i < array_size; ++i) {
+        for (int i = num_inputs + 4; i < args_size; ++i) {
           ndoutputs.push_back(args[i].operator mxnet::NDArray*());
         }
       }
@@ -74,6 +75,10 @@ MXNET_REGISTER_GLOBAL("cached_op.invoke")
           Context::Create(static_cast<Context::DeviceType>(default_dev_type), default_dev_id);
       op->Forward(op_shared, ndinputs, ndoutputs, ctx);
 
+      if (caller_provided_outputs) {
+        *ret = nullptr;
+        return;
+      }
       if (op->num_outputs() == 1) {
         *ret = ndoutputs[0];
       } else {

@@ -302,10 +302,12 @@ ProfilerScope* ProfilerScope::Get() {
 }
 
 void ProfilerScope::SetCurrentProfilerScope(const std::string& scope) {
+  std::lock_guard<std::mutex> lock(mutex_);
   current_profiler_scope_ = scope;
 }
 
 std::string ProfilerScope::GetCurrentProfilerScope() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return current_profiler_scope_;
 }
 

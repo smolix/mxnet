@@ -28,6 +28,28 @@ namespace mxnet {
 namespace op {
 
 template <typename T>
+void ValidateROIAlignInputsCPU(const TBlob& rois,
+                               const int rois_cols,
+                               const int batch_size,
+                               const int height,
+                               const int width) {
+  CHECK_GT(height, 0) << "ROIAlign requires input height > 0";
+  CHECK_GT(width, 0) << "ROIAlign requires input width > 0";
+  if (rois_cols == 5) {
+    const T* rois_ptr = rois.dptr<T>();
+    for (index_t i = 0; i < rois.Size() / rois_cols; ++i) {
+      const int roi_batch_ind = static_cast<int>(rois_ptr[i * rois_cols]);
+      CHECK_GE(roi_batch_ind, 0)
+          << "ROIAlign roi batch index " << roi_batch_ind << " at row " << i
+          << " is out of bounds for batch size " << batch_size;
+      CHECK_LT(roi_batch_ind, batch_size)
+          << "ROIAlign roi batch index " << roi_batch_ind << " at row " << i
+          << " is out of bounds for batch size " << batch_size;
+    }
+  }
+}
+
+template <typename T>
 struct PreCalc {
   int pos1;
   int pos2;
@@ -446,6 +468,8 @@ void ROIAlignForwardCompute(const nnvm::NodeAttrs& attrs,
     const DType* bottom_rois = in_data[roialign::kBox].dptr<DType>();
     DType* top_data          = out_data[roialign::kOut].dptr<DType>();
 
+    ValidateROIAlignInputsCPU<DType>(
+        in_data[roialign::kBox], rois_cols, in_data[roialign::kData].size(0), height, width);
     ROIAlignForward<DType>(count,
                            bottom_data,
                            param.spatial_scale,
@@ -500,6 +524,7 @@ void ROIAlignBackwardCompute(const nnvm::NodeAttrs& attrs,
     const DType* bottom_rois = in_data[0].dptr<DType>();
     DType* grad_in           = outputs[0].dptr<DType>();
 
+    ValidateROIAlignInputsCPU<DType>(in_data[0], rois_cols, outputs[0].size(0), height, width);
     if (kAddTo == req[roialign::kData] || kWriteTo == req[roialign::kData]) {
       if (kWriteTo == req[roialign::kData]) {
         Fill<false>(s, outputs[0], kWriteTo, static_cast<DType>(0));

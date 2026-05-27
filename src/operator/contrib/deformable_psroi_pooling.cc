@@ -21,6 +21,21 @@ using std::round;
 namespace mshadow {
 
 template <typename DType>
+inline void ValidateDeformablePSROIPoolROIsCPU(const Tensor<cpu, 2, DType>& bbox,
+                                               const index_t batch_size) {
+  const DType* bottom_rois = bbox.dptr_;
+  for (index_t i = 0; i < bbox.size(0); ++i) {
+    const index_t roi_batch_ind = static_cast<index_t>(bottom_rois[i * bbox.size(1)]);
+    CHECK_GE(roi_batch_ind, 0)
+        << "DeformablePSROIPooling roi batch index " << roi_batch_ind << " at row " << i
+        << " is out of bounds for batch size " << batch_size;
+    CHECK_LT(roi_batch_ind, batch_size)
+        << "DeformablePSROIPooling roi batch index " << roi_batch_ind << " at row " << i
+        << " is out of bounds for batch size " << batch_size;
+  }
+}
+
+template <typename DType>
 inline DType bilinear_interp_cpu(const DType* data,
                                  const DType x,
                                  const DType y,
@@ -169,6 +184,7 @@ inline void DeformablePSROIPoolForward(const Tensor<cpu, 4, DType>& out,
   const index_t pooled_width        = pooled_size;
   const index_t num_classes         = no_trans ? 1 : trans.size(1) / 2;
   const index_t channels_each_class = no_trans ? output_dim : output_dim / num_classes;
+  ValidateDeformablePSROIPoolROIsCPU(bbox, data.size(0));
   DeformablePSROIPoolForwardCPU<DType>(count,
                                        bottom_data,
                                        spatial_scale,
@@ -355,6 +371,7 @@ inline void DeformablePSROIPoolBackwardAcc(const Tensor<cpu, 4, DType>& in_grad,
   const index_t pooled_width        = pooled_size;
   const index_t num_classes         = no_trans ? 1 : trans_grad.size(1) / 2;
   const index_t channels_each_class = no_trans ? output_dim : output_dim / num_classes;
+  ValidateDeformablePSROIPoolROIsCPU(bbox, in_grad.size(0));
   DeformablePSROIPoolBackwardAccCPU<DType>(count,
                                            top_diff,
                                            top_count_data,

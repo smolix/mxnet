@@ -20,6 +20,19 @@ using std::min;
 namespace mshadow {
 
 template <typename DType>
+inline void ValidatePSROIPoolROIsCPU(const Tensor<cpu, 2, DType>& bbox, const int batch_size) {
+  const DType* bottom_rois = bbox.dptr_;
+  for (mxnet::index_t i = 0; i < bbox.size(0); ++i) {
+    const int roi_batch_ind = static_cast<int>(bottom_rois[i * bbox.size(1)]);
+    CHECK_GE(roi_batch_ind, 0) << "PSROIPooling roi batch index " << roi_batch_ind << " at row "
+                               << i << " is out of bounds for batch size " << batch_size;
+    CHECK_LT(roi_batch_ind, batch_size)
+        << "PSROIPooling roi batch index " << roi_batch_ind << " at row " << i
+        << " is out of bounds for batch size " << batch_size;
+  }
+}
+
+template <typename DType>
 inline void PSROIPoolForwardCPU(const mxnet::index_t count,
                                 const DType* bottom_data,
                                 const DType spatial_scale,
@@ -105,6 +118,7 @@ inline void PSROIPoolForward(const Tensor<cpu, 4, DType>& out,
   const int width          = data.size(3);
   const int pooled_height  = out.size(2);
   const int pooled_width   = out.size(3);
+  ValidatePSROIPoolROIsCPU(bbox, data.size(0));
   PSROIPoolForwardCPU<DType>(count,
                              bottom_data,
                              spatial_scale,
@@ -204,6 +218,7 @@ inline void PSROIPoolBackwardAcc(const Tensor<cpu, 4, DType>& in_grad,
   const int width          = in_grad.size(3);
   const int pooled_height  = out_grad.size(2);
   const int pooled_width   = out_grad.size(3);
+  ValidatePSROIPoolROIsCPU(bbox, in_grad.size(0));
   PSROIPoolBackwardAccCPU<DType>(count,
                                  top_diff,
                                  num_rois,

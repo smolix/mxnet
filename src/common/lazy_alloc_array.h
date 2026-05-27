@@ -96,40 +96,32 @@ template <typename FCreate>
 inline std::shared_ptr<TElem> LazyAllocArray<TElem>::Get(int index, FCreate creator) {
   CHECK_GE(index, 0);
   size_t idx = static_cast<size_t>(index);
+  std::lock_guard<std::mutex> lock(create_mutex_);
+  if (is_clearing_.load()) {
+    return nullptr;
+  }
   if (idx < kInitSize) {
     std::shared_ptr<TElem> ptr = head_[idx];
     if (ptr) {
       return ptr;
-    } else {
-      std::lock_guard<std::mutex> lock(create_mutex_);
-      if (!is_clearing_.load()) {
-        std::shared_ptr<TElem> ptr = head_[idx];
-        if (ptr) {
-          return ptr;
-        }
-        ptr = head_[idx] = std::shared_ptr<TElem>(creator());
-        return ptr;
+    }
+    ptr = head_[idx] = std::shared_ptr<TElem>(creator());
+    return ptr;
+  } else {
+    idx -= kInitSize;
+    if (more_.size() <= idx) {
+      more_.reserve(idx + 1);
+      while (more_.size() <= idx) {
+        more_.push_back(std::shared_ptr<TElem>(nullptr));
       }
     }
-  } else {
-    std::lock_guard<std::mutex> lock(create_mutex_);
-    if (!is_clearing_.load()) {
-      idx -= kInitSize;
-      if (more_.size() <= idx) {
-        more_.reserve(idx + 1);
-        while (more_.size() <= idx) {
-          more_.push_back(std::shared_ptr<TElem>(nullptr));
-        }
-      }
-      std::shared_ptr<TElem> ptr = more_[idx];
-      if (ptr) {
-        return ptr;
-      }
-      ptr = more_[idx] = std::shared_ptr<TElem>(creator());
+    std::shared_ptr<TElem> ptr = more_[idx];
+    if (ptr) {
       return ptr;
     }
+    ptr = more_[idx] = std::shared_ptr<TElem>(creator());
+    return ptr;
   }
-  return nullptr;
 }
 
 template <typename TElem>

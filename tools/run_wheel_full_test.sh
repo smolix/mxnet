@@ -180,7 +180,7 @@ run_shard cpu_layer_norm \
 
 run_shard cpu_group_norm \
     "GroupNorm parametric (XOP21)" -- \
-    tests/python/unittest/test_operator.py -v -k 'test_group_norm' -n "$PARALLEL_CPU"
+    tests/python/unittest/test_operator.py -v -k 'test_groupnorm' -n "$PARALLEL_CPU"
 
 # The big CPU unit-test lane — same shape as the existing local-validation
 # matrix.  Excludes test_operator.py because it gets its own subset above and
@@ -314,6 +314,7 @@ fi
 # ----------------------------------------------------------------------
 section "Summarize"
 
+summary_bad=0
 {
     echo "# MXNet wheel acceptance report"
     echo
@@ -336,16 +337,24 @@ section "Summarize"
         id=$(basename "$f" .log)
         last=$(grep -E '=+ .*(passed|failed|error|skipped|xfailed|xpassed).* in [0-9.]+s' "$f" | tail -1)
         rc=$(grep -oE 'rc=[0-9-]+' "$f" | tail -1)
+        rc_value="${rc#rc=}"
         if [ -n "$last" ]; then
-            if echo "$last" | grep -q failed; then
-                marker="FAIL"
-            elif echo "$last" | grep -q error; then
-                marker="ERROR"
+            if [ "$rc_value" != "0" ]; then
+                if echo "$last" | grep -Eq '[0-9]+ (error|errors)'; then
+                    marker="ERROR"
+                else
+                    marker="FAIL"
+                fi
+                summary_bad=$((summary_bad + 1))
             else
                 marker="PASS"
             fi
             printf '| %s | %s | %s |\n' "$id" "$marker" "${last//|/\\|}"
+        elif grep -q '0 items' "$f"; then
+            summary_bad=$((summary_bad + 1))
+            printf '| %s | NO_TESTS | %s |\n' "$id" "$rc"
         else
+            summary_bad=$((summary_bad + 1))
             printf '| %s | INCOMPLETE | %s |\n' "$id" "$rc"
         fi
     done
@@ -358,3 +367,8 @@ cat "$REPORT_DIR/summary.md"
 log
 log "Done. Report: $REPORT_DIR"
 log "  bundle: tar czf $(basename "$REPORT_DIR").tar.gz -C $(dirname "$REPORT_DIR") $(basename "$REPORT_DIR")"
+
+if [ "$summary_bad" -ne 0 ]; then
+    log "Acceptance completed with $summary_bad failed, incomplete, or empty shard(s)."
+    exit 1
+fi

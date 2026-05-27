@@ -35,7 +35,7 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
 
 
-FEATURES = ("USE_CUDA", "USE_OPENCV")
+FEATURES = ("USE_CUDA", "USE_CUDNN", "USE_NCCL", "USE_ONEDNN", "USE_OPENCV")
 TRUE_VALUES = {"1", "ON", "TRUE", "YES"}
 FALSE_VALUES = {"0", "OFF", "FALSE", "NO"}
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -208,11 +208,15 @@ def inspect_wheel_payload(wheel_path):
         "error": None,
         "has_libmxnet": False,
         "needed": [],
+        "cudnn_needed": [],
+        "nccl_needed": [],
         "opencv_needed": [],
         "opencv_bundled": [],
         "opencv_bundled_sonames": [],
         "runpath": None,
         "runpath_has_origin_lib": False,
+        "runpath_has_nvidia_cudnn": False,
+        "runpath_has_nvidia_nccl": False,
     }
     if not wheel_path.exists():
         return payload
@@ -239,13 +243,25 @@ def inspect_wheel_payload(wheel_path):
                 dynamic = _parse_dynamic_section(_readelf_dynamic_section(libmxnet_path))
 
             payload["needed"] = dynamic["needed"]
+            payload["cudnn_needed"] = sorted(
+                soname for soname in dynamic["needed"] if soname.startswith("libcudnn")
+            )
+            payload["nccl_needed"] = sorted(
+                soname for soname in dynamic["needed"] if soname.startswith("libnccl")
+            )
             payload["opencv_needed"] = sorted(
                 soname for soname in dynamic["needed"] if soname.startswith("libopencv_")
             )
             payload["runpath"] = dynamic["runpath"]
+            runpath_entries = [] if dynamic["runpath"] is None else dynamic["runpath"].split(":")
             payload["runpath_has_origin_lib"] = (
-                dynamic["runpath"] is not None
-                and "$ORIGIN/lib" in dynamic["runpath"].split(":")
+                "$ORIGIN/lib" in runpath_entries
+            )
+            payload["runpath_has_nvidia_cudnn"] = (
+                "$ORIGIN/../nvidia/cudnn/lib" in runpath_entries
+            )
+            payload["runpath_has_nvidia_nccl"] = (
+                "$ORIGIN/../nvidia/nccl/lib" in runpath_entries
             )
             payload["inspected"] = True
     except (OSError, zipfile.BadZipFile, subprocess.CalledProcessError) as err:
@@ -308,6 +324,9 @@ def validate_provenance(
     allow_missing_cache=False,
     expect_commit=None,
     expect_cuda=None,
+    expect_cudnn=None,
+    expect_nccl=None,
+    expect_onednn=None,
     expect_opencv=None,
 ):
     errors = []
@@ -335,16 +354,21 @@ def validate_provenance(
     if not features["cache_found"] and not allow_missing_cache:
         errors.append("CMake cache not found at {}".format(features["cache_path"]))
     for name in FEATURES:
-        if features[name]["enabled"] is None and not allow_missing_cache:
+        feature = features.get(name, {"enabled": None, "raw": None})
+        if feature["enabled"] is None and not allow_missing_cache:
             errors.append("{} was not found as a boolean CMake feature".format(name))
 
     for name, expected in {
         "USE_CUDA": _expected_flag(expect_cuda),
+        "USE_CUDNN": _expected_flag(expect_cudnn),
+        "USE_NCCL": _expected_flag(expect_nccl),
+        "USE_ONEDNN": _expected_flag(expect_onednn),
         "USE_OPENCV": _expected_flag(expect_opencv),
     }.items():
-        if expected is not None and features[name]["enabled"] is not expected:
+        feature = features.get(name, {"enabled": None, "raw": None})
+        if expected is not None and feature["enabled"] is not expected:
             errors.append("{} expected {}, found {}".format(
-                name, "ON" if expected else "OFF", features[name]["raw"] or "unknown"))
+                name, "ON" if expected else "OFF", feature["raw"] or "unknown"))
 
     build = report.get("build")
     if build and build["metadata_found"]:
@@ -364,6 +388,8 @@ def validate_provenance(
                 )
             )
 
+    expected_cudnn = _expected_flag(expect_cudnn)
+    expected_nccl = _expected_flag(expect_nccl)
     expected_opencv = _expected_flag(expect_opencv)
     for wheel in report["wheels"]:
         if not wheel["exists"]:
@@ -383,6 +409,36 @@ def validate_provenance(
             errors.append("{} payload inspection failed: {}".format(
                 wheel["filename"], payload["error"]))
             continue
+        if expected_cudnn is True:
+            if not payload["has_libmxnet"]:
+                errors.append("{} does not contain mxnet/libmxnet.so".format(
+                    wheel["filename"]))
+            if not payload["cudnn_needed"]:
+                errors.append("{} libmxnet.so has no libcudnn NEEDED entries".format(
+                    wheel["filename"]))
+            if not payload["runpath_has_nvidia_cudnn"]:
+                errors.append("{} libmxnet.so RUNPATH does not include "
+                              "$ORIGIN/../nvidia/cudnn/lib".format(wheel["filename"]))
+        elif expected_cudnn is False and payload["cudnn_needed"]:
+            errors.append("{} libmxnet.so has cuDNN NEEDED entries despite "
+                          "--expect-cudnn off: {}".format(
+                              wheel["filename"], ", ".join(payload["cudnn_needed"])))
+
+        if expected_nccl is True:
+            if not payload["has_libmxnet"]:
+                errors.append("{} does not contain mxnet/libmxnet.so".format(
+                    wheel["filename"]))
+            if not payload["nccl_needed"]:
+                errors.append("{} libmxnet.so has no libnccl NEEDED entries".format(
+                    wheel["filename"]))
+            if not payload["runpath_has_nvidia_nccl"]:
+                errors.append("{} libmxnet.so RUNPATH does not include "
+                              "$ORIGIN/../nvidia/nccl/lib".format(wheel["filename"]))
+        elif expected_nccl is False and payload["nccl_needed"]:
+            errors.append("{} libmxnet.so has NCCL NEEDED entries despite "
+                          "--expect-nccl off: {}".format(
+                              wheel["filename"], ", ".join(payload["nccl_needed"])))
+
         if expected_opencv is True:
             if not payload["has_libmxnet"]:
                 errors.append("{} does not contain mxnet/libmxnet.so".format(
@@ -428,8 +484,9 @@ def format_text_report(report, errors):
             features["cache_path"], "" if features["cache_found"] else " (missing)"),
     ]
     for name in FEATURES:
-        raw = "" if features[name]["raw"] is None else " [{}]".format(features[name]["raw"])
-        lines.append("  {}: {}{}".format(name, _flag_text(features[name]["enabled"]), raw))
+        feature = features.get(name, {"enabled": None, "raw": None})
+        raw = "" if feature["raw"] is None else " [{}]".format(feature["raw"])
+        lines.append("  {}: {}{}".format(name, _flag_text(feature["enabled"]), raw))
 
     if build:
         lines.append("  CMake build metadata: {}".format(
@@ -449,12 +506,17 @@ def format_text_report(report, errors):
                 lines.append("      payload: error={}".format(payload["error"]))
             else:
                 lines.append(
-                    "      payload: libmxnet={} opencv_needed={} "
-                    "opencv_bundled={} origin_lib_runpath={}".format(
+                    "      payload: libmxnet={} cudnn_needed={} nccl_needed={} "
+                    "opencv_needed={} opencv_bundled={} origin_lib_runpath={} "
+                    "cudnn_runpath={} nccl_runpath={}".format(
                         "yes" if payload["has_libmxnet"] else "no",
+                        ",".join(payload["cudnn_needed"]) or "none",
+                        ",".join(payload["nccl_needed"]) or "none",
                         ",".join(payload["opencv_needed"]) or "none",
                         len(payload["opencv_bundled"]),
-                        "yes" if payload["runpath_has_origin_lib"] else "no"))
+                        "yes" if payload["runpath_has_origin_lib"] else "no",
+                        "yes" if payload["runpath_has_nvidia_cudnn"] else "no",
+                        "yes" if payload["runpath_has_nvidia_nccl"] else "no"))
 
     lines.append("Validation: {}".format("failed" if errors else "ok"))
     lines.extend("  - {}".format(error) for error in errors)
@@ -471,6 +533,9 @@ def parse_args(argv):
     parser.add_argument("--package-name", default="mxnet")
     parser.add_argument("--expect-commit")
     parser.add_argument("--expect-cuda", choices=("on", "off"))
+    parser.add_argument("--expect-cudnn", choices=("on", "off"))
+    parser.add_argument("--expect-nccl", choices=("on", "off"))
+    parser.add_argument("--expect-onednn", choices=("on", "off"))
     parser.add_argument("--expect-opencv", choices=("on", "off"))
     parser.add_argument("--allow-dirty", action="store_true")
     parser.add_argument("--strict-untracked", action="store_true")
@@ -496,6 +561,9 @@ def main(argv=None):
             allow_missing_cache=args.allow_missing_cache,
             expect_commit=args.expect_commit,
             expect_cuda=args.expect_cuda,
+            expect_cudnn=args.expect_cudnn,
+            expect_nccl=args.expect_nccl,
+            expect_onednn=args.expect_onednn,
             expect_opencv=args.expect_opencv,
         )
     except (OSError, ProvenanceError, subprocess.CalledProcessError) as err:

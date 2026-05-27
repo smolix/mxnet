@@ -24,6 +24,7 @@
 #include <vector>
 #include "../nn/pooling-inl.h"
 #include "../mshadow_op.h"
+#include "../tensor/init_op.h"
 
 namespace mxnet {
 namespace op {
@@ -127,8 +128,25 @@ void QuantizedPoolingForwardGPU(const nnvm::NodeAttrs& attrs,
 #endif  // MXNET_USE_CUDNN == 1 && CUDA_VERSION >= 8000
 }
 
+void QuantizedPoolingBackwardGPU(const nnvm::NodeAttrs& attrs,
+                                 const OpContext& ctx,
+                                 const std::vector<TBlob>& inputs,
+                                 const std::vector<OpReqType>& req,
+                                 const std::vector<TBlob>& outputs) {
+  CHECK_EQ(inputs.size(), 7U);
+  CHECK_EQ(outputs.size(), 3U);
+  CHECK_EQ(req.size(), 3U);
+  mshadow::Stream<gpu>* s = ctx.get_stream<gpu>();
+  Fill<false>(s, outputs[0], req[0], 0);
+  Fill<false>(s, outputs[1], req[1], 0);
+  Fill<false>(s, outputs[2], req[2], 0);
+}
+
 NNVM_REGISTER_OP(_contrib_quantized_pooling)
     .set_attr<FCompute>("FCompute<gpu>", QuantizedPoolingForwardGPU);
+
+NNVM_REGISTER_OP(_backward_contrib_quantized_pooling)
+    .set_attr<FCompute>("FCompute<gpu>", QuantizedPoolingBackwardGPU);
 
 }  // namespace op
 }  // namespace mxnet

@@ -31,8 +31,19 @@
 # install NCCL in the same location as the CUDA toolkit.
 # See https://github.com/caffe2/caffe2/issues/1601
 
-if ($ENV{NCCL_ROOT_DIR})
+if(DEFINED ENV{NCCL_ROOT_DIR} AND NOT "$ENV{NCCL_ROOT_DIR}" STREQUAL "")
   message(WARNING "NCCL_ROOT_DIR is deprecated. Please set NCCL_ROOT instead.")
+  if(NOT NCCL_ROOT_DIR)
+    set(NCCL_ROOT_DIR "$ENV{NCCL_ROOT_DIR}")
+  endif()
+endif()
+
+if(NCCL_ROOT AND NOT NCCL_ROOT_DIR)
+  set(NCCL_ROOT_DIR "${NCCL_ROOT}")
+endif()
+
+if(DEFINED ENV{NCCL_ROOT} AND NOT "$ENV{NCCL_ROOT}" STREQUAL "" AND NOT NCCL_ROOT_DIR)
+  set(NCCL_ROOT_DIR "$ENV{NCCL_ROOT}")
 endif()
 
 find_path(NCCL_INCLUDE_DIRS
@@ -41,24 +52,26 @@ find_path(NCCL_INCLUDE_DIRS
   ${NCCL_INCLUDE_DIR}
   ${NCCL_ROOT_DIR}
   ${NCCL_ROOT_DIR}/include
+  ${NCCL_ROOT_DIR}/nvidia/nccl/include
   ${CUDA_TOOLKIT_ROOT_DIR}/include
   $ENV{NCCL_DIR}/include
   )
 
 if(CMAKE_BUILD_TYPE STREQUAL "Distribution" AND UNIX)
-  set(NCCL_LIB_NAME "nccl_static")
+  set(NCCL_LIB_NAMES "nccl_static")
 else()
-  set(NCCL_LIB_NAME "nccl")
+  set(NCCL_LIB_NAMES "nccl" "libnccl.so.2")
 endif()
 
 find_library(NCCL_LIBRARIES
-  NAMES ${NCCL_LIB_NAME}
+  NAMES ${NCCL_LIB_NAMES}
   HINTS
   ${NCCL_LIB_DIR}
   ${NCCL_ROOT_DIR}
   ${NCCL_ROOT_DIR}/lib
   ${NCCL_ROOT_DIR}/lib/x86_64-linux-gnu
   ${NCCL_ROOT_DIR}/lib64
+  ${NCCL_ROOT_DIR}/nvidia/nccl/lib
   ${CUDA_TOOLKIT_ROOT_DIR}/lib64
   $ENV{NCCL_DIR}/lib
   )
@@ -74,7 +87,7 @@ if (UNIX)
   )
 
   find_library(NCCL_LIBRARIES
-    NAMES ${NCCL_LIB_NAME}
+    NAMES ${NCCL_LIB_NAMES}
     PATHS ${search_paths}
     PATH_SUFFIXES lib
   )
@@ -87,4 +100,3 @@ if(NCCL_FOUND)
   message(STATUS "Found NCCL (include: ${NCCL_INCLUDE_DIRS}, library: ${NCCL_LIBRARIES})")
   mark_as_advanced(NCCL_ROOT_DIR NCCL_INCLUDE_DIRS NCCL_LIBRARIES)
 endif()
-

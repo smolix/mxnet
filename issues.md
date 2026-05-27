@@ -5,17 +5,19 @@ git log, not here. Open / partial / deferred / external items are on top;
 the **RESOLVED / HISTORICAL** section below the divider holds everything
 already closed (kept for traceability and to avoid re-doing closed audits).
 
-**Branch:** `cleanup/p0-p1-p2-20260522`
+**Branch:** `master`
 **Latest merged PRs:** #33 (dropout/license/wheel `.3`), #34 (NCCL
 single-machine kvstore fix + release-wheel timeout/thread update), #35
-(ctypes ABI / floor-divide / release-provenance guard)
+(ctypes ABI / floor-divide / release-provenance guard), #36 (skip audit +
+WarpCTC optional-plugin contract cleanup)
 **Latest tag on GitHub:** `v2.0.0+cu13.bw.20260526.3` (release published with
 CUDA wheel)
 **Release wheel:** <https://github.com/smolix/mxnet/releases/download/v2.0.0%2Bcu13.bw.20260526.3/mxnet-2.0.0%2Bcu13.bw.20260526.3-cp312-cp312-linux_x86_64.whl>
-**Local wheel:** `dist/mxnet-2.0.0+cu13.bw.20260526.3-cp312-cp312-linux_x86_64.whl`
-(522 MiB, release artifact and local copy; smoke-tested locally;
-`rt.get_commit_hash()` reports
-`cfe0fbd6881be1834e96dcd638aa95de5dc8856d`.)
+**Local wheel:** `dist/mxnet-2.0.0+cu13.bw.20260526.4-cp312-cp312-linux_x86_64.whl`
+(522 MiB, built from local commit
+`3d07d3b7f80aa6b83917033383ecb87b6ebbde00`; not yet published.
+Fresh-venv smoke shows CUDA/cuDNN/NCCL/oneDNN/OpenCV enabled and sees 4 GPUs;
+focused wheel NCCL tests pass `13 passed`.)
 Runtime deps are pulled from NVIDIA pip wheels; `libmxnet.so`
 RUNPATH covers `$ORIGIN/lib`, venv-side `nvidia/cudnn/lib`,
 `nvidia/nccl/lib`, `nvidia/cu13/lib`, and local CUDA install paths. The
@@ -39,16 +41,12 @@ Status labels:
 
 | Priority | Tracker | Status | Issue | Next action |
 |---|---|---|---|---|
-| P0 | V1 | Open validation gap | Full Python unit-test and d2l-neu notebook sweeps have **not** been re-run end-to-end on release wheel `v2.0.0+cu13.bw.20260526.3`. Targeted release verification is green: clean-wheel import/GPU conv smoke, no NumPy subnormal warnings, `test_cuda_runtime.py`, D2L AlexNet/NiN/VGG after the cuDNN fix, focused regression coverage for the leak/image-pipeline/dropout fixes, FS12 ctypes ABI coverage, and mixed int/float16 floor-divide regression coverage. The d2l-neu sweep is currently running externally and is assumed fine until it reports otherwise. | Re-run the full sharded unit-test matrix from the released `.20260526.3` wheel with complete test deps, then consume the d2l-neu MXNet notebook sweep result when it finishes. |
-| P0 | B4 / XOP18 | Deferred (architectural) | Real `_backward_sg_onednn_*` for QAT needs an NNVM/CachedOp framework refactor (multi-week scope). 20-test coverage in `test_quantized_backward.py` (14 passed, 6 xfailed) is the truthful production state. | Reopen with a concrete framework-refactor proposal. |
-| P1 | XOP18 | Partial | Quantized self-attention subgraph forward contract pinned. Backward zero-grad behavior remains under B4. | Close alongside B4 framework refactor. |
-| P1 | XOP26 | In progress locally | WarpCTC kNullOp/kAddTo gate + OpenCV plugin buffer-bytes fix landed; OpenCV plugin tests pass. Local follow-up fixes the WarpCTC CMake option to require/resolve an actual `ctc.h` + `libwarpctc` instead of linking an undefined `WARPCTC_LIB`, fixes the sentinel label shape, and waits for async backward errors. Validation: plugin-disabled run `1 skipped`; CPU-only plugin build against a local `libwarpctc` contract stub builds and the sentinel passes `1 passed`. | Commit/PR the CMake + sentinel repairs. If a real WarpCTC install becomes available, repeat the same sentinel against it; the local stub already exercises the req-rejection path before `compute_ctc_loss` can matter. |
-| P1 | FS8 | In progress | Repaired profiler/NCCL/KVStore stale-skip batch passes `6 passed, 1 skipped`; old Gluon issue-11164 dynamic reshape/slice tests reactivated in focused group `19 passed`; higher-order grad + quantization GPU at `51 passed, 6 skipped`. Local follow-up removed no-reason runtime skips in focused DNNL/Gluon/NumPy tests by replacing them with explicit structural/capability reasons. | Keep stale skips under suspicion; either repair, capability-gate, or open a concrete bug row. After the XOP26/FS13 cleanup PR, rerun the focused stale-skip batch. |
-| P1 | FS13 | In progress locally | `test_fs13_skip_reason_tracker_id.py` now audits both decorator marks and runtime `pytest.skip()` / `pytest.xfail()` calls. The current tree passes the stricter lint; previously untracked runtime skips now cite source-tree, wheel-metadata, dtype/capability, or structural gates. | Commit/PR the stricter lint and repaired skip reasons. Continue to let this lint block new broad skips without a tracker or capability gate. |
+| P0 | B4 / XOP18 | Fixed locally | Local QAT backward now covers simple `_sg_onednn_conv`, simple `_sg_onednn_fully_connected`, fused Conv+ReLU, quantized avg/max pooling, Conv -> ReLU -> Pool -> FC composite, and quantized oneDNN self-attention QK/QK-split/ValAtt. `tests/python/dnnl/subgraphs/test_quantized_backward.py` passes (`21 passed`) and `tests/python/dnnl/test_xop18_quantized_subgraph_req.py` passes (`9 passed`, also under `NaiveEngine`). The oneDNN reduce destination descriptor bug exposed by this path is fixed locally. | Keep broader full-suite/wheel validation before release. |
+| P1 | XOP18 | Fixed locally | Quantized self-attention subgraph backward now uses real CPU gradients instead of `MakeZeroGradNodes`; direct int8/uint8 QAT tests compare QK, QK-split, and ValAtt gradients against NumPy references. | Re-run in wheel acceptance sweep. |
 | P2 | CN9 / L6 | Open (track upstream) | Bundled dmlc concurrent queue still assigns `-1` into a `uint32_t` sentinel under NVCC; oneDNN's vendored ITT assembly still lacks a non-executable-stack note. | Do not commit private submodule-local fixes; track as upstream/submodule policy. |
 | P2 | C4 | Open | CUDA build matrix CI for Ada/Hopper/Blackwell + CUDA 12.x compatibility. | Validate `sm_89` here; leave CUDA 12.x and dedicated Blackwell to later runners. |
 | P2 | L7 | In progress | Target load envelope: 48-64 runnable tasks; cap `OPENBLAS_NUM_THREADS=1`, `OMP_NUM_THREADS=2-4`, `MKL_NUM_THREADS=1` for xdist lanes. | Keep one heavy CPU lane at a time. |
-| P2 | O1, O4, O7 | Partial / Open | Linux wheel now has a working NVIDIA-pip runtime layout and published release artifact, but it is still not a self-contained CUDA/cuDNN/NCCL wheel (O1). Release publication was manual; GitHub release automation is still absent (O4). No conda/system package story exists (O7). The build-metadata freshness guard landed in PR #35: cleanup-wheel packaging refreshes/rebuilds `build/`, and `release_provenance.py` rejects CMake metadata whose `MXNET_COMMIT_HASH` differs from `git HEAD`. | Strategic; defer expensive CUDA release automation until the release cadence is clearer. Decide later whether to keep the pip-runtime dependency model or produce a bundled runtime wheel. |
+| P2 | O1, O4, O7 | Partial / Open | Linux wheel now has a working NVIDIA-pip runtime layout, and the local `.20260526.4` wheel enables CUDA/cuDNN/NCCL/oneDNN/OpenCV with provenance guards for all five features. The published `.20260526.3` release wheel still reports `NCCL` disabled until a new tag/release is published. The wheel is still not self-contained for CUDA/cuDNN/NCCL (O1). Release publication is manual; GitHub release automation is still absent (O4). No conda/system package story exists (O7). | Publish/tag `.20260526.4` when ready. Defer expensive CUDA release automation until the release cadence is clearer; separately decide whether to keep the pip-runtime dependency model or produce a bundled runtime wheel. |
 | P2 | T2, T3, T4, T5, T6, T11 | Open / Partial | T2 GluonNLP/Sockeye/AutoGluon (DGL out of scope); T3 multi-machine ps-lite rendezvous; T4 Python 3.13+; T5 NumPy 2.x ABI; T6 DLPack PyTorch/JAX/CUDA interop; T11 cross-platform lifecycle coverage. | Strategic; revisit when needed. |
 | Strategic | O8, O9, O12 | Informational / Deferred | Apache MXNet archived 2023-11-17 — all fixes live in this fork (O8). Future oneDNN major releases will require porting (O9). ONNX Runtime 1.26 / opset 26 refresh is out of scope for current Linux/CUDA cleanup (O12). | — |
 | Strategic | P1, P3, P4, P5 | Deferred / Hardware | cuBLASLt default-on / stride-aware / INT8 (P1); topk K-independence (P3); softmax / LayerNorm small-op kernel pipelines (P4); BF16 CPU validation on AVX-512-BF16 hardware (P5). | Defer; benchmark harness driven. |
@@ -70,13 +68,17 @@ Status labels:
 Everything below this divider is closed work or historical record. Rows are
 kept for traceability and to avoid re-doing closed audits.
 
-## Resolved In Current Cleanup Branch (`cleanup/p0-p1-p2-20260522`)
+## Resolved In Current Fork
 
 Compact summary; commit hashes, test paths, and detail-level reasoning live in
 git log. Latest entries at the top.
 
 | Date | Tracker | Resolution |
 |---|---|---|
+| 2026-05-26 | **NCCL release-wheel guard** | Closed locally in commit `3d07d3b7f`. CUDA release-wheel builds now configure with `USE_CUDA=ON`, `USE_CUDNN=ON`, `USE_NCCL=ON`, `USE_ONEDNN=ON`, and `USE_OPENCV=ON`; CMake fails instead of silently compiling `USE_NCCL=OFF` when NCCL is requested but missing; `FindNCCL.cmake` recognizes `NCCL_ROOT` / pip-style `nvidia/nccl` layouts; and `release_provenance.py` verifies CUDNN/NCCL/ONEDNN feature flags plus `libcudnn`/`libnccl` payload/runpath metadata. Validation: source build `libmxnet.so` links `libnccl.so.2`; built-lib NCCL tests `13 passed`; local wheel `2.0.0+cu13.bw.20260526.4` imports with CUDA/cuDNN/NCCL/oneDNN/OpenCV enabled, sees 4 GPUs, and passes wheel NCCL tests `13 passed`. |
+| 2026-05-26 | **V1 release-wheel acceptance sweep** | Closed for release wheel `v2.0.0+cu13.bw.20260526.3` under its actual feature set (CUDA/cuDNN/oneDNN/OpenCV enabled, NCCL disabled). Fresh-venv wheel acceptance passed: CPU broad unittest `13219 passed, 35 skipped, 1 xfailed`; CPU `test_operator.py` `1096 passed, 1 skipped`; CPU `test_random.py` `37 passed`; DNNL smoke/quantization/AMP/BF16/batch-dot/layer-norm/subgraph shards all passed; QAT backward shard reported the expected B4 state `14 passed, 6 xfailed`; GPU operator NumPy shard `11005 passed, 58 skipped`; GPU operator classic shard `1932 passed, 5 skipped`; GPU quantization wrapper `25 passed, 6 xfailed`; cuBLASLt, cuDNN fallback, TF32 deconv, reducer, fork-safety, AMP, and AMP-init shards all passed. D2L is currently treated as clean per the latest d2l-neu build status. The acceptance harness was also fixed locally so strict xfail summaries are not mislabeled as failures and empty shard selectors are caught. |
+| 2026-05-26 | **FS8 stale skip audit** | Closed on merged `master`. The repaired profiler/NCCL/KVStore stale-skip batch passes `6 passed, 1 skipped` (the skip is expected because the current release wheel was built without NCCL); the old Gluon issue-11164 dynamic reshape/slice group is active and passes `23 passed`; higher-order-gradient plus GPU quantization wrapper validation passes `56 passed, 6 xfailed`; and the FS13 skip-reason lint passes `1 passed`. No current FS8 umbrella work remains: new broad skips should be rejected by `test_fs13_skip_reason_tracker_id.py`, and fresh failures should get concrete tracker rows instead of reopening FS8. |
+| 2026-05-26 | **FS13 skip-reason lint / XOP26 optional plugin cleanup** | Closed in PR #36 commit `7ff3e7f6e`. The skip audit now covers runtime `pytest.skip()` / `pytest.xfail()` calls as well as decorator marks, and previously vague runtime skips cite concrete structural/capability reasons. WarpCTC plugin-side contracts are repaired: CMake now requires/resolves `ctc.h` + `libwarpctc` clearly, the sentinel label shape is correct, and async backward errors are waited before assertion. Real third-party `libwarpctc` validation is external/deferred. |
 | 2026-05-26 | **FS12 numpy-shape SIGBUS** | Closed locally. Root cause was a Python/C ABI mismatch, not a thread_local storage bug: `MXIsNumpyShape(int* curr)` wrote four bytes into a one-byte `ctypes.c_bool` allocated by `mxnet.util.is_np_shape()`. `MXNDArrayIsDeferredCompute(int* curr)` had the same wrapper bug. Both wrappers now use `ctypes.c_int` and return `bool(curr.value)`. Regression coverage: `tests/python/unittest/test_fs12_np_shape_bus_error_repro.py` now checks the actual out-parameter object size passed through `ctypes.byref`. Validation: focused FS12 suite `4 passed, 1 skipped`; full `test_numpy_op.py -x` cleared the old ~21% SIGBUS point and ran to 99% before exposing the separate mixed `floor_divide` numeric bug below. |
 | 2026-05-26 | **Mixed int/float16 `np.floor_divide` boundary** | Closed locally. The full `test_numpy_op.py` run reached `11080 passed, 1 skipped` and then failed on `floor_divide(int16, float16)`: the mixed half path computed `7 / 2.334` in float16, rounded the quotient to `3`, then floored it. The mixed `mshadow_op::mixed_floor_divide` and reverse path now compute the quotient in float before flooring and casting back to half. Regression coverage: `test_np_floor_divide_mixed_int_float16_boundary`; the original parametrized `test_np_standard_binary_funcs[...]` case passes. |
 | 2026-05-26 | **Release-wheel build timeout/thread policy** | Closed in PR #34 commit `cfe0fbd68`. The release CUDA wheel job timeout and build-step timeout are now 90 minutes, and the build step uses `getconf _NPROCESSORS_ONLN` instead of a fixed small `-j` value. |
@@ -153,7 +155,7 @@ in the appendix below for traceability.
 | XOP15 | Quantized primary-output req | `_contrib_quantized_elemwise_mul`, native + oneDNN quantize/quantize_v2/dequantize honor kNullOp/kAddTo for primary, shared helpers for ranges. |
 | XOP16 | Quantized inference contracts | Quantized embedding storage contract (shape+dtype+range value) pinned. |
 | XOP17 | Quantized metadata | Quantized RNN lists `statecell_output` when `state_outputs=True`. |
-| XOP18 | Quantized subgraph forward | Forward contract anchor (registration + shape) for `_sg_onednn_selfatt_qk{,_split,_valatt}`. (Backward remains under B4.) |
+| XOP18 | Quantized self-attention backward | Forward and backward contract anchors for `_sg_onednn_selfatt_qk{,_split}` and `_sg_onednn_selfatt_valatt`; QAT gradients are checked against NumPy references. |
 | XOP19 | oneDNN descriptor/output handling | Reducer, softmax, batch-dot, deconv weight-grad, dnnl_reshape, `DNNLMaskedSoftmax`, BF16 fallback paths in selfatt + conv all converted or gated. Primary writes in quantized subgraphs use cached dst pattern (audit-closed). |
 | XOP20 | Image dtype validation | `resize-inl.h` int32/int64 guard fixed; image resize preserves `kNullOp` and rejects `kAddTo`. |
 | XOP21 | Large-tensor size truncation | LayerNorm, GroupNorm, ROIAlign, PSROIPool, BilinearSampler, SpatialTransformer, dnnl_dot, multi_sum_sq all INT_MAX-guarded. |
@@ -161,7 +163,7 @@ in the appendix below for traceability.
 | XOP23 | Engine/runtime invariant | Assert→CHECK conversions + 3 race-stress tests. (NCCL stress open — see active queue.) |
 | XOP24 | CUDA/NCCL unchecked status | `cudaMemcpyPeerAsync` checked; KVStore P2P / `KVStoreNCCL` NCCL/init calls checked; healthy-path P2P coverage. |
 | XOP25 | Storage/profiler UB | `SET_GPU_PROFILER` null-checks profiler ptr; Linux CPU memory info multiplies by `mem_unit`. |
-| XOP26 | Plugin/output contracts | WarpCTC kNullOp/kAddTo gate; OpenCV plugin buffer-bytes fix. (WarpCTC sentinel test skips unless plugin built — see active queue.) |
+| XOP26 | Plugin/output contracts | WarpCTC kNullOp/kAddTo gate; OpenCV plugin buffer-bytes fix. The optional WarpCTC build path now requires/resolves `ctc.h` + `libwarpctc` clearly, and the sentinel test skips unless the plugin is built. Real third-party `libwarpctc` validation is external/deferred. |
 | XOP27 | Visualization metadata | `plot_network()` forms shape/type keys from consumed output index. |
 
 ## Compiler Noise Triage — Resolved

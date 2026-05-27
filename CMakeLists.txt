@@ -885,8 +885,9 @@ if(USE_CUDA)
       list(APPEND mxnet_LINKER_LIBS ${NCCL_LIBRARIES})
       add_definitions(-DMXNET_USE_NCCL=1)
     else()
-      add_definitions(-DMXNET_USE_NCCL=0)
-      message(WARNING "Could not find NCCL libraries")
+      message(FATAL_ERROR
+        "USE_NCCL=ON but NCCL was not found. Install libnccl-dev or set "
+        "NCCL_ROOT/NCCL_INCLUDE_DIR/NCCL_LIB_DIR to the NCCL headers and library.")
     endif()
   endif()
   if(UNIX)

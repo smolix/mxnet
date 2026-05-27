@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 
+#include "operator/elemwise_op_common.h"
 #include "operator/nn/dnnl/dnnl_act-inl.h"
 #include "operator/nn/dnnl/dnnl_base-inl.h"
 #include "operator/quantization/quantization_utils.h"
@@ -37,6 +38,8 @@ namespace op {
 
 using red::limits::MaxValue;
 using red::limits::MinValue;
+
+static uint32_t SgDNNLConvNumInputs(const NodeAttrs& attrs);
 
 template <typename DType>
 static void UpdateConvWeightBias(NDArray* weight,
@@ -126,6 +129,377 @@ class SgDNNLConvOperator {
   size_t bias_ver_{0};
   float data_scale_{0.0f};
   std::vector<float> weight_scales_;
+};
+
+static bool SgDNNLConvHasSupportedQATBackwardAct(const DNNLConvFusionParam& param) {
+  const auto& full_param = param.full_conv_param;
+  return !full_param.dnnl_param.with_act ||
+         (full_param.act_param.alg == dnnl::algorithm::eltwise_relu &&
+          full_param.act_param.alpha == 0.f);
+}
+
+static bool SgDNNLConvBackwardNeedsFwdOutput(const DNNLConvFusionParam& param) {
+  return param.full_conv_param.dnnl_param.with_act;
+}
+
+static bool SgDNNLConvBackwardNeedsFwdOutputRange(const DNNLConvFusionParam& param) {
+  const auto& dnnl_param = param.full_conv_param.dnnl_param;
+  return SgDNNLConvBackwardNeedsFwdOutput(param) &&
+         !dnnl_param.enabled_float_output.has_value();
+}
+
+static size_t SgDNNLConvBackwardNumAuxInputs(const DNNLConvFusionParam& param) {
+  return 1 + (SgDNNLConvBackwardNeedsFwdOutput(param) ? 1 : 0) +
+         (SgDNNLConvBackwardNeedsFwdOutputRange(param) ? 2 : 0);
+}
+
+static bool SgDNNLConvSupportsQATBackward(const DNNLConvFusionParam& param) {
+  const auto& dnnl_param = param.full_conv_param.dnnl_param;
+  const bool supported_output_type =
+      !dnnl_param.enabled_float_output.has_value() ||
+      dnnl_param.enabled_float_output.value() == mshadow::kFloat32;
+  const bool supported_fused_output =
+      !SgDNNLConvBackwardNeedsFwdOutputRange(param) ||
+      (dnnl_param.min_calib_range.has_value() && dnnl_param.max_calib_range.has_value());
+  return dnnl_param.quantized && supported_output_type &&
+         supported_fused_output &&
+         !dnnl_param.with_bn && !dnnl_param.with_sum && !dnnl_param.with_postsum_act &&
+         SgDNNLConvHasSupportedQATBackwardAct(param);
+}
+
+static NDArray DequantizeQATDataCPU(const NDArray& data,
+                                    const NDArray& data_min,
+                                    const NDArray& data_max) {
+  CHECK(data.dtype() == mshadow::kInt8 || data.dtype() == mshadow::kUint8)
+      << "QAT subgraph convolution backward expects int8/uint8 quantized data, got "
+      << data.dtype();
+  NDArray ret(data.shape(), data.ctx(), false, mshadow::kFloat32);
+  const float min_range = data_min.data().dptr<float>()[0];
+  const float max_range = data_max.data().dptr<float>()[0];
+  float* out            = ret.data().dptr<float>();
+  const size_t size     = data.shape().Size();
+  const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+
+  if (data.dtype() == mshadow::kInt8) {
+    const int8_t* in = data.data().dptr<int8_t>();
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = QuantizedToFloat<int8_t>(in[i], min_range, max_range);
+    }
+  } else {
+    const uint8_t* in    = data.data().dptr<uint8_t>();
+    const float scale    = (max_range - min_range) / 255.0f;
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = static_cast<float>(in[i]) * scale + min_range;
+    }
+  }
+  return ret;
+}
+
+static NDArray CastQATGradToFloatCPU(const NDArray& grad) {
+  const NDArray default_grad = grad.IsDNNLData() ? grad.Reorder2Default() : grad;
+  if (default_grad.dtype() == mshadow::kFloat32) {
+    return default_grad;
+  }
+  CHECK(default_grad.dtype() == mshadow::kInt8 || default_grad.dtype() == mshadow::kUint8)
+      << "QAT subgraph convolution backward expects float32/int8/uint8 output gradients, got "
+      << default_grad.dtype();
+  NDArray ret(default_grad.shape(), default_grad.ctx(), false, mshadow::kFloat32);
+  float* out        = ret.data().dptr<float>();
+  const size_t size = default_grad.shape().Size();
+  const int nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+
+  if (default_grad.dtype() == mshadow::kInt8) {
+    const int8_t* in = default_grad.data().dptr<int8_t>();
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = static_cast<float>(in[i]);
+    }
+  } else {
+    const uint8_t* in = default_grad.data().dptr<uint8_t>();
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = static_cast<float>(in[i]);
+    }
+  }
+  return ret;
+}
+
+static NDArray ApplyFusedReluGradCPU(const NDArray& out_grad,
+                                     const NDArray& fwd_output,
+                                     const NDArray* fwd_output_min,
+                                     const NDArray* fwd_output_max) {
+  CHECK_EQ(out_grad.dtype(), mshadow::kFloat32);
+  const NDArray default_output =
+      fwd_output.IsDNNLData() ? fwd_output.Reorder2Default() : fwd_output;
+  NDArray float_output;
+  const NDArray* output = &default_output;
+  if (default_output.dtype() == mshadow::kFloat32) {
+    CHECK(fwd_output_min == nullptr && fwd_output_max == nullptr)
+        << "_backward_sg_onednn_conv got quantized output ranges for a float32 forward output";
+  } else {
+    CHECK(fwd_output_min != nullptr && fwd_output_max != nullptr)
+        << "_backward_sg_onednn_conv needs forward output min/max to backpropagate through "
+           "quantized fused ReLU";
+    float_output = DequantizeQATDataCPU(default_output, *fwd_output_min, *fwd_output_max);
+    output       = &float_output;
+  }
+  CHECK_EQ(out_grad.shape(), output->shape());
+  NDArray ret(out_grad.shape(), out_grad.ctx(), false, mshadow::kFloat32);
+  const float* grad = out_grad.data().dptr<float>();
+  const float* out  = output->data().dptr<float>();
+  float* dst        = ret.data().dptr<float>();
+  const size_t len  = out_grad.shape().Size();
+#pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
+  for (index_t i = 0; i < static_cast<index_t>(len); ++i) {
+    dst[i] = out[i] > 0.f ? grad[i] : 0.f;
+  }
+  return ret;
+}
+
+template <typename DType>
+static void ZeroLikeOutputCPUImpl(const NDArray& out) {
+  DType* ptr       = out.data().dptr<DType>();
+  const size_t len = out.shape().Size();
+#pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
+  for (index_t i = 0; i < static_cast<index_t>(len); ++i) {
+    ptr[i] = DType(0);
+  }
+}
+
+static void PrepareDefaultOutputCPU(const NDArray& out, OpReqType req) {
+  if (req == kNullOp) {
+    return;
+  }
+  // This backward writes through raw TBlob/default pointers.  Executor memory
+  // reuse can hand us a chunk that still carries an old oneDNN memory descriptor
+  // for a different shape; refresh it to this NDArray's current default shape.
+  const_cast<NDArray&>(out).InvalidateDNNLData();
+  (void)out.GetDNNLData();
+}
+
+static void ZeroLikeOutputCPU(const NDArray& out, OpReqType req) {
+  if (req == kNullOp) {
+    return;
+  }
+  if (req == kAddTo) {
+    PrepareDefaultOutputCPU(out, req);
+    return;
+  }
+  CHECK(req == kWriteTo || req == kWriteInplace)
+      << "Unsupported zero-gradient request type " << req;
+  PrepareDefaultOutputCPU(out, req);
+  MSHADOW_TYPE_SWITCH(out.dtype(), DType, {
+    ZeroLikeOutputCPUImpl<DType>(out);
+  });
+}
+
+static void SgDNNLConvQATBackward(const nnvm::NodeAttrs& attrs,
+                                  const OpContext& ctx,
+                                  const std::vector<NDArray>& inputs,
+                                  const std::vector<OpReqType>& req,
+                                  const std::vector<NDArray>& outputs) {
+  const auto& param = nnvm::get<DNNLConvFusionParam>(attrs.parsed);
+  CHECK(SgDNNLConvSupportsQATBackward(param))
+      << "_backward_sg_onednn_conv currently supports only simple quantized "
+         "_sg_onednn_conv with no batchnorm/sum fusion and only ReLU activation fusion";
+
+  const auto& full_conv_param = param.full_conv_param;
+  const auto& conv_param      = full_conv_param.conv_param;
+  const bool has_bias         = !conv_param.no_bias;
+  const size_t fwd_inputs     = SgDNNLConvNumInputs(attrs);
+  const bool needs_fwd_output = SgDNNLConvBackwardNeedsFwdOutput(param);
+  const size_t aux_inputs     = SgDNNLConvBackwardNumAuxInputs(param);
+  CHECK_EQ(inputs.size(), fwd_inputs + aux_inputs);
+  CHECK_EQ(outputs.size(), fwd_inputs);
+  CHECK_EQ(req.size(), fwd_inputs);
+
+  size_t in_idx = 1;  // inputs[0] is output gradient.
+  const NDArray* fwd_output     = needs_fwd_output ? &inputs[in_idx++] : nullptr;
+  const NDArray* fwd_output_min = nullptr;
+  const NDArray* fwd_output_max = nullptr;
+  if (SgDNNLConvBackwardNeedsFwdOutputRange(param)) {
+    fwd_output_min = &inputs[in_idx++];
+    fwd_output_max = &inputs[in_idx++];
+  }
+  const NDArray& qdata  = inputs[in_idx++];
+  const NDArray& weight = inputs[in_idx++];
+  const NDArray* bias   = has_bias ? &inputs[in_idx++] : nullptr;
+  const NDArray& data_min = inputs[in_idx++];
+  const NDArray& data_max = inputs[in_idx++];
+  CHECK_EQ(in_idx, inputs.size());
+  CHECK_EQ(weight.dtype(), mshadow::kFloat32)
+      << "_backward_sg_onednn_conv QAT path expects float32 weights";
+  if (bias) {
+    CHECK_EQ(bias->dtype(), mshadow::kFloat32)
+        << "_backward_sg_onednn_conv QAT path expects float32 bias";
+  }
+  CHECK(inputs[0].dtype() == mshadow::kFloat32 || inputs[0].dtype() == mshadow::kInt8 ||
+        inputs[0].dtype() == mshadow::kUint8)
+      << "_backward_sg_onednn_conv QAT path expects float32/int8/uint8 output gradients";
+
+  NDArray data = DequantizeQATDataCPU(qdata, data_min, data_max);
+  NDArray float_grad = CastQATGradToFloatCPU(inputs[0]);
+  NDArray conv_out_grad;
+  const NDArray* out_grad = &float_grad;
+  if (needs_fwd_output) {
+    conv_out_grad = ApplyFusedReluGradCPU(float_grad, *fwd_output, fwd_output_min, fwd_output_max);
+    out_grad      = &conv_out_grad;
+  }
+
+  nnvm::NodeAttrs conv_attrs;
+  auto conv_param_copy = conv_param;
+  conv_attrs.name      = attrs.name + "_qat_backward";
+  conv_attrs.parsed    = conv_param_copy;
+  conv_attrs.dict.clear();
+  conv_param_copy.SetAttrDict(&conv_attrs.dict);
+
+  std::vector<TBlob> conv_inputs;
+  conv_inputs.reserve(has_bias ? 4 : 3);
+  conv_inputs.emplace_back(out_grad->data());
+  conv_inputs.emplace_back(data.data());
+  conv_inputs.emplace_back(weight.data());
+  if (has_bias) {
+    conv_inputs.emplace_back(bias->data());
+  }
+
+  std::vector<TBlob> conv_outputs;
+  conv_outputs.reserve(has_bias ? 3 : 2);
+  PrepareDefaultOutputCPU(outputs[0], req[0]);
+  PrepareDefaultOutputCPU(outputs[1], req[1]);
+  conv_outputs.emplace_back(outputs[0].data());
+  conv_outputs.emplace_back(outputs[1].data());
+  if (has_bias) {
+    PrepareDefaultOutputCPU(outputs[2], req[2]);
+    conv_outputs.emplace_back(outputs[2].data());
+  }
+
+  std::vector<OpReqType> conv_req;
+  conv_req.reserve(conv_outputs.size());
+  conv_req.insert(conv_req.end(), req.begin(), req.begin() + conv_outputs.size());
+  ConvolutionGradCompute<cpu>(conv_attrs, ctx, conv_inputs, conv_req, conv_outputs);
+
+  for (size_t i = conv_outputs.size(); i < outputs.size(); ++i) {
+    ZeroLikeOutputCPU(outputs[i], req[i]);
+  }
+}
+
+static bool SgDNNLConvBackwardShape(const nnvm::NodeAttrs& attrs,
+                                    mxnet::ShapeVector* in_shapes,
+                                    mxnet::ShapeVector* out_shapes) {
+  const size_t fwd_inputs = SgDNNLConvNumInputs(attrs);
+  const auto& param       = nnvm::get<DNNLConvFusionParam>(attrs.parsed);
+  const size_t aux_inputs = SgDNNLConvBackwardNumAuxInputs(param);
+  CHECK_EQ(in_shapes->size(), fwd_inputs + aux_inputs);
+  CHECK_EQ(out_shapes->size(), fwd_inputs);
+  for (size_t i = 0; i < fwd_inputs; ++i) {
+    SHAPE_ASSIGN_CHECK(*out_shapes, i, (*in_shapes)[i + aux_inputs]);
+  }
+  return true;
+}
+
+static bool SgDNNLConvBackwardType(const nnvm::NodeAttrs& attrs,
+                                   std::vector<int>* in_types,
+                                   std::vector<int>* out_types) {
+  const auto& param = nnvm::get<DNNLConvFusionParam>(attrs.parsed);
+  CHECK(SgDNNLConvSupportsQATBackward(param));
+  const auto& conv_param = param.full_conv_param.conv_param;
+  const bool has_bias    = !conv_param.no_bias;
+  const size_t fwd_inputs = SgDNNLConvNumInputs(attrs);
+  const bool needs_fwd_output = SgDNNLConvBackwardNeedsFwdOutput(param);
+  const bool needs_fwd_output_range = SgDNNLConvBackwardNeedsFwdOutputRange(param);
+  const size_t aux_inputs     = SgDNNLConvBackwardNumAuxInputs(param);
+  CHECK_EQ(in_types->size(), fwd_inputs + aux_inputs);
+  CHECK_EQ(out_types->size(), fwd_inputs);
+
+  if (needs_fwd_output_range && in_types->at(0) != -1) {
+    CHECK(in_types->at(0) == mshadow::kFloat32 || in_types->at(0) == mshadow::kInt8 ||
+          in_types->at(0) == mshadow::kUint8)
+        << "_backward_sg_onednn_conv expects float32/int8/uint8 output gradients";
+  } else {
+    TYPE_ASSIGN_CHECK(*in_types, 0, mshadow::kFloat32);
+  }
+  if (needs_fwd_output) {
+    if (needs_fwd_output_range) {
+      CHECK(in_types->at(1) == mshadow::kInt8 || in_types->at(1) == mshadow::kUint8)
+          << "_backward_sg_onednn_conv expects int8/uint8 quantized forward output";
+      TYPE_ASSIGN_CHECK(*in_types, 2, mshadow::kFloat32);
+      TYPE_ASSIGN_CHECK(*in_types, 3, mshadow::kFloat32);
+    } else {
+      TYPE_ASSIGN_CHECK(*in_types, 1, mshadow::kFloat32);
+    }
+  }
+  const size_t data_idx = aux_inputs;
+  CHECK(in_types->at(data_idx) == mshadow::kInt8 || in_types->at(data_idx) == mshadow::kUint8)
+      << "_backward_sg_onednn_conv expects int8/uint8 quantized data input";
+  TYPE_ASSIGN_CHECK(*out_types, 0, mshadow::kFloat32);
+
+  size_t idx = data_idx + 1;
+  TYPE_ASSIGN_CHECK(*in_types, idx, mshadow::kFloat32);
+  TYPE_ASSIGN_CHECK(*out_types, idx - aux_inputs, mshadow::kFloat32);
+  ++idx;
+  if (has_bias) {
+    TYPE_ASSIGN_CHECK(*in_types, idx, mshadow::kFloat32);
+    TYPE_ASSIGN_CHECK(*out_types, idx - aux_inputs, mshadow::kFloat32);
+    ++idx;
+  }
+  for (; idx < in_types->size(); ++idx) {
+    TYPE_ASSIGN_CHECK(*in_types, idx, mshadow::kFloat32);
+    TYPE_ASSIGN_CHECK(*out_types, idx - aux_inputs, mshadow::kFloat32);
+  }
+  return true;
+}
+
+static bool SgDNNLConvBackwardStorageType(const nnvm::NodeAttrs& attrs,
+                                          const int dev_mask,
+                                          DispatchMode* dispatch_mode,
+                                          std::vector<int>* in_attrs,
+                                          std::vector<int>* out_attrs) {
+  for (auto& attr : *out_attrs) {
+    type_assign(&attr, mxnet::kDefaultStorage);
+  }
+  *dispatch_mode = DispatchMode::kFComputeEx;
+  return true;
+}
+
+struct SgDNNLConvGrad {
+  std::vector<nnvm::NodeEntry> operator()(const nnvm::ObjectPtr& n,
+                                          const std::vector<nnvm::NodeEntry>& ograds) const {
+    const auto& param = nnvm::get<DNNLConvFusionParam>(n->attrs.parsed);
+    if (!SgDNNLConvSupportsQATBackward(param)) {
+      return MakeZeroGradNodes(n, ograds);
+    }
+    std::vector<nnvm::NodeEntry> heads;
+    heads.reserve(n->inputs.size() + SgDNNLConvBackwardNumAuxInputs(param));
+    heads.emplace_back(ograds[0]);
+    if (SgDNNLConvBackwardNeedsFwdOutput(param)) {
+      heads.emplace_back(n, 0, 0);
+      if (SgDNNLConvBackwardNeedsFwdOutputRange(param)) {
+        heads.emplace_back(n, 1, 0);
+        heads.emplace_back(n, 2, 0);
+      }
+    }
+    heads.insert(heads.end(), n->inputs.begin(), n->inputs.end());
+    auto p        = nnvm::Node::Create();
+    p->attrs.op   = nnvm::Op::Get("_backward_sg_onednn_conv");
+    p->attrs.name = n->attrs.name + "_backward";
+    p->attrs.dict = n->attrs.dict;
+    p->attrs.subgraphs.reserve(n->attrs.subgraphs.size());
+    for (const auto& subgraph : n->attrs.subgraphs) {
+      p->attrs.subgraphs.push_back(subgraph);
+    }
+    p->inputs = std::move(heads);
+    p->control_deps.emplace_back(n);
+    if (p->op()->attr_parser != nullptr) {
+      p->op()->attr_parser(&(p->attrs));
+    }
+    CHECK_EQ(p->num_inputs(), p->inputs.size())
+        << "Number of inputs to operator _backward_sg_onednn_conv (" << p->num_inputs()
+        << ") does not match the actual number of inputs provided to operator "
+        << p->attrs.name << " (" << p->inputs.size() << ").";
+    return CreateNodeEntries(p);
+  }
 };
 
 void SgDNNLConvOperator::Forward(const OpContext& ctx,
@@ -927,7 +1301,7 @@ NNVM_REGISTER_OP(_sg_onednn_conv)
     .set_attr<bool>("TIsDNNL", true)
     // TODO(Xinyu): a temp solution to enable GluonCV INT8 flow,
     // will be reverted after the improvement of CachedOP is done.
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)
+    .set_attr<nnvm::FGradient>("FGradient", SgDNNLConvGrad{})
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& n) {
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
@@ -940,6 +1314,22 @@ NNVM_REGISTER_OP(_sg_onednn_conv)
     .set_attr<FQuantizedOp>("FQuantizedOp", SgDNNLConvQuantizedOp)
     .set_attr<FNeedRequantize>("FNeedRequantize", [](const NodeAttrs& attrs) { return true; })
     .set_attr<FAvoidQuantizeInput>("FAvoidQuantizeInput", SgDNNLAvoidConvQuantizeInput);
+
+NNVM_REGISTER_OP(_backward_sg_onednn_conv)
+    .set_num_inputs([](const NodeAttrs& attrs) {
+      const auto& param = nnvm::get<DNNLConvFusionParam>(attrs.parsed);
+      return SgDNNLConvNumInputs(attrs) + SgDNNLConvBackwardNumAuxInputs(param);
+    })
+    .set_num_outputs([](const NodeAttrs& attrs) { return SgDNNLConvNumInputs(attrs); })
+    .set_attr_parser(SgDNNLConvParamParser)
+    .set_attr<mxnet::FInferShape>("FInferShape", SgDNNLConvBackwardShape)
+    .set_attr<nnvm::FInferType>("FInferType", SgDNNLConvBackwardType)
+    .set_attr<FInferStorageType>("FInferStorageType", SgDNNLConvBackwardStorageType)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& attrs) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
+    .set_attr<FComputeEx>("FComputeEx<cpu>", SgDNNLConvQATBackward);
 
 }  // namespace op
 }  // namespace mxnet

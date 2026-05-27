@@ -37,7 +37,15 @@ static void DNNLQuantizedPoolingForward(const nnvm::NodeAttrs& attrs,
                                         const std::vector<NDArray>& out_data) {
   CHECK(in_data[0].dtype() == mshadow::kUint8 || in_data[0].dtype() == mshadow::kInt8)
       << "dnnl_quantized_pooling op only supports uint8 and int8 as input type";
-  DNNLRun(DNNLPoolingCompute, attrs, ctx, in_data, req, out_data);
+  const PoolingParam& param = nnvm::get<PoolingParam>(attrs.parsed);
+  if (ctx.is_train && DNNLRequireWorkspace(param) && !param.IsAdaptivePooling()) {
+    NDArray workspace(out_data[0].shape(), out_data[0].ctx(), false, mshadow::kInt32);
+    std::vector<NDArray> dnnl_outputs{out_data[0], workspace};
+    std::vector<OpReqType> dnnl_req{req[0], kWriteTo};
+    DNNLRun(DNNLPoolingCompute, attrs, ctx, in_data, dnnl_req, dnnl_outputs);
+  } else {
+    DNNLRun(DNNLPoolingCompute, attrs, ctx, in_data, req, out_data);
+  }
   out_data[1].data().dptr<float>()[0] = in_data[1].data().dptr<float>()[0];
   out_data[2].data().dptr<float>()[0] = in_data[2].data().dptr<float>()[0];
 }

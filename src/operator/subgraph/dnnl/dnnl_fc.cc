@@ -113,6 +113,252 @@ class SgDNNLFCOp {
   std::vector<float> weight_scales_;
 };
 
+static bool SgDNNLFCSupportsQATBackward(const DNNLFCFullParam& full_param) {
+  const auto& dnnl_param = full_param.dnnl_param;
+  return dnnl_param.quantized && dnnl_param.enabled_float_output.has_value() &&
+         dnnl_param.enabled_float_output.value() == mshadow::kFloat32 &&
+         !dnnl_param.with_eltwise && !dnnl_param.with_sum;
+}
+
+static NDArray DequantizeQATTensorCPU(const NDArray& data,
+                                      const NDArray& data_min,
+                                      const NDArray& data_max,
+                                      const char* op_name) {
+  CHECK(data.dtype() == mshadow::kInt8 || data.dtype() == mshadow::kUint8)
+      << op_name << " expects int8/uint8 quantized input, got " << data.dtype();
+  NDArray ret(data.shape(), data.ctx(), false, mshadow::kFloat32);
+  const float min_range = data_min.data().dptr<float>()[0];
+  const float max_range = data_max.data().dptr<float>()[0];
+  float* out            = ret.data().dptr<float>();
+  const size_t size     = data.shape().Size();
+  const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+
+  if (data.dtype() == mshadow::kInt8) {
+    const int8_t* in = data.data().dptr<int8_t>();
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = QuantizedToFloat<int8_t>(in[i], min_range, max_range);
+    }
+  } else {
+    const uint8_t* in    = data.data().dptr<uint8_t>();
+    const float scale    = (max_range - min_range) / 255.0f;
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < static_cast<index_t>(size); ++i) {
+      out[i] = static_cast<float>(in[i]) * scale + min_range;
+    }
+  }
+  return ret;
+}
+
+template <typename DType>
+static void ZeroLikeFCOutputCPUImpl(const NDArray& out) {
+  DType* ptr       = out.data().dptr<DType>();
+  const size_t len = out.shape().Size();
+#pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
+  for (index_t i = 0; i < static_cast<index_t>(len); ++i) {
+    ptr[i] = DType(0);
+  }
+}
+
+static void PrepareDefaultFCOutputCPU(const NDArray& out, OpReqType req) {
+  if (req == kNullOp) {
+    return;
+  }
+  const_cast<NDArray&>(out).InvalidateDNNLData();
+  (void)out.GetDNNLData();
+}
+
+static void ZeroLikeFCOutputCPU(const NDArray& out, OpReqType req) {
+  if (req == kNullOp) {
+    return;
+  }
+  if (req == kAddTo) {
+    PrepareDefaultFCOutputCPU(out, req);
+    return;
+  }
+  CHECK(req == kWriteTo || req == kWriteInplace)
+      << "Unsupported zero-gradient request type " << req;
+  PrepareDefaultFCOutputCPU(out, req);
+  MSHADOW_TYPE_SWITCH(out.dtype(), DType, {
+    ZeroLikeFCOutputCPUImpl<DType>(out);
+  });
+}
+
+static void SgDNNLFCQATBackward(const nnvm::NodeAttrs& attrs,
+                                const OpContext& ctx,
+                                const std::vector<NDArray>& inputs,
+                                const std::vector<OpReqType>& req,
+                                const std::vector<NDArray>& outputs) {
+  const auto& full_param = nnvm::get<DNNLFCFullParam>(attrs.parsed);
+  CHECK(SgDNNLFCSupportsQATBackward(full_param))
+      << "_backward_sg_onednn_fully_connected currently supports only simple "
+         "quantized _sg_onednn_fully_connected with float output and no eltwise/sum fusion";
+  const FCInputIndex idx(full_param);
+  const size_t fwd_inputs = idx.GetTotal();
+  CHECK_EQ(inputs.size(), fwd_inputs + 1);
+  CHECK_EQ(outputs.size(), fwd_inputs);
+  CHECK_EQ(req.size(), fwd_inputs);
+  CHECK_EQ(inputs[0].dtype(), mshadow::kFloat32)
+      << "_backward_sg_onednn_fully_connected expects float32 output gradients";
+
+  const size_t base = 1;
+  const NDArray& qdata = inputs[base + idx.data];
+  const NDArray& data_min = inputs[base + idx.data_min];
+  const NDArray& data_max = inputs[base + idx.data_max];
+  NDArray data = DequantizeQATTensorCPU(
+      qdata, data_min, data_max, "_backward_sg_onednn_fully_connected data");
+
+  const NDArray& weight = inputs[base + idx.weight];
+  NDArray dequantized_weight;
+  const NDArray* fc_weight = &weight;
+  if (weight.dtype() != mshadow::kFloat32) {
+    CHECK(weight.dtype() == mshadow::kInt8 || weight.dtype() == mshadow::kUint8)
+        << "_backward_sg_onednn_fully_connected expects float32/int8/uint8 weights, got "
+        << weight.dtype();
+    CHECK(!(full_param.dnnl_param.channel_wise_quantize.has_value() &&
+            full_param.dnnl_param.channel_wise_quantize.value()))
+        << "_backward_sg_onednn_fully_connected does not support channel-wise quantized "
+           "int8/uint8 weights because QAT backward weight dequantization requires scalar "
+           "weight min/max ranges";
+    dequantized_weight = DequantizeQATTensorCPU(weight,
+                                                inputs[base + idx.weight_min],
+                                                inputs[base + idx.weight_max],
+                                                "_backward_sg_onednn_fully_connected weight");
+    fc_weight = &dequantized_weight;
+  }
+
+  nnvm::NodeAttrs fc_attrs;
+  auto fc_param_copy = full_param.default_param;
+  fc_attrs.name      = attrs.name + "_qat_backward";
+  fc_attrs.parsed    = fc_param_copy;
+  fc_attrs.dict.clear();
+  fc_param_copy.SetAttrDict(&fc_attrs.dict);
+
+  std::vector<TBlob> fc_inputs{inputs[0].data(), data.data(), fc_weight->data()};
+  std::vector<TBlob> fc_outputs;
+  std::vector<OpReqType> fc_req;
+  std::vector<bool> handled(fwd_inputs, false);
+
+  PrepareDefaultFCOutputCPU(outputs[idx.data], req[idx.data]);
+  PrepareDefaultFCOutputCPU(outputs[idx.weight], req[idx.weight]);
+  fc_outputs.emplace_back(outputs[idx.data].data());
+  fc_outputs.emplace_back(outputs[idx.weight].data());
+  fc_req.emplace_back(req[idx.data]);
+  fc_req.emplace_back(req[idx.weight]);
+  handled[idx.data]   = true;
+  handled[idx.weight] = true;
+
+  if (idx.IsBiasExist()) {
+    PrepareDefaultFCOutputCPU(outputs[idx.bias], req[idx.bias]);
+    fc_outputs.emplace_back(outputs[idx.bias].data());
+    fc_req.emplace_back(req[idx.bias]);
+    handled[idx.bias] = true;
+  }
+
+  FullyConnectedGradCompute<cpu>(fc_attrs, ctx, fc_inputs, fc_req, fc_outputs);
+
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    if (!handled[i]) {
+      ZeroLikeFCOutputCPU(outputs[i], req[i]);
+    }
+  }
+}
+
+static bool SgDNNLFCBackwardShape(const nnvm::NodeAttrs& attrs,
+                                  mxnet::ShapeVector* in_shapes,
+                                  mxnet::ShapeVector* out_shapes) {
+  const auto& full_param = nnvm::get<DNNLFCFullParam>(attrs.parsed);
+  const FCInputIndex idx(full_param);
+  const size_t fwd_inputs = idx.GetTotal();
+  CHECK_EQ(in_shapes->size(), fwd_inputs + 1);
+  CHECK_EQ(out_shapes->size(), fwd_inputs);
+  for (size_t i = 0; i < fwd_inputs; ++i) {
+    SHAPE_ASSIGN_CHECK(*out_shapes, i, (*in_shapes)[i + 1]);
+  }
+  return true;
+}
+
+static bool SgDNNLFCBackwardType(const nnvm::NodeAttrs& attrs,
+                                 std::vector<int>* in_types,
+                                 std::vector<int>* out_types) {
+  const auto& full_param = nnvm::get<DNNLFCFullParam>(attrs.parsed);
+  CHECK(SgDNNLFCSupportsQATBackward(full_param));
+  const FCInputIndex idx(full_param);
+  const size_t fwd_inputs = idx.GetTotal();
+  CHECK_EQ(in_types->size(), fwd_inputs + 1);
+  CHECK_EQ(out_types->size(), fwd_inputs);
+  TYPE_ASSIGN_CHECK(*in_types, 0, mshadow::kFloat32);
+
+  const size_t base = 1;
+  CHECK(in_types->at(base + idx.data) == mshadow::kInt8 ||
+        in_types->at(base + idx.data) == mshadow::kUint8)
+      << "_backward_sg_onednn_fully_connected expects int8/uint8 quantized data input";
+  const int weight_type = in_types->at(base + idx.weight);
+  if (full_param.dnnl_param.channel_wise_quantize.has_value() &&
+      full_param.dnnl_param.channel_wise_quantize.value()) {
+    TYPE_ASSIGN_CHECK(*in_types, base + idx.weight, mshadow::kFloat32);
+  } else {
+    CHECK(weight_type == mshadow::kFloat32 || weight_type == mshadow::kInt8 ||
+          weight_type == mshadow::kUint8)
+        << "_backward_sg_onednn_fully_connected expects float32/int8/uint8 weight input";
+  }
+  if (idx.IsBiasExist()) {
+    const int bias_type = in_types->at(base + idx.bias);
+    CHECK(bias_type == mshadow::kFloat32 || bias_type == mshadow::kInt32 ||
+          bias_type == mshadow::kInt8)
+        << "_backward_sg_onednn_fully_connected expects float32/int32/int8 bias input";
+  }
+
+  for (size_t i = 0; i < fwd_inputs; ++i) {
+    TYPE_ASSIGN_CHECK(*out_types, i, mshadow::kFloat32);
+  }
+  return true;
+}
+
+static bool SgDNNLFCBackwardStorageType(const nnvm::NodeAttrs& attrs,
+                                        const int dev_mask,
+                                        DispatchMode* dispatch_mode,
+                                        std::vector<int>* in_attrs,
+                                        std::vector<int>* out_attrs) {
+  for (auto& attr : *out_attrs) {
+    type_assign(&attr, mxnet::kDefaultStorage);
+  }
+  *dispatch_mode = DispatchMode::kFComputeEx;
+  return true;
+}
+
+struct SgDNNLFCGrad {
+  std::vector<nnvm::NodeEntry> operator()(const nnvm::ObjectPtr& n,
+                                          const std::vector<nnvm::NodeEntry>& ograds) const {
+    const auto& full_param = nnvm::get<DNNLFCFullParam>(n->attrs.parsed);
+    if (!SgDNNLFCSupportsQATBackward(full_param)) {
+      return MakeZeroGradNodes(n, ograds);
+    }
+    std::vector<nnvm::NodeEntry> heads;
+    heads.reserve(n->inputs.size() + 1);
+    heads.emplace_back(ograds[0]);
+    heads.insert(heads.end(), n->inputs.begin(), n->inputs.end());
+    auto p        = nnvm::Node::Create();
+    p->attrs.op   = nnvm::Op::Get("_backward_sg_onednn_fully_connected");
+    p->attrs.name = n->attrs.name + "_backward";
+    p->attrs.dict = n->attrs.dict;
+    p->attrs.subgraphs.reserve(n->attrs.subgraphs.size());
+    for (const auto& subgraph : n->attrs.subgraphs) {
+      p->attrs.subgraphs.push_back(subgraph);
+    }
+    p->inputs = std::move(heads);
+    p->control_deps.emplace_back(n);
+    if (p->op()->attr_parser != nullptr) {
+      p->op()->attr_parser(&(p->attrs));
+    }
+    CHECK_EQ(p->num_inputs(), p->inputs.size())
+        << "Number of inputs to operator _backward_sg_onednn_fully_connected ("
+        << p->num_inputs() << ") does not match the actual number of inputs provided to operator "
+        << p->attrs.name << " (" << p->inputs.size() << ").";
+    return CreateNodeEntries(p);
+  }
+};
+
 void SgDNNLFCOp::Forward(const OpContext& ctx,
                          const std::vector<NDArray>& in_data,
                          const std::vector<OpReqType>& req,
@@ -987,7 +1233,7 @@ NNVM_REGISTER_OP(_sg_onednn_fully_connected)
     .set_attr<bool>("TIsDNNL", true)
     // TODO(Xinyu): a temp solution to enable GluonCV INT8 flow,
     // will be reverted after the improvement of CachedOP is done.
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)
+    .set_attr<nnvm::FGradient>("FGradient", SgDNNLFCGrad{})
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& n) {
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
@@ -1000,6 +1246,25 @@ NNVM_REGISTER_OP(_sg_onednn_fully_connected)
     .set_attr<FQuantizedOp>("FQuantizedOp", SgDNNLFCQuantizedOp)
     .set_attr<FNeedRequantize>("FNeedRequantize", [](const NodeAttrs& attrs) { return true; })
     .set_attr<FAvoidQuantizeInput>("FAvoidQuantizeInput", SgDNNLAvoidFCQuantizeInput);
+
+NNVM_REGISTER_OP(_backward_sg_onednn_fully_connected)
+    .set_num_inputs([](const NodeAttrs& attrs) {
+      const auto& full_param = nnvm::get<DNNLFCFullParam>(attrs.parsed);
+      return FCInputIndex(full_param).GetTotal() + 1;
+    })
+    .set_num_outputs([](const NodeAttrs& attrs) {
+      const auto& full_param = nnvm::get<DNNLFCFullParam>(attrs.parsed);
+      return FCInputIndex(full_param).GetTotal();
+    })
+    .set_attr_parser(SgDNNLFCParamParser)
+    .set_attr<mxnet::FInferShape>("FInferShape", SgDNNLFCBackwardShape)
+    .set_attr<nnvm::FInferType>("FInferType", SgDNNLFCBackwardType)
+    .set_attr<FInferStorageType>("FInferStorageType", SgDNNLFCBackwardStorageType)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& attrs) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
+    .set_attr<FComputeEx>("FComputeEx<cpu>", SgDNNLFCQATBackward);
 
 }  // namespace op
 }  // namespace mxnet

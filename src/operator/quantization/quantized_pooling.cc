@@ -22,6 +22,8 @@
  */
 #include <mxnet/op_attr_types.h>
 #include "../nn/pooling-inl.h"
+#include "../tensor/init_op.h"
+#include "./quantization_utils.h"
 #if MXNET_USE_ONEDNN == 1
 #include "../nn/dnnl/dnnl_pooling-inl.h"
 #endif
@@ -174,6 +176,261 @@ inline static bool QuantizedPoolingStorageType(const nnvm::NodeAttrs& attrs,
   return true;
 }
 
+struct QuantizedPoolingDequantizeUnsigned {
+  template <typename SrcDType>
+  MSHADOW_XINLINE static void Map(int i,
+                                  float* out,
+                                  const SrcDType* in,
+                                  const float* imin_range,
+                                  const float* imax_range,
+                                  const OpReqType req) {
+    const float scale = (*imax_range - *imin_range) / 255.0f;
+    KERNEL_ASSIGN(out[i], req, in[i] * scale + *imin_range);
+  }
+};
+
+struct QuantizedPoolingDequantizeInt8 {
+  template <typename SrcDType>
+  MSHADOW_XINLINE static void Map(int i,
+                                  float* out,
+                                  const SrcDType* in,
+                                  const float* imin_range,
+                                  const float* imax_range,
+                                  const OpReqType req) {
+    const float real_range = MaxAbs(*imax_range, *imin_range);
+    KERNEL_ASSIGN(out[i], req, in[i] * (real_range / 127.0f));
+  }
+};
+
+struct QuantizedPoolingCastGrad {
+  template <typename SrcDType>
+  MSHADOW_XINLINE static void Map(int i, float* out, const SrcDType* in, const OpReqType req) {
+    KERNEL_ASSIGN(out[i], req, static_cast<float>(in[i]));
+  }
+};
+
+inline bool QuantizedPoolingBackwardShape(const nnvm::NodeAttrs& attrs,
+                                          mxnet::ShapeVector* in_shape,
+                                          mxnet::ShapeVector* out_shape) {
+  CHECK_EQ(in_shape->size(), 7U);
+  CHECK_EQ(out_shape->size(), 3U);
+
+  mxnet::ShapeVector fwd_in{in_shape->at(1), in_shape->at(2), in_shape->at(3)};
+  mxnet::ShapeVector fwd_out;
+  if (QuantizedPoolingShape(attrs, &fwd_in, &fwd_out)) {
+    SHAPE_ASSIGN_CHECK(*in_shape, 1, fwd_in[0]);
+    SHAPE_ASSIGN_CHECK(*in_shape, 2, fwd_in[1]);
+    SHAPE_ASSIGN_CHECK(*in_shape, 3, fwd_in[2]);
+    SHAPE_ASSIGN_CHECK(*in_shape, 4, fwd_out[0]);
+    SHAPE_ASSIGN_CHECK(*in_shape, 5, fwd_out[1]);
+    SHAPE_ASSIGN_CHECK(*in_shape, 6, fwd_out[2]);
+    SHAPE_ASSIGN_CHECK(*in_shape, 0, fwd_out[0]);
+  } else {
+    SHAPE_ASSIGN_CHECK(*in_shape, 2, mxnet::TShape{1});
+    SHAPE_ASSIGN_CHECK(*in_shape, 3, mxnet::TShape{1});
+    SHAPE_ASSIGN_CHECK(*in_shape, 5, mxnet::TShape{1});
+    SHAPE_ASSIGN_CHECK(*in_shape, 6, mxnet::TShape{1});
+    if (shape_is_known(in_shape->at(4))) {
+      SHAPE_ASSIGN_CHECK(*in_shape, 0, in_shape->at(4));
+    }
+    if (shape_is_known(in_shape->at(0))) {
+      SHAPE_ASSIGN_CHECK(*in_shape, 4, in_shape->at(0));
+    }
+  }
+  if (shape_is_known(in_shape->at(0)) && shape_is_known(in_shape->at(4))) {
+    CHECK_EQ(in_shape->at(0), in_shape->at(4))
+        << "_backward_contrib_quantized_pooling expects ograd and saved output shapes to match";
+  }
+
+  SHAPE_ASSIGN_CHECK(*out_shape, 0, in_shape->at(1));
+  SHAPE_ASSIGN_CHECK(*out_shape, 1, mxnet::TShape{1});
+  SHAPE_ASSIGN_CHECK(*out_shape, 2, mxnet::TShape{1});
+  return shape_is_known(out_shape->at(0)) && shape_is_known(out_shape->at(1)) &&
+         shape_is_known(out_shape->at(2));
+}
+
+inline bool QuantizedPoolingBackwardType(const nnvm::NodeAttrs& attrs,
+                                         std::vector<int>* in_type,
+                                         std::vector<int>* out_type) {
+  CHECK_EQ(in_type->size(), 7U);
+  CHECK_EQ(out_type->size(), 3U);
+  if (in_type->at(0) != -1) {
+    CHECK(in_type->at(0) == mshadow::kFloat32 || in_type->at(0) == mshadow::kInt8 ||
+          in_type->at(0) == mshadow::kUint8)
+        << "_backward_contrib_quantized_pooling only supports float32, int8, or uint8 "
+        << "output gradients, while " << in_type->at(0) << " was given";
+  } else {
+    TYPE_ASSIGN_CHECK(*in_type, 0, mshadow::kFloat32);
+  }
+  TYPE_ASSIGN_CHECK(*in_type, 2, mshadow::kFloat32);
+  TYPE_ASSIGN_CHECK(*in_type, 3, mshadow::kFloat32);
+  TYPE_ASSIGN_CHECK(*in_type, 5, mshadow::kFloat32);
+  TYPE_ASSIGN_CHECK(*in_type, 6, mshadow::kFloat32);
+
+  if (in_type->at(1) != -1) {
+    CHECK(in_type->at(1) == mshadow::kInt8 || in_type->at(1) == mshadow::kUint8 ||
+          in_type->at(1) == mshadow::kFloat32)
+        << "_backward_contrib_quantized_pooling only supports int8, uint8, or float32 "
+        << "forward data, while " << in_type->at(1) << " was given";
+    TYPE_ASSIGN_CHECK(*in_type, 4, in_type->at(1));
+  } else if (in_type->at(4) != -1) {
+    CHECK(in_type->at(4) == mshadow::kInt8 || in_type->at(4) == mshadow::kUint8 ||
+          in_type->at(4) == mshadow::kFloat32)
+        << "_backward_contrib_quantized_pooling only supports int8, uint8, or float32 "
+        << "forward output, while " << in_type->at(4) << " was given";
+    TYPE_ASSIGN_CHECK(*in_type, 1, in_type->at(4));
+  }
+
+  TYPE_ASSIGN_CHECK(*out_type, 0, mshadow::kFloat32);
+  TYPE_ASSIGN_CHECK(*out_type, 1, mshadow::kFloat32);
+  TYPE_ASSIGN_CHECK(*out_type, 2, mshadow::kFloat32);
+  return in_type->at(1) != -1 && in_type->at(4) != -1;
+}
+
+inline bool QuantizedPoolingBackwardStorageType(const nnvm::NodeAttrs& attrs,
+                                                const int dev_mask,
+                                                DispatchMode* dispatch_mode,
+                                                std::vector<int>* in_attrs,
+                                                std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 7U);
+  CHECK_EQ(out_attrs->size(), 3U);
+  *dispatch_mode = DispatchMode::kFCompute;
+  for (int& in_attr : *in_attrs)
+    in_attr = kDefaultStorage;
+  for (int& out_attr : *out_attrs)
+    out_attr = kDefaultStorage;
+  return true;
+}
+
+inline TBlob QuantizedPoolingDequantizeIfNeeded(mshadow::Stream<cpu>* s,
+                                                const TBlob& data,
+                                                const TBlob& min_range,
+                                                const TBlob& max_range,
+                                                float* workspace,
+                                                size_t* workspace_offset) {
+  if (data.type_flag_ == mshadow::kFloat32) {
+    return data;
+  }
+
+  TBlob dequantized(workspace + *workspace_offset, data.shape_, data.dev_mask(), data.dev_id());
+  *workspace_offset += data.Size();
+  if (data.type_flag_ == mshadow::kUint8) {
+    mxnet_op::Kernel<QuantizedPoolingDequantizeUnsigned, cpu>::Launch(s,
+                                                                      data.Size(),
+                                                                      dequantized.dptr<float>(),
+                                                                      data.dptr<uint8_t>(),
+                                                                      min_range.dptr<float>(),
+                                                                      max_range.dptr<float>(),
+                                                                      kWriteTo);
+  } else if (data.type_flag_ == mshadow::kInt8) {
+    mxnet_op::Kernel<QuantizedPoolingDequantizeInt8, cpu>::Launch(s,
+                                                                  data.Size(),
+                                                                  dequantized.dptr<float>(),
+                                                                  data.dptr<int8_t>(),
+                                                                  min_range.dptr<float>(),
+                                                                  max_range.dptr<float>(),
+                                                                  kWriteTo);
+  } else {
+    LOG(FATAL) << "_backward_contrib_quantized_pooling only supports int8, uint8, or float32 "
+               << "saved tensors";
+  }
+  return dequantized;
+}
+
+inline TBlob QuantizedPoolingCastGradIfNeeded(mshadow::Stream<cpu>* s,
+                                              const TBlob& grad,
+                                              float* workspace,
+                                              size_t* workspace_offset) {
+  if (grad.type_flag_ == mshadow::kFloat32) {
+    return grad;
+  }
+
+  TBlob cast_grad(workspace + *workspace_offset, grad.shape_, grad.dev_mask(), grad.dev_id());
+  *workspace_offset += grad.Size();
+  if (grad.type_flag_ == mshadow::kUint8) {
+    mxnet_op::Kernel<QuantizedPoolingCastGrad, cpu>::Launch(s,
+                                                            grad.Size(),
+                                                            cast_grad.dptr<float>(),
+                                                            grad.dptr<uint8_t>(),
+                                                            kWriteTo);
+  } else if (grad.type_flag_ == mshadow::kInt8) {
+    mxnet_op::Kernel<QuantizedPoolingCastGrad, cpu>::Launch(s,
+                                                            grad.Size(),
+                                                            cast_grad.dptr<float>(),
+                                                            grad.dptr<int8_t>(),
+                                                            kWriteTo);
+  } else {
+    LOG(FATAL) << "_backward_contrib_quantized_pooling only supports float32, int8, or uint8 "
+               << "output gradients";
+  }
+  return cast_grad;
+}
+
+void QuantizedPoolingBackwardComputeCPU(const nnvm::NodeAttrs& attrs,
+                                        const OpContext& ctx,
+                                        const std::vector<TBlob>& inputs,
+                                        const std::vector<OpReqType>& req,
+                                        const std::vector<TBlob>& outputs) {
+  const PoolingParam& param = nnvm::get<PoolingParam>(attrs.parsed);
+  CHECK_EQ(inputs.size(), 7U);
+  CHECK_EQ(outputs.size(), 3U);
+  CHECK_EQ(req.size(), 3U);
+  CHECK(param.pool_type == pool_enum::kMaxPooling || param.pool_type == pool_enum::kAvgPooling)
+      << "QuantizedPoolingOp only supports pool_type=max/avg for now";
+
+  mshadow::Stream<cpu>* s = ctx.get_stream<cpu>();
+  if (req[0] != kNullOp) {
+    const TBlob& ograd      = inputs[0];
+    const TBlob& fwd_data   = inputs[1];
+    const TBlob& fwd_min    = inputs[2];
+    const TBlob& fwd_max    = inputs[3];
+    const TBlob& fwd_output = inputs[4];
+    const TBlob& out_min    = inputs[5];
+    const TBlob& out_max    = inputs[6];
+
+    const size_t grad_workspace = ograd.type_flag_ == mshadow::kFloat32 ? 0 : ograd.Size();
+    const size_t data_workspace =
+        fwd_data.type_flag_ == mshadow::kFloat32 ? 0 : fwd_data.Size();
+    const size_t output_workspace =
+        fwd_output.type_flag_ == mshadow::kFloat32 ? 0 : fwd_output.Size();
+    const size_t workspace_size = grad_workspace + data_workspace + output_workspace;
+    mshadow::Tensor<cpu, 1, float> workspace =
+        ctx.requested[0].get_space_typed<cpu, 1, float>(mshadow::Shape1(workspace_size), s);
+    size_t workspace_offset = 0;
+    const TBlob float_ograd =
+        QuantizedPoolingCastGradIfNeeded(s, ograd, workspace.dptr_, &workspace_offset);
+    const TBlob deq_data =
+        QuantizedPoolingDequantizeIfNeeded(s, fwd_data, fwd_min, fwd_max, workspace.dptr_,
+                                           &workspace_offset);
+    const TBlob deq_output =
+        QuantizedPoolingDequantizeIfNeeded(s, fwd_output, out_min, out_max, workspace.dptr_,
+                                           &workspace_offset);
+
+    std::vector<TBlob> pooling_inputs;
+    if (GetNumBackInputs(param) == 5) {
+      pooling_inputs = {float_ograd, TBlob(), deq_data, deq_output, TBlob()};
+    } else {
+      pooling_inputs = {float_ograd, deq_data, deq_output};
+    }
+    PoolingGradCompute<cpu>(attrs, ctx, pooling_inputs, {req[0]}, {outputs[0]});
+  }
+
+  Fill<false>(s, outputs[1], req[1], 0);
+  Fill<false>(s, outputs[2], req[2], 0);
+}
+
+std::vector<nnvm::NodeEntry> QuantizedPoolingGrad(const nnvm::ObjectPtr& n,
+                                                  const std::vector<nnvm::NodeEntry>& ograds) {
+  std::vector<nnvm::NodeEntry> inputs;
+  inputs.reserve(7);
+  inputs.push_back(ograds[0]);
+  inputs.insert(inputs.end(), n->inputs.begin(), n->inputs.end());
+  for (uint32_t i = 0; i < n->num_outputs(); ++i) {
+    inputs.emplace_back(n, i, 0);
+  }
+  return MakeGradNode("_backward_contrib_quantized_pooling", n, inputs, n->attrs.dict);
+}
+
 NNVM_REGISTER_OP(_contrib_quantized_pooling)
     .add_alias("_npx_quantized_pooling")
     .describe(R"code(Pooling operator for input and output data type of int8.
@@ -181,8 +438,9 @@ The input and output data comes with min and max thresholds for quantizing
 the float32 data into int8.
 
 .. Note::
-    This operator only supports forward propogation. DO NOT use it in training.
-    This operator only supports `pool_type` of `avg` or `max`.)code" ADD_FILELINE)
+    This operator only supports `pool_type` of `avg` or `max`.
+    Backward propagation computes the data gradient and returns zero min/max gradients.)code"
+                  ADD_FILELINE)
     .set_num_inputs(3)
     .set_num_outputs(3)
     .set_attr_parser(PoolingParamParser)
@@ -199,9 +457,7 @@ the float32 data into int8.
     .set_attr<mxnet::FInferShape>("FInferShape", QuantizedPoolingShape)
     .set_attr<nnvm::FInferType>("FInferType", QuantizedPoolingType)
     .set_attr<FInferStorageType>("FInferStorageType", QuantizedPoolingStorageType)
-    // TODO(Xinyu): a temp solution to enable GluonCV INT8 flow,
-    // will be reverted after the improvement of CachedOP is done.
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)
+    .set_attr<nnvm::FGradient>("FGradient", QuantizedPoolingGrad)
     .set_attr<FNeedRequantize>(
         "FNeedRequantize",
         [](const NodeAttrs& attrs) {
@@ -215,6 +471,20 @@ the float32 data into int8.
     .add_argument("min_data", "NDArray-or-Symbol", "Minimum value of data.")
     .add_argument("max_data", "NDArray-or-Symbol", "Maximum value of data.")
     .add_arguments(PoolingParam::__FIELDS__());
+
+NNVM_REGISTER_OP(_backward_contrib_quantized_pooling)
+    .set_num_inputs(7)
+    .set_num_outputs(3)
+    .set_attr_parser(PoolingParamParser)
+    .set_attr<mxnet::FInferShape>("FInferShape", QuantizedPoolingBackwardShape)
+    .set_attr<nnvm::FInferType>("FInferType", QuantizedPoolingBackwardType)
+    .set_attr<FInferStorageType>("FInferStorageType", QuantizedPoolingBackwardStorageType)
+    .set_attr<FResourceRequest>(
+        "FResourceRequest",
+        [](const NodeAttrs& n) {
+          return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+        })
+    .set_attr<FCompute>("FCompute<cpu>", QuantizedPoolingBackwardComputeCPU);
 
 NNVM_REGISTER_OP(Pooling).set_attr<FQuantizedOp>("FQuantizedOp", [](const NodeAttrs& attrs) {
   PoolingParam param;

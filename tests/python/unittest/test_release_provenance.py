@@ -34,7 +34,13 @@ def _write_minimal_repo(tmp_path, version):
     libinfo.write_text('__version__ = "{}"\n'.format(version))
     cache = tmp_path / "build" / "CMakeCache.txt"
     cache.parent.mkdir()
-    cache.write_text("USE_CUDA:BOOL=ON\nUSE_OPENCV:BOOL=OFF\n")
+    cache.write_text(
+        "USE_CUDA:BOOL=ON\n"
+        "USE_CUDNN:BOOL=ON\n"
+        "USE_NCCL:BOOL=ON\n"
+        "USE_ONEDNN:BOOL=ON\n"
+        "USE_OPENCV:BOOL=OFF\n"
+    )
     return cache
 
 
@@ -67,11 +73,15 @@ def test_collect_provenance_reports_release_staging_fields(monkeypatch, tmp_path
             "error": None,
             "has_libmxnet": True,
             "needed": [],
+            "cudnn_needed": [],
+            "nccl_needed": [],
             "opencv_needed": [],
             "opencv_bundled": [],
             "opencv_bundled_sonames": [],
             "runpath": None,
             "runpath_has_origin_lib": False,
+            "runpath_has_nvidia_cudnn": False,
+            "runpath_has_nvidia_nccl": False,
         },
     )
 
@@ -110,6 +120,9 @@ def test_validate_provenance_rejects_dirty_tree_and_wheel_version_mismatch():
             "cache_found": True,
             "cache_path": "build/CMakeCache.txt",
             "USE_CUDA": {"enabled": True, "raw": "ON"},
+            "USE_CUDNN": {"enabled": True, "raw": "ON"},
+            "USE_NCCL": {"enabled": True, "raw": "ON"},
+            "USE_ONEDNN": {"enabled": True, "raw": "ON"},
             "USE_OPENCV": {"enabled": False, "raw": "OFF"},
         },
         "wheels": [
@@ -174,6 +187,9 @@ def test_validate_provenance_rejects_stale_cmake_commit_stamp():
             "cache_found": True,
             "cache_path": "build/CMakeCache.txt",
             "USE_CUDA": {"enabled": True, "raw": "ON"},
+            "USE_CUDNN": {"enabled": True, "raw": "ON"},
+            "USE_NCCL": {"enabled": True, "raw": "ON"},
+            "USE_ONEDNN": {"enabled": True, "raw": "ON"},
             "USE_OPENCV": {"enabled": False, "raw": "OFF"},
         },
         "build": {
@@ -232,6 +248,9 @@ def test_validate_provenance_checks_opencv_wheel_payload():
             "cache_found": True,
             "cache_path": "build/CMakeCache.txt",
             "USE_CUDA": {"enabled": True, "raw": "ON"},
+            "USE_CUDNN": {"enabled": True, "raw": "ON"},
+            "USE_NCCL": {"enabled": True, "raw": "ON"},
+            "USE_ONEDNN": {"enabled": True, "raw": "ON"},
             "USE_OPENCV": {"enabled": True, "raw": "ON"},
         },
         "wheels": [
@@ -248,11 +267,15 @@ def test_validate_provenance_checks_opencv_wheel_payload():
                     "error": None,
                     "has_libmxnet": True,
                     "needed": ["libcudart.so.13"],
+                    "cudnn_needed": [],
+                    "nccl_needed": [],
                     "opencv_needed": [],
                     "opencv_bundled": [],
                     "opencv_bundled_sonames": [],
                     "runpath": "$ORIGIN/../nvidia/cu13/lib",
                     "runpath_has_origin_lib": False,
+                    "runpath_has_nvidia_cudnn": False,
+                    "runpath_has_nvidia_nccl": False,
                 },
             }
         ],
@@ -285,6 +308,9 @@ def test_validate_provenance_accepts_opencv_wheel_payload():
             "cache_found": True,
             "cache_path": "build/CMakeCache.txt",
             "USE_CUDA": {"enabled": True, "raw": "ON"},
+            "USE_CUDNN": {"enabled": True, "raw": "ON"},
+            "USE_NCCL": {"enabled": True, "raw": "ON"},
+            "USE_ONEDNN": {"enabled": True, "raw": "ON"},
             "USE_OPENCV": {"enabled": True, "raw": "ON"},
         },
         "wheels": [
@@ -301,9 +327,13 @@ def test_validate_provenance_accepts_opencv_wheel_payload():
                     "error": None,
                     "has_libmxnet": True,
                     "needed": [
+                        "libcudnn.so.9",
+                        "libnccl.so.2",
                         "libopencv_imgcodecs.so.406",
                         "libopencv_imgproc.so.406",
                     ],
+                    "cudnn_needed": ["libcudnn.so.9"],
+                    "nccl_needed": ["libnccl.so.2"],
                     "opencv_needed": [
                         "libopencv_imgcodecs.so.406",
                         "libopencv_imgproc.so.406",
@@ -316,8 +346,13 @@ def test_validate_provenance_accepts_opencv_wheel_payload():
                         "libopencv_imgcodecs.so.406",
                         "libopencv_imgproc.so.406",
                     ],
-                    "runpath": "$ORIGIN/lib:$ORIGIN/../nvidia/cu13/lib",
+                    "runpath": (
+                        "$ORIGIN/lib:$ORIGIN/../nvidia/cudnn/lib:"
+                        "$ORIGIN/../nvidia/nccl/lib:$ORIGIN/../nvidia/cu13/lib"
+                    ),
                     "runpath_has_origin_lib": True,
+                    "runpath_has_nvidia_cudnn": True,
+                    "runpath_has_nvidia_nccl": True,
                 },
             }
         ],
@@ -326,5 +361,73 @@ def test_validate_provenance_accepts_opencv_wheel_payload():
     assert release_provenance.validate_provenance(
         report,
         expect_cuda="on",
+        expect_cudnn="on",
+        expect_nccl="on",
+        expect_onednn="on",
         expect_opencv="on",
     ) == []
+
+
+def test_validate_provenance_checks_cudnn_and_nccl_wheel_payload():
+    release_provenance = _load_release_provenance()
+    report = {
+        "expected_package_name": "mxnet",
+        "git": {
+            "commit": "0123456789abcdef0123456789abcdef01234567",
+            "short_commit": "0123456789ab",
+            "dirty": False,
+            "tracked_change_count": 0,
+            "untracked_count": 0,
+        },
+        "package": {"version": "2.0.0"},
+        "features": {
+            "cache_found": True,
+            "cache_path": "build/CMakeCache.txt",
+            "USE_CUDA": {"enabled": True, "raw": "ON"},
+            "USE_CUDNN": {"enabled": True, "raw": "ON"},
+            "USE_NCCL": {"enabled": True, "raw": "ON"},
+            "USE_ONEDNN": {"enabled": True, "raw": "ON"},
+            "USE_OPENCV": {"enabled": False, "raw": "OFF"},
+        },
+        "wheels": [
+            {
+                "filename": "mxnet-2.0.0-cp312-cp312-linux_x86_64.whl",
+                "path": "dist/mxnet-2.0.0-cp312-cp312-linux_x86_64.whl",
+                "exists": True,
+                "distribution": "mxnet",
+                "distribution_matches_package": True,
+                "version": "2.0.0",
+                "version_matches_package": True,
+                "payload": {
+                    "inspected": True,
+                    "error": None,
+                    "has_libmxnet": True,
+                    "needed": ["libcudnn.so.9"],
+                    "cudnn_needed": ["libcudnn.so.9"],
+                    "nccl_needed": [],
+                    "opencv_needed": [],
+                    "opencv_bundled": [],
+                    "opencv_bundled_sonames": [],
+                    "runpath": "$ORIGIN/../nvidia/cu13/lib",
+                    "runpath_has_origin_lib": False,
+                    "runpath_has_nvidia_cudnn": False,
+                    "runpath_has_nvidia_nccl": False,
+                },
+            }
+        ],
+    }
+
+    errors = release_provenance.validate_provenance(
+        report,
+        expect_cuda="on",
+        expect_cudnn="on",
+        expect_nccl="on",
+        expect_onednn="on",
+        expect_opencv="off",
+    )
+
+    assert any("RUNPATH does not include $ORIGIN/../nvidia/cudnn/lib" in error
+               for error in errors)
+    assert any("has no libnccl NEEDED entries" in error for error in errors)
+    assert any("RUNPATH does not include $ORIGIN/../nvidia/nccl/lib" in error
+               for error in errors)

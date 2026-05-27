@@ -15,24 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""XOP18 forward contract anchor for quantized self-attention subgraphs.
-
-issues.md XOP18 calls for direct small int8/uint8 contract tests for
-`_sg_onednn_selfatt_qk{,_split}` and `_sg_onednn_selfatt_valatt` before
-fixing the backward direction (which is blocked on B4 / NNVM CachedOp).
-
-The full subgraph backward is xfailed in
-`tests/python/dnnl/subgraphs/test_quantized_backward.py`; this file
-covers the orthogonal contract that the forward path is at least
-**registered + invokable + shape-correct** so a future quantization
-refactor that drops one of these subgraph ops fails here loudly instead
-of breaking ResNet-style transformer inference silently.
-"""
+"""XOP18 contract tests for quantized oneDNN self-attention subgraphs."""
 
 import numpy as np
 import pytest
 
 import mxnet as mx
+from mxnet import autograd
 
 
 def _onednn_available():
@@ -56,10 +45,117 @@ def test_selfatt_subgraph_op_registered(op_name):
 
     A previous reorganization quietly dropped one of these from the
     registry; this test fails fast if that happens again."""
-    sym_module = mx.sym
-    assert hasattr(sym_module, op_name) or hasattr(sym_module.contrib, op_name) or \
-        hasattr(sym_module._internal, op_name) if hasattr(sym_module, '_internal') else True, \
-        f"Self-attention subgraph op {op_name!r} is not registered in mx.sym"
+    assert hasattr(mx.nd._internal, op_name), \
+        f"Self-attention subgraph op {op_name!r} is not registered in mx.nd._internal"
+    assert hasattr(mx.sym._internal, op_name), \
+        f"Self-attention subgraph op {op_name!r} is not registered in mx.sym._internal"
+
+
+def _dequant_int8(qarray, min_range, max_range):
+    scale = max(abs(float(min_range)), abs(float(max_range))) / 127.0
+    return qarray.astype('float32') * scale
+
+
+def _dequant_uint8(qarray, min_range, max_range):
+    return qarray.astype('float32') * ((float(max_range) - float(min_range)) / 255.0) + \
+        float(min_range)
+
+
+def test_selfatt_qk_quantized_backward_matches_reference():
+    B, T_q, T_k, heads, head_dim = 2, 3, 4, 2, 4
+    ctx = mx.cpu()
+    queries_np = np.linspace(
+        -0.4, 0.5, B * T_q * heads * head_dim).reshape(B, T_q, heads * head_dim)
+    keys_np = np.linspace(
+        0.3, -0.6, B * T_k * heads * head_dim).reshape(B, T_k, heads * head_dim)
+    queries = mx.nd.array(queries_np.astype('float32'), ctx=ctx)
+    keys = mx.nd.array(keys_np.astype('float32'), ctx=ctx)
+    queries.attach_grad()
+    keys.attach_grad()
+
+    with autograd.record():
+        q, qmin, qmax = mx.nd.contrib.quantize_v2(
+            queries, min_calib_range=-1.0, max_calib_range=1.0, out_type='int8')
+        k, kmin, kmax = mx.nd.contrib.quantize_v2(
+            keys, min_calib_range=-1.0, max_calib_range=1.0, out_type='int8')
+        out = mx.nd._internal._sg_onednn_selfatt_qk(
+            queries=q, key_data=k, min_q=qmin, max_q=qmax, min_k=kmin, max_k=kmax,
+            heads=heads, quantized=True, enabled_float_output='float32')
+        out.sum().backward()
+
+    q_float = _dequant_int8(q.asnumpy(), qmin.asscalar(), qmax.asscalar())
+    k_float = _dequant_int8(k.asnumpy(), kmin.asscalar(), kmax.asscalar())
+    q_heads = q_float.reshape(B, T_q, heads, head_dim)
+    k_heads = k_float.reshape(B, T_k, heads, head_dim)
+    expected_q = np.einsum('bhqk,bkhd->bqhd',
+                           np.ones((B, heads, T_q, T_k), dtype='float32'),
+                           k_heads).reshape(B, T_q, heads * head_dim)
+    expected_k = np.einsum('bhqk,bqhd->bkhd',
+                           np.ones((B, heads, T_q, T_k), dtype='float32'),
+                           q_heads).reshape(B, T_k, heads * head_dim)
+    np.testing.assert_allclose(queries.grad.asnumpy(), expected_q, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(keys.grad.asnumpy(), expected_k, rtol=1e-5, atol=1e-5)
+
+
+def test_selfatt_qk_split_quantized_backward_matches_reference():
+    B, T, heads, head_dim = 2, 3, 2, 4
+    embed_dim = heads * head_dim
+    ctx = mx.cpu()
+    qkv_np = np.linspace(
+        -0.5, 0.5, B * T * 3 * embed_dim).reshape(B, T, 3 * embed_dim)
+    qkv_input = mx.nd.array(qkv_np.astype('float32'), ctx=ctx)
+    qkv_input.attach_grad()
+
+    with autograd.record():
+        qkv, qkv_min, qkv_max = mx.nd.contrib.quantize_v2(
+            qkv_input, min_calib_range=-1.0, max_calib_range=1.0, out_type='int8')
+        out = mx.nd._internal._sg_onednn_selfatt_qk_split(
+            qkv, qkv_min, qkv_max, heads=heads, quantized=True,
+            enabled_float_output='float32')
+        out.sum().backward()
+
+    qkv_float = _dequant_int8(qkv.asnumpy(), qkv_min.asscalar(), qkv_max.asscalar())
+    q = qkv_float[:, :, :embed_dim].reshape(B, T, heads, head_dim)
+    k = qkv_float[:, :, embed_dim:2 * embed_dim].reshape(B, T, heads, head_dim)
+    expected = np.zeros((B, T, 3, heads, head_dim), dtype='float32')
+    upstream = np.ones((B, heads, T, T), dtype='float32')
+    expected[:, :, 0, :, :] = np.einsum('bhqk,bkhd->bqhd', upstream, k)
+    expected[:, :, 1, :, :] = np.einsum('bhqk,bqhd->bkhd', upstream, q)
+    expected = expected.reshape(B, T, 3 * embed_dim)
+    np.testing.assert_allclose(qkv_input.grad.asnumpy(), expected, rtol=1e-5, atol=1e-5)
+
+
+def test_selfatt_valatt_quantized_backward_matches_reference():
+    B, T, heads, head_dim = 2, 3, 2, 4
+    embed_dim = heads * head_dim
+    ctx = mx.cpu()
+    attention_np = np.linspace(0.05, 0.95, B * heads * T * T).reshape(B, heads, T, T)
+    qkv_np = np.linspace(-0.5, 0.5, B * T * 3 * embed_dim).reshape(B, T, 3 * embed_dim)
+    attention = mx.nd.array(attention_np.astype('float32'), ctx=ctx)
+    qkv_input = mx.nd.array(qkv_np.astype('float32'), ctx=ctx)
+    attention.attach_grad()
+    qkv_input.attach_grad()
+
+    with autograd.record():
+        att, att_min, att_max = mx.nd.contrib.quantize_v2(
+            attention, min_calib_range=0.0, max_calib_range=1.0, out_type='uint8')
+        qkv, qkv_min, qkv_max = mx.nd.contrib.quantize_v2(
+            qkv_input, min_calib_range=-1.0, max_calib_range=1.0, out_type='int8')
+        out = mx.nd._internal._sg_onednn_selfatt_valatt(
+            att, qkv, att_min, att_max, qkv_min, qkv_max,
+            heads=heads, quantized=True, enabled_float_output='float32')
+        out.sum().backward()
+
+    att_float = _dequant_uint8(att.asnumpy(), att_min.asscalar(), att_max.asscalar())
+    qkv_float = _dequant_int8(qkv.asnumpy(), qkv_min.asscalar(), qkv_max.asscalar())
+    value = qkv_float[:, :, 2 * embed_dim:].reshape(B, T, heads, head_dim)
+    upstream = np.ones((B, T, heads, head_dim), dtype='float32')
+    expected_att = np.einsum('bqhd,bkhd->bhqk', upstream, value)
+    expected_qkv = np.zeros((B, T, 3, heads, head_dim), dtype='float32')
+    expected_qkv[:, :, 2, :, :] = np.einsum('bhqk,bqhd->bkhd', att_float, upstream)
+    expected_qkv = expected_qkv.reshape(B, T, 3 * embed_dim)
+    np.testing.assert_allclose(attention.grad.asnumpy(), expected_att, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(qkv_input.grad.asnumpy(), expected_qkv, rtol=1e-5, atol=1e-5)
 
 
 def test_selfatt_qk_forward_shape():

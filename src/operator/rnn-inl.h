@@ -1052,7 +1052,8 @@ class RNNOp {
     CHECK_EQ(in_grad.size(), num_inputs);
     CHECK_EQ(out_grad.size(), num_outputs);
     CHECK_EQ(req.size(), num_inputs);
-    CHECK_NE(req[rnn_enum::kData], kAddTo) << "AddTo is not supported for data";
+    CHECK(req[rnn_enum::kData] != kAddTo || ctx_.dev_type == kCPU)
+        << "AddTo for data is only supported by the native CPU RNN path";
     CHECK_NE(req[rnn_enum::kState], kAddTo) << "AddTo is not supported for state";
     Stream<xpu>* s = ctx.get_stream<xpu>();
     // get input + output tensors

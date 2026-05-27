@@ -544,7 +544,8 @@ void LstmBackwardSingleLayer(DType* ws,
   }
   Tensor<cpu, 2, DType> dyx(difgo.dptr_, Shape2(T * N, H * 4));
   if (req_data != kNullOp) {
-    linalg_gemm(dyx, wx, dx, alpha, bid ? beta1 : beta0, false, false);
+    const DType beta_data = (bid || req_data == kAddTo) ? beta1 : beta0;
+    linalg_gemm(dyx, wx, dx, alpha, beta_data, false, false);
   }
   if (req_params != kNullOp && req_params != kAddTo) {
     linalg_gemm(dyx, x, dwx, alpha, beta0, true, false);
@@ -644,6 +645,7 @@ void LstmBackward(DType* ws,
     Tensor<cpu, 3, DType> dy(dy_ptr, Shape3(T, N, H * D));
     Tensor<cpu, 2, DType> x(i ? y.dptr_ - r_size : x_ptr, Shape2(T * N, input_size));
     Tensor<cpu, 2, DType> dx(i ? dy_tmp_ptr : dx_ptr, Shape2(T * N, input_size));
+    const int layer_req_data = (i == 0 || req_data == kNullOp) ? req_data : kWriteTo;
     LstmBackwardSingleLayer<DType>(ws2,
                                    rs_cur_ptr,
                                    tmp_buf,
@@ -665,7 +667,7 @@ void LstmBackward(DType* ws,
                                    w_cur_ptr,
                                    dw_cur_ptr,
                                    db_cur_ptr,
-                                   req_data,
+                                   layer_req_data,
                                    req_params,
                                    req_state,
                                    req_statecell);
@@ -697,7 +699,7 @@ void LstmBackward(DType* ws,
                                      w_cur_ptr,
                                      dw_cur_ptr,
                                      db_cur_ptr,
-                                     req_data,
+                                     layer_req_data,
                                      req_params,
                                      req_state,
                                      req_statecell);
@@ -1399,6 +1401,7 @@ void GruBackwardSingleLayer(DType* ws,
   // dx = da * wx    [T * N, I] = [T * N, 3 * H] * [3 * H, I]
   Tensor<cpu, 2, DType> d_da(da, Shape2(T * N, 3 * H));
   if (req_data != kNullOp) {
+    beta = req_data == kAddTo ? 1.0 : 0.0;
     Tensor<cpu, 2, DType> d_dx(dx, Shape2(T * N, I));
     linalg_gemm(d_da, wx, d_dx, alpha, beta, false, false);
   }
@@ -1606,6 +1609,7 @@ void GruBackward(DType* ws,
     }
     Tensor<cpu, 2, DType> hx_l = hx[l];
     Tensor<cpu, 2, DType> x_l(y_tmp, Shape2(T * N, I));
+    const int layer_req_data = (l == 0 || req_data == kNullOp) ? req_data : kWriteTo;
     GruBackwardSingleLayer<DType>(ws2,
                                   tmp_buf,
                                   D,
@@ -1630,7 +1634,7 @@ void GruBackward(DType* ws,
                                   dwh_l,
                                   dbx_l,
                                   dbh_l,
-                                  req_data,
+                                  layer_req_data,
                                   req_params,
                                   req_state);
     if (dropout > 0.0f && l > 0 && req_data != kNullOp) {
@@ -2315,6 +2319,7 @@ void VanillaRNNBackwardSingleLayer(DType* ws,
   // dx = da * wx    [T * N, I] = [T * N, H] * [H, I]
   Tensor<cpu, 2, DType> d_dar(dar, Shape2(T * N, H));
   if (req_data != kNullOp) {
+    beta = req_data == kAddTo ? 1.0 : 0.0;
     Tensor<cpu, 2, DType> d_dx(dx, Shape2(T * N, I));
     linalg_gemm(d_dar, wx, d_dx, alpha, beta, false, false);
   }
@@ -2510,6 +2515,7 @@ void VanillaRNNBackward(DType* ws,
     }
     Tensor<cpu, 2, DType> hx_l = hx[l];
     Tensor<cpu, 2, DType> x_l(y_tmp, Shape2(T * N, I));
+    const int layer_req_data = (l == 0 || req_data == kNullOp) ? req_data : kWriteTo;
     VanillaRNNBackwardSingleLayer<DType>(ws2,
                                          tmp_buf,
                                          D,
@@ -2531,7 +2537,7 @@ void VanillaRNNBackward(DType* ws,
                                          dwh_l,
                                          dbx_l,
                                          dbh_l,
-                                         req_data,
+                                         layer_req_data,
                                          req_params,
                                          req_state,
                                          mode);

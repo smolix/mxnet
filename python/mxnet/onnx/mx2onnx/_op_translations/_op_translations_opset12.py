@@ -819,7 +819,7 @@ def convert_pooling(node, **kwargs):
         if pool_type == 'max':
             input_dtype = get_input_dtypes(node, kwargs)[0]
             if np.issubdtype(input_dtype, np.floating):
-                pad_value = np.array(np.finfo(input_dtype).min, dtype=input_dtype)
+                pad_value = np.array(-np.inf, dtype=input_dtype)
             else:
                 pad_value = np.array(np.iinfo(input_dtype).min, dtype=input_dtype)
             create_const_scalar_node(name + '_full_pool_output_pad_value', pad_value, kwargs)

@@ -9,15 +9,20 @@ already closed (kept for traceability and to avoid re-doing closed audits).
 **Latest merged PRs:** #33 (dropout/license/wheel `.3`), #34 (NCCL
 single-machine kvstore fix + release-wheel timeout/thread update), #35
 (ctypes ABI / floor-divide / release-provenance guard), #36 (skip audit +
-WarpCTC optional-plugin contract cleanup)
-**Latest tag on GitHub:** `v2.0.0+cu13.bw.20260526.3` (release published with
-CUDA wheel)
-**Release wheel:** <https://github.com/smolix/mxnet/releases/download/v2.0.0%2Bcu13.bw.20260526.3/mxnet-2.0.0%2Bcu13.bw.20260526.3-cp312-cp312-linux_x86_64.whl>
-**Local wheel:** `dist/mxnet-2.0.0+cu13.bw.20260526.4-cp312-cp312-linux_x86_64.whl`
-(522 MiB, built from local commit
-`3d07d3b7f80aa6b83917033383ecb87b6ebbde00`; not yet published.
-Fresh-venv smoke shows CUDA/cuDNN/NCCL/oneDNN/OpenCV enabled and sees 4 GPUs;
-focused wheel NCCL tests pass `13 passed`.)
+WarpCTC optional-plugin contract cleanup), #37 (quantized subgraph QAT
+backward + XOP18 self-attention backward), #38 (ONNX export for modern
+runtimes)
+**Latest tag on GitHub:** `v2.0.0+cu13.bw.20260526.5` (release published with
+CUDA/cuDNN/NCCL/oneDNN/OpenCV wheel)
+**Release wheel:** <https://github.com/smolix/mxnet/releases/download/v2.0.0%2Bcu13.bw.20260526.5/mxnet-2.0.0%2Bcu13.bw.20260526.5-cp312-cp312-linux_x86_64.whl>
+**Local wheel artifact:** `dist/mxnet-2.0.0+cu13.bw.20260526.5-cp312-cp312-linux_x86_64.whl`
+(523 MiB, built from commit
+`6fffc5c176af8b38bac99862dcfc29996322cf31`; uploaded to the GitHub release
+above. Release provenance reports CUDA/cuDNN/NCCL/oneDNN/OpenCV enabled,
+bundled OpenCV payload, and matching CMake build metadata.)
+**Current master delta:** PR #38 merge commit
+`2e6ce3000d5352b12255909b9e68f66773eb21a4` fixes ONNX export/runtime
+compatibility, but no post-PR #38 wheel has been built or published yet.
 Runtime deps are pulled from NVIDIA pip wheels; `libmxnet.so`
 RUNPATH covers `$ORIGIN/lib`, venv-side `nvidia/cudnn/lib`,
 `nvidia/nccl/lib`, `nvidia/cu13/lib`, and local CUDA install paths. The
@@ -41,17 +46,15 @@ Status labels:
 
 | Priority | Tracker | Status | Issue | Next action |
 |---|---|---|---|---|
-| P0 | B4 / XOP18 | Fixed locally | Local QAT backward now covers simple `_sg_onednn_conv`, simple `_sg_onednn_fully_connected`, fused Conv+ReLU, quantized avg/max pooling, Conv -> ReLU -> Pool -> FC composite, and quantized oneDNN self-attention QK/QK-split/ValAtt. `tests/python/dnnl/subgraphs/test_quantized_backward.py` passes (`21 passed`) and `tests/python/dnnl/test_xop18_quantized_subgraph_req.py` passes (`9 passed`, also under `NaiveEngine`). The oneDNN reduce destination descriptor bug exposed by this path is fixed locally. | Keep broader full-suite/wheel validation before release. |
-| P1 | XOP18 | Fixed locally | Quantized self-attention subgraph backward now uses real CPU gradients instead of `MakeZeroGradNodes`; direct int8/uint8 QAT tests compare QK, QK-split, and ValAtt gradients against NumPy references. | Re-run in wheel acceptance sweep. |
+| P1 | FP16-CPU / macOS-arm64 | Remote / Open | CPU FP16 issues need reproduction and repair on a suitable CPU host; after that, Apple Silicon needs a regression pass to make sure the fixes do not regress the macOS arm64 wheel path. | On the next server, build from current `master`, run the focused FP16 CPU smoke/failures (including `tools/run_fp16_remote_smoke.sh` where applicable), then run the Apple Silicon C++/Python/wheel smoke before tagging another release. |
 | P2 | CN9 / L6 | Open (track upstream) | Bundled dmlc concurrent queue still assigns `-1` into a `uint32_t` sentinel under NVCC; oneDNN's vendored ITT assembly still lacks a non-executable-stack note. | Do not commit private submodule-local fixes; track as upstream/submodule policy. |
 | P2 | C4 | Open | CUDA build matrix CI for Ada/Hopper/Blackwell + CUDA 12.x compatibility. | Validate `sm_89` here; leave CUDA 12.x and dedicated Blackwell to later runners. |
 | P2 | L7 | In progress | Target load envelope: 48-64 runnable tasks; cap `OPENBLAS_NUM_THREADS=1`, `OMP_NUM_THREADS=2-4`, `MKL_NUM_THREADS=1` for xdist lanes. | Keep one heavy CPU lane at a time. |
-| P2 | O1, O4, O7 | Partial / Open | Linux wheel now has a working NVIDIA-pip runtime layout, and the local `.20260526.4` wheel enables CUDA/cuDNN/NCCL/oneDNN/OpenCV with provenance guards for all five features. The published `.20260526.3` release wheel still reports `NCCL` disabled until a new tag/release is published. The wheel is still not self-contained for CUDA/cuDNN/NCCL (O1). Release publication is manual; GitHub release automation is still absent (O4). No conda/system package story exists (O7). | Publish/tag `.20260526.4` when ready. Defer expensive CUDA release automation until the release cadence is clearer; separately decide whether to keep the pip-runtime dependency model or produce a bundled runtime wheel. |
+| P2 | O1, O4, O7 | Partial / Open | Linux wheel `.20260526.5` is published and has provenance guards for CUDA/cuDNN/NCCL/oneDNN/OpenCV. The wheel still relies on NVIDIA pip runtime libraries for CUDA/cuDNN/NCCL rather than bundling them directly (O1). Release publication is manual; GitHub release automation is still absent (O4). No conda/system package story exists (O7). | Defer expensive CUDA release automation until the release cadence is clearer; separately decide whether to keep the pip-runtime dependency model or produce a bundled runtime wheel. |
 | P2 | T2, T3, T4, T5, T6, T11 | Open / Partial | T2 GluonNLP/Sockeye/AutoGluon (DGL out of scope); T3 multi-machine ps-lite rendezvous; T4 Python 3.13+; T5 NumPy 2.x ABI; T6 DLPack PyTorch/JAX/CUDA interop; T11 cross-platform lifecycle coverage. | Strategic; revisit when needed. |
-| Strategic | O8, O9, O12 | Informational / Deferred | Apache MXNet archived 2023-11-17 — all fixes live in this fork (O8). Future oneDNN major releases will require porting (O9). ONNX Runtime 1.26 / opset 26 refresh is out of scope for current Linux/CUDA cleanup (O12). | — |
+| Strategic | O8, O9 | Informational / Deferred | Apache MXNet archived 2023-11-17 — all fixes live in this fork (O8). Future oneDNN major releases will require porting (O9). | — |
 | Strategic | P1, P3, P4, P5 | Deferred / Hardware | cuBLASLt default-on / stride-aware / INT8 (P1); topk K-independence (P3); softmax / LayerNorm small-op kernel pipelines (P4); BF16 CPU validation on AVX-512-BF16 hardware (P5). | Defer; benchmark harness driven. |
 | Deferred | GH7, GH8, GH9 | Deferred | Horovod KVStore barrier API (GH7); FlexiBLAS / THP / `parallel_for` grain (GH8); TensorRT upgrade (GH9). | Out of scope until specific drivers exist. |
-| Remote | FP16 smoke | Remote | `tools/run_fp16_remote_smoke.sh` ready for a Zen 4+ host. | Run on target when available. |
 
 ### Cross-Platform Lifecycle Coverage TODO (T11)
 
@@ -75,6 +78,8 @@ git log. Latest entries at the top.
 
 | Date | Tracker | Resolution |
 |---|---|---|
+| 2026-05-27 | **O12 ONNX export/runtime compatibility** | Closed in PR #38 merge commit `2e6ce3000` (feature commit `9dae10e00`). MXNet now defaults ONNX export to the tested opset 13 instead of the installed ONNX package's latest opset, exposes explicit `opset_version`, emits explicit opset imports, tracks internal MXNet shapes for translation, fixes ONNX Runtime output shape parity for `pooling_convention='full'`, fixes float16 constant encoding, and registers NumPy `divide` in `__array_ufunc__` dispatch so scalar-left division records deferred compute correctly. Validated with ONNX `1.21.0` and ONNX Runtime `1.24.1`: `tests/python/onnx` `10525 passed, 1431 skipped` in 47:17; `test_onnx_export_np_scalar_op` `84 passed`; `test_export_opset.py` `3 passed`; `test_np_array_ufunc_protocol` `1 passed`. Not yet included in a published wheel. |
+| 2026-05-27 | **B4 / XOP18 quantized subgraph QAT backward** | Closed in PR #37 commit `6fffc5c17` and released as `v2.0.0+cu13.bw.20260526.5`. QAT backward now covers simple `_sg_onednn_conv`, simple `_sg_onednn_fully_connected`, fused Conv+ReLU, quantized avg/max pooling, Conv -> ReLU -> Pool -> FC composite, and quantized oneDNN self-attention QK/QK-split/ValAtt. Quantized self-attention subgraph backward now uses real CPU gradients instead of `MakeZeroGradNodes`; direct int8/uint8 QAT tests compare QK, QK-split, and ValAtt gradients against NumPy references. The oneDNN reduce destination descriptor bug exposed by this path is fixed. Validation before release: `tests/python/dnnl/subgraphs/test_quantized_backward.py` `21 passed`; `tests/python/dnnl/test_xop18_quantized_subgraph_req.py` `9 passed`, also under `NaiveEngine`; clean CUDA wheel build and release provenance passed for commit `6fffc5c176af8b38bac99862dcfc29996322cf31`. |
 | 2026-05-26 | **NCCL release-wheel guard** | Closed locally in commit `3d07d3b7f`. CUDA release-wheel builds now configure with `USE_CUDA=ON`, `USE_CUDNN=ON`, `USE_NCCL=ON`, `USE_ONEDNN=ON`, and `USE_OPENCV=ON`; CMake fails instead of silently compiling `USE_NCCL=OFF` when NCCL is requested but missing; `FindNCCL.cmake` recognizes `NCCL_ROOT` / pip-style `nvidia/nccl` layouts; and `release_provenance.py` verifies CUDNN/NCCL/ONEDNN feature flags plus `libcudnn`/`libnccl` payload/runpath metadata. Validation: source build `libmxnet.so` links `libnccl.so.2`; built-lib NCCL tests `13 passed`; local wheel `2.0.0+cu13.bw.20260526.4` imports with CUDA/cuDNN/NCCL/oneDNN/OpenCV enabled, sees 4 GPUs, and passes wheel NCCL tests `13 passed`. |
 | 2026-05-26 | **V1 release-wheel acceptance sweep** | Closed for release wheel `v2.0.0+cu13.bw.20260526.3` under its actual feature set (CUDA/cuDNN/oneDNN/OpenCV enabled, NCCL disabled). Fresh-venv wheel acceptance passed: CPU broad unittest `13219 passed, 35 skipped, 1 xfailed`; CPU `test_operator.py` `1096 passed, 1 skipped`; CPU `test_random.py` `37 passed`; DNNL smoke/quantization/AMP/BF16/batch-dot/layer-norm/subgraph shards all passed; QAT backward shard reported the expected B4 state `14 passed, 6 xfailed`; GPU operator NumPy shard `11005 passed, 58 skipped`; GPU operator classic shard `1932 passed, 5 skipped`; GPU quantization wrapper `25 passed, 6 xfailed`; cuBLASLt, cuDNN fallback, TF32 deconv, reducer, fork-safety, AMP, and AMP-init shards all passed. D2L is currently treated as clean per the latest d2l-neu build status. The acceptance harness was also fixed locally so strict xfail summaries are not mislabeled as failures and empty shard selectors are caught. |
 | 2026-05-26 | **FS8 stale skip audit** | Closed on merged `master`. The repaired profiler/NCCL/KVStore stale-skip batch passes `6 passed, 1 skipped` (the skip is expected because the current release wheel was built without NCCL); the old Gluon issue-11164 dynamic reshape/slice group is active and passes `23 passed`; higher-order-gradient plus GPU quantization wrapper validation passes `56 passed, 6 xfailed`; and the FS13 skip-reason lint passes `1 passed`. No current FS8 umbrella work remains: new broad skips should be rejected by `test_fs13_skip_reason_tracker_id.py`, and fresh failures should get concrete tracker rows instead of reopening FS8. |
@@ -272,7 +277,7 @@ Major Blackwell/CUDA port findings, kept as context.
 | NCCL single-process | 2-GPU NCCL KVStore tests passed; multi-process DDP-style is outside MXNet KVStore design. |
 | Test-source bugs | Several stale numpy/op tests fixed or correctly skipped. |
 | GPU profiler symbolic test | oneDNN v3 node-name expectation updated. |
-| ONNX | Opset 18 reduction API change handled; broader ORT 1.26 / ONNX 1.21 refresh deferred under O12. |
+| ONNX | Opset 18 reduction API change handled; ONNX 1.21 / ONNX Runtime 1.24 export compatibility closed under O12. Future opset-version bumps should be opened as new compatibility work only when required. |
 | cuDNN 9.22 bump | Depthwise conv perf improved on Blackwell. |
 | cuDNN frontend autotune | Env-gated v9 frontend autotune path added; default conservative. |
 | sm_120 SASS | Confirmed `12.0+PTX` emits sm_120 SASS. |

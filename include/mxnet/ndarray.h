@@ -32,6 +32,7 @@
 #include <nnvm/node.h>
 
 #include <algorithm>
+#include <stdint.h>
 #include <map>
 #include <memory>
 #include <string>
@@ -406,7 +407,7 @@ class NDArray {
    *    source stream that current NDArray lives on.
    * \param stream a pointer to the stream provided by consumer.
    */
-  void StreamSync(int stream) const;
+  void StreamSync(uintptr_t stream) const;
   /*! \return the associated variable of the ndarray.*/
   inline Engine::VarHandle var() const {
     return ptr_->var;

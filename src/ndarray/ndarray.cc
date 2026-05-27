@@ -2516,19 +2516,20 @@ void NDArray::WaitToWrite() const {
   Engine::Get()->WaitForVar(ptr_->var);
 }
 
-void NDArray::StreamSync(int stream) const {
+void NDArray::StreamSync(uintptr_t stream) const {
   if (is_none())
     return;
   Imperative::DCInfo::Compute(*this);
 #if MXNET_USE_CUDA
+  NDArray self = *this;
   Engine::Get()->PushAsync(
-      [this, stream](RunContext ctx,
+      [self, stream](RunContext ctx,
                      Engine::CallbackOnStart on_start,
                      Engine::CallbackOnComplete on_complete) {
         on_start();
         cudaStream_t consumer = reinterpret_cast<cudaStream_t>(stream);
         std::unordered_map<cudaStream_t, engine::EventInfo> events_per_stream;
-        auto& sync_obj = this->var()->sync_object;
+        auto& sync_obj = self.var()->sync_object;
         std::lock_guard<std::mutex> l(sync_obj.mutex);
         auto& reader_events = sync_obj.reader_events;
         reader_events.erase(
@@ -2567,7 +2568,7 @@ void NDArray::StreamSync(int stream) const {
         }
         on_complete();
       },
-      this->ctx(),
+      self.ctx(),
       {},
       {});
 #else

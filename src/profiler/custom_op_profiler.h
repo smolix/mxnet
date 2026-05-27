@@ -19,6 +19,8 @@
 #ifndef MXNET_PROFILER_CUSTOM_OP_PROFILER_H_
 #define MXNET_PROFILER_CUSTOM_OP_PROFILER_H_
 
+#include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
@@ -38,14 +40,8 @@ using TaskPtr = std::unique_ptr<ProfileTask>;
 class CustomOpProfiler {
  public:
   static CustomOpProfiler* Get() {
-    static std::mutex mtx;
-    static std::unique_ptr<CustomOpProfiler> prof = nullptr;
-    if (!prof) {
-      std::unique_lock<std::mutex> lk(mtx);
-      if (!prof)
-        prof = std::make_unique<CustomOpProfiler>();
-    }
-    return prof.get();
+    static CustomOpProfiler prof;
+    return &prof;
   }
   /*!
    * \brief Called before the callback of custom operators to start a profile task for python
@@ -56,9 +52,15 @@ class CustomOpProfiler {
     const Tid tid               = std::this_thread::get_id();
     const std::string task_name = MakePythonCodeName(op_type);
     std::lock_guard<std::mutex> lock(mutex_);
-    tid_to_op_type_[tid] = op_type;
-    tasks_[tid]          = std::make_unique<ProfileTask>(task_name.c_str(), &custom_op_domain);
-    tasks_[tid]->start();
+    try {
+      tid_to_op_type_[tid] = op_type;
+      tasks_[tid]          = std::make_unique<ProfileTask>(task_name.c_str(), &custom_op_domain);
+      tasks_[tid]->start();
+    } catch (...) {
+      tasks_.erase(tid);
+      tid_to_op_type_.erase(tid);
+      throw;
+    }
   }
 
   /*!
@@ -76,6 +78,25 @@ class CustomOpProfiler {
     tasks_[tid]->stop();
     tasks_.erase(tid);
   }
+
+  class Scope {
+   public:
+    explicit Scope(const std::string& op_type) : active_(true) {
+      CustomOpProfiler::Get()->OnCustomBegin(op_type);
+    }
+
+    Scope(const Scope&) = delete;
+    Scope& operator=(const Scope&) = delete;
+
+    ~Scope() {
+      if (active_) {
+        CustomOpProfiler::Get()->OnCustomEnd();
+      }
+    }
+
+   private:
+    bool active_;
+  };
 
   /*!
    * \brief Generate a display name for sub-operators, which is the name used for OprBlock

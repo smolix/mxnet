@@ -91,6 +91,9 @@ void Backward(const OpStatePtr& state,
   std::unordered_set<int> output_tags({1});
 
   auto dev_id = ctx.run_ctx.ctx.dev_id;
+  ptrs.reserve(inputs.size() + outputs.size());
+  cpys.reserve(inputs.size() + outputs.size());
+  tags.reserve(inputs.size() + outputs.size());
 
   for (const auto& i : inputs) {
     NDArray* nd = new NDArray(i.data(), dev_id);

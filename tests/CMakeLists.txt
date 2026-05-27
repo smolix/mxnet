@@ -99,6 +99,7 @@ if(GTEST_FOUND AND NOT MSVC)
   mxnet_add_unit_test_executable(misc_storage ""
     cpp/misc/base.cc
     cpp/misc/libinfo_test.cc
+    cpp/misc/tricky_bug_test.cc
     cpp/storage/storage_test.cc)
 
   mxnet_add_unit_test_executable(operator_batchnorm ""

@@ -84,9 +84,8 @@ class CustomOperator {
             const std::string op_type = "") {
     if (naive_engine_) {
       if (profiler::Profiler::Get()->IsProfiling(profiler::Profiler::kImperative)) {
-        profiler::CustomOpProfiler::Get()->OnCustomBegin(op_type);
+        profiler::CustomOpProfiler::Scope custom_op_profile(op_type);
         func();
-        profiler::CustomOpProfiler::Get()->OnCustomEnd();
       } else {
         func();
       }
@@ -116,9 +115,8 @@ class CustomOperator {
 
       try {
         if (profiler::Profiler::Get()->IsProfiling(profiler::Profiler::kImperative)) {
-          profiler::CustomOpProfiler::Get()->OnCustomBegin(op_type);
+          profiler::CustomOpProfiler::Scope custom_op_profile(op_type);
           func();
-          profiler::CustomOpProfiler::Get()->OnCustomEnd();
         } else {
           func();
         }
@@ -134,11 +132,13 @@ class CustomOperator {
       for (const auto& i : arrs) {
         vars.push_back(i.var());
         if (output_tags.count(tags[idx]) > 0) {
-          if (i.storage_type() == kDefaultStorage || i.storage_type() == kUndefinedStorage)
+          if (i.storage_type() == kDefaultStorage || i.storage_type() == kUndefinedStorage) {
+            ++idx;
             continue;
+          }
           vars2.push_back(i.var());
-          idx++;
         }
+        ++idx;
       }
 
       Engine::Get()->PushSync(

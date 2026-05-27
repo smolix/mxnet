@@ -223,18 +223,23 @@ class Barrier {
  private:
   std::mutex mutex_;
   std::condition_variable cv_;
-  std::size_t count_;
-  std::size_t total_count_;
+  std::size_t waiting_{0};
+  std::size_t generation_{0};
+  const std::size_t total_count_;
 
  public:
-  explicit Barrier(std::size_t count) : count_{count}, total_count_{count} {}
+  explicit Barrier(std::size_t count) : total_count_{count} {
+    CHECK_GT(count, 0U);
+  }
   void Wait() {
     std::unique_lock<std::mutex> lock{mutex_};
-    if (--count_ == 0) {
-      count_ = total_count_;
+    const std::size_t generation = generation_;
+    if (++waiting_ == total_count_) {
+      waiting_ = 0;
+      ++generation_;
       cv_.notify_all();
     } else {
-      cv_.wait(lock, [this] { return count_ == total_count_; });
+      cv_.wait(lock, [this, generation] { return generation_ != generation; });
     }
   }
 };

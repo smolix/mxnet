@@ -23,6 +23,7 @@
  */
 #include <mxnet/api_registry.h>
 #include <mxnet/runtime/packed_func.h>
+#include <array>
 #include "../../utils.h"
 #include "../../../../operator/numpy/random/np_laplace_op.h"
 
@@ -35,8 +36,8 @@ MXNET_REGISTER_API("_npi.laplace")
       nnvm::NodeAttrs attrs;
       op::NumpyLaplaceParam param = {};
 
-      NDArray** inputs = new NDArray*[2]();
-      int num_inputs   = 0;
+      std::array<NDArray*, 2> inputs = {{nullptr, nullptr}};
+      int num_inputs                 = 0;
 
       if (args[0].type_code() == kNull) {
         param.loc = dmlc::nullopt;
@@ -80,12 +81,11 @@ MXNET_REGISTER_API("_npi.laplace")
         attrs.dict["ctx"] = args[4].operator std::string();
       }
 
-      inputs = inputs == nullptr ? nullptr : inputs;
-
       NDArray* out      = args[5].operator mxnet::NDArray*();
       NDArray** outputs = out == nullptr ? nullptr : &out;
       int num_outputs   = out != nullptr;
-      auto ndoutputs    = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, outputs);
+      auto ndoutputs = Invoke(
+          op, &attrs, num_inputs, num_inputs == 0 ? nullptr : inputs.data(), &num_outputs, outputs);
       if (out) {
         *ret = PythonArg(5);
       } else {

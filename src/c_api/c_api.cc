@@ -2298,6 +2298,8 @@ int MXNDArrayLoad(const char* fname,
     *ptr         = npy::load_array(fname);  // Only supports local filesystem at this point in time
     ret->ret_handles[0] = ptr;
     *out_arr            = dmlc::BeginPtr(ret->ret_handles);
+    *out_name_size      = 0;
+    *out_names          = nullptr;
   } else {
     std::vector<NDArray> data;
     std::vector<std::string>& names = ret->ret_vec_str;
@@ -3841,26 +3843,37 @@ int MXEnginePushAsyncND(EngineAsyncFunc async_func,
                         const char* opr_name,
                         bool wait) {
   API_BEGIN();
+  AssertValidNumberVars(num_const_nds, num_mutable_nds);
+  CHECK(const_nds_handle != nullptr || num_const_nds == 0)
+      << "const_nds_handle must be non-null when num_const_nds is positive.";
+  CHECK(mutable_nds_handle != nullptr || num_mutable_nds == 0)
+      << "mutable_nds_handle must be non-null when num_mutable_nds is positive.";
   NDArray** const_nds   = reinterpret_cast<NDArray**>(const_nds_handle);
   NDArray** mutable_nds = reinterpret_cast<NDArray**>(mutable_nds_handle);
-  std::vector<VarHandle> const_var_vec(num_const_nds);
-  for (int i = 0; i < num_const_nds; ++i)
-    const_var_vec[i] = const_nds[i]->var();
-  std::vector<VarHandle> mutable_var_vec(num_mutable_nds);
-  for (int i = 0; i < num_mutable_nds; ++i)
-    mutable_var_vec[i] = mutable_nds[i]->var();
-  return MXEnginePushAsync(async_func,
-                           func_param,
-                           deleter,
-                           ctx_handle,
-                           const_var_vec.data(),
-                           num_const_nds,
-                           mutable_var_vec.data(),
-                           num_mutable_nds,
-                           prop_handle,
-                           priority,
-                           opr_name,
-                           wait);
+  std::vector<VarHandle> const_var_vec;
+  const_var_vec.reserve(num_const_nds);
+  for (int i = 0; i < num_const_nds; ++i) {
+    const_var_vec.push_back(const_nds[i]->var());
+  }
+  std::vector<VarHandle> mutable_var_vec;
+  mutable_var_vec.reserve(num_mutable_nds);
+  for (int i = 0; i < num_mutable_nds; ++i) {
+    mutable_var_vec.push_back(mutable_nds[i]->var());
+  }
+  CHECK_EQ(MXEnginePushAsync(async_func,
+                             func_param,
+                             deleter,
+                             ctx_handle,
+                             const_var_vec.data(),
+                             num_const_nds,
+                             mutable_var_vec.data(),
+                             num_mutable_nds,
+                             prop_handle,
+                             priority,
+                             opr_name,
+                             wait),
+           0)
+      << MXGetLastError();
   API_END();
 }
 
@@ -3876,25 +3889,36 @@ int MXEnginePushSyncND(EngineSyncFunc sync_func,
                        int priority,
                        const char* opr_name) {
   API_BEGIN();
+  AssertValidNumberVars(num_const_nds, num_mutable_nds);
+  CHECK(const_nds_handle != nullptr || num_const_nds == 0)
+      << "const_nds_handle must be non-null when num_const_nds is positive.";
+  CHECK(mutable_nds_handle != nullptr || num_mutable_nds == 0)
+      << "mutable_nds_handle must be non-null when num_mutable_nds is positive.";
   NDArray** const_nds   = reinterpret_cast<NDArray**>(const_nds_handle);
   NDArray** mutable_nds = reinterpret_cast<NDArray**>(mutable_nds_handle);
-  std::vector<VarHandle> const_var_vec(num_const_nds);
-  for (int i = 0; i < num_const_nds; ++i)
-    const_var_vec[i] = const_nds[i]->var();
-  std::vector<VarHandle> mutable_var_vec(num_mutable_nds);
-  for (int i = 0; i < num_mutable_nds; ++i)
-    mutable_var_vec[i] = mutable_nds[i]->var();
-  return MXEnginePushSync(sync_func,
-                          func_param,
-                          deleter,
-                          ctx_handle,
-                          const_var_vec.data(),
-                          num_const_nds,
-                          mutable_var_vec.data(),
-                          num_mutable_nds,
-                          prop_handle,
-                          priority,
-                          opr_name);
+  std::vector<VarHandle> const_var_vec;
+  const_var_vec.reserve(num_const_nds);
+  for (int i = 0; i < num_const_nds; ++i) {
+    const_var_vec.push_back(const_nds[i]->var());
+  }
+  std::vector<VarHandle> mutable_var_vec;
+  mutable_var_vec.reserve(num_mutable_nds);
+  for (int i = 0; i < num_mutable_nds; ++i) {
+    mutable_var_vec.push_back(mutable_nds[i]->var());
+  }
+  CHECK_EQ(MXEnginePushSync(sync_func,
+                            func_param,
+                            deleter,
+                            ctx_handle,
+                            const_var_vec.data(),
+                            num_const_nds,
+                            mutable_var_vec.data(),
+                            num_mutable_nds,
+                            prop_handle,
+                            priority,
+                            opr_name),
+           0)
+      << MXGetLastError();
   API_END();
 }
 
@@ -3915,6 +3939,10 @@ int MXShallowCopyNDArray(NDArrayHandle src_handle, NDArrayHandle* out) {
 }
 
 int MXPushStreamDep(NDArrayHandle handle, int stream) {
+  return MXPushStreamDepEx(handle, static_cast<uintptr_t>(stream));
+}
+
+int MXPushStreamDepEx(NDArrayHandle handle, uintptr_t stream) {
   API_BEGIN();
   static_cast<NDArray*>(handle)->StreamSync(stream);
   API_END();
@@ -3923,9 +3951,19 @@ int MXPushStreamDep(NDArrayHandle handle, int stream) {
 int MXGetCurrentStream(int device_id, int* stream) {
   API_BEGIN();
 #if MXNET_USE_CUDA
-  RunContext rctx{Context::GPU(device_id), new mshadow::Stream<gpu>(), nullptr};
-  mshadow::Stream<gpu>* cur_stream = rctx.get_stream<gpu>();
-  *stream = reinterpret_cast<int64_t>(mshadow::Stream<gpu>::GetStream(cur_stream));
+  (void)device_id;
+  *stream = 0;
+#else
+  LOG(FATAL) << "GPU is not enabled.";
+#endif
+  API_END();
+}
+
+int MXGetCurrentStreamEx(int device_id, uintptr_t* stream) {
+  API_BEGIN();
+#if MXNET_USE_CUDA
+  (void)device_id;
+  *stream = 0;
 #else
   LOG(FATAL) << "GPU is not enabled.";
 #endif

@@ -37,6 +37,21 @@ namespace mxnet {
 namespace op {
 
 template <typename DType>
+void ValidateRROIAlignInputsCPU(const TBlob& data, const TBlob& bbox) {
+  CHECK_GT(data.size(2), 0) << "RROIAlign requires input height > 0";
+  CHECK_GT(data.size(3), 0) << "RROIAlign requires input width > 0";
+  const DType* bottom_rois = bbox.dptr<DType>();
+  for (index_t i = 0; i < bbox.size(0); ++i) {
+    const int roi_batch_ind = static_cast<int>(bottom_rois[i * bbox.size(1)]);
+    CHECK_GE(roi_batch_ind, 0) << "RROIAlign roi batch index " << roi_batch_ind << " at row "
+                               << i << " is out of bounds for batch size " << data.size(0);
+    CHECK_LT(roi_batch_ind, data.size(0))
+        << "RROIAlign roi batch index " << roi_batch_ind << " at row " << i
+        << " is out of bounds for batch size " << data.size(0);
+  }
+}
+
+template <typename DType>
 struct position_for_bilinear_interpolate {
   // 4 positions and corresponding weights for
   // computing bilinear interpolation
@@ -174,6 +189,7 @@ inline void RROIAlignForward(const OpContext& ctx,
 
   // (n, c, ph, pw) is an element in the pooled output
   // can be parallelized using omp
+  ValidateRROIAlignInputsCPU<DType>(data, bbox);
 #pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
   for (int n = 0; n < num_rois; ++n) {
     // Increment ROI data pointer

@@ -117,8 +117,8 @@ def ndarray_from_dlpack(array_cls):
             if device != DLDeviceType.DLGPU:
                 dlpack = ctypes.py_object(dlpack.__dlpack__())
             else:
-                s = mx_int()
-                check_call(_LIB.MXGetCurrentStream(
+                s = ctypes.c_size_t()
+                check_call(_LIB.MXGetCurrentStreamEx(
                     ctypes.c_int(device_id), ctypes.byref(s)))
                 dlpack = ctypes.py_object(dlpack.__dlpack__(stream=s.value))
         else:

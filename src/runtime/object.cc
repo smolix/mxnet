@@ -154,6 +154,7 @@ class TypeContext {
   }
 
   uint32_t TypeKey2Index(const std::string& skey) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = type_key2index_.find(skey);
     CHECK(it != type_key2index_.end()) << "Cannot find type " << skey;
     return it->second;

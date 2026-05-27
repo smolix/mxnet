@@ -23,6 +23,7 @@
  */
 #include <mxnet/api_registry.h>
 #include <mxnet/runtime/packed_func.h>
+#include <array>
 #include <vector>
 #include "../../utils.h"
 #include "../../../../operator/numpy/random/np_multinomial_op.h"
@@ -35,8 +36,8 @@ MXNET_REGISTER_API("_npi.multinomial")
       const nnvm::Op* op = Op::Get("_npi_multinomial");
       nnvm::NodeAttrs attrs;
       op::NumpyMultinomialParam param = {};
-      NDArray** inputs = new NDArray*[1]();
-      int num_inputs   = 0;
+      std::array<NDArray*, 1> inputs = {{nullptr}};
+      int num_inputs                 = 0;
 
       // parse int
       param.n = args[0].operator int();
@@ -66,9 +67,9 @@ MXNET_REGISTER_API("_npi.multinomial")
       attrs.parsed = std::move(param);
       attrs.op     = op;
       SetAttrDict<op::NumpyMultinomialParam>(&attrs);
-      inputs          = num_inputs == 0 ? nullptr : inputs;
       int num_outputs = 0;
-      auto ndoutputs  = Invoke(op, &attrs, num_inputs, inputs, &num_outputs, nullptr);
+      auto ndoutputs = Invoke(
+          op, &attrs, num_inputs, num_inputs == 0 ? nullptr : inputs.data(), &num_outputs, nullptr);
       *ret            = ndoutputs[0];
     });
 

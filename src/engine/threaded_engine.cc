@@ -511,6 +511,10 @@ void ThreadedEngine::WaitForAll() {
 
 inline void ThreadedEngine::OnComplete(ThreadedOpr* threaded_opr) {
   bool is_temporary_opr = threaded_opr->temporary;
+  if (threaded_opr->opr_exception != nullptr && threaded_opr->mutable_vars.empty()) {
+    std::lock_guard<std::mutex> exception_lock(exception_m_);
+    global_exception_refs_.push_back(threaded_opr->opr_exception);
+  }
   // Mark complete for read variables
   for (auto&& i : threaded_opr->const_vars) {
     i->CompleteReadDependency([this](OprBlock* opr) { this->PushToExecute(opr, false); });

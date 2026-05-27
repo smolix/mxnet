@@ -55,6 +55,24 @@ class NDArrayBase(object):
         return (_global_var._ndarray_cls, (None,), self.__getstate__())
 
 
+def _make_ndarray_outputs(output_vars, out_stypes, num_output, create_ndarray_fn, output_is_list):
+    """Create Python NDArrays and free unwrapped handles if wrapping raises."""
+    wrapped_count = 0
+    try:
+        ret = []
+        for i in range(num_output):
+            ret.append(create_ndarray_fn(ctypes.cast(output_vars[i], NDArrayHandle),
+                                         stype=out_stypes[i]))
+            wrapped_count += 1
+        if num_output == 1 and not output_is_list:
+            return ret[0]
+        return ret
+    except Exception:
+        for i in range(wrapped_count, num_output):
+            check_call(_LIB.MXNDArrayFree(output_vars[i]))
+        raise
+
+
 def _imperative_invoke(handle, ndargs, keys, vals, out, is_np_op, output_is_list):
     """ctypes implementation of imperative invoke wrapper"""
     if out is not None:
@@ -87,9 +105,5 @@ def _imperative_invoke(handle, ndargs, keys, vals, out, is_np_op, output_is_list
     create_ndarray_fn = _global_var._np_ndarray_cls if is_np_op else _global_var._ndarray_cls
     if original_output is not None:
         return original_output
-    if num_output.value == 1 and not output_is_list:
-        return create_ndarray_fn(ctypes.cast(output_vars[0], NDArrayHandle),
-                                 stype=out_stypes[0])
-    else:
-        return [create_ndarray_fn(ctypes.cast(output_vars[i], NDArrayHandle),
-                                  stype=out_stypes[i]) for i in range(num_output.value)]
+    return _make_ndarray_outputs(output_vars, out_stypes, num_output.value,
+                                 create_ndarray_fn, output_is_list)

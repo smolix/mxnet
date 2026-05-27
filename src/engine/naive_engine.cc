@@ -25,6 +25,7 @@
 #include <future>
 #include <memory>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #include "./engine_impl.h"
 #include "../profiler/profiler.h"
@@ -154,10 +155,10 @@ class NaiveEngine final : public Engine {
                  int priority         = 0,
                  const char* opr_name = nullptr,
                  bool wait            = false) override {
-    std::promise<void> promise;
-    std::future<void> future     = promise.get_future();
-    CallbackOnStart on_start     = CreateOnStart(NaiveEngine::OnStart, &promise);
-    CallbackOnComplete callback  = CreateCallback(NaiveEngine::OnComplete, &promise);
+    CallbackState callback_state;
+    std::future<void> future     = callback_state.promise.get_future();
+    CallbackOnStart on_start     = CreateOnStart(NaiveEngine::OnStart, &callback_state);
+    CallbackOnComplete callback  = CreateCallback(NaiveEngine::OnComplete, &callback_state);
     profiler::Profiler* profiler = profiler::Profiler::Get();
     auto opr_deleter             = [this](NaiveOpr* p) { this->DeleteOperator(p); };
     std::unique_ptr<NaiveOpr, decltype(opr_deleter)> opr(nullptr, opr_deleter);
@@ -198,6 +199,13 @@ class NaiveEngine final : public Engine {
       exec_fun(RunContext{exec_ctx, &cpu_stream_, nullptr}, on_start, callback);
     }
     future.wait();
+    if (callback_state.exception != nullptr) {
+      std::lock_guard<std::mutex> lock(exception_mutex_);
+      global_exceptions_.push_back(callback_state.exception);
+      for (auto var : mutable_vars) {
+        var_exceptions_[var] = callback_state.exception;
+      }
+    }
     // increment mutable var version
     for (auto var : mutable_vars) {
       ++var->version_;
@@ -225,22 +233,61 @@ class NaiveEngine final : public Engine {
         "DeleteVariable");
   }
 
-  void WaitForVar(VarHandle var) override {}
+  void WaitForVar(VarHandle var) override {
+    this->Throw(var);
+  }
 
-  void WaitForAll() override {}
+  void WaitForAll() override {
+    std::exception_ptr exception_to_rethrow = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(exception_mutex_);
+      for (const auto& exception : global_exceptions_) {
+        if (exception != nullptr && exception_to_rethrow == nullptr) {
+          exception_to_rethrow = exception;
+        }
+      }
+      global_exceptions_.clear();
+      var_exceptions_.clear();
+    }
+    if (exception_to_rethrow != nullptr) {
+      std::rethrow_exception(exception_to_rethrow);
+    }
+  }
 
-  void Throw(VarHandle var) override {}
+  void Throw(VarHandle var) override {
+    std::exception_ptr exception_to_rethrow = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(exception_mutex_);
+      auto it = var_exceptions_.find(var);
+      if (it != var_exceptions_.end()) {
+        exception_to_rethrow = it->second;
+        var_exceptions_.erase(it);
+      }
+    }
+    if (exception_to_rethrow != nullptr) {
+      std::rethrow_exception(exception_to_rethrow);
+    }
+  }
 
   void NotifyShutdown() override {
     shutdown_phase_.store(true);
   }
 
  private:
+  struct CallbackState {
+    std::promise<void> promise;
+    std::exception_ptr exception{nullptr};
+  };
+
   // onstart
   static void OnStart(Engine* engine, void* param, const dmlc::Error* error) {}
   // callback to oncomplete
   static void OnComplete(Engine* engine, void* param, const dmlc::Error* error) {
-    static_cast<std::promise<void>*>(param)->set_value();
+    auto* state = static_cast<CallbackState*>(param);
+    if (error != nullptr) {
+      state->exception = std::make_exception_ptr(*error);
+    }
+    state->promise.set_value();
   }
   /*! \brief whether it is during shutdown phase*/
   std::atomic<bool> shutdown_phase_{false};
@@ -252,6 +299,9 @@ class NaiveEngine final : public Engine {
   // GPU auxiliary streams
   std::vector<GPUAuxStream*> aux_streams_;
 #endif
+  std::mutex exception_mutex_;
+  std::vector<std::exception_ptr> global_exceptions_;
+  std::unordered_map<VarHandle, std::exception_ptr> var_exceptions_;
   /*!
    * \brief Holding a shared_ptr to the object pool to prevent it from being destructed too early
    * See also #309 (https://github.com/apache/mxnet/issues/309) and similar fix in

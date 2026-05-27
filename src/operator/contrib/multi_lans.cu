@@ -31,6 +31,12 @@ namespace op {
 #define BLOCK_SIZE_LAMB 512
 #define ILP_LAMB        4
 
+namespace {
+void CUDART_CB FreeHostBuffer(void* data) {
+  free(data);
+}
+}  // namespace
+
 template <bool has_mixed_precision, typename MPDType, typename DType>
 __global__ void KernelStep1(const MultiLANSKernelParam<DType, MPDType> kernel_params,
                             const float beta1,
@@ -205,16 +211,19 @@ void CallKernel1(Stream<gpu>* s,
       chunk_id++;
     }
   }
-  cudaMemcpyAsync(block_to_tensor,
-                  host_block2tensor,
-                  kernel_params.nchunks * sizeof(int),
-                  cudaMemcpyHostToDevice,
-                  Stream<gpu>::GetStream(s));
-  cudaMemcpyAsync(block_to_chunk,
-                  host_block2chunk,
-                  kernel_params.nchunks * sizeof(int),
-                  cudaMemcpyHostToDevice,
-                  Stream<gpu>::GetStream(s));
+  cudaStream_t stream = Stream<gpu>::GetStream(s);
+  CUDA_CALL(cudaMemcpyAsync(block_to_tensor,
+                            host_block2tensor,
+                            kernel_params.nchunks * sizeof(int),
+                            cudaMemcpyHostToDevice,
+                            stream));
+  CUDA_CALL(cudaMemcpyAsync(block_to_chunk,
+                            host_block2chunk,
+                            kernel_params.nchunks * sizeof(int),
+                            cudaMemcpyHostToDevice,
+                            stream));
+  CUDA_CALL(cudaLaunchHostFunc(stream, FreeHostBuffer, host_block2tensor));
+  CUDA_CALL(cudaLaunchHostFunc(stream, FreeHostBuffer, host_block2chunk));
 
   bool has_mixed_precision = !std::is_same<DType, MPDType>::value;
   MPDType beta3            = 1.0 - param.beta1;

@@ -24,6 +24,10 @@
 #ifndef MXNET_C_API_H_
 #define MXNET_C_API_H_
 
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+
 /*! \brief Inhibit C++ name-mangling for MXNet functions. */
 #ifdef __cplusplus
 extern "C" {
@@ -35,12 +39,6 @@ extern "C" {
 #else
 #define DEFAULT(x)
 #endif  // __cplusplus
-
-#include <stdint.h>
-
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
 
 /*! \brief MXNET_DLL prefix for windows */
 #ifdef _WIN32
@@ -3169,11 +3167,25 @@ MXNET_DLL int MXCheckDynamicShapeOp(SymbolHandle sym_handle, bool* has_dynamic_s
 MXNET_DLL int MXPushStreamDep(NDArrayHandle handle, int stream);
 
 /*!
+ * \brief Synchronize the consumer stream with the producer stream where the NDArray lives.
+ * \param handle NDArray handle of producer.
+ * \param stream A pointer-sized stream value from consumer.
+ */
+MXNET_DLL int MXPushStreamDepEx(NDArrayHandle handle, uintptr_t stream);
+
+/*!
  * \brief Get current stream pointer based on current device type and id
  * \param device_id Current device id.
  * \param stream A pointer pointing to current stream.
  */
 MXNET_DLL int MXGetCurrentStream(int device_id, int* stream);
+
+/*!
+ * \brief Get current stream pointer based on current device type and id
+ * \param device_id Current device id.
+ * \param stream A pointer-sized current stream value.
+ */
+MXNET_DLL int MXGetCurrentStreamEx(int device_id, uintptr_t* stream);
 
 /*!
  * \brief Push a new NVTX range. Requires building with CUDA and NVTX.

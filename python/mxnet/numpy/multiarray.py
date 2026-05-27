@@ -501,7 +501,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
                 raise ValueError('Stream {} is not supported in current device {}'\
                     .format(stream, self.device.device_type))
             if stream != -1:
-                check_call(_LIB.MXPushStreamDep(self.handle, ctypes.c_int64(stream)))
+                check_call(_LIB.MXPushStreamDepEx(self.handle, ctypes.c_size_t(stream)))
         to_dlpack_write = ndarray_to_dlpack_for_write()
         return to_dlpack_write(self)
 

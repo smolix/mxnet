@@ -121,30 +121,23 @@ class LtPool {
 
   cublasLtHandle_t handle() const { return handle_; }
 
-  // Returns workspace pointer for `bytes`. The buffer is allocated lazily on
-  // the device this pool was constructed on and reused across calls. Returns
-  // nullptr (and a non-success status via the caller path) on cudaMalloc
-  // failure.
-  void* Workspace(size_t bytes) {
-    std::lock_guard<std::mutex> lk(ws_mu_);
-    if (ws_bytes_ >= bytes && ws_ != nullptr) return ws_;
-    if (ws_ != nullptr) {
-      cudaFree(ws_);
-      ws_       = nullptr;
-      ws_bytes_ = 0;
-    }
+  void* AllocWorkspace(size_t bytes) {
     int prev_dev = -1;
     cudaGetDevice(&prev_dev);
     if (prev_dev != dev_id_) cudaSetDevice(dev_id_);
-    cudaError_t err = cudaMalloc(&ws_, bytes);
+    void* ws = nullptr;
+    cudaError_t err = cudaMalloc(&ws, bytes);
     if (prev_dev != -1 && prev_dev != dev_id_) cudaSetDevice(prev_dev);
-    if (err != cudaSuccess) {
-      ws_       = nullptr;
-      ws_bytes_ = 0;
-      return nullptr;
-    }
-    ws_bytes_ = bytes;
-    return ws_;
+    return (err == cudaSuccess) ? ws : nullptr;
+  }
+
+  void FreeWorkspace(void* ws) {
+    if (ws == nullptr) return;
+    int prev_dev = -1;
+    cudaGetDevice(&prev_dev);
+    if (prev_dev != dev_id_) cudaSetDevice(dev_id_);
+    cudaFree(ws);
+    if (prev_dev != -1 && prev_dev != dev_id_) cudaSetDevice(prev_dev);
   }
 
   // LRU lookup. Returns nullptr on miss.
@@ -195,9 +188,6 @@ class LtPool {
 
   int                                                dev_id_;
   cublasLtHandle_t                                   handle_{nullptr};
-  std::mutex                                         ws_mu_;
-  void*                                              ws_{nullptr};
-  size_t                                             ws_bytes_{0};
   std::mutex                                         cache_mu_;
   std::list<GemmKey>                                 lru_;
   std::unordered_map<GemmKey, Entry, GemmKeyHash>    cache_;
@@ -349,12 +339,13 @@ cublasStatus_t MaybeCublasLtGemmImpl(cublasHandle_t legacy_handle,
 
   void* ws = nullptr;
   if (algo_ws_bytes > 0) {
-    ws = pool.Workspace(algo_ws_bytes);
+    ws = pool.AllocWorkspace(algo_ws_bytes);
     if (ws == nullptr) { cleanup(); return CUBLAS_STATUS_ALLOC_FAILED; }
   }
 
   s = cublasLtMatmul(pool.handle(), op_desc, alpha, A, a_lay, B, b_lay, beta,
                      C, c_lay, C, c_lay, &algo, ws, algo_ws_bytes, stream);
+  pool.FreeWorkspace(ws);
   cleanup();
   return s;
 }

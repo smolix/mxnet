@@ -426,6 +426,7 @@ class ThreadedEngine : public Engine {
   }
 
   int set_bulk_size(int bulk_size) override {
+    CHECK_GE(bulk_size, 0) << "bulk size must be non-negative";
     BulkStatus& bulk_status = *BulkStatusStore::Get();
     std::swap(bulk_status.bulk_size, bulk_size);
     if (bulk_status.count >= bulk_status.bulk_size)

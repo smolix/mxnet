@@ -25,6 +25,29 @@ namespace mshadow {
 namespace cuda_impl {
 
 template <typename DType>
+inline void ValidatePSROIPoolROIsGPU(const Tensor<gpu, 2, DType>& bbox, const int batch_size) {
+  std::vector<DType> rois(bbox.shape_.Size());
+  if (rois.empty()) {
+    return;
+  }
+  cudaStream_t stream = Stream<gpu>::GetStream(bbox.stream_);
+  CUDA_CALL(cudaMemcpyAsync(rois.data(),
+                            bbox.dptr_,
+                            rois.size() * sizeof(DType),
+                            cudaMemcpyDeviceToHost,
+                            stream));
+  CUDA_CALL(cudaStreamSynchronize(stream));
+  for (mxnet::index_t i = 0; i < bbox.size(0); ++i) {
+    const int roi_batch_ind = static_cast<int>(rois[i * bbox.size(1)]);
+    CHECK_GE(roi_batch_ind, 0) << "PSROIPooling roi batch index " << roi_batch_ind << " at row "
+                               << i << " is out of bounds for batch size " << batch_size;
+    CHECK_LT(roi_batch_ind, batch_size)
+        << "PSROIPooling roi batch index " << roi_batch_ind << " at row " << i
+        << " is out of bounds for batch size " << batch_size;
+  }
+}
+
+template <typename DType>
 __global__ void PSROIPoolForwardKernel(const int count,
                                        const DType* bottom_data,
                                        const DType spatial_scale,
@@ -115,6 +138,7 @@ inline void PSROIPoolForward(const Tensor<gpu, 4, DType>& out,
   const int pooled_height  = out.size(2);
   const int pooled_width   = out.size(3);
   cudaStream_t stream      = Stream<gpu>::GetStream(out.stream_);
+  ValidatePSROIPoolROIsGPU(bbox, data.size(0));
   PSROIPoolForwardKernel<DType>
       <<<mxnet::op::mxnet_op::cuda_get_num_blocks(count), kBaseThreadNum, 0, stream>>>(
           count,
@@ -222,6 +246,7 @@ inline void PSROIPoolBackwardAcc(const Tensor<gpu, 4, DType>& in_grad,
   const int pooled_height  = out_grad.size(2);
   const int pooled_width   = out_grad.size(3);
   cudaStream_t stream      = Stream<gpu>::GetStream(in_grad.stream_);
+  ValidatePSROIPoolROIsGPU(bbox, in_grad.size(0));
   PSROIPoolBackwardAccKernel<DType>
       <<<mxnet::op::mxnet_op::cuda_get_num_blocks(count), kBaseThreadNum, 0, stream>>>(
           count,

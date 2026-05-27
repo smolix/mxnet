@@ -27,6 +27,7 @@
 #include <thread>
 #include <unordered_map>
 #include <chrono>
+#include <mutex>
 #include "./profiler.h"
 
 namespace mxnet {
@@ -142,9 +143,11 @@ class GpuDeviceStorageProfiler {
       profiler::Profiler* prof = profiler::Profiler::Get();
       if (prof->IsProfiling(profiler::Profiler::kMemory)) {
 #ifdef _MSC_VER
+        std::lock_guard<std::mutex> lock(gpu_mem_alloc_entries_mutex_);
         gpu_mem_alloc_entries_[handle.dptr] = AllocEntry{
             handle.profiler_scope, handle.name, handle.size, handle.ctx.dev_id, actual_size, reuse};
 #else
+        std::lock_guard<std::mutex> lock(gpu_mem_alloc_entries_mutex_);
         gpu_mem_alloc_entries_[handle.dptr] = {
             handle.profiler_scope, handle.name, handle.size, handle.ctx.dev_id, actual_size, reuse};
 #endif
@@ -154,6 +157,7 @@ class GpuDeviceStorageProfiler {
 
   inline void OnFree(void* dptr) {
     // In case of bug which tries to free first
+    std::lock_guard<std::mutex> lock(gpu_mem_alloc_entries_mutex_);
     if (gpu_mem_alloc_entries_.find(dptr) != gpu_mem_alloc_entries_.end())
       gpu_mem_alloc_entries_.erase(dptr);
   }
@@ -170,6 +174,7 @@ class GpuDeviceStorageProfiler {
     if (handle.size > 0) {
       profiler::Profiler* prof = profiler::Profiler::Get();
       if (prof->IsProfiling(profiler::Profiler::kMemory)) {
+        std::lock_guard<std::mutex> lock(gpu_mem_alloc_entries_mutex_);
         auto entry_iter = gpu_mem_alloc_entries_.find(handle.dptr);
         if (entry_iter != gpu_mem_alloc_entries_.end()) {
           entry_iter->second.profiler_scope = handle.profiler_scope;
@@ -181,6 +186,7 @@ class GpuDeviceStorageProfiler {
 
   /*! \brief set the dumping filename */
   void SetConfig(const std::string& filename_prefix) {
+    std::lock_guard<std::mutex> lock(gpu_mem_alloc_entries_mutex_);
     filename_prefix_ = filename_prefix;
   }
   /*! \brief dump the allocation entries to file */
@@ -193,6 +199,7 @@ class GpuDeviceStorageProfiler {
 
  private:
   std::string filename_prefix_ = "gpu_memory_profile";
+  mutable std::mutex gpu_mem_alloc_entries_mutex_;
   /*! \brief Dynamically-sized dictionary of memory profile counters */
   struct AllocEntry {
     std::string profiler_scope;  // profiler scope of the storage handle

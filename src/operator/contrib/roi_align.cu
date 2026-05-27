@@ -23,7 +23,9 @@
  * Adapted from Caffe2
  */
 #include <limits>
+#include <vector>
 #include "./roi_align-inl.h"
+#include "../../common/cuda/utils.h"
 #include "../mxnet_op.h"
 
 namespace mxnet {
@@ -33,6 +35,37 @@ using namespace mshadow::cuda_impl;
 
 // The maximum number of blocks to use in the default kernel call.
 constexpr int ROI_MAXIMUM_NUM_BLOCKS = 4096;
+
+template <typename T>
+void ValidateROIAlignInputsGPU(mshadow::Stream<gpu>* s,
+                               const TBlob& rois,
+                               const int rois_cols,
+                               const int batch_size,
+                               const int height,
+                               const int width) {
+  CHECK_GT(height, 0) << "ROIAlign requires input height > 0";
+  CHECK_GT(width, 0) << "ROIAlign requires input width > 0";
+  std::vector<T> rois_host(rois.Size());
+  if (rois_host.empty()) {
+    return;
+  }
+  cudaStream_t stream = mshadow::Stream<gpu>::GetStream(s);
+  CUDA_CALL(cudaMemcpyAsync(rois_host.data(),
+                            rois.dptr<T>(),
+                            rois_host.size() * sizeof(T),
+                            cudaMemcpyDeviceToHost,
+                            stream));
+  CUDA_CALL(cudaStreamSynchronize(stream));
+  for (index_t i = 0; i < static_cast<index_t>(rois_host.size() / rois_cols); ++i) {
+    const int roi_batch_ind = static_cast<int>(rois_host[i * rois_cols]);
+    CHECK_GE(roi_batch_ind, 0)
+        << "ROIAlign roi batch index " << roi_batch_ind << " at row " << i
+        << " is out of bounds for batch size " << batch_size;
+    CHECK_LT(roi_batch_ind, batch_size)
+        << "ROIAlign roi batch index " << roi_batch_ind << " at row " << i
+        << " is out of bounds for batch size " << batch_size;
+  }
+}
 
 /**
  * @brief Compute the number of blocks needed to run N threads.
@@ -360,6 +393,7 @@ void ROIAlignForwardCompute(const nnvm::NodeAttrs& attrs,
   const int width         = in_data[roialign::kData].size(3);
   const int pooled_height = out_data[roialign::kOut].size(2);
   const int pooled_width  = out_data[roialign::kOut].size(3);
+  const int rois_cols     = in_data[roialign::kBox].size(1);
 
   Stream<gpu>* s      = ctx.get_stream<gpu>();
   cudaStream_t stream = mshadow::Stream<gpu>::GetStream(s);
@@ -367,6 +401,8 @@ void ROIAlignForwardCompute(const nnvm::NodeAttrs& attrs,
     const DType* bottom_data = in_data[roialign::kData].dptr<DType>();
     const DType* bottom_rois = in_data[roialign::kBox].dptr<DType>();
     DType* top_data          = out_data[roialign::kOut].dptr<DType>();
+    ValidateROIAlignInputsGPU<DType>(
+        s, in_data[roialign::kBox], rois_cols, in_data[roialign::kData].size(0), height, width);
     RoIAlignForwardKernel<DType>
         <<<ROI_GET_BLOCKS(count), kMaxThreadsPerBlock, 0, stream>>>(count,
                                                                     bottom_data,
@@ -418,6 +454,7 @@ void ROIAlignBackwardCompute(const nnvm::NodeAttrs& attrs,
   const int width         = outputs[0].size(3);
   const int pooled_height = out_grad[0].size(2);
   const int pooled_width  = out_grad[0].size(3);
+  const int rois_cols     = in_data[0].size(1);
 
   Stream<gpu>* s      = ctx.get_stream<gpu>();
   cudaStream_t stream = mshadow::Stream<gpu>::GetStream(s);
@@ -427,6 +464,7 @@ void ROIAlignBackwardCompute(const nnvm::NodeAttrs& attrs,
     const DType* top_diff    = out_grad[0].dptr<DType>();
     const DType* bottom_rois = in_data[0].dptr<DType>();
     DType* grad_in           = outputs[0].dptr<DType>();
+    ValidateROIAlignInputsGPU<DType>(s, in_data[0], rois_cols, outputs[0].size(0), height, width);
 
     if (kWriteTo == req[roialign::kBox]) {
       Fill<false>(s, outputs[1], kWriteTo, static_cast<DType>(0));

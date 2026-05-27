@@ -22,9 +22,34 @@
  * \brief
  */
 #include "./index_copy-inl.h"
+#include "../../common/cuda/utils.h"
 
 namespace mxnet {
 namespace op {
+
+template <typename IType>
+void ValidateIndexCopyIndicesGPU(mshadow::Stream<gpu>* s,
+                                 const TBlob& idx_vector,
+                                 const index_t out_rows) {
+  std::vector<IType> idx(idx_vector.Size());
+  if (idx.empty()) {
+    return;
+  }
+  cudaStream_t stream = mshadow::Stream<gpu>::GetStream(s);
+  CUDA_CALL(cudaMemcpyAsync(idx.data(),
+                            idx_vector.dptr<IType>(),
+                            idx.size() * sizeof(IType),
+                            cudaMemcpyDeviceToHost,
+                            stream));
+  CUDA_CALL(cudaStreamSynchronize(stream));
+  for (index_t i = 0; i < static_cast<index_t>(idx.size()); ++i) {
+    const index_t index = static_cast<index_t>(idx[i]);
+    CHECK_GE(index, 0) << "index_copy index " << index << " at position " << i
+                       << " is out of bounds for axis 0 with size " << out_rows;
+    CHECK_LT(index, out_rows) << "index_copy index " << index << " at position " << i
+                              << " is out of bounds for axis 0 with size " << out_rows;
+  }
+}
 
 struct index_copy_fwd_gpu {
   template <typename DType, typename IType>
@@ -57,12 +82,16 @@ void IndexCopyForward<gpu>(const nnvm::NodeAttrs& attrs,
   const TBlob& original_tensor = inputs[0];
   const TBlob& idx_vector      = inputs[1];
   const TBlob& copied_tensor   = inputs[2];
-  int dim_size                 = inputs[2].Size() / inputs[1].Size();
+  int dim_size                 = idx_vector.Size() == 0 ? 0 : inputs[2].Size() / idx_vector.Size();
   // copy original tensor to output
   copy(s, out, original_tensor);
+  if (idx_vector.Size() == 0) {
+    return;
+  }
   // index copy
   MSHADOW_TYPE_SWITCH(out.type_flag_, DType, {
     MSHADOW_TYPE_SWITCH(idx_vector.type_flag_, IType, {
+      ValidateIndexCopyIndicesGPU<IType>(s, idx_vector, original_tensor.shape_[0]);
       Kernel<index_copy_fwd_gpu, gpu>::Launch(s,
                                               copied_tensor.Size(),
                                               copied_tensor.dptr<DType>(),
@@ -111,13 +140,14 @@ void IndexCopyBackward<gpu>(const nnvm::NodeAttrs& attrs,
   const TBlob& index     = inputs[2];
   const TBlob& in_grad_1 = outputs[0];
   const TBlob& in_grad_2 = outputs[2];
-  int dim_size           = inputs[3].Size() / inputs[2].Size();
   int index_size         = inputs[2].Size();
+  int dim_size           = index_size == 0 ? 0 : inputs[3].Size() / index_size;
   OpReqType orig_req     = req[0];
   OpReqType new_req      = req[2];
   // index_copy_backward
   MSHADOW_TYPE_SWITCH(out_grad.type_flag_, DType, {
     MSHADOW_TYPE_SWITCH(index.type_flag_, IType, {
+      ValidateIndexCopyIndicesGPU<IType>(s, index, out_grad.shape_[0]);
       switch (orig_req) {
         case kNullOp:
           break;

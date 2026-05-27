@@ -30,13 +30,19 @@
 #include <mxnet/ndarray.h>
 #include <dmlc/timer.h>
 #include <atomic>
+#include <csignal>
 #include <ctime>
 #include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <thread>
 #include <chrono>
 #include <string>
 #include <vector>
 #include <random>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 #include "../src/engine/engine_impl.h"
 #include "../include/test_util.h"
@@ -92,6 +98,16 @@ void EvaluateWorkload(const Workload& wl, std::vector<double>* data) {
     std::this_thread::sleep_for(std::chrono::microseconds(wl.time));
   }
 }
+
+void AsyncCompleteWithError(mxnet::RunContext,
+                            mxnet::Engine::CallbackOnStart on_start,
+                            mxnet::Engine::CallbackOnComplete on_complete) {
+  on_start();
+  dmlc::Error error("expected async callback failure");
+  on_complete(&error);
+}
+
+void NoOpSync(mxnet::RunContext) {}
 
 /**
  * evaluate a list of workload, return the time used
@@ -215,6 +231,126 @@ TEST(Engine, ThreadedAsyncExceptionsAreReportedOnce) {
     EXPECT_NO_THROW(engine->WaitForAll());
   }
 }
+
+TEST(Engine, ThreadedReadOnlyAsyncExceptionReachesWaitForAll) {
+  const int num_engine = 2;
+  std::vector<mxnet::Engine*> engines(num_engine);
+  engines[0]                = mxnet::engine::CreateThreadedEnginePooled();
+  engines[1]                = mxnet::engine::CreateThreadedEnginePerDevice();
+  std::string type_names[2] = {"ThreadedEnginePooled", "ThreadedEnginePerDevice"};
+
+  for (int e = 0; e < num_engine; ++e) {
+    auto engine = engines[e];
+    LOG(INFO) << "Testing read-only async exception propagation in " << type_names[e];
+
+    auto var = engine->NewVariable();
+    engine->PushAsync(AsyncCompleteWithError,
+                      mxnet::Context::CPU(),
+                      {var},
+                      {},
+                      mxnet::FnProperty::kAsync,
+                      0,
+                      "ReadOnlyAsyncExceptionRegression");
+
+    EXPECT_THROW(engine->WaitForAll(), dmlc::Error)
+        << "Callback errors from read-only ops must be visible to WaitForAll.";
+    engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, var);
+    EXPECT_NO_THROW(engine->WaitForAll());
+  }
+}
+
+TEST(Engine, ThreadedNoVarAsyncExceptionReachesWaitForAll) {
+  const int num_engine = 2;
+  std::vector<mxnet::Engine*> engines(num_engine);
+  engines[0]                = mxnet::engine::CreateThreadedEnginePooled();
+  engines[1]                = mxnet::engine::CreateThreadedEnginePerDevice();
+  std::string type_names[2] = {"ThreadedEnginePooled", "ThreadedEnginePerDevice"};
+
+  for (int e = 0; e < num_engine; ++e) {
+    auto engine = engines[e];
+    LOG(INFO) << "Testing no-var async exception propagation in " << type_names[e];
+
+    engine->PushAsync(AsyncCompleteWithError,
+                      mxnet::Context::CPU(),
+                      {},
+                      {},
+                      mxnet::FnProperty::kAsync,
+                      0,
+                      "NoVarAsyncExceptionRegression");
+
+    EXPECT_THROW(engine->WaitForAll(), dmlc::Error)
+        << "Callback errors from ops without dependency vars must be visible to WaitForAll.";
+    EXPECT_NO_THROW(engine->WaitForAll());
+  }
+}
+
+TEST(Engine, NaiveAsyncCallbackExceptionReachesWaitForAll) {
+  mxnet::Engine* engine = mxnet::engine::CreateNaiveEngine();
+  auto var              = engine->NewVariable();
+
+  engine->PushAsync(AsyncCompleteWithError,
+                    mxnet::Context::CPU(),
+                    {},
+                    {var},
+                    mxnet::FnProperty::kAsync,
+                    0,
+                    "NaiveAsyncExceptionRegression");
+
+  EXPECT_THROW(engine->WaitForAll(), dmlc::Error)
+      << "NaiveEngine must not drop errors passed to CallbackOnComplete.";
+  engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, var);
+}
+
+TEST(Engine, NegativeBulkSizeIsRejectedAndDoesNotPoisonThreadLocalState) {
+  mxnet::Engine* engine = mxnet::engine::CreateThreadedEnginePooled();
+
+  bool rejected_negative_bulk_size = false;
+  bool follow_up_push_succeeded    = false;
+  std::string follow_up_error;
+
+  // Bulk status is thread-local. Run the invalid state transition in a throwaway
+  // thread so the test process remains usable even when the current bug poisons
+  // that thread's bulk state.
+  std::thread worker([&]() {
+    try {
+      engine->set_bulk_size(-1);
+    } catch (const dmlc::Error&) {
+      rejected_negative_bulk_size = true;
+    } catch (const std::exception& e) {
+      follow_up_error = std::string("unexpected set_bulk_size exception: ") + e.what();
+    }
+
+    try {
+      engine->PushSync(NoOpSync, mxnet::Context::CPU(), {}, {});
+      follow_up_push_succeeded = true;
+    } catch (const std::exception& e) {
+      follow_up_error = e.what();
+    }
+  });
+  worker.join();
+
+  EXPECT_TRUE(rejected_negative_bulk_size)
+      << "set_bulk_size(-1) should fail before mutating thread-local bulk state.";
+  EXPECT_TRUE(follow_up_push_succeeded)
+      << "A rejected bulk-size update must not make the next PushSync throw: " << follow_up_error;
+  EXPECT_NO_THROW(engine->WaitForAll());
+}
+
+#if !defined(_WIN32)
+TEST(Engine, ThreadedEnginePerDeviceStartIsIdempotent) {
+  EXPECT_EXIT(
+      {
+        std::signal(SIGALRM, [](int) { _exit(2); });
+        alarm(3);
+        mxnet::Engine* engine = mxnet::engine::CreateThreadedEnginePerDevice();
+        engine->Start();
+        _exit(0);
+      },
+      ::testing::ExitedWithCode(0),
+      "")
+      << "Calling Start() on an already-started per-device engine must not deadlock.";
+}
+#endif
 
 TEST(Engine, WaitForVarClearsThreadedAsyncException) {
   const int num_engine = 2;
@@ -485,6 +621,111 @@ TEST(Engine, PushFuncND) {
     delete pnd;
   }
 }
+
+TEST(Engine, PushFuncNDRejectsNegativeCountsBeforeAllocatingVectors) {
+  auto ctx = mxnet::Context{};
+  mxnet::NDArray nd(ctx);
+  void* nd_handle = &nd;
+
+  int res = MXEnginePushAsyncND(
+      FooAsyncFunc, nullptr, nullptr, &ctx, &nd_handle, -1, &nd_handle, 1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("Non-negative number of const vars"),
+            std::string::npos)
+      << MXGetLastError();
+
+  res = MXEnginePushAsyncND(
+      FooAsyncFunc, nullptr, nullptr, &ctx, &nd_handle, 1, &nd_handle, -1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("Non-negative number of mutable vars"),
+            std::string::npos)
+      << MXGetLastError();
+
+  res = MXEnginePushSyncND(FooSyncFunc, nullptr, nullptr, &ctx, &nd_handle, -1, &nd_handle, 1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("Non-negative number of const vars"),
+            std::string::npos)
+      << MXGetLastError();
+
+  res = MXEnginePushSyncND(FooSyncFunc, nullptr, nullptr, &ctx, &nd_handle, 1, &nd_handle, -1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("Non-negative number of mutable vars"),
+            std::string::npos)
+      << MXGetLastError();
+}
+
+#if !defined(_WIN32)
+void RunPushFuncNDProfilingExitTest() {
+  std::signal(SIGALRM, [](int) { _exit(5); });
+  alarm(5);
+
+  auto ctx = mxnet::Context{};
+  const char* keys[] = {"profile_api",
+                        "profile_symbolic",
+                        "profile_imperative",
+                        "profile_memory",
+                        "aggregate_stats",
+                        "continuous_dump",
+                        "filename"};
+  const char* vals[] = {"1", "0", "0", "0", "1", "0", "/tmp/mxnet_api_profile.json"};
+
+  if (MXSetProfilerConfig(7, keys, vals) != 0) {
+    _exit(1);
+  }
+  if (MXSetProfilerState(1) != 0) {
+    _exit(2);
+  }
+
+  if (MXEnginePushAsyncND(FooAsyncFunc,
+                          nullptr,
+                          nullptr,
+                          &ctx,
+                          nullptr,
+                          0,
+                          nullptr,
+                          0,
+                          nullptr,
+                          0,
+                          "MXEnginePushAsyncNDProfileRegression",
+                          true) != 0) {
+    _exit(3);
+  }
+  if (MXEnginePushSyncND(FooSyncFunc,
+                         nullptr,
+                         nullptr,
+                         &ctx,
+                         nullptr,
+                         0,
+                         nullptr,
+                         0,
+                         nullptr,
+                         0,
+                         "MXEnginePushSyncNDProfileRegression") != 0) {
+    _exit(4);
+  }
+
+  if (MXSetProfilerState(0) != 0) {
+    _exit(6);
+  }
+
+  const char* stats = nullptr;
+  if (MXAggregateProfileStatsPrint(&stats, 0, 1, 0, 1) != 0 || stats == nullptr) {
+    _exit(7);
+  }
+  const std::string json(stats);
+  if (json.find("MXEnginePushAsyncND") == std::string::npos ||
+      json.find("MXEnginePushSyncND") == std::string::npos) {
+    _exit(8);
+  }
+  _exit(0);
+}
+
+TEST(Engine, PushFuncNDReachesApiEndForProfiling) {
+  EXPECT_EXIT(RunPushFuncNDProfilingExitTest(), ::testing::ExitedWithCode(0), "")
+      << "MXEnginePushAsyncND/MXEnginePushSyncND must execute API_END so API profiling "
+         "closes and records their outer C API duration tasks.";
+}
+#endif
 
 TEST(Engine, basics) {
   auto&& engine = mxnet::Engine::Get();

@@ -1525,7 +1525,8 @@ def test_onnx_export_np_reciprocal(tmp_path, dtype, shape):
 @pytest.mark.parametrize('shape', [(1, 3), (3, 4, 5)])
 def test_onnx_export_np_power(tmp_path, shape, dtype):
     x = mx.np.random.uniform(-5, 5, shape).astype(dtype)
-    y = mx.np.random.uniform(-10, 10, shape).astype(dtype)
+    y_low = 0 if np.dtype(dtype).kind in 'iu' else -10
+    y = mx.np.random.uniform(y_low, 10, shape).astype(dtype)
     M = def_model(mx.np, 'power')
     op_export_test('power', M, [x, y], tmp_path)
 

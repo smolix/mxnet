@@ -39,6 +39,29 @@ import numpy as np
 from mxnet import ndarray as nd
 
 
+LOWEST_TESTED_ONNX_OPSET_VERSION = 12
+DEFAULT_ONNX_OPSET_VERSION = 13
+
+
+def get_effective_onnx_opset_version(opset_version=None):
+    """Return the ONNX opset version MXNet should use for export."""
+    if opset_version is None:
+        return DEFAULT_ONNX_OPSET_VERSION
+    try:
+        opset_version = int(opset_version)
+    except (TypeError, ValueError):
+        raise TypeError("opset_version must be an integer or None")
+    if opset_version < LOWEST_TESTED_ONNX_OPSET_VERSION:
+        logging.warning('Your ONNX op set version is %s, '
+                        'which is lower than the lowest tested op set (%s); '
+                        'using %s instead.',
+                        str(opset_version),
+                        str(LOWEST_TESTED_ONNX_OPSET_VERSION),
+                        str(LOWEST_TESTED_ONNX_OPSET_VERSION))
+        return LOWEST_TESTED_ONNX_OPSET_VERSION
+    return opset_version
+
+
 class MXNetGraph(object):
     """Class to convert MXNet to ONNX graph"""
     registry_ = {}
@@ -69,18 +92,13 @@ class MXNetGraph(object):
     def convert_layer(node, **kwargs):
         """Convert MXNet layer to ONNX"""
         try:
-            from onnx.defs import onnx_opset_version
+            import onnx as _  # pylint: disable=unused-import
         except ImportError:
             raise ImportError("Onnx and protobuf need to be installed. "
                               + "Instructions to install - https://github.com/onnx/onnx")
 
         op = str(node["op"])
-        opset_version = kwargs.get("opset_version", onnx_opset_version())
-        if opset_version < 12:
-            logging.warning('Your ONNX op set version is {}, '
-                            'which is lower than then lowest tested op set (12), please consider '
-                            'updating ONNX'.format(str(opset_version)))
-            opset_version = 12
+        opset_version = get_effective_onnx_opset_version(kwargs.get("opset_version"))
         # Fallback to older opset versions if op is not registered in current version
         convert_func = None
         for op_version in range(opset_version, 11, -1):
@@ -233,6 +251,31 @@ class MXNetGraph(object):
         return dict([(k.replace("arg:", "").replace("aux:", ""), v.asnumpy())
                      for k, v in weights_dict.items()])
 
+    @staticmethod
+    def get_output_shape_lookup(sym, params, in_shapes, output_label):
+        """Return a lookup from MXNet/ONNX node output names to static shapes."""
+        inputs = {n: tuple(s) for n, s in
+                  zip([n for n in sym.list_inputs() if n not in params and n != output_label],
+                      in_shapes)}
+        inputs.update({n: v.shape for n, v in params.items() if n in sym.list_inputs()})
+
+        internals = sym.get_internals()
+        _, out_shapes, _ = internals.infer_shape(**inputs)
+        shape_lookup = {}
+        for output_name, shape in zip(internals.list_outputs(), out_shapes):
+            shape = tuple(shape)
+            shape_lookup[output_name] = shape
+            marker = '_output'
+            marker_pos = output_name.rfind(marker)
+            if marker_pos >= 0:
+                base_name = output_name[:marker_pos]
+                suffix = output_name[marker_pos + len(marker):]
+                if suffix == '':
+                    shape_lookup[base_name] = shape
+                elif suffix.isdigit():
+                    shape_lookup[base_name + suffix] = shape
+        return shape_lookup
+
     def create_onnx_graph_proto(self, sym, params, in_shapes, in_types, verbose=False, opset_version=None,
                                 dynamic=True, dynamic_input_shapes=None):
         """Convert MXNet graph to ONNX graph
@@ -250,7 +293,7 @@ class MXNetGraph(object):
         verbose : Boolean
             If true will print logs of the model conversion
         opset_version : Int
-            ONNX opset version to use for export, defaults to latest supported by onnx package
+            ONNX opset version to use for export, defaults to MXNet's tested default
         dynamic: Boolean
             If True will allow for dynamic input shapes to the model
         dynamic_input_shapes: list of tuple
@@ -264,13 +307,11 @@ class MXNetGraph(object):
         try:
             from onnx import (helper, NodeProto, ValueInfoProto, TensorProto)
             from onnx.helper import make_tensor_value_info
-            from onnx.defs import onnx_opset_version
         except ImportError:
             raise ImportError("Onnx and protobuf need to be installed. "
                               + "Instructions to install - https://github.com/onnx/onnx")
 
-        if opset_version is None:
-            opset_version = onnx_opset_version()
+        opset_version = get_effective_onnx_opset_version(opset_version)
 
         # When MXNet model is saved to json file , MXNet adds a node for label.
         # The name of this node is, name of the last node + "_label" ( i.e if last node
@@ -282,11 +323,13 @@ class MXNetGraph(object):
         weights = MXNetGraph.convert_weights_to_numpy(params)
 
         mx_graph = json.loads(sym.tojson())["nodes"]
+        output_shape_lookup = MXNetGraph.get_output_shape_lookup(sym, params, in_shapes, output_label)
 
         class NodeOutput:
-            def __init__(self, name, dtype):
+            def __init__(self, name, dtype, shape=None):
                 self.name = name
                 self.dtype = np.dtype(dtype)
+                self.shape = shape
 
         initializer = []
         all_processed_nodes = []
@@ -391,14 +434,15 @@ class MXNetGraph(object):
                 # match the output names to output dtypes
                 if dtypes is not None:
                     assert len(node_output_names) == len(dtypes)
-                    node_outputs = [NodeOutput(node_output_names[i], dtypes[i])
+                    node_outputs = [NodeOutput(node_output_names[i], dtypes[i],
+                                               output_shape_lookup.get(node_output_names[i]))
                                     for i in range(len(dtypes))]
                 else:
                     # in case dtypes is None, we just default to the dtype of the first input
                     assert len(node["inputs"]) > 0
                     first_input = node["inputs"][0]
                     first_input_dtype = outputs_lookup[first_input[0]][first_input[1]].dtype
-                    node_outputs = [NodeOutput(n, first_input_dtype)
+                    node_outputs = [NodeOutput(n, first_input_dtype, output_shape_lookup.get(n))
                                     for n in node_output_names]
                 outputs_lookup.append(node_outputs)
 

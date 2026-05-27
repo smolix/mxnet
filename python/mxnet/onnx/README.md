@@ -24,7 +24,9 @@
 [ONNX](https://onnx.ai/), or Open Neural Network Exchange, is an open source deep learning model format that acts as a framework neutral graph representation between DL frameworks or between training and inference. With the ability to export models to the ONNX format, MXNet users can enjoy faster inference and a wider range of deployment device choices, including edge and mobile devices where MXNet installation may be constrained. Popular hardware-accelerated and/or cross-platform ONNX runtime frameworks include Nvidia [TensorRT](https://github.com/onnx/onnx-tensorrt), Microsoft [ONNXRuntime](https://github.com/microsoft/onnxruntime), Apple [CoreML](https://github.com/onnx/onnx-coreml), etc.
 
 ### ONNX Versions Supported
-ONNX 1.7 & 1.8
+MXNet exports ONNX models using opset 13 by default. The exporter remains
+compatible with the historical ONNX 1.7/1.8 package range and with newer ONNX
+packages such as 1.20/1.21 for opset-13 export.
 
 ### Installation
 From MXNet 1.9 release and on, the ONNX export module has become an offical, built-in feature in MXNet. You can access the module at `mxnet.onnx`.
@@ -38,7 +40,7 @@ The main API is `export_model`, which, as the name suggests, exports an MXNet mo
 mxnet.onnx.export_model(sym, params, in_shapes=None, in_types=np.float32,
                  onnx_file_path='model.onnx', verbose=False, dynamic=False,
                  dynamic_input_shapes=None, run_shape_inference=False, input_type=None,
-                 input_shape=None)
+                 input_shape=None, large_model=False, opset_version=None)
 ```
 
 Parameters:
@@ -70,6 +72,9 @@ Parameters:
     large_model : Boolean
         Whether to export a model that is larger than 2 GB. If true will save param tensors in separate
         files along with .onnx model file. This feature is supported since onnx 1.8.0
+    opset_version : int or None
+        ONNX operator set version to target. Defaults to MXNet's tested default
+        opset, currently 13, rather than the newest opset in the installed ONNX package.
 
 Returns:
 

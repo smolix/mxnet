@@ -358,6 +358,7 @@ class ThreadedEngine : public Engine {
                        OprBlock* opr_block,
                        CallbackOnStart on_start,
                        CallbackOnComplete callback) {
+    callback.InitOnceGuard();
     ThreadedOpr* threaded_opr = opr_block->opr;
     if (opr_block->profiling && threaded_opr->opr_name.size()) {
       std::unique_ptr<profiler::ProfileOperator::Attributes> attrs;
@@ -392,10 +393,12 @@ class ThreadedEngine : public Engine {
             callback();
           }
         } catch (const std::exception& e) {
-          on_start();
-          threaded_opr->opr_exception =
-              std::make_shared<std::exception_ptr>(std::current_exception());
-          callback();
+          if (!callback.completed()) {
+            on_start();
+            threaded_opr->opr_exception =
+                std::make_shared<std::exception_ptr>(std::current_exception());
+            callback();
+          }
         }
         if (debug_info) {
           LOG(INFO) << "Fin ExecuteOprFn ";

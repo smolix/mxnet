@@ -117,6 +117,14 @@ mxnet::Engine::AsyncFn AsyncCompleteWithNamedError(const std::string& message) {
   };
 }
 
+void AsyncCompleteThenThrow(mxnet::RunContext,
+                            mxnet::Engine::CallbackOnStart on_start,
+                            mxnet::Engine::CallbackOnComplete on_complete) {
+  on_start();
+  on_complete();
+  throw dmlc::Error("late async failure after completion");
+}
+
 void NoOpSync(mxnet::RunContext) {}
 
 /**
@@ -290,6 +298,33 @@ TEST(Engine, ThreadedNoVarAsyncExceptionReachesWaitForAll) {
 
     EXPECT_THROW(engine->WaitForAll(), dmlc::Error)
         << "Callback errors from ops without dependency vars must be visible to WaitForAll.";
+    EXPECT_NO_THROW(engine->WaitForAll());
+  }
+}
+
+TEST(Engine, ThreadedIgnoresAsyncThrowAfterCompletion) {
+  const int num_engine = 2;
+  std::vector<mxnet::Engine*> engines(num_engine);
+  engines[0]                = mxnet::engine::CreateThreadedEnginePooled();
+  engines[1]                = mxnet::engine::CreateThreadedEnginePerDevice();
+  std::string type_names[2] = {"ThreadedEnginePooled", "ThreadedEnginePerDevice"};
+
+  for (int e = 0; e < num_engine; ++e) {
+    auto engine = engines[e];
+    LOG(INFO) << "Testing late async throw after completion in " << type_names[e];
+
+    auto var = engine->NewVariable();
+    engine->PushAsync(AsyncCompleteThenThrow,
+                      mxnet::Context::CPU(),
+                      {},
+                      {var},
+                      mxnet::FnProperty::kAsync,
+                      0,
+                      "AsyncCompleteThenThrowRegression");
+
+    EXPECT_NO_THROW(engine->WaitForAll())
+        << "An async function that already completed must not complete the same op twice.";
+    engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, var);
     EXPECT_NO_THROW(engine->WaitForAll());
   }
 }

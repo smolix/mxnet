@@ -18,8 +18,10 @@
 from __future__ import print_function
 import mxnet as mx
 from mxnet.gluon.model_zoo.vision import get_model
+from mxnet.gluon.model_zoo import model_store
 import sys
 import multiprocessing
+import zipfile
 import pytest
 
 
@@ -59,6 +61,23 @@ def test_models(model_name, request):
     if not test_pretrain:
         model.initialize()
     model(mx.np.random.uniform(size=data_shape)).wait_to_read()
+
+
+def test_model_store_removes_temp_zip_after_bad_download(monkeypatch, tmp_path):
+    model_name = 'unit_test_model'
+    monkeypatch.setitem(model_store._model_sha1, model_name,
+                        '0123456789abcdef0123456789abcdef01234567')
+
+    def fake_download(url, path=None, overwrite=False):
+        with open(path, 'wb') as temp_zip:
+            temp_zip.write(b'not a zip archive')
+
+    monkeypatch.setattr(model_store, 'download', fake_download)
+
+    with pytest.raises(zipfile.BadZipFile):
+        model_store.get_model_file(model_name, root=str(tmp_path))
+
+    assert list(tmp_path.glob('*.zip*')) == []
 
 def parallel_download(model_name):
     model = get_model(model_name, pretrained=True, root='./parallel_download')

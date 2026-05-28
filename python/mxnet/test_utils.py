@@ -30,6 +30,7 @@ import logging
 import bz2
 import zipfile
 import json
+import uuid
 from contextlib import contextmanager
 from collections import OrderedDict
 import numpy as np
@@ -1742,21 +1743,35 @@ def download(url, fname=None, dirname=None, overwrite=False, retries=5, timeout=
     while retries+1 > 0:
         # Disable pyling too broad Exception
         # pylint: disable=W0703
+        r = None
+        temp_fname = None
         try:
             r = requests.get(url, stream=True, timeout=timeout)
             assert r.status_code == 200, f"failed to open {url}"
-            with open(fname, 'wb') as f:
+            temp_fname = '{}.{}'.format(fname, uuid.uuid4())
+            with open(temp_fname, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=1024):
                     if chunk: # filter out keep-alive new chunks
                         f.write(chunk)
-                break
+            os.replace(temp_fname, fname)
+            temp_fname = None
+            break
         except Exception as e:
+            if temp_fname is not None:
+                try:
+                    os.remove(temp_fname)
+                except OSError:
+                    pass
             retries -= 1
             if retries <= 0:
                 raise e
 
             print("download failed, retrying, {} attempt{} left"
                   .format(retries, 's' if retries > 1 else ''))
+        finally:
+            close = getattr(r, 'close', None)
+            if close is not None:
+                close()
     logging.info("downloaded %s into %s successfully", url, fname)
     return fname
 

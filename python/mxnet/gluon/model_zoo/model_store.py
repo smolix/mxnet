@@ -111,12 +111,17 @@ def get_model_file(name, root=os.path.join(base.data_dir(), 'models')):
     temp_zip_file_path = os.path.join(root, file_name+'.zip'+random_uuid)
     download(_url_format.format(repo_url=repo_url, file_name=file_name),
              path=temp_zip_file_path, overwrite=True)
-    with zipfile.ZipFile(temp_zip_file_path) as zf:
-        with TemporaryDirectory(dir=root) as temp_dir:
-            zf.extractall(temp_dir)
-            temp_file_path = os.path.join(temp_dir, file_name+'.params')
-            replace_file(temp_file_path, file_path)
-    os.remove(temp_zip_file_path)
+    try:
+        with zipfile.ZipFile(temp_zip_file_path) as zf:
+            with TemporaryDirectory(dir=root) as temp_dir:
+                zf.extractall(temp_dir)
+                temp_file_path = os.path.join(temp_dir, file_name+'.params')
+                replace_file(temp_file_path, file_path)
+    finally:
+        try:
+            os.remove(temp_zip_file_path)
+        except OSError:
+            pass
 
     if check_sha1(file_path, sha1_hash):
         return file_path

@@ -52,3 +52,30 @@ def test_download_successful(tmpdir):
     mx.test_utils.download("https://raw.githubusercontent.com/apache/mxnet/master/README.md",
                            fname=tmpfile)
     assert os.path.getsize(tmpfile) > 100
+
+
+def test_download_stream_error_closes_response_and_removes_partial(monkeypatch, tmp_path):
+    closed = []
+    target = tmp_path / 'partial.bin'
+
+    class FakeResponse:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            yield b'partial'
+            raise RuntimeError('stream failed')
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(mx.test_utils.requests, 'get',
+                        lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(RuntimeError, match='stream failed'):
+        mx.test_utils.download('https://example.invalid/partial.bin',
+                               fname=str(target),
+                               retries=0)
+
+    assert closed == [True]
+    assert not target.exists()
+    assert list(tmp_path.glob('partial.bin.*')) == []

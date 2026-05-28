@@ -270,9 +270,9 @@ void save_array(const std::string& fname, const NDArray& array_) {
     array = array_;
     array.WaitToRead();
 #if MXNET_USE_ONEDNN == 1
-    if (array.IsDNNLData()) {
-      array = array.Reorder2Default();
-    }
+    array_.Reorder2DefaultAsync();
+    array_.WaitToRead();
+    array = array_;
 #endif
   }
 
@@ -476,9 +476,9 @@ void save_array(mz_zip_archive* archive, const std::string& array_name, const ND
     array = array_;
     array.WaitToRead();
 #if MXNET_USE_ONEDNN == 1
-    if (array.IsDNNLData()) {
-      array = array.Reorder2Default();
-    }
+    array_.Reorder2DefaultAsync();
+    array_.WaitToRead();
+    array = array_;
 #endif
   }
 

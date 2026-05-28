@@ -966,16 +966,19 @@ void NDArray::UpdateDNNLMemDesc(const void* mem_desc) {
 void NDArray::SetTBlob() const {
   CHECK(ptr_ != nullptr);
   mxnet::TShape shape = shape_;
-  char* dptr          = static_cast<char*>(ptr_->shandle.dptr);
+  char* dptr          = nullptr;
   auto stype          = storage_type();
   if (stype == kDefaultStorage) {
 #if MXNET_USE_ONEDNN == 1
-    CHECK(!IsDNNLData()) << "We can't generate TBlob for oneDNN data. "
-                         << "Please use Reorder2Default() to generate a new NDArray first";
+    if (IsDNNLData()) {
+      const_cast<NDArray*>(this)->SelfReorder2Default();
+    }
 #endif
+    dptr = static_cast<char*>(ptr_->shandle.dptr);
     dptr += byte_offset_;
   } else if (stype == kCSRStorage || stype == kRowSparseStorage) {
     CHECK_EQ(byte_offset_, 0);
+    dptr  = static_cast<char*>(ptr_->shandle.dptr);
     shape = storage_shape();
   } else {
     LOG(FATAL) << "unknown storage type " << stype;
@@ -2405,8 +2408,9 @@ void NDArray::SyncCopyToCPU(void* data, size_t size) const {
     RunContext rctx{this->ctx(), nullptr, nullptr};
     NDArray src = *this;
 #if MXNET_USE_ONEDNN == 1
-    if (src.IsDNNLData())
-      src = this->Reorder2Default();
+    this->Reorder2DefaultAsync();
+    this->WaitToRead();
+    src = *this;
 #endif
     ndarray::Copy<cpu, cpu>(src.data(), &dst, Context::CPU(), Context::CPU(), rctx);
   } else {

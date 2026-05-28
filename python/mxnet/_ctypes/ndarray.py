@@ -64,9 +64,19 @@ def _make_ndarray_outputs(output_vars, out_stypes, num_output, create_ndarray_fn
         for i in range(num_output):
             handle = ctypes.cast(output_vars[i], NDArrayHandle)
             if out_stypes is None:
-                ret.append(create_ndarray_fn(handle, writable=writable))
+                try:
+                    ret.append(create_ndarray_fn(handle, writable=writable))
+                except TypeError as err:
+                    if "unexpected keyword argument 'writable'" not in str(err):
+                        raise
+                    ret.append(create_ndarray_fn(handle))
             else:
-                ret.append(create_ndarray_fn(handle, stype=out_stypes[i], writable=writable))
+                try:
+                    ret.append(create_ndarray_fn(handle, stype=out_stypes[i], writable=writable))
+                except TypeError as err:
+                    if "unexpected keyword argument 'writable'" not in str(err):
+                        raise
+                    ret.append(create_ndarray_fn(handle, stype=out_stypes[i]))
             wrapped_count += 1
         if num_output == 1 and not output_is_list:
             return ret[0]

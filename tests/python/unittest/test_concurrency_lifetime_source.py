@@ -243,6 +243,29 @@ def test_python_handle_array_wrappers_free_unwrapped_handles():
     assert "output_vars, None, num_output.value, self._create_ndarray_fn, True, writable=False" in io_py
 
 
+def test_public_copy_save_paths_wait_after_onednn_reorder():
+    ndarray_cc = _read("src/ndarray/ndarray.cc")
+    sync_body = ndarray_cc.split("void NDArray::SyncCopyToCPU", 1)[1].split("} else {", 1)[0]
+    set_tblob_body = ndarray_cc.split("void NDArray::SetTBlob() const", 1)[1].split("/*!", 1)[0]
+    cnpy_cc = _read("src/serialization/cnpy.cc")
+
+    assert "this->Reorder2DefaultAsync()" in sync_body
+    assert "this->WaitToRead()" in sync_body
+    assert "const_cast<NDArray*>(this)->SelfReorder2Default()" in set_tblob_body
+    assert "We can't generate TBlob for oneDNN data" not in set_tblob_body
+    assert "array_.Reorder2DefaultAsync()" in cnpy_cc
+    assert "array_.WaitToRead()" in cnpy_cc
+
+
+def test_ndarray_output_wrapper_accepts_legacy_factories():
+    contents = _read("python/mxnet/_ctypes/ndarray.py")
+    body = contents.split("def _make_ndarray_outputs", 1)[1].split("def _imperative_invoke", 1)[0]
+
+    assert "unexpected keyword argument 'writable'" in body
+    assert "create_ndarray_fn(handle)" in body
+    assert "create_ndarray_fn(handle, stype=out_stypes[i])" in body
+
+
 def test_dnnl_fc_bf16_fallback_preserves_output_req():
     contents = _read("src/operator/nn/dnnl/dnnl_fully_connected.cc")
     body = contents.split("void DNNLFCForwardImpl", 1)[1].split("NDArray data", 1)[0]

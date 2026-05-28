@@ -24,6 +24,7 @@
 #include <atomic>
 #include <future>
 #include <memory>
+#include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -35,6 +36,37 @@
 
 namespace mxnet {
 namespace engine {
+
+namespace {
+
+std::string ExceptionMessage(const std::exception_ptr& exception) {
+  try {
+    std::rethrow_exception(exception);
+  } catch (const dmlc::Error& err) {
+    return err.what();
+  } catch (const std::exception& err) {
+    return err.what();
+  } catch (...) {
+    return "unknown non-standard exception";
+  }
+}
+
+void ThrowCollectedEngineExceptions(const std::vector<std::exception_ptr>& exceptions) {
+  if (exceptions.empty()) {
+    return;
+  }
+  if (exceptions.size() == 1) {
+    std::rethrow_exception(exceptions.front());
+  }
+  std::ostringstream os;
+  os << "Multiple asynchronous engine errors (" << exceptions.size() << "):";
+  for (size_t i = 0; i < exceptions.size(); ++i) {
+    os << "\n[" << i << "] " << ExceptionMessage(exceptions[i]);
+  }
+  throw dmlc::Error(os.str());
+}
+
+}  // namespace
 
 /*!
  * \brief var used in Naive Engine for tracking the version
@@ -238,20 +270,18 @@ class NaiveEngine final : public Engine {
   }
 
   void WaitForAll() override {
-    std::exception_ptr exception_to_rethrow = nullptr;
+    std::vector<std::exception_ptr> exceptions_to_rethrow;
     {
       std::lock_guard<std::mutex> lock(exception_mutex_);
       for (const auto& exception : global_exceptions_) {
-        if (exception != nullptr && exception_to_rethrow == nullptr) {
-          exception_to_rethrow = exception;
+        if (exception != nullptr) {
+          exceptions_to_rethrow.push_back(exception);
         }
       }
       global_exceptions_.clear();
       var_exceptions_.clear();
     }
-    if (exception_to_rethrow != nullptr) {
-      std::rethrow_exception(exception_to_rethrow);
-    }
+    ThrowCollectedEngineExceptions(exceptions_to_rethrow);
   }
 
   void Throw(VarHandle var) override {

@@ -28,12 +28,44 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <sstream>
 #include <utility>
 #include "./threaded_engine.h"
 #include "../common/cuda/utils.h"
 
 namespace mxnet {
 namespace engine {
+
+namespace {
+
+std::string ExceptionMessage(const std::exception_ptr& exception) {
+  try {
+    std::rethrow_exception(exception);
+  } catch (const dmlc::Error& err) {
+    return err.what();
+  } catch (const std::exception& err) {
+    return err.what();
+  } catch (...) {
+    return "unknown non-standard exception";
+  }
+}
+
+void ThrowCollectedEngineExceptions(const std::vector<std::exception_ptr>& exceptions) {
+  if (exceptions.empty()) {
+    return;
+  }
+  if (exceptions.size() == 1) {
+    std::rethrow_exception(exceptions.front());
+  }
+  std::ostringstream os;
+  os << "Multiple asynchronous engine errors (" << exceptions.size() << "):";
+  for (size_t i = 0; i < exceptions.size(); ++i) {
+    os << "\n[" << i << "] " << ExceptionMessage(exceptions[i]);
+  }
+  throw dmlc::Error(os.str());
+}
+
+}  // namespace
 
 #if ENGINE_DEBUG
 std::atomic<std::size_t> OprBlock::counter{0};
@@ -487,15 +519,14 @@ void ThreadedEngine::WaitForAll() {
     }
   }
 
-  std::exception_ptr exception_to_rethrow = nullptr;
+  std::vector<std::exception_ptr> exceptions_to_rethrow;
   {
     std::lock_guard<std::mutex> exception_lock(exception_m_);
     if (!global_exception_refs_.empty()) {
       // iterate through all exception refs
       for (const auto& global_exception_ref : global_exception_refs_) {
-        // the first exception will be saved to be rethrown later
-        if (*global_exception_ref != nullptr && exception_to_rethrow == nullptr) {
-          exception_to_rethrow = *global_exception_ref;
+        if (*global_exception_ref != nullptr) {
+          exceptions_to_rethrow.push_back(*global_exception_ref);
         }
         // clear exceptions, WaitToRead following WaitForAll shouldn't throw
         *global_exception_ref = nullptr;
@@ -504,9 +535,7 @@ void ThreadedEngine::WaitForAll() {
       global_exception_refs_.clear();
     }
   }
-  if (exception_to_rethrow != nullptr) {
-    std::rethrow_exception(exception_to_rethrow);
-  }
+  ThrowCollectedEngineExceptions(exceptions_to_rethrow);
 }
 
 inline void ThreadedEngine::OnComplete(ThreadedOpr* threaded_opr) {

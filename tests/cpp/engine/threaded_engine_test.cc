@@ -107,6 +107,16 @@ void AsyncCompleteWithError(mxnet::RunContext,
   on_complete(&error);
 }
 
+mxnet::Engine::AsyncFn AsyncCompleteWithNamedError(const std::string& message) {
+  return [message](mxnet::RunContext,
+                   mxnet::Engine::CallbackOnStart on_start,
+                   mxnet::Engine::CallbackOnComplete on_complete) {
+    on_start();
+    dmlc::Error error(message);
+    on_complete(&error);
+  };
+}
+
 void NoOpSync(mxnet::RunContext) {}
 
 /**
@@ -280,6 +290,47 @@ TEST(Engine, ThreadedNoVarAsyncExceptionReachesWaitForAll) {
 
     EXPECT_THROW(engine->WaitForAll(), dmlc::Error)
         << "Callback errors from ops without dependency vars must be visible to WaitForAll.";
+    EXPECT_NO_THROW(engine->WaitForAll());
+  }
+}
+
+TEST(Engine, WaitForAllAggregatesMultipleAsyncExceptions) {
+  const int num_engine = 3;
+  std::vector<mxnet::Engine*> engines(num_engine);
+  engines[0]                = mxnet::engine::CreateNaiveEngine();
+  engines[1]                = mxnet::engine::CreateThreadedEnginePooled();
+  engines[2]                = mxnet::engine::CreateThreadedEnginePerDevice();
+  std::string type_names[3] = {"NaiveEngine", "ThreadedEnginePooled", "ThreadedEnginePerDevice"};
+
+  for (int e = 0; e < num_engine; ++e) {
+    auto engine = engines[e];
+    LOG(INFO) << "Testing WaitForAll exception aggregation in " << type_names[e];
+
+    engine->PushAsync(AsyncCompleteWithNamedError("first aggregated engine failure"),
+                      mxnet::Context::CPU(),
+                      {},
+                      {},
+                      mxnet::FnProperty::kAsync,
+                      0,
+                      "FirstAggregatedFailure");
+    engine->PushAsync(AsyncCompleteWithNamedError("second aggregated engine failure"),
+                      mxnet::Context::CPU(),
+                      {},
+                      {},
+                      mxnet::FnProperty::kAsync,
+                      0,
+                      "SecondAggregatedFailure");
+
+    try {
+      engine->WaitForAll();
+      FAIL() << "WaitForAll should report the aggregated async errors";
+    } catch (const dmlc::Error& err) {
+      const std::string message = err.what();
+      EXPECT_NE(message.find("Multiple asynchronous engine errors"), std::string::npos)
+          << message;
+      EXPECT_NE(message.find("first aggregated engine failure"), std::string::npos) << message;
+      EXPECT_NE(message.find("second aggregated engine failure"), std::string::npos) << message;
+    }
     EXPECT_NO_THROW(engine->WaitForAll());
   }
 }

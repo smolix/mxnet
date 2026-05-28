@@ -19,8 +19,24 @@
 """
 
 import os
+import re
+import zipfile
 import mxnet as mx
 from mxnet import gluon
+
+
+def _safe_extract_zip(zip_path, target_dir):
+    target_dir = os.path.abspath(target_dir)
+    with zipfile.ZipFile(zip_path) as zf:
+        for info in zf.infolist():
+            normalized = os.path.normpath(info.filename)
+            if os.path.isabs(info.filename) or normalized == os.pardir or \
+                    normalized.startswith(os.pardir + os.sep):
+                raise ValueError("unsafe zip member: {}".format(info.filename))
+            target = os.path.abspath(os.path.join(target_dir, normalized))
+            if target != target_dir and not target.startswith(target_dir + os.sep):
+                raise ValueError("unsafe zip member: {}".format(info.filename))
+        zf.extractall(target_dir)
 
 def load_mldataset(filename):
     """Not particularly fast code to parse the text file and load it into three NDArray's
@@ -43,14 +59,18 @@ def load_mldataset(filename):
     return gluon.data.ArrayDataset(user, item, score)
 
 def ensure_local_data(prefix):
+    if not re.match(r'^[A-Za-z0-9_.-]+$', prefix):
+        raise ValueError("invalid MovieLens dataset prefix: {}".format(prefix))
     if not os.path.exists(f"{prefix}.zip"):
         print(f"Downloading MovieLens data: {prefix}")
         # MovieLens 100k dataset from https://grouplens.org/datasets/movielens/
         # This dataset is copy right to GroupLens Research Group at the University of Minnesota,
         # and licensed under their usage license.
         # For full text of the usage license, see http://files.grouplens.org/datasets/movielens/ml-100k-README.txt
-        os.system(f"wget http://files.grouplens.org/datasets/movielens/{prefix}.zip")
-        os.system(f"unzip {prefix}.zip")
+        url = f"https://files.grouplens.org/datasets/movielens/{prefix}.zip"
+        mx.gluon.utils.download(url, path=f"{prefix}.zip")
+    if not os.path.isdir(prefix):
+        _safe_extract_zip(f"{prefix}.zip", ".")
 
 
 def get_dataset(prefix='ml-100k'):

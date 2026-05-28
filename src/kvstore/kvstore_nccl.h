@@ -26,6 +26,7 @@
 
 #if MXNET_USE_NCCL
 
+#include <mxnet/engine.h>
 #include <mxnet/kvstore.h>
 #include <nccl.h>
 #include <unordered_map>
@@ -75,6 +76,7 @@ class KVStoreNCCL : public KVStoreLocal {
   }
 
   virtual ~KVStoreNCCL() {
+    Engine::Get()->WaitForAll();
     for (auto e : nccl_data_) {
       cudaStreamDestroy(e.second.stream);
       ncclCommDestroy(e.second.comm);

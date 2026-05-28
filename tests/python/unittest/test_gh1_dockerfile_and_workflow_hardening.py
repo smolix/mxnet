@@ -123,6 +123,14 @@ def test_example_gluon_data_uses_context_managed_tarfile():
         "example/gluon/data.py no longer closes tarfile on extraction failure"
 
 
+def test_movielens_data_avoids_shell_download_and_validates_zip():
+    contents = _read("example/recommenders/movielens_data.py")
+    assert "os.system" not in contents, \
+        "MovieLens downloader reintroduced shell command execution"
+    assert "_safe_extract_zip" in contents and "startswith(os.pardir + os.sep)" in contents, \
+        "MovieLens downloader no longer validates zip members before extraction"
+
+
 if __name__ == "__main__":
     import sys, pytest
     sys.exit(pytest.main([__file__, "-v"]))

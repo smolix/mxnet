@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <utility>
@@ -449,16 +450,16 @@ void ThreadedEngine::WaitForVar(VarHandle var) {
     LOG(INFO) << "Wait for " << threaded_var;
     debug_wait_var_ = threaded_var;
   }
-  std::atomic<bool> done{false};
+  auto done = std::make_shared<std::atomic<bool>>(false);
   this->PushAsync(
-      [this, &done](RunContext, CallbackOnStart on_start, CallbackOnComplete on_complete) {
+      [this, done](RunContext, CallbackOnStart on_start, CallbackOnComplete on_complete) {
         on_start();
         if (engine_info_) {
           LOG(INFO) << "Sync is executed";
         }
         {
           std::unique_lock<std::mutex> lock{finished_m_};
-          done.store(true);
+          done->store(true);
         }
         finished_cv_.notify_all();
         if (engine_info_) {
@@ -479,7 +480,7 @@ void ThreadedEngine::WaitForVar(VarHandle var) {
       // Watchdog loop: wake every diag_timeout_s seconds and log if still stuck.
       while (!finished_cv_.wait_for(lock,
                                     std::chrono::seconds(diag_timeout_s),
-                                    [this, &done]() { return done.load() || kill_.load(); })) {
+                                    [this, done]() { return done->load() || kill_.load(); })) {
         LOG(WARNING) << "[MXNET_ENGINE_DIAG] WaitForVar timeout after " << diag_timeout_s
                      << "s: var=" << threaded_var
                      << " pending_ops=" << pending_.load()
@@ -489,7 +490,7 @@ void ThreadedEngine::WaitForVar(VarHandle var) {
                         "to debug synchronously.";
       }
     } else {
-      finished_cv_.wait(lock, [this, &done]() { return done.load() || kill_.load(); });
+      finished_cv_.wait(lock, [this, done]() { return done->load() || kill_.load(); });
     }
   }
 

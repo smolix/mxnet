@@ -617,7 +617,8 @@ Graph QuantizeGraph(Graph&& src) {
 static inline void SetCalibTableForEntry(
     const NodeEntry& e,
     const ObjectPtr& node,
-    const std::unordered_map<std::string, std::pair<float, float>>& calib_table) {
+    const std::unordered_map<std::string, std::pair<float, float>>& calib_table,
+    bool required) {
   std::string out_name       = GetOutputName(e.node.get(), e.index);
   std::string full_node_name = e.node->attrs.name;
 
@@ -635,37 +636,39 @@ static inline void SetCalibTableForEntry(
   }
   const auto calib_table_iter = calib_table.find(full_node_name);
   static int verbose          = dmlc::GetEnv("MXNET_QUANTIZATION_VERBOSE", 0);
-  if (calib_table_iter != calib_table.end()) {
-    if (verbose) {
-      LOG(INFO) << "Set calibration result to " << node->attrs.name
-                << " : min=" << calib_table_iter->second.first
-                << " max=" << calib_table_iter->second.second;
-    }
-    // std::to_string(NaN) yields the literal string "nan", which the
-    // dmlc::optional<float> parameter parser rejects ("Invalid Parameter
-    // format ... expect float or None but value='nan'"). When the calibrated
-    // range is NaN (can happen if the calibration data triggers a NaN
-    // activation in the FP reference run), fall back to "None" so the
-    // operator picks runtime min/max instead.
-    const float min_val = calib_table_iter->second.first;
-    const float max_val = calib_table_iter->second.second;
-    if (std::isnan(min_val) || std::isnan(max_val)) {
-      LOG(WARNING) << "Calibration produced NaN min/max for node " << node->attrs.name
-                   << " (min=" << min_val << " max=" << max_val
-                   << "); falling back to runtime range.";
-      node->attrs.dict["min_calib_range"] = "None";
-      node->attrs.dict["max_calib_range"] = "None";
-    } else {
-      node->attrs.dict["min_calib_range"] = std::to_string(min_val);
-      node->attrs.dict["max_calib_range"] = std::to_string(max_val);
-    }
-    if (node->op() && node->op()->attr_parser)
-      node->op()->attr_parser(&(node->attrs));
-  } else {
+  if (calib_table_iter == calib_table.end()) {
+    CHECK(!required) << "Missing calibration result for " << full_node_name
+                     << " while setting ranges for " << node->attrs.name;
     if (verbose) {
       LOG(INFO) << "Can't find calibration result for " << node->attrs.name;
     }
+    return;
   }
+  if (verbose) {
+    LOG(INFO) << "Set calibration result to " << node->attrs.name
+              << " : min=" << calib_table_iter->second.first
+              << " max=" << calib_table_iter->second.second;
+  }
+  // std::to_string(NaN) yields the literal string "nan", which the
+  // dmlc::optional<float> parameter parser rejects ("Invalid Parameter
+  // format ... expect float or None but value='nan'"). When the calibrated
+  // range is NaN (can happen if the calibration data triggers a NaN
+  // activation in the FP reference run), fall back to "None" so the
+  // operator picks runtime min/max instead.
+  const float min_val = calib_table_iter->second.first;
+  const float max_val = calib_table_iter->second.second;
+  if (std::isnan(min_val) || std::isnan(max_val)) {
+    LOG(WARNING) << "Calibration produced NaN min/max for node " << node->attrs.name
+                 << " (min=" << min_val << " max=" << max_val
+                 << "); falling back to runtime range.";
+    node->attrs.dict["min_calib_range"] = "None";
+    node->attrs.dict["max_calib_range"] = "None";
+  } else {
+    node->attrs.dict["min_calib_range"] = std::to_string(min_val);
+    node->attrs.dict["max_calib_range"] = std::to_string(max_val);
+  }
+  if (node->op() && node->op()->attr_parser)
+    node->op()->attr_parser(&(node->attrs));
 }
 
 Graph SetCalibTableToQuantizedGraph(Graph&& g) {
@@ -684,12 +687,18 @@ Graph SetCalibTableToQuantizedGraph(Graph&& g) {
       const auto calib_idx = need_calib_input_map[node->op()](node->attrs);
       CHECK_EQ(calib_idx.size(), 1);
       const auto& idx = calib_idx[0];
-      SetCalibTableForEntry(node->inputs[idx], node, calib_table);
+      SetCalibTableForEntry(node->inputs[idx],
+                            node,
+                            calib_table,
+                            node->attrs.name.rfind("requantize_", 0) == 0);
     } else if (need_calib_output_map.count(node->op())) {
       const auto calib_idx = need_calib_output_map[node->op()](node->attrs);
       CHECK_EQ(calib_idx.size(), 1);
       const auto& idx = calib_idx[0];
-      SetCalibTableForEntry({node, static_cast<uint32_t>(idx), 0}, node, calib_table);
+      SetCalibTableForEntry({node, static_cast<uint32_t>(idx), 0},
+                            node,
+                            calib_table,
+                            node->attrs.name.rfind("requantize_", 0) == 0);
     }
   });
   return std::move(g);

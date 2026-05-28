@@ -1943,6 +1943,34 @@ def test_quantize_sym_with_calib():
 
 
 @use_np
+def test_quantize_sym_with_calib_rejects_missing_required_entries():
+    if is_test_for_native_cpu():
+        print('skipped testing missing calibration table entries for native cpu since quantize '
+              'model is not supported yet')
+        return
+    if is_test_for_gpu():
+        print('skipped testing missing calibration table entries for gpu')
+        return
+
+    data = mx.sym.Variable('data')
+    conv = mx.sym.Convolution(data, kernel=(1, 1), num_filter=16, name='conv')
+    bn = mx.sym.BatchNorm(data=conv, eps=2e-05, fix_gamma=False, momentum=0.9,
+                          use_global_stats=False, name='bn')
+    act = mx.sym.Activation(data=bn, act_type='relu', name='relu')
+    pool = mx.sym.Pooling(act, kernel=(4, 4), pool_type='avg', name='pool')
+    fc = mx.sym.FullyConnected(pool, num_hidden=10, flatten=True, name='fc')
+    sym = mx.sym.softmax(fc, name='softmax')
+    offline_params = [name for name in sym.list_arguments()
+                      if not name.startswith('data') and not name.endswith('label')]
+    qsym, _ = mx.contrib.quant._quantize_symbol(
+        sym, device=mx.current_device(), offline_params=offline_params, quantize_mode='full')
+    min_max_dict = {'conv_output': (-1.0, 1.0)}
+
+    with _pytest_for_reset_np_fixture.raises(mx.base.MXNetError, match='Missing calibration result'):
+        mx.contrib.quant._calibrate_quantized_sym(qsym, min_max_dict)
+
+
+@use_np
 def test_quantization_net_with_different_data_inputs_options():
     if is_test_for_native_cpu():
         print('skipped testing test_quantization_net_with_different_data_inputs_options for native cpu since it is not supported yet')

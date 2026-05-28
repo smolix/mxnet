@@ -217,3 +217,27 @@ def test_dlpack_error_paths_release_owned_resources():
     assert "dl_managed_tensor_deleter(ctypes.byref(c_obj))" in contents
     assert "ndarray.flags['WRITEABLE'] = was_writeable" in contents
     assert "check_call(_LIB.MXNDArrayFree(handle))" in contents
+
+
+def test_python_handle_array_wrappers_free_unwrapped_handles():
+    ctypes_ndarray = _read("python/mxnet/_ctypes/ndarray.py")
+    nd_utils = _read("python/mxnet/ndarray/utils.py")
+    np_utils = _read("python/mxnet/numpy_extension/utils.py")
+    gluon_internal = _read("python/mxnet/gluon/data/_internal.py")
+    io_py = _read("python/mxnet/io/io.py")
+
+    assert "out_stypes is None" in ctypes_ndarray
+    assert "check_call(_LIB.MXNDArrayFree(output_vars[i]))" in ctypes_ndarray
+
+    assert "from .._ctypes.ndarray import _make_ndarray_outputs" in nd_utils
+    assert "from .._ctypes.ndarray import _make_ndarray_outputs" in np_utils
+    assert "from ..._ctypes.ndarray import _make_ndarray_outputs" in gluon_internal
+    assert "from .._ctypes.ndarray import _make_ndarray_outputs" in io_py
+
+    assert "py_names = [py_str(names[i]) for i in range(out_size.value)]" in nd_utils
+    assert "py_names = [py_str(names[i]) for i in range(out_size.value)]" in np_utils
+    assert "return dict(zip(py_names, out))" in nd_utils
+    assert "return dict(zip(py_names, out))" in np_utils
+
+    assert "output_vars, None, num_output.value, create_ndarray_fn, True, writable=False" in gluon_internal
+    assert "output_vars, None, num_output.value, self._create_ndarray_fn, True, writable=False" in io_py

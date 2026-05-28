@@ -31,6 +31,7 @@ from ..base import c_str_array, mx_uint, py_str
 from ..base import DataIterHandle, NDArrayHandle
 from ..base import mx_real_t
 from ..base import check_call, build_param_doc as _build_param_doc
+from .._ctypes.ndarray import _make_ndarray_outputs
 from ..ndarray import NDArray
 from ..ndarray.sparse import CSRNDArray
 from ..util import is_np_array
@@ -931,8 +932,8 @@ class MXDataIter(DataIter):
         check_call(_LIB.MXDataIterGetItems(self.handle,
                                            ctypes.byref(num_output),
                                            ctypes.byref(output_vars)))
-        out = [self._create_ndarray_fn(ctypes.cast(output_vars[i], NDArrayHandle),
-                                       False) for i in range(num_output.value)]
+        out = _make_ndarray_outputs(
+            output_vars, None, num_output.value, self._create_ndarray_fn, True, writable=False)
         return tuple(out)
 
     def __len__(self):

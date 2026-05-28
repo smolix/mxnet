@@ -55,14 +55,18 @@ class NDArrayBase(object):
         return (_global_var._ndarray_cls, (None,), self.__getstate__())
 
 
-def _make_ndarray_outputs(output_vars, out_stypes, num_output, create_ndarray_fn, output_is_list):
+def _make_ndarray_outputs(output_vars, out_stypes, num_output, create_ndarray_fn, output_is_list,
+                          writable=True):
     """Create Python NDArrays and free unwrapped handles if wrapping raises."""
     wrapped_count = 0
     try:
         ret = []
         for i in range(num_output):
-            ret.append(create_ndarray_fn(ctypes.cast(output_vars[i], NDArrayHandle),
-                                         stype=out_stypes[i]))
+            handle = ctypes.cast(output_vars[i], NDArrayHandle)
+            if out_stypes is None:
+                ret.append(create_ndarray_fn(handle, writable=writable))
+            else:
+                ret.append(create_ndarray_fn(handle, stype=out_stypes[i], writable=writable))
             wrapped_count += 1
         if num_output == 1 and not output_is_list:
             return ret[0]

@@ -23,6 +23,7 @@ import os
 import pickle as pkl
 import random
 import functools
+import ctypes
 import pytest
 from common import assertRaises, legacy_np_semantics, TemporaryDirectory
 from mxnet.test_utils import almost_equal
@@ -423,6 +424,35 @@ def test_ndarray_saveload(save_fn):
         assert np.sum(single_ndarray.asnumpy() != single_ndarray_loaded.asnumpy()) == 0
 
     os.remove(fname)
+
+
+def test_make_ndarray_outputs_frees_unwrapped_handles_on_constructor_error(monkeypatch):
+    from mxnet._ctypes import ndarray as ctypes_ndarray
+    from mxnet.base import NDArrayHandle
+
+    output_vars = (NDArrayHandle * 4)()
+    for i in range(4):
+        output_vars[i] = NDArrayHandle(i + 1)
+
+    freed = []
+
+    class FakeLib:
+        def MXNDArrayFree(self, handle):
+            freed.append(handle.value if hasattr(handle, 'value') else handle)
+            return 0
+
+    def create_ndarray(handle, writable=True):
+        value = ctypes.cast(handle, NDArrayHandle).value
+        if value == 2:
+            raise RuntimeError('wrap failed')
+        return value
+
+    monkeypatch.setattr(ctypes_ndarray, '_LIB', FakeLib())
+    with pytest.raises(RuntimeError):
+        ctypes_ndarray._make_ndarray_outputs(
+            output_vars, None, len(output_vars), create_ndarray, True)
+
+    assert freed == [2, 3, 4]
 
 
 @mx.util.use_np

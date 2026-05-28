@@ -48,6 +48,21 @@ struct QuantizedReluUInt8AffineKernel {
   }
 };
 
+struct QuantizedReluInt8Kernel {
+  MSHADOW_XINLINE static void Map(int i,
+                                  int8_t* out,
+                                  const int8_t* in,
+                                  float input_absmax,
+                                  float out_max,
+                                  OpReqType req) {
+    const float real = static_cast<float>(in[i]) * input_absmax / kInt8Range;
+    const float relu = real > 0.0f ? real : 0.0f;
+    const float scaled = out_max > 0.0f ? floorf(relu * kInt8Range / out_max + 0.5f) : 0.0f;
+    const int32_t q = static_cast<int32_t>(scaled > kInt8Range ? kInt8Range : scaled);
+    KERNEL_ASSIGN(out[i], req, static_cast<int8_t>(q));
+  }
+};
+
 static void DNNLQuantizedActForward(const nnvm::NodeAttrs& attrs,
                                     const OpContext& ctx,
                                     const std::vector<NDArray>& in_data,
@@ -59,6 +74,26 @@ static void DNNLQuantizedActForward(const nnvm::NodeAttrs& attrs,
 
   const float input_min = in_data[1].data().dptr<float>()[0];
   const float input_max = in_data[2].data().dptr<float>()[0];
+  if (in_data[0].dtype() == mshadow::kInt8 && input_min < 0.0f) {
+    const float output_min = 0.0f;
+    const float output_max = std::max(0.0f, input_max);
+    if (req[0] != kNullOp) {
+      NDArray input = in_data[0].Reorder2Default();
+      mxnet_op::Kernel<QuantizedReluInt8Kernel, cpu>::Launch(
+          ctx.get_stream<cpu>(),
+          input.shape().Size(),
+          out_data[0].data().dptr<int8_t>(),
+          input.data().dptr<int8_t>(),
+          MaxAbs(input_min, input_max),
+          output_max,
+          req[0]);
+    }
+    AssignQuantizedRangeOutput(
+        out_data[1].data().dptr<float>(), &output_min, req[1], "quantized_act");
+    AssignQuantizedRangeOutput(
+        out_data[2].data().dptr<float>(), &output_max, req[2], "quantized_act");
+    return;
+  }
   if (in_data[0].dtype() == mshadow::kUint8 && input_min < 0.0f) {
     const float output_min = 0.0f;
     const float output_max = std::max(0.0f, input_max);

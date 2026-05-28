@@ -59,19 +59,20 @@ static bool DNNLQuantizedConcatAffineUInt8Fallback(const ConcatParam& param,
                                                   const std::vector<float>& data_max,
                                                   float output_min,
                                                   float output_max) {
-  if (out_data[quantized_concat_enum::kOut].dtype() != mshadow::kUint8) {
+  const auto out_dtype = out_data[quantized_concat_enum::kOut].dtype();
+  if (out_dtype != mshadow::kUint8 && out_dtype != mshadow::kInt8) {
     return false;
   }
 
-  bool needs_affine_rescale = false;
+  bool needs_rescale = false;
   for (int i = 0; i < param.num_args; ++i) {
-    if (in_data[i].dtype() != mshadow::kUint8) {
+    if (in_data[i].dtype() != mshadow::kUint8 && in_data[i].dtype() != mshadow::kInt8) {
       return false;
     }
-    needs_affine_rescale = needs_affine_rescale || data_min[i] != output_min ||
-                           data_max[i] != output_max;
+    needs_rescale = needs_rescale || in_data[i].dtype() != out_dtype ||
+                    data_min[i] != output_min || data_max[i] != output_max;
   }
-  if (!needs_affine_rescale) {
+  if (!needs_rescale) {
     return false;
   }
 
@@ -106,19 +107,54 @@ static bool DNNLQuantizedConcatAffineUInt8Fallback(const ConcatParam& param,
     after_axis *= inputs[0].shape()[i];
   }
 
-  uint8_t* out = out_data[quantized_concat_enum::kOut].data().dptr<uint8_t>();
+  uint8_t* out_u8 = out_dtype == mshadow::kUint8 ?
+                        out_data[quantized_concat_enum::kOut].data().dptr<uint8_t>() :
+                        nullptr;
+  int8_t* out_s8 = out_dtype == mshadow::kInt8 ?
+                       out_data[quantized_concat_enum::kOut].data().dptr<int8_t>() :
+                       nullptr;
+  const float output_absmax = MaxAbs(output_min, output_max);
   size_t out_offset = 0;
   for (size_t prefix = 0; prefix < before_axis; ++prefix) {
     for (int input_idx = 0; input_idx < param.num_args; ++input_idx) {
-      const uint8_t* in = inputs[input_idx].data().dptr<uint8_t>();
       const size_t axis_size = inputs[input_idx].shape()[param_dim];
       const size_t block_size = axis_size * after_axis;
       const size_t in_offset = prefix * block_size;
-      const float scale = (data_max[input_idx] - data_min[input_idx]) / kUint8Range;
-      for (size_t j = 0; j < block_size; ++j) {
-        const float real = static_cast<float>(in[in_offset + j]) * scale + data_min[input_idx];
-        const uint8_t q = QuantizeAffineUInt8(real, output_min, output_max);
-        KERNEL_ASSIGN(out[out_offset + j], req[quantized_concat_enum::kOut], q);
+      if (inputs[input_idx].dtype() == mshadow::kUint8) {
+        const uint8_t* in = inputs[input_idx].data().dptr<uint8_t>();
+        const float scale = (data_max[input_idx] - data_min[input_idx]) / kUint8Range;
+        for (size_t j = 0; j < block_size; ++j) {
+          const float real = static_cast<float>(in[in_offset + j]) * scale + data_min[input_idx];
+          if (out_dtype == mshadow::kUint8) {
+            const uint8_t q = QuantizeAffineUInt8(real, output_min, output_max);
+            KERNEL_ASSIGN(out_u8[out_offset + j], req[quantized_concat_enum::kOut], q);
+          } else {
+            const float scaled = output_absmax > 0.0f ?
+                                     floorf(std::min(std::abs(real) * kInt8Range / output_absmax,
+                                                     kInt8Range) +
+                                            0.5f) :
+                                     0.0f;
+            const int32_t q = static_cast<int32_t>(real < 0.0f ? -scaled : scaled);
+            KERNEL_ASSIGN(out_s8[out_offset + j],
+                          req[quantized_concat_enum::kOut],
+                          static_cast<int8_t>(q));
+          }
+        }
+      } else {
+        const int8_t* in = inputs[input_idx].data().dptr<int8_t>();
+        const float scale = MaxAbs(data_min[input_idx], data_max[input_idx]) / kInt8Range;
+        for (size_t j = 0; j < block_size; ++j) {
+          const float real = static_cast<float>(in[in_offset + j]) * scale;
+          const float scaled = output_absmax > 0.0f ?
+                                   floorf(std::min(std::abs(real) * kInt8Range / output_absmax,
+                                                   kInt8Range) +
+                                          0.5f) :
+                                   0.0f;
+          const int32_t q = static_cast<int32_t>(real < 0.0f ? -scaled : scaled);
+          KERNEL_ASSIGN(out_s8[out_offset + j],
+                        req[quantized_concat_enum::kOut],
+                        static_cast<int8_t>(q));
+        }
       }
       out_offset += block_size;
     }

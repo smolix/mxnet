@@ -201,6 +201,18 @@ def test_dequantize_int8_to_float32():
     test_symbolic_api_dequantization(qdata, min_range, max_range, expected_result)
 
 
+def test_dequantize_uint8_uses_affine_range():
+    qdata_np = onp.array([0, 64, 128, 255], dtype=onp.uint8)
+    qdata = mx.nd.array(qdata_np, dtype=onp.uint8, ctx=mx.current_device())
+    min_range = mx.nd.array([-1.0], dtype=onp.float32, ctx=mx.current_device())
+    max_range = mx.nd.array([3.0], dtype=onp.float32, ctx=mx.current_device())
+
+    data = mx.nd.contrib.dequantize(qdata, min_range, max_range, out_type='float32')
+
+    expected = qdata_np.astype('float32') * (4.0 / 255.0) - 1.0
+    assert_almost_equal(data.asnumpy(), expected, atol=1e-6, rtol=1e-6)
+
+
 def test_dequantize_out_buffer_overwrites_prefilled_sentinel():
     qdata_np = onp.array([-127, -64, 0, 127], dtype=onp.int8)
     qdata = mx.nd.array(qdata_np, dtype=onp.int8, ctx=mx.current_device())

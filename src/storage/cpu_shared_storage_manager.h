@@ -26,6 +26,7 @@
 #include <sys/mman.h>
 #include <sys/fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #else
 #include <Windows.h>
 #include <process.h>
@@ -163,30 +164,61 @@ void CPUSharedStorageManager::Alloc(Storage::Handle* handle, bool /* failsafe */
 #endif  // __linux__
   }
 
-  if (fid == -1) {
-    if (is_new) {
-      LOG(FATAL) << "Failed to open shared memory. shm_open failed with error " << strerror(errno);
-    } else {
-      LOG(FATAL) << "Invalid file descriptor from shared array.";
-    }
-  }
+	  if (fid == -1) {
+	    if (is_new) {
+	      LOG(FATAL) << "Failed to open shared memory. shm_open failed with error " << strerror(errno);
+	    } else {
+	      LOG(FATAL) << "Invalid file descriptor from shared array.";
+	    }
+	  }
 
-  if (is_new)
-    CHECK_EQ(ftruncate(fid, size), 0);
+	  class ScopedPosixSharedMemory {
+	   public:
+	    ScopedPosixSharedMemory(int* fd, const std::string* name, bool unlink_name)
+	        : fd_(fd), name_(name), unlink_name_(unlink_name) {}
+	    ~ScopedPosixSharedMemory() {
+	      if (unlink_name_ && name_ != nullptr && !name_->empty()) {
+	        shm_unlink(name_->c_str());
+	      }
+	      if (close_fd_ && fd_ != nullptr && *fd_ != -1) {
+	        close(*fd_);
+	        *fd_ = -1;
+	      }
+	    }
+	    void ReleaseFd() {
+	      close_fd_ = false;
+	    }
+	    void ReleaseName() {
+	      unlink_name_ = false;
+	    }
+
+	   private:
+	    int* fd_;
+	    const std::string* name_;
+	    bool unlink_name_;
+	    bool close_fd_{true};
+	  };
+	  ScopedPosixSharedMemory cleanup(&fid, &filename, is_new);
+
+	  if (is_new)
+	    CHECK_EQ(ftruncate(fid, size), 0);
 
   ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fid, 0);
   CHECK_NE(ptr, MAP_FAILED) << "Failed to map shared memory. mmap failed with error "
                             << strerror(errno);
 #ifdef __linux__
   handle->shared_id = fid;
-  if (is_new) {
-    CHECK_EQ(shm_unlink(filename.c_str()), 0)
-        << "Failed to unlink shared memory. shm_unlink failed with error " << strerror(errno);
-  }
-#else
-  CHECK_EQ(close(fid), 0) << "Failed to close shared memory. close failed with error "
-                          << strerror(errno);
-#endif  // __linux__
+	  if (is_new) {
+	    CHECK_EQ(shm_unlink(filename.c_str()), 0)
+	        << "Failed to unlink shared memory. shm_unlink failed with error " << strerror(errno);
+	    cleanup.ReleaseName();
+	  }
+	  cleanup.ReleaseFd();
+	#else
+	  CHECK_EQ(close(fid), 0) << "Failed to close shared memory. close failed with error "
+	                          << strerror(errno);
+	  cleanup.ReleaseFd();
+	#endif  // __linux__
 #endif  // _WIN32
 
   if (is_new) {

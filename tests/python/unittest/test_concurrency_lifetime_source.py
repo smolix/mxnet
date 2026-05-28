@@ -65,6 +65,16 @@ def test_dnnl_activation_backward_uses_commit_output_path():
     assert "CreateDNNLData" not in body
 
 
+def test_dnnl_concat_backward_owns_submemory_wrapper():
+    contents = _read("src/operator/nn/dnnl/dnnl_concat.cc")
+    body = contents.split("void DNNLConcatBackward", 1)[1].split("DNNLStream::Get()->Submit", 1)[0]
+
+    assert "new dnnl::memory" not in body
+    assert "dnnl::memory from_mem(from_md, gradz_mem->get_engine(), gradz_mem->get_data_handle())" in body
+    assert "{{DNNL_ARG_FROM, from_mem}, {DNNL_ARG_TO, *gradi_mem.second}}" in body
+    assert "dnnl::reorder(from_mem, *gradi_mem.second)" in body
+
+
 def test_dnnl_rnn_backward_guards_null_state_cell_commit():
     contents = _read("src/operator/nn/dnnl/dnnl_rnn.cc")
     body = contents.split("void DNNLRnnOp::Backward", 1)[1].split("// Commit weights diff", 1)[0]

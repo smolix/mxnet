@@ -30,6 +30,7 @@
 #include <map>
 #include <vector>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <limits>
 #include <algorithm>
@@ -253,6 +254,64 @@ void FCForward(const OpContext& ctx,
   }
 }
 
+inline void AssignCPUHalfFCValue(mshadow::half::half_t* out, index_t idx, OpReqType req, float val) {
+  if (req == kWriteTo || req == kWriteInplace) {
+    out[idx] = static_cast<mshadow::half::half_t>(val);
+  } else if (req == kAddTo) {
+    out[idx] = static_cast<mshadow::half::half_t>(static_cast<float>(out[idx]) + val);
+  } else {
+    CHECK_EQ(req, kNullOp);
+  }
+}
+
+inline index_t FCFlattenedRows(const TBlob& tblob, bool flatten) {
+  return flatten ? tblob.shape_[0] : tblob.shape_.ProdShape(0, tblob.ndim() - 1);
+}
+
+inline index_t FCFlattenedCols(const TBlob& tblob, bool flatten) {
+  return flatten ? tblob.shape_.ProdShape(1, tblob.ndim()) : tblob.shape_[tblob.ndim() - 1];
+}
+
+inline void FCForwardCPUHalf(const FullyConnectedParam& param,
+                             const std::vector<TBlob>& in_data,
+                             const std::vector<OpReqType>& req,
+                             const std::vector<TBlob>& out_data) {
+  if (req[fullc::kOut] == kNullOp)
+    return;
+  CHECK_EQ(req[fullc::kOut], kWriteTo);
+  const TBlob& data_blob   = in_data[fullc::kData];
+  const TBlob& weight_blob = in_data[fullc::kWeight];
+  const TBlob& out_blob    = out_data[fullc::kOut];
+  const index_t batch      = FCFlattenedRows(data_blob, param.flatten);
+  const index_t input_dim  = FCFlattenedCols(data_blob, param.flatten);
+  const index_t num_hidden = weight_blob.shape_[0];
+  CHECK_EQ(weight_blob.shape_[1], input_dim)
+      << "Incomplete weight tensor detected: weight.data().shape[1] != prod(data.data().shape[1:])."
+         " This is not supported by FCForward. If weight is in row_sparse format,"
+         " please make sure all row ids are present.";
+  CHECK_EQ(out_blob.Size(), batch * num_hidden);
+
+  const auto* data_ptr   = data_blob.dptr<mshadow::half::half_t>();
+  const auto* weight_ptr = weight_blob.dptr<mshadow::half::half_t>();
+  const auto* bias_ptr =
+      param.no_bias ? nullptr : in_data[fullc::kBias].dptr<mshadow::half::half_t>();
+  auto* out_ptr = out_blob.dptr<mshadow::half::half_t>();
+#pragma omp parallel for collapse(2) num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
+  for (index_t row = 0; row < batch; ++row) {
+    for (index_t col = 0; col < num_hidden; ++col) {
+      float acc = 0.0f;
+      for (index_t kk = 0; kk < input_dim; ++kk) {
+        acc += static_cast<float>(data_ptr[row * input_dim + kk]) *
+               static_cast<float>(weight_ptr[col * input_dim + kk]);
+      }
+      if (bias_ptr != nullptr) {
+        acc += static_cast<float>(bias_ptr[col]);
+      }
+      out_ptr[row * num_hidden + col] = static_cast<mshadow::half::half_t>(acc);
+    }
+  }
+}
+
 #if defined(__CUDACC__)
 
 template <typename LType, typename DType, typename AType>
@@ -436,6 +495,67 @@ void FCBackward(const OpContext& ctx,
   linalg_gemm(y_grad, wmat, x_grad, false, false, stream, req[fullc::kData]);
 }
 
+inline void FCBackwardCPUHalf(const FullyConnectedParam& param,
+                              const std::vector<TBlob>& out_grad,
+                              const std::vector<TBlob>& in_data,
+                              const std::vector<OpReqType>& req,
+                              const std::vector<TBlob>& in_grad) {
+  const TBlob& grad_blob   = out_grad[fullc::kOut];
+  const TBlob& data_blob   = in_data[fullc::kData];
+  const TBlob& weight_blob = in_data[fullc::kWeight];
+  const index_t batch      = FCFlattenedRows(data_blob, param.flatten);
+  const index_t input_dim  = FCFlattenedCols(data_blob, param.flatten);
+  const index_t num_hidden = weight_blob.shape_[0];
+  CHECK_EQ(weight_blob.shape_[1], input_dim);
+  CHECK_EQ(grad_blob.Size(), batch * num_hidden);
+
+  const auto* grad_ptr   = grad_blob.dptr<mshadow::half::half_t>();
+  const auto* data_ptr   = data_blob.dptr<mshadow::half::half_t>();
+  const auto* weight_ptr = weight_blob.dptr<mshadow::half::half_t>();
+
+  if (req[fullc::kWeight] != kNullOp) {
+    auto* weight_grad_ptr = in_grad[fullc::kWeight].dptr<mshadow::half::half_t>();
+#pragma omp parallel for collapse(2) num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
+    for (index_t row = 0; row < num_hidden; ++row) {
+      for (index_t col = 0; col < input_dim; ++col) {
+        float acc = 0.0f;
+        for (index_t kk = 0; kk < batch; ++kk) {
+          acc += static_cast<float>(grad_ptr[kk * num_hidden + row]) *
+                 static_cast<float>(data_ptr[kk * input_dim + col]);
+        }
+        AssignCPUHalfFCValue(weight_grad_ptr, row * input_dim + col, req[fullc::kWeight], acc);
+      }
+    }
+  }
+
+  if (!param.no_bias && req[fullc::kBias] != kNullOp) {
+    auto* bias_grad_ptr = in_grad[fullc::kBias].dptr<mshadow::half::half_t>();
+#pragma omp parallel for num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
+    for (index_t col = 0; col < num_hidden; ++col) {
+      float acc = 0.0f;
+      for (index_t kk = 0; kk < batch; ++kk) {
+        acc += static_cast<float>(grad_ptr[kk * num_hidden + col]);
+      }
+      AssignCPUHalfFCValue(bias_grad_ptr, col, req[fullc::kBias], acc);
+    }
+  }
+
+  if (req[fullc::kData] != kNullOp) {
+    auto* data_grad_ptr = in_grad[fullc::kData].dptr<mshadow::half::half_t>();
+#pragma omp parallel for collapse(2) num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
+    for (index_t row = 0; row < batch; ++row) {
+      for (index_t col = 0; col < input_dim; ++col) {
+        float acc = 0.0f;
+        for (index_t kk = 0; kk < num_hidden; ++kk) {
+          acc += static_cast<float>(grad_ptr[row * num_hidden + kk]) *
+                 static_cast<float>(weight_ptr[kk * input_dim + col]);
+        }
+        AssignCPUHalfFCValue(data_grad_ptr, row * input_dim + col, req[fullc::kData], acc);
+      }
+    }
+  }
+}
+
 template <typename xpu>
 void FullyConnectedCompute(const nnvm::NodeAttrs& attrs,
                            const OpContext& ctx,
@@ -456,8 +576,12 @@ void FullyConnectedCompute(const nnvm::NodeAttrs& attrs,
       FCForward<xpu, double>(ctx, param, inputs, req, outputs);
       break;
     case mshadow::kFloat16:
-      LOG(FATAL) << "float16 fully connected layer is currently"
-                    "only supported by CuDNN version.";
+      if (std::is_same<xpu, cpu>::value) {
+        FCForwardCPUHalf(param, inputs, req, outputs);
+      } else {
+        LOG(FATAL) << "float16 fully connected layer is currently"
+                      "only supported by CuDNN version.";
+      }
       break;
     default:
       LOG(FATAL) << "Unsupported type " << dtype;
@@ -488,8 +612,12 @@ void FullyConnectedGradCompute(const nnvm::NodeAttrs& attrs,
       FCBackward<xpu, double>(ctx, param, out_grad, in_data, req, outputs);
       break;
     case mshadow::kFloat16:
-      LOG(FATAL) << "float16 fully connected layer is currently"
-                    "only supported by CuDNN version.";
+      if (std::is_same<xpu, cpu>::value) {
+        FCBackwardCPUHalf(param, out_grad, in_data, req, outputs);
+      } else {
+        LOG(FATAL) << "float16 fully connected layer is currently"
+                      "only supported by CuDNN version.";
+      }
       break;
     default:
       LOG(FATAL) << "Unsupported type " << dtype;

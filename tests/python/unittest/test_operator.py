@@ -3143,6 +3143,83 @@ def test_cpu_fp16_dot_and_batch_dot():
     assert_almost_equal(batch_out.asnumpy(), expected_batch, rtol=1e-2, atol=1e-2)
 
 
+def test_cpu_fp16_fully_connected():
+    ctx = mx.cpu()
+    data_np = np.array([[1.0, -2.0, 0.5], [0.25, 3.0, -1.5]], dtype=np.float16)
+    weight_np = np.array([[0.5, -1.0, 2.0],
+                          [-1.5, 0.25, 0.75],
+                          [2.0, 1.5, -0.5],
+                          [0.125, -0.25, 1.25]], dtype=np.float16)
+    bias_np = np.array([0.25, -0.5, 1.0, -1.0], dtype=np.float16)
+    ograd_np = np.array([[1.0, -0.5, 2.0, 0.25],
+                         [-1.5, 0.75, -0.25, 1.25]], dtype=np.float16)
+
+    data = mx.nd.array(data_np, ctx=ctx, dtype='float16')
+    weight = mx.nd.array(weight_np, ctx=ctx, dtype='float16')
+    bias = mx.nd.array(bias_np, ctx=ctx, dtype='float16')
+    data.attach_grad()
+    weight.attach_grad()
+    bias.attach_grad()
+
+    with mx.autograd.record():
+        out = mx.nd.FullyConnected(data, weight, bias, num_hidden=weight_np.shape[0],
+                                   no_bias=False)
+    out.backward(mx.nd.array(ograd_np, ctx=ctx, dtype='float16'))
+
+    expected_out = np.dot(data_np.astype(np.float32), weight_np.astype(np.float32).T)
+    expected_out += bias_np.astype(np.float32)
+    expected_data_grad = np.dot(ograd_np.astype(np.float32), weight_np.astype(np.float32))
+    expected_weight_grad = np.dot(ograd_np.astype(np.float32).T, data_np.astype(np.float32))
+    expected_bias_grad = ograd_np.astype(np.float32).sum(axis=0)
+
+    assert out.dtype == np.float16
+    assert_almost_equal(out.asnumpy(), expected_out.astype(np.float16), rtol=1e-2, atol=1e-2)
+    assert_almost_equal(data.grad.asnumpy(), expected_data_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
+    assert_almost_equal(weight.grad.asnumpy(), expected_weight_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
+    assert_almost_equal(bias.grad.asnumpy(), expected_bias_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
+
+
+def test_cpu_fp16_convolution():
+    ctx = mx.cpu()
+    data_np = (np.arange(9, dtype=np.float16).reshape(1, 1, 3, 3) / 4 - 1)
+    weight_np = np.array([[[[0.5, -1.0],
+                            [1.5, 0.25]]]], dtype=np.float16)
+    ograd_np = np.array([[[[1.0, -0.5],
+                           [0.25, 1.5]]]], dtype=np.float16)
+
+    data = mx.nd.array(data_np, ctx=ctx, dtype='float16')
+    weight = mx.nd.array(weight_np, ctx=ctx, dtype='float16')
+    data.attach_grad()
+    weight.attach_grad()
+
+    with mx.autograd.record():
+        out = mx.nd.Convolution(data, weight, kernel=(2, 2), num_filter=1, no_bias=True)
+    out.backward(mx.nd.array(ograd_np, ctx=ctx, dtype='float16'))
+
+    expected_out = np.zeros((1, 1, 2, 2), dtype=np.float32)
+    expected_data_grad = np.zeros_like(data_np, dtype=np.float32)
+    expected_weight_grad = np.zeros_like(weight_np, dtype=np.float32)
+    data_f32 = data_np.astype(np.float32)
+    weight_f32 = weight_np.astype(np.float32)
+    ograd_f32 = ograd_np.astype(np.float32)
+    for oy in range(2):
+        for ox in range(2):
+            window = data_f32[0, 0, oy:oy + 2, ox:ox + 2]
+            expected_out[0, 0, oy, ox] = np.sum(window * weight_f32[0, 0])
+            expected_data_grad[0, 0, oy:oy + 2, ox:ox + 2] += ograd_f32[0, 0, oy, ox] * weight_f32[0, 0]
+            expected_weight_grad[0, 0] += ograd_f32[0, 0, oy, ox] * window
+
+    assert out.dtype == np.float16
+    assert_almost_equal(out.asnumpy(), expected_out.astype(np.float16), rtol=1e-2, atol=1e-2)
+    assert_almost_equal(data.grad.asnumpy(), expected_data_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
+    assert_almost_equal(weight.grad.asnumpy(), expected_weight_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
+
+
 def get_correlation(data1,data2,kernel_size,max_displacement,stride1,stride2,pad_size,is_multiply):
 
     img1 = mx.sym.Variable('img1')

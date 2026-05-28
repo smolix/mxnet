@@ -256,6 +256,30 @@ def test_dnnl_fc_bf16_fallback_preserves_output_req():
     assert "f32_req.push_back(req[i])" in body
 
 
+def test_cpu_fp16_fully_connected_uses_explicit_half_fallback():
+    contents = _read("src/operator/nn/fully_connected-inl.h")
+
+    assert "inline void FCForwardCPUHalf" in contents
+    assert "inline void FCBackwardCPUHalf" in contents
+    assert "static_cast<float>(data_ptr[row * input_dim + kk])" in contents
+    assert "static_cast<float>(weight_ptr[col * input_dim + kk])" in contents
+    assert "std::is_same<xpu, cpu>::value" in contents
+    assert "FCForwardCPUHalf(param, inputs, req, outputs)" in contents
+    assert "FCBackwardCPUHalf(param, out_grad, in_data, req, outputs)" in contents
+
+
+def test_cpu_fp16_gemm_uses_float_accumulation():
+    contents = _read("src/operator/linalg_impl.h")
+    body = contents.split("linalg_gemm<cpu, mshadow::half::half_t>", 1)[1].split("#ifdef __CUDACC__", 1)[0]
+
+    assert "check_gemm(A, B, C, alpha, beta, tA, tB)" in body
+    assert "const float alpha_f = static_cast<float>(alpha)" in body
+    assert "static_cast<float>(A.dptr_[a_idx])" in body
+    assert "static_cast<float>(B.dptr_[b_idx])" in body
+    assert "static_cast<float>(C.dptr_[c_idx])" in body
+    assert "FP16 gemm on cpu not implemented" not in body
+
+
 def test_onednn_quantized_subgraphs_reject_uint8_nonzero_offsets():
     conv = _read("src/operator/subgraph/dnnl/dnnl_conv.cc")
     fc = _read("src/operator/subgraph/dnnl/dnnl_fc.cc")

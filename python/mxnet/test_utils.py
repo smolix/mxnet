@@ -1747,7 +1747,8 @@ def download(url, fname=None, dirname=None, overwrite=False, retries=5, timeout=
         temp_fname = None
         try:
             r = requests.get(url, stream=True, timeout=timeout)
-            assert r.status_code == 200, f"failed to open {url}"
+            if r.status_code != 200:
+                raise RuntimeError(f"failed to open {url}: HTTP {r.status_code}")
             temp_fname = '{}.{}'.format(fname, uuid.uuid4())
             with open(temp_fname, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=1024):

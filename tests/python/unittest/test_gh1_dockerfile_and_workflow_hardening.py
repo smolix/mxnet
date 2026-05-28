@@ -121,6 +121,30 @@ def test_example_gluon_data_uses_context_managed_tarfile():
     contents = _read("example/gluon/data.py")
     assert 'with tarfile.open(tar_path, "r:gz") as tar:' in contents, \
         "example/gluon/data.py no longer closes tarfile on extraction failure"
+    assert "_safe_extract_tar(tar, data_folder)" in contents, \
+        "example/gluon/data.py no longer validates tar members before extraction"
+
+
+def test_example_zip_extractors_validate_members():
+    horovod = _read("example/distributed_training-horovod/gluon_mnist.py")
+    super_resolution = _read("example/gluon/super_resolution/super_resolution.py")
+    assert "https://data.mxnet.io/mxnet/data/mnist.zip" in horovod, \
+        "Horovod MNIST example reintroduced a plaintext dataset download"
+    assert "_safe_extract_zip(zf, data_dir)" in horovod and "commonpath" in horovod, \
+        "Horovod MNIST example no longer validates zip members before extraction"
+    assert "_safe_extract_zip(archive, tmp_dir)" in super_resolution and "commonpath" in super_resolution, \
+        "Super-resolution example no longer validates zip members before extraction"
+
+
+def test_download_and_sparse_benchmark_avoid_assert_and_shell():
+    test_utils = _read("python/mxnet/test_utils.py")
+    sparse_dot = _read("benchmark/python/sparse/dot.py")
+    assert "assert r.status_code == 200" not in test_utils, \
+        "download helper must not rely on assert for HTTP status validation"
+    assert "raise RuntimeError(f\"failed to open {url}: HTTP {r.status_code}\")" in test_utils, \
+        "download helper no longer raises an explicit HTTP status error"
+    assert "shell=True" not in sparse_dot and "os.system" not in sparse_dot, \
+        "sparse dot benchmark reintroduced shell command execution"
 
 
 def test_movielens_data_avoids_shell_download_and_validates_zip():

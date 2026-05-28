@@ -67,6 +67,15 @@ dataset_url = "https://github.com/BIDS/BSDS500/archive/master.zip"
 data_dir = path.expanduser(path.join(datasets_dir, "BSDS500"))
 tmp_dir = path.join(data_dir, "tmp")
 
+def _safe_extract_zip(zip_file, target_dir):
+    target_dir = path.abspath(target_dir)
+    for member in zip_file.infolist():
+        member_path = path.abspath(path.join(target_dir, member.filename))
+        if path.commonpath([target_dir, member_path]) != target_dir:
+            raise RuntimeError("Unsafe zip member path: {}".format(member.filename))
+    zip_file.extractall(target_dir)
+
+
 def get_dataset(prefetch=False):
     """Download the BSDS500 dataset and return train and test iters."""
 
@@ -86,7 +95,7 @@ def get_dataset(prefetch=False):
         os.makedirs(data_dir)
         os.makedirs(tmp_dir)
         with zipfile.ZipFile(downloaded_file) as archive:
-            archive.extractall(tmp_dir)
+            _safe_extract_zip(archive, tmp_dir)
         shutil.rmtree(datasets_tmpdir)
 
         shutil.copytree(

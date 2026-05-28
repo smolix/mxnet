@@ -20,7 +20,6 @@ import ctypes
 import os
 import time
 import argparse
-import subprocess
 import scipy.sparse as sp
 
 import mxnet as mx
@@ -134,7 +133,8 @@ def _get_iter(path, data_shape, batch_size):
 
 
 def _line_count(path):
-    return int(subprocess.check_output('wc -l {}'.format(path), shell=True).split()[0])
+    with open(path, "rb") as data:
+        return sum(1 for _ in data)
 
 
 def _compare_sparse_dense(data_dir, file_name, mini_file_name, feature_dim,
@@ -148,8 +148,12 @@ def _compare_sparse_dense(data_dir, file_name, mini_file_name, feature_dim,
             last = _line_count(path) - num_batches * batch_size
             last = last if last >= 1 else 1
             start = int(rnd.uniform(1, last))
-            os.system("sed -n '{},{}p' {} > {}".format(
-                start, start + num_batches * batch_size, repr(path), repr(mini_path)))
+            with open(path, "rb") as src, open(mini_path, "wb") as dst:
+                for line_number, line in enumerate(src, start=1):
+                    if start <= line_number <= start + num_batches * batch_size:
+                        dst.write(line)
+                    elif line_number > start + num_batches * batch_size:
+                        break
             assert os.path.exists(mini_path)
 
     def run_benchmark(mini_path):

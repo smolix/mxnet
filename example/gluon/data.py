@@ -21,7 +21,6 @@ import os
 import random
 import tarfile
 import logging
-import tarfile
 logging.basicConfig(level=logging.INFO)
 
 import mxnet as mx
@@ -29,6 +28,17 @@ from mxnet.test_utils import get_cifar10
 from mxnet.gluon.data.vision import ImageFolderDataset
 from mxnet.gluon.data import DataLoader
 from mxnet.contrib.io import DataLoaderIter
+
+def _safe_extract_tar(tar, target_dir):
+    target_dir = os.path.abspath(target_dir)
+    for member in tar.getmembers():
+        member_path = os.path.abspath(os.path.join(target_dir, member.name))
+        if os.path.commonpath([target_dir, member_path]) != target_dir:
+            raise RuntimeError("Unsafe tar member path: {}".format(member.name))
+        if member.issym() or member.islnk():
+            raise RuntimeError("Refusing tar link member: {}".format(member.name))
+    tar.extractall(target_dir)
+
 
 def get_cifar10_iterator(batch_size, data_shape, resize=-1, num_parts=1, part_index=0):
     get_cifar10()
@@ -100,7 +110,7 @@ def get_caltech101_data():
     if (not os.path.isdir(os.path.join(data_folder, "101_ObjectCategories")) or
         not os.path.isdir(os.path.join(data_folder, "101_ObjectCategories_test"))):
         with tarfile.open(tar_path, "r:gz") as tar:
-            tar.extractall(data_folder)
+            _safe_extract_tar(tar, data_folder)
         print('Data extracted')
     training_path = os.path.join(data_folder, dataset_name)
     testing_path = os.path.join(data_folder, "{}_test".format(dataset_name))

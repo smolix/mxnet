@@ -826,6 +826,25 @@ def test_dataloader_scope():
 
     assert item is not None
 
+
+def test_dataloader_stale_iterator_does_not_shutdown_shared_pool():
+    dataset = mx.gluon.data.SimpleDataset(np.arange(32))
+    loader = DataLoader(dataset, batch_size=4, num_workers=2,
+                        thread_pool=True, try_nopython=False, timeout=5)
+
+    it1 = iter(loader)
+    it2 = iter(loader)
+    first = next(it2).asnumpy()
+    assert np.array_equal(first, np.arange(4))
+
+    del it1
+    gc.collect()
+
+    second = next(it2).asnumpy()
+    assert np.array_equal(second, np.arange(4, 8))
+    it2.close()
+
+
 @pytest.mark.remote_required
 def test_mx_datasets_handle():
     # _DownloadedDataset

@@ -628,7 +628,7 @@ class _MultiWorkerIter(object):
         self._worker_pool = None
 
     def __del__(self):
-        self.close()
+        self.close(shutdown_pool=False)
 
 
 class DataLoader(object):

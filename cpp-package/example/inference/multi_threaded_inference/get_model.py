@@ -17,9 +17,11 @@
 
 import logging
 import argparse
+import contextlib
 import requests
 import errno
 import os
+import uuid
 
 models = ["imagenet1k-inception-bn", "imagenet1k-resnet-50",
           "imagenet1k-resnet-152", "imagenet1k-resnet-18"]
@@ -76,15 +78,21 @@ def download(url, fname=None, dirname=None, overwrite=False, retries=5):
     while retries+1 > 0:
         # Disable pyling too broad Exception
         # pylint: disable=W0703
+        tmp_fname = '{}.{}'.format(fname, uuid.uuid4())
         try:
-            r = requests.get(url, stream=True)
-            assert r.status_code == 200, f"failed to open {url}"
-            with open(fname, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=1024):
-                    if chunk: # filter out keep-alive new chunks
-                        f.write(chunk)
-                break
+            with contextlib.closing(requests.get(url, stream=True, timeout=30)) as r:
+                assert r.status_code == 200, f"failed to open {url}"
+                with open(tmp_fname, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=1024):
+                        if chunk: # filter out keep-alive new chunks
+                            f.write(chunk)
+                os.replace(tmp_fname, fname)
+            break
         except Exception as e:
+            try:
+                os.remove(tmp_fname)
+            except OSError:
+                pass
             retries -= 1
             if retries <= 0:
                 raise e

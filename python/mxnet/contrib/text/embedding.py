@@ -37,6 +37,32 @@ from ... import numpy as _mx_np
 from ... import numpy_extension as _mx_npx
 
 
+def _validate_archive_member(base_dir, member_name):
+    normalized = os.path.normpath(member_name)
+    if os.path.isabs(member_name) or normalized == os.pardir or normalized.startswith(os.pardir + os.sep):
+        raise ValueError('Archive member would extract outside target directory: {}'.format(
+            member_name))
+    base_dir = os.path.abspath(base_dir)
+    target = os.path.abspath(os.path.join(base_dir, normalized))
+    if target != base_dir and not target.startswith(base_dir + os.sep):
+        raise ValueError('Archive member would extract outside target directory: {}'.format(
+            member_name))
+
+
+def _safe_extract_zip(zip_file, target_dir):
+    for info in zip_file.infolist():
+        _validate_archive_member(target_dir, info.filename)
+    zip_file.extractall(target_dir)
+
+
+def _safe_extract_tar(tar_file, target_dir):
+    for member in tar_file.getmembers():
+        _validate_archive_member(target_dir, member.name)
+        if member.issym() or member.islnk():
+            raise ValueError('Archive member uses a link: {}'.format(member.name))
+    tar_file.extractall(path=target_dir)
+
+
 def register(embedding_cls):
     """Registers a new token embedding.
 
@@ -223,10 +249,13 @@ class _TokenEmbedding(vocab.Vocabulary):
             ext = os.path.splitext(downloaded_file)[1]
             if ext == '.zip':
                 with zipfile.ZipFile(downloaded_file_path, 'r') as zf:
-                    zf.extractall(embedding_dir)
+                    _safe_extract_zip(zf, embedding_dir)
             elif ext == '.gz':
                 with tarfile.open(downloaded_file_path, 'r:gz') as tar:
-                    tar.extractall(path=embedding_dir)
+                    _safe_extract_tar(tar, embedding_dir)
+            if not check_sha1(pretrained_file_path, expected_file_hash):
+                raise ValueError('Downloaded embedding file has different hash. '
+                                 'Please try again.')
         return pretrained_file_path
 
     def _load_embedding(self, pretrained_file_path, elem_delim, init_unknown_vec, encoding='utf8'):

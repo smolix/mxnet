@@ -19,6 +19,7 @@
 """Model zoo for pre-trained models."""
 __all__ = ['get_model_file', 'purge']
 import os
+import shutil
 import zipfile
 import logging
 import uuid
@@ -114,8 +115,9 @@ def get_model_file(name, root=os.path.join(base.data_dir(), 'models')):
     try:
         with zipfile.ZipFile(temp_zip_file_path) as zf:
             with TemporaryDirectory(dir=root) as temp_dir:
-                zf.extractall(temp_dir)
                 temp_file_path = os.path.join(temp_dir, file_name+'.params')
+                with zf.open(file_name+'.params') as src, open(temp_file_path, 'wb') as dst:
+                    shutil.copyfileobj(src, dst)
                 replace_file(temp_file_path, file_path)
     finally:
         try:

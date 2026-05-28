@@ -150,21 +150,21 @@ def download_file(url, dest_path):
     full_path = os.path.join(dest_path, file_name)
     tmp_path = "{}.tmp".format(full_path)
     logging.info("Downloading: {}".format(full_path))
-    r = requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT_SECONDS)
-    if r.status_code == 404:
-        return r.status_code
-    elif r.status_code != 200:
-        raise RuntimeError("{} returned status code {}".format(url, r.status_code))
-    try:
-        with open(tmp_path, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=1024):
-                if chunk: # filter out keep-alive new chunks
-                    f.write(chunk)
-        os.replace(tmp_path, full_path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.remove(tmp_path)
-        raise
+    with contextlib.closing(requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT_SECONDS)) as r:
+        if r.status_code == 404:
+            return r.status_code
+        elif r.status_code != 200:
+            raise RuntimeError("{} returned status code {}".format(url, r.status_code))
+        try:
+            with open(tmp_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=1024):
+                    if chunk: # filter out keep-alive new chunks
+                        f.write(chunk)
+            os.replace(tmp_path, full_path)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
+            raise
     return full_path
 
 

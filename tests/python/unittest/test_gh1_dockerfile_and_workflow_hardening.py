@@ -109,6 +109,20 @@ def test_diagnose_py_bounds_dns_timeout():
         "GH1: diagnose.py DNS resolve does not restore previous default"
 
 
+def test_diagnose_py_bounds_sysctl_timeout():
+    contents = _read("tools/diagnose.py")
+    assert "communicate(timeout=10)" in contents, \
+        "diagnose.py sysctl call is no longer bounded"
+    assert "pipe.kill()" in contents, \
+        "diagnose.py sysctl timeout no longer kills the child process"
+
+
+def test_example_gluon_data_uses_context_managed_tarfile():
+    contents = _read("example/gluon/data.py")
+    assert 'with tarfile.open(tar_path, "r:gz") as tar:' in contents, \
+        "example/gluon/data.py no longer closes tarfile on extraction failure"
+
+
 if __name__ == "__main__":
     import sys, pytest
     sys.exit(pytest.main([__file__, "-v"]))

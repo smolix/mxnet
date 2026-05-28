@@ -99,9 +99,8 @@ def get_caltech101_data():
     tar_path = mx.gluon.utils.download(url, path=data_folder)
     if (not os.path.isdir(os.path.join(data_folder, "101_ObjectCategories")) or
         not os.path.isdir(os.path.join(data_folder, "101_ObjectCategories_test"))):
-        tar = tarfile.open(tar_path, "r:gz")
-        tar.extractall(data_folder)
-        tar.close()
+        with tarfile.open(tar_path, "r:gz") as tar:
+            tar.extractall(data_folder)
         print('Data extracted')
     training_path = os.path.join(data_folder, dataset_name)
     testing_path = os.path.join(data_folder, "{}_test".format(dataset_name))

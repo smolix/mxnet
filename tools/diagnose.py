@@ -148,7 +148,12 @@ def check_hardware():
     print('processor    :', platform.processor())
     if sys.platform.startswith('darwin'):
         pipe = subprocess.Popen(('sysctl', '-a'), stdout=subprocess.PIPE)
-        output = pipe.communicate()[0]
+        try:
+            output = pipe.communicate(timeout=10)[0]
+        except subprocess.TimeoutExpired:
+            pipe.kill()
+            output = pipe.communicate()[0]
+            print('sysctl timed out; partial hardware details follow')
         for line in output.split(b'\n'):
             if b'brand_string' in line or b'features' in line:
                 print(line.strip())

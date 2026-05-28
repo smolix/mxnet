@@ -22,6 +22,7 @@ from mxnet.gluon.model_zoo import model_store
 import sys
 import multiprocessing
 import zipfile
+import hashlib
 import pytest
 
 
@@ -78,6 +79,26 @@ def test_model_store_removes_temp_zip_after_bad_download(monkeypatch, tmp_path):
         model_store.get_model_file(model_name, root=str(tmp_path))
 
     assert list(tmp_path.glob('*.zip*')) == []
+
+
+def test_model_store_extracts_only_expected_params_member(monkeypatch, tmp_path):
+    model_name = 'unit_test_model'
+    params = b'valid model params'
+    monkeypatch.setitem(model_store._model_sha1, model_name,
+                        hashlib.sha1(params).hexdigest())
+    file_name = '{}-{}'.format(model_name, model_store.short_hash(model_name))
+
+    def fake_download(url, path=None, overwrite=False):
+        with zipfile.ZipFile(path, 'w') as zf:
+            zf.writestr(file_name + '.params', params)
+            zf.writestr('../escaped', b'pwned')
+
+    monkeypatch.setattr(model_store, 'download', fake_download)
+
+    model_path = model_store.get_model_file(model_name, root=str(tmp_path))
+
+    assert open(model_path, 'rb').read() == params
+    assert not (tmp_path.parent / 'escaped').exists()
 
 def parallel_download(model_name):
     model = get_model(model_name, pretrained=True, root='./parallel_download')

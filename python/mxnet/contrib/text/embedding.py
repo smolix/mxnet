@@ -571,8 +571,10 @@ class GloVe(_TokenEmbedding):
         return archive
 
     def __init__(self, pretrained_file_name='glove.840B.300d.txt',
-                 embedding_root=os.path.join(base.data_dir(), 'embeddings'),
+                 embedding_root=None,
                  init_unknown_vec=nd.zeros, vocabulary=None, **kwargs):
+        if embedding_root is None:
+            embedding_root = os.path.join(base.data_dir(), 'embeddings')
         GloVe._check_pretrained_file_names(pretrained_file_name)
 
         super(GloVe, self).__init__(**kwargs)
@@ -654,8 +656,10 @@ class FastText(_TokenEmbedding):
         return '.'.join(pretrained_file_name.split('.')[:-1])+'.zip'
 
     def __init__(self, pretrained_file_name='wiki.simple.vec',
-                 embedding_root=os.path.join(base.data_dir(), 'embeddings'),
+                 embedding_root=None,
                  init_unknown_vec=nd.zeros, vocabulary=None, **kwargs):
+        if embedding_root is None:
+            embedding_root = os.path.join(base.data_dir(), 'embeddings')
         FastText._check_pretrained_file_names(pretrained_file_name)
 
         super(FastText, self).__init__(**kwargs)

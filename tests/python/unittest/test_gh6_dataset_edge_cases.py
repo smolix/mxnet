@@ -34,6 +34,7 @@ This file pins each fix.
 """
 
 import gzip
+import inspect
 import io
 import os
 import struct
@@ -116,6 +117,11 @@ def test_mnist_raises_on_empty_label_file(monkeypatch):
         msg = str(excinfo.value)
         assert "0 labels" in msg or "empty" in msg.lower() or "truncated" in msg.lower(), \
             f"GH6: MNIST empty-label error message regressed: {msg!r}"
+
+
+def test_vision_dataset_default_roots_resolve_at_call_time():
+    for cls in (datasets.MNIST, datasets.FashionMNIST, datasets.CIFAR10, datasets.CIFAR100):
+        assert inspect.signature(cls).parameters["root"].default is None
 
 
 if __name__ == "__main__":

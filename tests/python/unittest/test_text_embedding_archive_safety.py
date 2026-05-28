@@ -16,6 +16,7 @@
 # under the License.
 
 import hashlib
+import inspect
 import os
 import tarfile
 import zipfile
@@ -83,3 +84,8 @@ def test_pretrained_embedding_tar_rejects_path_traversal(monkeypatch, tmp_path):
         _TestEmbedding._get_pretrained_file(str(tmp_path), "vec.txt")
 
     assert not (tmp_path / "escaped").exists()
+
+
+def test_pretrained_embedding_default_roots_resolve_at_call_time():
+    assert inspect.signature(embedding.GloVe).parameters["embedding_root"].default is None
+    assert inspect.signature(embedding.FastText).parameters["embedding_root"].default is None

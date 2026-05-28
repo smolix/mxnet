@@ -146,6 +146,8 @@ class CustomOperator {
       for (const auto& i : arrs) {
         vars.push_back(i.var());
       }
+      std::vector<Engine::VarHandle> mutable_vars;
+      Engine::Get()->DeduplicateVarHandle(&vars, &mutable_vars);
 
       Engine::Get()->PushSync(
           [=](RunContext rctx) {
@@ -183,7 +185,7 @@ class CustomOperator {
           },
           ctx.run_ctx.ctx,
           vars,
-          {},
+          mutable_vars,
           FnProperty::kNoSkip,
           0,
           "CustomOperatorWait");

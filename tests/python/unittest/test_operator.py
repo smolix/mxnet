@@ -5739,6 +5739,11 @@ def test_custom_op():
     assert_almost_equal(rhs, lhs.grad, rtol=rtol, atol=atol)
     assert_almost_equal(lhs, rhs.grad, rtol=rtol, atol=atol)
 
+    x_dup = mx.nd.array(np.random.uniform(-1, 1, size=(4, 10)))
+    y_dup = mx.nd.Custom(x_dup, x_dup, name='mult_dup_input', op_type='mult')
+    y_dup.wait_to_read()
+    assert_almost_equal(y_dup, x_dup * x_dup, rtol=rtol, atol=atol)
+
     class MultNoGrad(mx.operator.CustomOp):
         def forward(self, is_train, req, in_data, out_data, aux):
             self.assign(out_data[0], req[0], in_data[0]*in_data[1])

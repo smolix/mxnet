@@ -1291,6 +1291,34 @@ def test_quantized_concat_uint8_preserves_affine_ranges():
 
 
 @use_np
+def test_quantized_bn_uint8_uses_affine_input_range():
+    if not is_test_for_dnnl():
+        print('skipped testing quantized_bn affine uint8 for non-oneDNN backend')
+        return
+
+    data = mx.nd.array([[[[0, 255]]]], dtype='uint8')
+    gamma = mx.nd.array([1.0], dtype='float32')
+    beta = mx.nd.array([0.0], dtype='float32')
+    mean = mx.nd.array([0.0], dtype='float32')
+    var = mx.nd.array([1.0], dtype='float32')
+    min_data = mx.nd.array([1.0], dtype='float32')
+    max_data = mx.nd.array([3.0], dtype='float32')
+
+    out, min_out, max_out = mx.nd.contrib.quantized_batch_norm(
+        data, gamma, beta, mean, var, min_data, max_data,
+        use_global_stats=True, axis=1, eps=0.0,
+        min_calib_range=0.0, max_calib_range=4.0)
+    dequantized = mx.nd.contrib.dequantize(out, min_out, max_out, out_type='float32')
+
+    assert_almost_equal(min_out.asscalar(), 0.0)
+    assert_almost_equal(max_out.asscalar(), 4.0)
+    assert_almost_equal(dequantized.asnumpy(),
+                        onp.array([[[[1.0, 3.0]]]]),
+                        atol=0.04,
+                        rtol=0.04)
+
+
+@use_np
 def test_quantized_bn():
     def get_mean_var(data):
         axes = list(range(data.ndim))

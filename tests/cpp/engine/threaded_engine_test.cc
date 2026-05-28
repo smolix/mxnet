@@ -505,6 +505,22 @@ TEST(Engine, PushFunc) {
   EXPECT_EQ(res, -1);
 }
 
+TEST(Engine, PushFuncDeduplicatesReadWriteVars) {
+  auto engine = mxnet::Engine::Get();
+  auto var    = engine->NewVariable();
+  auto ctx    = mxnet::Context{};
+
+  int res = MXEnginePushAsync(FooAsyncFunc, nullptr, nullptr, &ctx, &var, 1, &var, 1);
+  EXPECT_EQ(res, 0);
+  engine->WaitForAll();
+
+  res = MXEnginePushSync(FooSyncFunc, nullptr, nullptr, &ctx, &var, 1, &var, 1);
+  EXPECT_EQ(res, 0);
+  engine->WaitForAll();
+
+  engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, var);
+}
+
 TEST(Engine, PushFuncND) {
   auto ctx = mxnet::Context{};
   std::vector<mxnet::NDArray*> nds;

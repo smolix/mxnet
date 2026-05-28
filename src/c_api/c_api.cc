@@ -3782,6 +3782,7 @@ int MXEnginePushAsync(EngineAsyncFunc async_func,
   AssertValidNumberVars(num_const_vars, num_mutable_vars);
   std::vector<VarHandle> const_var_vec(const_vars, const_vars + num_const_vars);
   std::vector<VarHandle> mutable_var_vec(mutable_vars, mutable_vars + num_mutable_vars);
+  Engine::Get()->DeduplicateVarHandle(&const_var_vec, &mutable_var_vec);
   Engine::Get()->PushAsync(
       exec_fn, exec_ctx, const_var_vec, mutable_var_vec, prop, priority, opr_name, wait);
 
@@ -3824,6 +3825,7 @@ int MXEnginePushSync(EngineSyncFunc sync_func,
   AssertValidNumberVars(num_const_vars, num_mutable_vars);
   std::vector<VarHandle> const_var_vec(const_vars, const_vars + num_const_vars);
   std::vector<VarHandle> mutable_var_vec(mutable_vars, mutable_vars + num_mutable_vars);
+  Engine::Get()->DeduplicateVarHandle(&const_var_vec, &mutable_var_vec);
   Engine::Get()->PushSync(
       exec_fn, exec_ctx, const_var_vec, mutable_var_vec, prop, priority, opr_name);
 

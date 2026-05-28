@@ -985,7 +985,7 @@ MXNET_OPERATOR_REGISTER_SELFATT_QK(_sg_onednn_selfatt_qk)
                                        auto const& param =
                                            nnvm::get<DNNLSelfAttParam>(attrs.parsed);
                                        std::vector<std::string> input_names{"queries"};
-                                       input_names.emplace_back("key_data");
+                                       input_names.emplace_back("keys");
                                        if (param.quantized) {
                                          input_names.emplace_back("min_q");
                                          input_names.emplace_back("max_q");
@@ -1000,7 +1000,7 @@ MXNET_OPERATOR_REGISTER_SELFATT_QK(_sg_onednn_selfatt_qk)
     .set_attr<nnvm::FGradient>("FGradient", SgDNNLSelfAttQKGrad<false>{})
     .set_attr<FQuantizedOp>("FQuantizedOp", SgDNNLSelfAttQKQuantizedOp<false>)
     .add_argument("queries", "NDArray-or-Symbol", "Interleaved queries, keys and values")
-    .add_argument("key_data", "NDArray-or-Symbol", "Interleaved queries, keys and values")
+    .add_argument("keys", "NDArray-or-Symbol", "Interleaved queries, keys and values")
     .add_argument("min_q", "NDArray-or-Symbol", "Minimum value of queries.")
     .add_argument("max_q", "NDArray-or-Symbol", "Maximum value of queries.")
     .add_argument("min_k", "NDArray-or-Symbol", "Minimum value of keys.")
@@ -1033,7 +1033,7 @@ MXNET_OPERATOR_REGISTER_SELFATT_QK(_sg_onednn_selfatt_qk_split)
     .set_attr<FStatefulComputeEx>("FStatefulComputeEx<cpu>", SgDNNLSelfAttQKForward<true>)
     .set_attr<nnvm::FGradient>("FGradient", SgDNNLSelfAttQKGrad<true>{})
     .set_attr<FQuantizedOp>("FQuantizedOp", SgDNNLSelfAttQKQuantizedOp<true>)
-    .add_argument("query_keys_values", "NDArray-or-Symbol", "Interleaved queries, keys and values")
+    .add_argument("queries_keys_values", "NDArray-or-Symbol", "Interleaved queries, keys and values")
     .add_argument("min_qkv", "NDArray-or-Symbol", "Minimum value of queries, keys and values.")
     .add_argument("max_qkv", "NDArray-or-Symbol", "Maximum value of queries, keys and values.");
 

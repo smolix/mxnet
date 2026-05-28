@@ -37,9 +37,6 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
                                         const std::vector<NDArray>& out_data) {
   TmpMemMgr::Get()->Init(ctx.requested[fullc::kTempSpace]);
   FullyConnectedParam param = nnvm::get<FullyConnectedParam>(attrs.parsed);
-  DNNLFCFullParam full_param;
-  full_param.default_param = param;
-  full_param.dnnl_param.Init(std::unordered_map<std::string, std::string>());
   const size_t num_inputs = param.no_bias ? 2 : 3;
 
   CHECK_EQ(in_data.size(), static_cast<size_t>(num_inputs * 3));
@@ -47,6 +44,15 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
 
   NDArray data   = in_data[fullc::kData];
   NDArray weight = in_data[fullc::kWeight];
+  bool reordered = false;
+  if (data.IsDNNLData()) {
+    data      = data.Reorder2Default();
+    reordered = true;
+  }
+  if (weight.IsDNNLData()) {
+    weight    = weight.Reorder2Default();
+    reordered = true;
+  }
 
   const float min_data = in_data[num_inputs + quantized_fullc::kDataMin].data().dptr<float>()[0];
   const float max_data = in_data[num_inputs + quantized_fullc::kDataMax].data().dptr<float>()[0];
@@ -64,6 +70,13 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
   NDArray quantized_bias;
   if (!param.no_bias) {
     NDArray bias   = in_data[fullc::kBias];
+    if (bias.IsDNNLData()) {
+      bias      = bias.Reorder2Default();
+      reordered = true;
+    }
+    if (reordered) {
+      DNNLStream::Get()->Submit();
+    }
     float min_bias = in_data[num_inputs + quantized_fullc::kBiasMin].data().dptr<float>()[0];
     float max_bias = in_data[num_inputs + quantized_fullc::kBiasMax].data().dptr<float>()[0];
     float bias_int32_rescale = data_scale * weight_scale * MaxAbs(min_bias, max_bias) / kInt8Range;
@@ -76,6 +89,8 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
     for (index_t i = 0; i < static_cast<index_t>(bias_size); ++i) {
       quantized_bias_ptr[i] = bias_ptr[i] * bias_int32_rescale;
     }
+  } else if (reordered) {
+    DNNLStream::Get()->Submit();
   }
 
   Stream<cpu>* s = ctx.get_stream<cpu>();
@@ -87,45 +102,61 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
         s, 1, min_output_ptr, max_output_ptr, &min_data, &max_data, &min_weight, &max_weight);
   }
 
-  bool is_train             = false;
-  dnnl::memory::desc out_md = GetMemDesc(out_data[fullc::kOut]);
-  DNNLFCFlattenData(param, out_data[fullc::kOut], &data, &out_md);
-  auto& fwd = GetFCFwd(
-      full_param, is_train, data, weight, param.no_bias ? nullptr : &quantized_bias, out_md);
+  const auto& data_shape   = data.shape();
+  const auto& weight_shape = weight.shape();
+  CHECK_EQ(weight_shape.ndim(), 2U);
+  CHECK(data.dtype() == mshadow::kInt8 || data.dtype() == mshadow::kUint8)
+      << "QuantizedFullyConnected expects int8 or uint8 data";
+  const index_t m = param.flatten ? data_shape[0] : data_shape.ProdShape(0, data_shape.ndim() - 1);
+  const index_t k =
+      param.flatten ? data_shape.ProdShape(1, data_shape.ndim()) : data_shape[data_shape.ndim() - 1];
+  const index_t n = weight_shape[0];
+  CHECK_EQ(weight_shape[1], k);
 
-  auto fwd_src_desc              = fwd.fwd_pd.src_desc();
-  auto data_mem                  = in_data[fullc::kData].GetDNNLDataReorder(&fwd_src_desc);
-  const dnnl::memory* weight_mem = nullptr;
+  auto& out_arr = const_cast<NDArray&>(out_data[fullc::kOut]);
+  out_arr.InvalidateDNNLData();
+  int32_t* out_ptr         = out_arr.data().dptr<int32_t>();
+  const int8_t* data_s8    = data.dtype() == mshadow::kInt8 ? data.data().dptr<int8_t>() : nullptr;
+  const uint8_t* data_u8   = data.dtype() == mshadow::kUint8 ? data.data().dptr<uint8_t>() : nullptr;
+  const int8_t* weight_ptr = weight.data().dptr<int8_t>();
+  const int32_t* bias_ptr  = param.no_bias ? nullptr : quantized_bias.data().dptr<int32_t>();
+  const int omp_threads    = mxnet::engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 
-  if (weight.IsDefaultData()) {
-    // We also need to modify the layout on the original weight array.
-    // Don't switch below sequence because naive engine will executes
-    // pushAsync synchronously.
-    auto fwd_weight_desc = fwd.fwd_pd.weights_desc();
-    weight.DNNLDataReorderAsync(&fwd_weight_desc);
-    weight_mem = GetWeights(weight, fwd_weight_desc, 1);
-  } else {
-    weight_mem = weight.GetDNNLData();
-    CHECK(weight_mem->get_desc() == fwd.fwd_pd.weights_desc());
+  if (req[fullc::kOut] == kWriteTo || req[fullc::kOut] == kWriteInplace) {
+#pragma omp parallel for num_threads(omp_threads)
+    for (index_t row = 0; row < m; ++row) {
+      for (index_t col = 0; col < n; ++col) {
+        int32_t acc = bias_ptr == nullptr ? 0 : bias_ptr[col];
+        for (index_t inner = 0; inner < k; ++inner) {
+          if (data.dtype() == mshadow::kInt8) {
+            acc += static_cast<int32_t>(data_s8[row * k + inner]) *
+                   static_cast<int32_t>(weight_ptr[col * k + inner]);
+          } else {
+            acc += static_cast<int32_t>(data_u8[row * k + inner]) *
+                   static_cast<int32_t>(weight_ptr[col * k + inner]);
+          }
+        }
+        out_ptr[row * n + col] = acc;
+      }
+    }
+  } else if (req[fullc::kOut] == kAddTo) {
+#pragma omp parallel for num_threads(omp_threads)
+    for (index_t row = 0; row < m; ++row) {
+      for (index_t col = 0; col < n; ++col) {
+        int32_t acc = bias_ptr == nullptr ? 0 : bias_ptr[col];
+        for (index_t inner = 0; inner < k; ++inner) {
+          if (data.dtype() == mshadow::kInt8) {
+            acc += static_cast<int32_t>(data_s8[row * k + inner]) *
+                   static_cast<int32_t>(weight_ptr[col * k + inner]);
+          } else {
+            acc += static_cast<int32_t>(data_u8[row * k + inner]) *
+                   static_cast<int32_t>(weight_ptr[col * k + inner]);
+          }
+        }
+        out_ptr[row * n + col] += acc;
+      }
+    }
   }
-  auto out_mem = CreateDNNLMem(out_data[fullc::kOut], fwd.fwd_pd.dst_desc(), req[fullc::kOut]);
-
-  dnnl_args_map_t args = {
-      {DNNL_ARG_SRC, *data_mem},
-      {DNNL_ARG_WEIGHTS, *weight_mem},
-      {DNNL_ARG_DST, *out_mem.second},
-  };
-
-  const dnnl::memory* bias_mem = nullptr;
-  if (!param.no_bias) {
-    auto fwd_bias_desc  = fwd.fwd_pd.bias_desc();
-    bias_mem            = quantized_bias.GetDNNLDataReorder(&fwd_bias_desc);
-    args[DNNL_ARG_BIAS] = *bias_mem;
-  }
-
-  DNNLStream::Get()->RegisterPrimArgs(fwd.GetFwd(), args);
-  CommitOutput(out_data[fullc::kOut], out_mem);
-  DNNLStream::Get()->Submit();
 }
 
 }  // namespace op

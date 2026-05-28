@@ -32,7 +32,7 @@ from mxnet.operator import *
 from mxnet.base import py_str, MXNetError, _as_list
 from common import assert_raises_cudnn_not_satisfied, assert_raises_cuda_not_satisfied, assertRaises
 from common import legacy_np_semantics
-from common import xfail_when_nonstandard_decimal_separator, with_environment
+from common import xfail_when_nonstandard_decimal_separator, with_environment, requires_lapack
 import pytest
 import os
 
@@ -5810,6 +5810,53 @@ def test_custom_op():
         x = mx.nd.Custom(length=10, depth=10, op_type="no_input_op")
     assert_almost_equal(x, np.ones(shape=(10, 10), dtype=np.float32))
 
+
+@legacy_np_semantics()
+def test_custom_op_mixed_dense_sparse_outputs():
+    @mx.operator.register("mixed_dense_sparse_outputs")
+    class MixedDenseSparseOutputsProp(mx.operator.CustomOpProp):
+        def __init__(self):
+            super(MixedDenseSparseOutputsProp, self).__init__(need_top_grad=False)
+
+        def list_arguments(self):
+            return ['data']
+
+        def list_outputs(self):
+            return ['dense_output', 'sparse_output']
+
+        def infer_shape(self, in_shape):
+            return in_shape, [in_shape[0], in_shape[0]], []
+
+        def infer_type(self, in_type):
+            return in_type, [in_type[0], in_type[0]], []
+
+        def infer_storage_type(self, in_stype):
+            return ['csr'], ['default', 'csr'], []
+
+        def create_operator(self, ctx, shapes, dtypes):
+            class MixedDenseSparseOutputs(mx.operator.CustomOp):
+                def forward(self, is_train, req, in_data, out_data, aux):
+                    dense = mx.nd.ones(in_data[0].shape, ctx=in_data[0].context)
+                    inp = in_data[0]
+                    sparse_data = inp.data + inp.data
+                    sparse = mx.nd.sparse.csr_matrix(
+                        (sparse_data, inp.indices, inp.indptr), shape=inp.shape)
+                    self.assign(out_data[0], req[0], dense)
+                    self.assign(out_data[1], req[1], sparse)
+
+                def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
+                    pass
+
+            return MixedDenseSparseOutputs()
+
+    data = mx.nd.array(np.array([[0, 1, 0], [2, 0, 3]], dtype=np.float32)).tostype('csr')
+    dense_out, sparse_out = mx.nd.Custom(data, op_type='mixed_dense_sparse_outputs')
+    assert dense_out.stype == 'default'
+    assert sparse_out.stype == 'csr'
+    assert_almost_equal(dense_out.asnumpy(), np.ones(data.shape, dtype=np.float32))
+    assert_almost_equal(sparse_out.asnumpy(), 2 * data.asnumpy())
+
+
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
 # @pytest.mark.skip(reason="Flaky test, tracked at https://github.com/apache/mxnet/issues/17467")
 @legacy_np_semantics()
@@ -6385,6 +6432,7 @@ def _make_triangle_symm(a, ndims, m, lower, dtype=np.float32):
 # @ankkhedia: Getting rid of fixed seed as flakiness could not be reproduced
 # tracked at https://github.com/apache/mxnet/issues/11718
 @xfail_when_nonstandard_decimal_separator
+@requires_lapack
 def test_laop():
     dtype = np.float64
     rtol_fw = 1e-7
@@ -6552,6 +6600,7 @@ def _syevd_combined_symbol(a):
                                    transpose_b=False, name='Ut_L_U')
     return mx.sym.Group([u_ut, ut_lam_u])
 
+@requires_lapack
 def test_laop_2():
     dtype = np.float64
     rtol_fw = 1e-7
@@ -6676,6 +6725,7 @@ def _syevd_backward(grad_u, grad_l, u, l):
 
 # Seed set because the test is not robust enough to operate on random data
 @pytest.mark.seed(1896893923)
+@requires_lapack
 def test_laop_3():
     # Currently disabled on GPU as syevd needs cuda8
     # and MxNet builds use cuda 7.5
@@ -6745,6 +6795,7 @@ def test_laop_3():
 
 # @piyushghai - Removing the fixed seed for this test.
 # Issue for flakiness is tracked at - https://github.com/apache/mxnet/issues/11721
+@requires_lapack
 def test_laop_4():
     # Currently disabled on GPU as syevd needs cuda8
     # and MxNet builds use cuda 7.5
@@ -6820,6 +6871,7 @@ def test_laop_5():
 # Tests for linalg.inverse
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
 # @pytest.mark.skip(reason="Test crashes https://github.com/apache/mxnet/issues/15975")
+@requires_lapack
 def test_laop_6():
     dtype = np.float64
     rtol_fw = 1e-7

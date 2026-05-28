@@ -90,10 +90,12 @@ class CustomOperator {
         func();
       }
       for (size_t i = 0, out_idx = 0; i < arrs.size(); i++) {
-        if (arrs[i].storage_type() == kDefaultStorage ||
-            arrs[i].storage_type() == kUndefinedStorage)
-          continue;
         if (output_tags.count(tags[i]) > 0) {
+          if (arrs[i].storage_type() == kDefaultStorage ||
+              arrs[i].storage_type() == kUndefinedStorage) {
+            ++out_idx;
+            continue;
+          }
           outputs[out_idx].SparseUpdateChunk(arrs[i]);
           out_idx++;
         }
@@ -127,18 +129,9 @@ class CustomOperator {
       Imperative::Get()->set_is_training(prev_training);
       Imperative::Get()->set_is_recording(prev_recording);
 
-      std::vector<Engine::VarHandle> vars, vars2;
-      size_t idx = 0;
+      std::vector<Engine::VarHandle> vars;
       for (const auto& i : arrs) {
         vars.push_back(i.var());
-        if (output_tags.count(tags[idx]) > 0) {
-          if (i.storage_type() == kDefaultStorage || i.storage_type() == kUndefinedStorage) {
-            ++idx;
-            continue;
-          }
-          vars2.push_back(i.var());
-        }
-        ++idx;
       }
 
       Engine::Get()->PushSync(
@@ -154,10 +147,12 @@ class CustomOperator {
             }
 
             for (size_t i = 0, out_idx = 0; i < arrs.size(); i++) {
-              if (arrs[i].storage_type() == kDefaultStorage ||
-                  arrs[i].storage_type() == kUndefinedStorage)
-                continue;
               if (output_tags.count(tags[i]) > 0) {
+                if (arrs[i].storage_type() == kDefaultStorage ||
+                    arrs[i].storage_type() == kUndefinedStorage) {
+                  ++out_idx;
+                  continue;
+                }
                 outputs[out_idx].SparseUpdateChunk(arrs[i]);
                 out_idx++;
               }
@@ -167,7 +162,7 @@ class CustomOperator {
           },
           ctx.run_ctx.ctx,
           vars,
-          vars2,
+          {},
           FnProperty::kNoSkip,
           0,
           "CustomOperatorWait");

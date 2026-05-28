@@ -183,6 +183,8 @@ def c2pyerror(err_msg):
     arr = err_msg.split("\n")
     if arr[-1] == "":
         arr.pop()
+    if not arr:
+        return "Unknown MXNet C API error", None
     err_type = _find_error_type(arr[0])
     trace_mode = False
     stack_trace = []

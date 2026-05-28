@@ -79,7 +79,7 @@ def test_selfatt_qk_quantized_backward_matches_reference():
         k, kmin, kmax = mx.nd.contrib.quantize_v2(
             keys, min_calib_range=-1.0, max_calib_range=1.0, out_type='int8')
         out = mx.nd._internal._sg_onednn_selfatt_qk(
-            queries=q, key_data=k, min_q=qmin, max_q=qmax, min_k=kmin, max_k=kmax,
+            queries=q, keys=k, min_q=qmin, max_q=qmax, min_k=kmin, max_k=kmax,
             heads=heads, quantized=True, enabled_float_output='float32')
         out.sum().backward()
 

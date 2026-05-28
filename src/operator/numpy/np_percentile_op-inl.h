@@ -161,13 +161,14 @@ void NumpyPercentileForward(const nnvm::NodeAttrs& attrs,
   const NumpyPercentileParam& param      = nnvm::get<NumpyPercentileParam>(attrs.parsed);
   const int interpolation                = param.interpolation;
   dmlc::optional<mxnet::Tuple<int>> axis = param.axis;
-  dmlc::optional<double> q_scalar        = param.q_scalar;
+  const bool has_q_scalar                = param.q_scalar.has_value() ? true : false;
+  const double q_scalar_value            = has_q_scalar ? param.q_scalar.value() : 0.0;
 
   auto small = NumpyReduceAxesShapeImpl(data.shape_, axis, false);
 
   TShape r_shape;
   r_shape    = TShape(small.ndim() + 1, 1);
-  r_shape[0] = q_scalar.has_value() ? 1 : inputs[1].Size();
+  r_shape[0] = has_q_scalar ? 1 : inputs[1].Size();
   for (int i = 1; i < r_shape.ndim(); ++i) {
     r_shape[i] = small[i - 1];
   }
@@ -246,8 +247,8 @@ void NumpyPercentileForward(const nnvm::NodeAttrs& attrs,
     TBlob percentile;
     double q;
 
-    if (q_scalar.has_value()) {
-      q = q_scalar.value();
+    if (has_q_scalar) {
+      q = q_scalar_value;
       Tensor<cpu, 1, double> host_q(&q, Shape1(1), ctx.get_stream<cpu>());
       Tensor<xpu, 1, double> device_q(
           reinterpret_cast<double*>(workspace_curr_ptr), Shape1(1), ctx.get_stream<xpu>());

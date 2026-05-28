@@ -198,16 +198,16 @@ def %s(*%s, **kwargs):"""%(func_name, arr_name))
             code.append("""
     _ = kwargs.pop('name', None)
     out = kwargs.pop('out', None)
-    keys = list(kwargs.keys())
-    vals = list(kwargs.values())""")
+    param_keys = list(kwargs.keys())
+    param_vals = list(kwargs.values())""")
     else:
         code.append("""
 def %s(%s):"""%(func_name, ', '.join(signature)))
         if not signature_only:
             code.append("""
     ndargs = []
-    keys = list(kwargs.keys())
-    vals = list(kwargs.values())""")
+    param_keys = list(kwargs.keys())
+    param_vals = list(kwargs.values())""")
             # NDArray args
             for name in ndarg_names: # pylint: disable=redefined-argument-from-local
                 code.append("""
@@ -219,20 +219,20 @@ def %s(%s):"""%(func_name, ', '.join(signature)))
             for name in kwarg_names: # pylint: disable=redefined-argument-from-local
                 code.append("""
     if %s is not _Null:
-        keys.append('%s')
-        vals.append(%s)"""%(name, name, name))
+        param_keys.append('%s')
+        param_vals.append(%s)"""%(name, name, name))
             # dtype
             if dtype_name is not None:
                 if is_np_op:
                     code.append("""
     if %s is not _Null and %s is not None:
-        keys.append('%s')
-        vals.append(get_dtype_name(%s))"""%(dtype_name, dtype_name, dtype_name, dtype_name))
+        param_keys.append('%s')
+        param_vals.append(get_dtype_name(%s))"""%(dtype_name, dtype_name, dtype_name, dtype_name))
                 else:
                     code.append("""
     if %s is not _Null:
-        keys.append('%s')
-        vals.append(get_dtype_name(%s))"""%(dtype_name, dtype_name, dtype_name))
+        param_keys.append('%s')
+        param_vals.append(get_dtype_name(%s))"""%(dtype_name, dtype_name, dtype_name))
 
     verify_ndarrays_fn =\
         _verify_all_np_ndarrays.__name__ if is_np_op else _verify_all_legacy_ndarrays.__name__
@@ -241,7 +241,7 @@ def %s(%s):"""%(func_name, ', '.join(signature)))
     {verify_fn}("{op_name}", "{func_name}", ndargs, out)
         """.format(verify_fn=verify_ndarrays_fn, op_name=op_name, func_name=func_name))
         code.append("""
-    return _imperative_invoke(%d, ndargs, keys, vals, out, %s, %s)"""%(
+    return _imperative_invoke(%d, ndargs, param_keys, param_vals, out, %s, %s)"""%(
         handle.value, str(is_np_op), str(output_is_list)))
     else:
         code.append("""

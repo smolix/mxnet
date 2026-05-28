@@ -197,7 +197,6 @@ void NumpyInterpForward(const nnvm::NodeAttrs& attrs,
   const NumpyInterpParam& param = nnvm::get<NumpyInterpParam>(attrs.parsed);
   dmlc::optional<double> left   = param.left;
   dmlc::optional<double> right  = param.right;
-  dmlc::optional<double> period = param.period;
   bool x_is_scalar              = param.x_is_scalar;
 
   TBlob xp           = inputs[0];
@@ -205,8 +204,10 @@ void NumpyInterpForward(const nnvm::NodeAttrs& attrs,
   const TBlob& out   = outputs[0];
   bool has_left      = left.has_value() ? true : false;
   bool has_right     = right.has_value() ? true : false;
+  bool has_period    = param.period.has_value() ? true : false;
   double left_value  = left.has_value() ? left.value() : 0.0;
   double right_value = right.has_value() ? right.value() : 0.0;
+  double period_value = has_period ? param.period.value() : 0.0;
 
   CHECK_GE(xp.Size(), 1U) << "ValueError: array of sample points is empty";
 
@@ -221,8 +222,8 @@ void NumpyInterpForward(const nnvm::NodeAttrs& attrs,
   size_t size_x              = x_is_scalar ? 8 : 0;
   size_t size_norm_x         = x_is_scalar ? 8 : inputs[2].Size() * sizeof(double);
   size_t size_norm_xp        = xp.Size() * sizeof(double);
-  size_t size_norm           = period.has_value() ? size_norm_x + size_norm_xp : 0;
-  size_t size_idx            = period.has_value() ? xp.Size() * sizeof(index_t) : 0;
+  size_t size_norm           = has_period ? size_norm_x + size_norm_xp : 0;
+  size_t size_idx            = has_period ? xp.Size() * sizeof(index_t) : 0;
   size_t workspace_size      = topk_workspace_size + size_x + size_norm + size_idx;
 
   Tensor<xpu, 1, char> temp_mem =
@@ -244,10 +245,9 @@ void NumpyInterpForward(const nnvm::NodeAttrs& attrs,
   }  // handle input x is a scalar
 
   // normalize the input data by periodic boundaries.
-  if (period.has_value()) {
+  if (has_period) {
     double* norm_xp_ptr;
     double* norm_x_ptr;
-    double period_value = period.value();
     index_t* idx_ptr;
     CHECK_NE(period_value, 0.0) << "period must be a non-zero value";
 

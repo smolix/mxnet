@@ -23,6 +23,7 @@ __all__ = ['DataLoader']
 import pickle
 import logging
 import io
+import os
 import sys
 import signal
 import multiprocessing
@@ -47,6 +48,8 @@ from ... import numpy as _mx_np  # pylint: disable=reimported
 _CPU_SHARED = Device('cpu_shared', 0)
 _CPU_SHARED_MEMORY_AVAILABLE = None
 _CPU_SHARED_MEMORY_ERROR = None
+_MULTIPROCESSING_FD_PASSING_AVAILABLE = None
+_MULTIPROCESSING_FD_PASSING_ERROR = None
 
 
 def _cpu_shared_memory_available():
@@ -63,6 +66,36 @@ def _cpu_shared_memory_available():
             _CPU_SHARED_MEMORY_AVAILABLE = True
             _CPU_SHARED_MEMORY_ERROR = None
     return _CPU_SHARED_MEMORY_AVAILABLE
+
+
+def _multiprocessing_fd_passing_available():
+    """Return whether multiprocessing can pass shared-memory fds in this process."""
+    global _MULTIPROCESSING_FD_PASSING_AVAILABLE, _MULTIPROCESSING_FD_PASSING_ERROR
+    if _MULTIPROCESSING_FD_PASSING_AVAILABLE is None:
+        fd = os.open(os.devnull, os.O_RDONLY)
+        try:
+            try:
+                wrapper = multiprocessing.reduction.DupFd(fd)
+                dup_fd = wrapper.detach()
+            except Exception as err:  # pylint: disable=broad-except
+                try:
+                    multiprocessing.resource_sharer.stop()
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                _MULTIPROCESSING_FD_PASSING_AVAILABLE = False
+                _MULTIPROCESSING_FD_PASSING_ERROR = str(err)
+            else:
+                os.close(dup_fd)
+                _MULTIPROCESSING_FD_PASSING_AVAILABLE = True
+                _MULTIPROCESSING_FD_PASSING_ERROR = None
+        finally:
+            os.close(fd)
+    return _MULTIPROCESSING_FD_PASSING_AVAILABLE
+
+
+def _multiprocessing_shared_memory_available():
+    """Return whether DataLoader can use cpu_shared transport between workers."""
+    return _cpu_shared_memory_available() and _multiprocessing_fd_passing_available()
 
 if sys.platform == 'darwin' or sys.platform == 'win32':
     def rebuild_ndarray(*args):
@@ -679,7 +712,7 @@ class DataLoader(object):
         self._prefetch = max(0, int(prefetch) if prefetch is not None else 2 * self._num_workers)
         shared_memory_available = True
         if self._num_workers > 0 and not self._thread_pool:
-            shared_memory_available = _cpu_shared_memory_available()
+            shared_memory_available = _multiprocessing_shared_memory_available()
         self._use_multiprocessing_shared_memory = shared_memory_available
         if batchify_fn is None:
             if self._num_workers > 0 and not self._thread_pool and shared_memory_available:
@@ -714,9 +747,11 @@ class DataLoader(object):
             nd.waitall()
             if self._num_workers > 0:
                 if not self._thread_pool and not shared_memory_available:
-                    logging.info("MXNet cpu_shared memory is unavailable; falling back to "
-                                 "DataLoader pickle transport for %s workers. Last error: %s",
-                                 self._num_workers, _CPU_SHARED_MEMORY_ERROR)
+                    logging.info("MXNet multiprocessing shared-memory transport is unavailable; "
+                                 "falling back to DataLoader pickle transport for %s workers. "
+                                 "Last cpu_shared error: %s. Last fd-passing error: %s",
+                                 self._num_workers, _CPU_SHARED_MEMORY_ERROR,
+                                 _MULTIPROCESSING_FD_PASSING_ERROR)
                 self._create_worker_pool()
 
     def _create_worker_pool(self):

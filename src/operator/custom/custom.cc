@@ -60,6 +60,15 @@ inline NDArray* AllocateNDArrayCopy(const NDArray& input, int dev_id) {
   return new NDArray(stype, input.shape(), input.data(), aux, dev_id);
 }
 
+inline NDArray* AllocateOutputNDArrayCopy(const NDArray& output, int dev_id) {
+  if (output.storage_type() == kDefaultStorage || output.storage_type() == kUndefinedStorage) {
+    return AllocateNDArrayCopy(output, dev_id);
+  }
+  Context ctx = output.ctx();
+  ctx.dev_id  = dev_id;
+  return new NDArray(output.storage_type(), output.shape(), ctx, true, output.dtype());
+}
+
 template <CustomOpPropCallbacks Type>
 std::vector<std::string> List(const NodeAttrs& attrs) {
   const auto& params = nnvm::get<CustomParam>(attrs.parsed);
@@ -316,7 +325,7 @@ void ForwardEx(const OpStatePtr& state,
   }
 
   for (size_t i = 0; i < params.num_outs; ++i) {
-    auto* nd = AllocateNDArrayCopy(outputs[i], dev_id);
+    auto* nd = AllocateOutputNDArrayCopy(outputs[i], dev_id);
     cpys.push_back(*nd);
     ptrs.push_back(reinterpret_cast<void*>(nd));
     tags.push_back(1);
@@ -397,7 +406,7 @@ void BackwardEx(const OpStatePtr& state,
     }
   }
   for (auto& output : outputs) {
-    auto* nd = AllocateNDArrayCopy(output, dev_id);
+    auto* nd = AllocateOutputNDArrayCopy(output, dev_id);
     cpys.push_back(*nd);
     ptrs.push_back(reinterpret_cast<void*>(nd));
     tags.push_back(2);

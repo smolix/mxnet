@@ -34,6 +34,18 @@
 #include "../imperative/exec_pass.h"
 #include "../operator/subgraph/subgraph_property.h"
 
+namespace {
+
+int ReturnNNVMStatus(int status) {
+  if (status != 0) {
+    const char* err = NNGetLastError();
+    MXAPISetLastError(err != nullptr && err[0] != '\0' ? err : "NNVM C API call failed");
+  }
+  return status;
+}
+
+}  // namespace
+
 namespace mxnet {
 namespace op {
 void RegisterLegacyOpProp();
@@ -81,13 +93,13 @@ std::vector<uint32_t> ReadOnlyArgIndices(const nnvm::IndexedGraph& idx) {
 int MXListAllOpNames(nn_uint* out_size, const char*** out_array) {
   mxnet::op::RegisterLegacyOpProp();
   mxnet::op::RegisterLegacyNDFunc();
-  return NNListAllOpNames(out_size, out_array);
+  return ReturnNNVMStatus(NNListAllOpNames(out_size, out_array));
 }
 
 int MXSymbolListAtomicSymbolCreators(uint32_t* out_size, AtomicSymbolCreator** out_array) {
   mxnet::op::RegisterLegacyOpProp();
   mxnet::op::RegisterLegacyNDFunc();
-  return NNListUniqueOps(out_size, out_array);
+  return ReturnNNVMStatus(NNListUniqueOps(out_size, out_array));
 }
 
 int MXSymbolGetAtomicSymbolInfo(AtomicSymbolCreator creator,
@@ -109,14 +121,14 @@ int MXSymbolGetAtomicSymbolInfo(AtomicSymbolCreator creator,
   } else {
     *key_var_num_args = ret->ret_str.c_str();
   }
-  return NNGetOpInfo(creator,
-                     name,
-                     description,
-                     num_args,
-                     arg_names,
-                     arg_type_infos,
-                     arg_descriptions,
-                     return_type);
+  return ReturnNNVMStatus(NNGetOpInfo(creator,
+                                      name,
+                                      description,
+                                      num_args,
+                                      arg_names,
+                                      arg_type_infos,
+                                      arg_descriptions,
+                                      return_type));
 }
 
 int MXSymbolCreateAtomicSymbol(AtomicSymbolCreator creator,
@@ -154,15 +166,15 @@ int MXSymbolCreateAtomicSymbol(AtomicSymbolCreator creator,
 }
 
 int MXSymbolCreateVariable(const char* name, SymbolHandle* out) {
-  return NNSymbolCreateVariable(name, out);
+  return ReturnNNVMStatus(NNSymbolCreateVariable(name, out));
 }
 
 int MXSymbolCreateGroup(uint32_t num_symbols, SymbolHandle* symbols, SymbolHandle* out) {
-  return NNSymbolCreateGroup(num_symbols, symbols, out);
+  return ReturnNNVMStatus(NNSymbolCreateGroup(num_symbols, symbols, out));
 }
 
 int MXSymbolGetOutput(SymbolHandle symbol, uint32_t index, SymbolHandle* out) {
-  return NNSymbolGetOutput(symbol, index, out);
+  return ReturnNNVMStatus(NNSymbolGetOutput(symbol, index, out));
 }
 
 int MXSymbolGetInputs(SymbolHandle symbol, SymbolHandle* out) {
@@ -210,19 +222,19 @@ int MXSymbolGetChildren(SymbolHandle symbol, SymbolHandle* out) {
 }
 
 int MXSymbolFree(SymbolHandle symbol) {
-  return NNSymbolFree(symbol);
+  return ReturnNNVMStatus(NNSymbolFree(symbol));
 }
 
 int MXSymbolCopy(SymbolHandle symbol, SymbolHandle* out) {
-  return NNSymbolCopy(symbol, out);
+  return ReturnNNVMStatus(NNSymbolCopy(symbol, out));
 }
 
 int MXSymbolPrint(SymbolHandle symbol, const char** out_str) {
-  return NNSymbolPrint(symbol, out_str);
+  return ReturnNNVMStatus(NNSymbolPrint(symbol, out_str));
 }
 
 int MXSymbolGetName(SymbolHandle symbol, const char** out, int* success) {
-  return NNSymbolGetAttr(symbol, "name", out, success);
+  return ReturnNNVMStatus(NNSymbolGetAttr(symbol, "name", out, success));
 }
 
 int MXSymbolGetAttr(SymbolHandle symbol, const char* key, const char** out, int* success) {
@@ -324,11 +336,11 @@ int MXSymbolListAttrShallow(SymbolHandle symbol, uint32_t* out_size, const char*
 }
 
 int MXSymbolListOutputs(SymbolHandle symbol, uint32_t* out_size, const char*** out_str_array) {
-  return NNSymbolListOutputNames(symbol, out_size, out_str_array);
+  return ReturnNNVMStatus(NNSymbolListOutputNames(symbol, out_size, out_str_array));
 }
 
 int MXSymbolGetNumOutputs(SymbolHandle symbol, uint32_t* output_count) {
-  return NNSymbolGetNumOutputs(symbol, output_count);
+  return ReturnNNVMStatus(NNSymbolGetNumOutputs(symbol, output_count));
 }
 
 int MXSymbolCompose(SymbolHandle sym,
@@ -336,18 +348,18 @@ int MXSymbolCompose(SymbolHandle sym,
                     uint32_t num_args,
                     const char** keys,
                     SymbolHandle* args) {
-  return NNSymbolCompose(sym, name, num_args, keys, args);
+  return ReturnNNVMStatus(NNSymbolCompose(sym, name, num_args, keys, args));
 }
 
 // adapter functions that re-implements the functions.
 int MXSymbolListArguments(SymbolHandle symbol, uint32_t* out_size, const char*** out_str_array) {
-  return NNSymbolListInputNames(symbol, 1, out_size, out_str_array);
+  return ReturnNNVMStatus(NNSymbolListInputNames(symbol, 1, out_size, out_str_array));
 }
 
 int MXSymbolListAuxiliaryStates(SymbolHandle symbol,
                                 uint32_t* out_size,
                                 const char*** out_str_array) {
-  return NNSymbolListInputNames(symbol, 2, out_size, out_str_array);
+  return ReturnNNVMStatus(NNSymbolListInputNames(symbol, 2, out_size, out_str_array));
 }
 
 int MXSymbolGetAtomicSymbolName(AtomicSymbolCreator creator, const char** out) {

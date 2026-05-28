@@ -2424,7 +2424,15 @@ def environment(*args):
         yield
     finally:
         # the backend engines may still be referencing the changed env var state
-        mx.nd.waitall()
+        active_exc = sys.exc_info()[1]
+        try:
+            mx.nd.waitall()
+        except Exception as wait_err:
+            if active_exc is not None:
+                logging.error("mx.nd.waitall() failed while unwinding an earlier exception: %s",
+                              wait_err)
+            else:
+                raise
         # reinstate original env_var state per the snapshot taken earlier
         set_environ(snapshot)
 

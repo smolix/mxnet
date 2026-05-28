@@ -48,9 +48,20 @@ def has_opencv():
     return mx.runtime.Features().is_enabled("OPENCV")
 
 
+def has_lapack():
+    """Return whether the loaded MXNet library was built with LAPACK support."""
+    return mx.runtime.Features().is_enabled("LAPACK")
+
+
 requires_opencv = pytest.mark.skipif(
     not has_opencv(),
     reason="MXNet built without OpenCV support"
+)
+
+
+requires_lapack = pytest.mark.skipif(
+    not has_lapack(),
+    reason="MXNet built without LAPACK support"
 )
 
 
@@ -315,6 +326,11 @@ def retry(n):
                 except AssertionError as e:
                     if i == n-1:
                         raise e
-                    mx.nd.waitall()
+                    try:
+                        mx.nd.waitall()
+                    except MXNetError as wait_err:
+                        raise AssertionError(
+                            "Retry cleanup failed after assertion '{}': {}".format(e, wait_err)
+                        ) from e
         return test_new
     return test_helper

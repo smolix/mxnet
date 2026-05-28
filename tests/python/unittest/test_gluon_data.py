@@ -61,6 +61,55 @@ def _skip_without_posix_shared_memory():
         pytest.skip("POSIX shared memory is unavailable; cpu_shared DataLoader transport cannot run")
 
 
+def _has_multiprocessing_fd_passing():
+    fd = os.open(os.devnull, os.O_RDONLY)
+    try:
+        dup_fd = None
+        try:
+            wrapper = multiprocessing.reduction.DupFd(fd)
+            dup_fd = wrapper.detach()
+        except (PermissionError, OSError, ValueError):
+            multiprocessing.resource_sharer.stop()
+            return False
+        else:
+            os.close(dup_fd)
+            return True
+    finally:
+        os.close(fd)
+
+
+def _skip_without_multiprocessing_fd_passing():
+    if not _has_multiprocessing_fd_passing():
+        pytest.skip("multiprocessing file-descriptor passing is unavailable; "
+                    "DataLoader worker transport cannot run")
+
+
+def test_multiprocessing_fd_passing_probe_cleans_up_on_detach_failure(monkeypatch):
+    calls = []
+    leaked_fds = []
+
+    class FailingDupFd:
+        def __init__(self, fd):
+            self.fd = os.dup(fd)
+            leaked_fds.append(self.fd)
+
+        def detach(self):
+            raise PermissionError("fd passing blocked")
+
+    def fake_stop():
+        calls.append('stop')
+        while leaked_fds:
+            os.close(leaked_fds.pop())
+
+    monkeypatch.setattr(multiprocessing.reduction, 'DupFd', FailingDupFd)
+    monkeypatch.setattr(multiprocessing.resource_sharer, 'stop', fake_stop)
+    fd_count_before = len(os.listdir('/proc/self/fd')) if os.path.isdir('/proc/self/fd') else None
+    assert not _has_multiprocessing_fd_passing()
+    assert calls == ['stop']
+    if fd_count_before is not None:
+        assert len(os.listdir('/proc/self/fd')) == fd_count_before
+
+
 def test_array_dataset():
     X = np.random.uniform(size=(10, 20))
     Y = np.random.uniform(size=(10,))
@@ -323,6 +372,7 @@ def test_list_dataset():
     for num_worker in range(0, 3):
         if num_worker > 0:
             _skip_without_posix_shared_memory()
+            _skip_without_multiprocessing_fd_passing()
         data = mx.gluon.data.DataLoader([([1,2], 0), ([3, 4], 1)], batch_size=1, num_workers=num_worker)
         for _ in data:
             pass
@@ -339,6 +389,7 @@ def test_multi_worker():
     for thread_pool in [True, False]:
         if not thread_pool:
             _skip_without_posix_shared_memory()
+            _skip_without_multiprocessing_fd_passing()
         loader = gluon.data.DataLoader(data, batch_size=1, num_workers=5, thread_pool=thread_pool)
         for i, batch in enumerate(loader):
             assert (batch.asnumpy() == i).all()
@@ -361,6 +412,7 @@ class _FailingDataset(gluon.data.Dataset):
 
 def test_multi_worker_iterator_close_recreates_pool():
     _skip_without_posix_shared_memory()
+    _skip_without_multiprocessing_fd_passing()
     loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, prefetch=2,
                                    try_nopython=False)
     iterator = iter(loader)
@@ -402,6 +454,19 @@ def test_thread_pool_default_batchify_avoids_shared_memory():
 def test_multi_worker_falls_back_to_pickle_transport_without_cpu_shared(monkeypatch):
     import mxnet.gluon.data.dataloader as dataloader_module
     monkeypatch.setattr(dataloader_module, '_cpu_shared_memory_available', lambda: False)
+
+    loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, try_nopython=False)
+    assert not loader._thread_pool
+    assert not loader._use_multiprocessing_shared_memory
+    assert not loader._batchify_fn._use_shared_mem
+    batch = next(iter(loader))
+    assert (batch.asnumpy() == 0).all()
+
+
+def test_multi_worker_falls_back_to_pickle_transport_without_fd_passing(monkeypatch):
+    import mxnet.gluon.data.dataloader as dataloader_module
+    monkeypatch.setattr(dataloader_module, '_cpu_shared_memory_available', lambda: True)
+    monkeypatch.setattr(dataloader_module, '_multiprocessing_fd_passing_available', lambda: False)
 
     loader = gluon.data.DataLoader(_Dataset(), batch_size=1, num_workers=2, try_nopython=False)
     assert not loader._thread_pool
@@ -499,6 +564,7 @@ def _batchify(data):
 
 def test_multi_worker_forked_data_loader():
     _skip_without_posix_shared_memory()
+    _skip_without_multiprocessing_fd_passing()
     data = _Dummy(False)
     loader = DataLoader(data, batch_size=40, batchify_fn=_batchify, num_workers=2)
     for _ in range(1):
@@ -517,6 +583,7 @@ def test_multi_worker_dataloader_release_pool():
         print('Skip for windows since spawn on windows is too expensive.')
         return
     _skip_without_posix_shared_memory()
+    _skip_without_multiprocessing_fd_passing()
 
     # macOS uses spawn for multiprocessing; creating 80 worker processes here
     # dominates the unittest runtime while covering the same release path.
@@ -684,6 +751,7 @@ def test_dataloader_scope():
     in use.
     """
     _skip_without_posix_shared_memory()
+    _skip_without_multiprocessing_fd_passing()
     args = {'num_workers': 1, 'batch_size': 2}
     dataset = nd.ones(5)
     iterator = iter(DataLoader(

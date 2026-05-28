@@ -901,6 +901,38 @@ def test_quantized_fc():
         check_quantized_fc((256, 2048, 2, 2), 800, False, qdtype)
         check_quantized_fc((256, 111, 2, 2), 800, False, qdtype)
 
+
+@use_np
+def test_quantized_fc_accepts_dnnl_quantize_v2_input():
+    if not is_test_for_dnnl() or not supports_dnnl_quantized_ops():
+        return
+
+    data = mx.np.arange(24, dtype='float32').reshape((2, 3, 2, 2)) - 12
+    qdata, min_data, max_data = mx.nd.contrib.quantize_v2(
+        data.as_nd_ndarray(), out_type='int8', min_calib_range=-16.0, max_calib_range=16.0)
+    qdata = qdata.as_np_ndarray()
+    min_data = min_data.as_np_ndarray()
+    max_data = max_data.as_np_ndarray()
+    weight = mx.np.array(onp.arange(-24, 24, dtype=onp.int8).reshape((4, 12))).astype('int8')
+    min_weight = mx.np.array([-24.0], dtype='float32')
+    max_weight = mx.np.array([23.0], dtype='float32')
+
+    out, _, _ = npx.quantized_fully_connected(
+        data=qdata,
+        weight=weight,
+        min_data=min_data,
+        max_data=max_data,
+        min_weight=min_weight,
+        max_weight=max_weight,
+        num_hidden=4,
+        no_bias=True,
+        flatten=True)
+
+    expected = onp.dot(qdata.asnumpy().reshape((2, 12)).astype('int32'),
+                       weight.asnumpy().astype('int32').T)
+    assert_almost_equal(out.asnumpy(), expected)
+
+
 @use_np
 def test_quantized_transpose():
     def check_quantized_transpose(shape, qdtype, axes):
@@ -1439,7 +1471,8 @@ def test_quantize_gluon_with_forward():
 
         data_shape = (32, 3, 224, 224)
         batch_size = 1
-        resnet18_v1 = vision.resnet18_v1(pretrained=True)
+        resnet18_v1 = vision.resnet18_v1(pretrained=False)
+        resnet18_v1.initialize(device=mx.current_device())
         resnet18_v1.reset_device(mx.current_device())
         excluded_names_match = []
         if mx.current_device() == mx.gpu():

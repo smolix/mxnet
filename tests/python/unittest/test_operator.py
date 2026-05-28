@@ -2044,8 +2044,6 @@ def check_binary_op_forward(symbol, baseline, gen_data, rtol=1e-3, atol=1e-5, mx
         y = y.outputs[0].asnumpy()
         x = baseline(d[0], d[1]).astype(y.dtype)
 
-        #np.set_printoptions(precision=20)
-
         a = d[0]
         b = d[1]
         #print("a: {} {}".format(a.dtype, a))
@@ -2060,14 +2058,14 @@ def check_binary_op_forward(symbol, baseline, gen_data, rtol=1e-3, atol=1e-5, mx
         idx = np.abs(x-y) > atol+rtol*np.abs(x)
         if idx.any():
             import binascii
-            np.set_printoptions(precision=20)
             logging.error('found precision problem:')
             d[0] = np.broadcast_to(d[0], x.shape)
             d[1] = np.broadcast_to(d[1], x.shape)
-            logging.error('input a: {}'.format(d[0][idx]))
-            logging.error('input b: {}'.format(d[1][idx]))
-            logging.error("output x: {} {}".format(x.dtype, x))
-            logging.error("output y: {} {}".format(y.dtype, y))
+            with np.printoptions(precision=20):
+                logging.error('input a: {}'.format(d[0][idx]))
+                logging.error('input b: {}'.format(d[1][idx]))
+                logging.error("output x: {} {}".format(x.dtype, x))
+                logging.error("output y: {} {}".format(y.dtype, y))
             def ftohex(xs):
                 import struct
                 return list(map(lambda x: binascii.hexlify(struct.pack('d', x)), xs.flatten()))
@@ -2897,8 +2895,6 @@ def test_flip():
 
 
 def test_stn():
-    import sys
-    np.set_printoptions(threshold=sys.maxsize)
     num_filter = 2  # conv of loc net
     kernel = (3, 3)  # conv of loc net
     num_hidden = 6  # fc of loc net

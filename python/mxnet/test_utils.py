@@ -733,8 +733,8 @@ def assert_almost_equal(a, b, rtol=None, atol=None, names=('a', 'b'), equal_nan=
     else:
         errMsg = f"Error {rel} exceeds tolerance rtol={rtol:e}, atol={atol:e}.\n"
 
-    np.set_printoptions(threshold=4, suppress=True)
-    msg = npt.build_err_msg([a, b], err_msg=errMsg)
+    with np.printoptions(threshold=4, suppress=True):
+        msg = npt.build_err_msg([a, b], err_msg=errMsg)
 
     raise AssertionError(msg)
 
@@ -801,8 +801,8 @@ def assert_almost_equal_with_err(a, b, rtol=None, atol=None, etol=None,
             errMsg = f"Error {relErr} exceeds tolerance rtol={rtol:e}, atol={atol:e} " \
                      f"(mismatch {mismatchDegree}{100*i/a.size}%).\n" \
                      f"{locationError(a, b, indexErr, names, maxError=True)}"
-            np.set_printoptions(threshold=4, suppress=True)
-            msg = npt.build_err_msg([a, b], err_msg=errMsg)
+            with np.printoptions(threshold=4, suppress=True):
+                msg = npt.build_err_msg([a, b], err_msg=errMsg)
             raise AssertionError(msg)
     else:
         assert_almost_equal(a, b, rtol=rtol, atol=atol, equal_nan=equal_nan)

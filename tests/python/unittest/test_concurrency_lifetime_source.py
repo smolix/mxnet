@@ -181,3 +181,16 @@ def test_numpy_binary_onednn_fallback_uses_layout_safe_fallback_compute():
     assert "FallBackCompute(NumpyBinaryOperatorFallbackCPU<OP>, attrs, ctx, inputs, req, outputs)" in body
     assert "inputs[0].data()" not in body
     assert "outputs[0].data()" not in body
+
+
+def test_tests_do_not_leak_print_options_or_kvstore_env():
+    test_utils = _read("python/mxnet/test_utils.py")
+    test_operator = _read("tests/python/unittest/test_operator.py")
+    test_trainer = _read("tests/python/unittest/test_gluon_trainer.py")
+
+    assert "np.set_printoptions" not in test_utils
+    assert "np.set_printoptions" not in test_operator
+    assert "with np.printoptions" in test_utils
+    assert "os.putenv('MXNET_UPDATE_ON_KVSTORE'" not in test_trainer
+    assert "previous_update_on_kvstore = os.environ.get('MXNET_UPDATE_ON_KVSTORE')" in test_trainer
+    assert "os.environ.pop('MXNET_UPDATE_ON_KVSTORE', None)" in test_trainer

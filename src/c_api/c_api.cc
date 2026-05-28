@@ -2786,7 +2786,7 @@ int MXDataIterGetLabel(DataIterHandle handle, NDArrayHandle* out) {
   API_BEGIN();
   const DataBatch& db = static_cast<IIterator<DataBatch>*>(handle)->Value();
   bool no_label       = db.data.size() < 2U;
-  NDArray* pndarray   = new NDArray();
+  std::unique_ptr<NDArray> pndarray(new NDArray());
   // temp hack to make label 1D
   // TODO(tianjun) make label 1D when label_width=0
   mxnet::TShape shape = no_label ? TShape({
@@ -2802,7 +2802,7 @@ int MXDataIterGetLabel(DataIterHandle handle, NDArrayHandle* out) {
   } else {
     *pndarray = db.data[1];
   }
-  *out = pndarray;
+  *out = pndarray.release();
   API_END();
 }
 
@@ -2811,11 +2811,15 @@ int MXDataIterGetItems(DataIterHandle handle, int* num_outputs, NDArrayHandle** 
   API_BEGIN();
   const DataBatch& db = static_cast<IIterator<DataBatch>*>(handle)->Value();
   std::vector<NDArray*> ndoutputs;
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
   ndoutputs.reserve(db.data.size());
   if (*outputs == nullptr) {
     *num_outputs = db.data.size();
-    for (int i = 0; i < *num_outputs; ++i)
-      ndoutputs.push_back(new NDArray());
+    owned_outputs.reserve(*num_outputs);
+    for (int i = 0; i < *num_outputs; ++i) {
+      owned_outputs.emplace_back(new NDArray());
+      ndoutputs.push_back(owned_outputs.back().get());
+    }
   } else {
     CHECK_EQ(*num_outputs, db.data.size()) << "MXDataIterGetItems expects " << db.data.size()
                                            << " outputs, but " << *num_outputs << " was given.";
@@ -2835,6 +2839,9 @@ int MXDataIterGetItems(DataIterHandle handle, int* num_outputs, NDArrayHandle** 
       ret->ret_handles.push_back(ndoutputs[i]);
     }
     *outputs = dmlc::BeginPtr(ret->ret_handles);
+    for (auto& output : owned_outputs) {
+      output.release();
+    }
   }
   API_END();
 }
@@ -2850,9 +2857,9 @@ int MXDataIterGetIndex(DataIterHandle handle, uint64_t** out_index, uint64_t* ou
 int MXDataIterGetData(DataIterHandle handle, NDArrayHandle* out) {
   API_BEGIN();
   const DataBatch& db = static_cast<IIterator<DataBatch>*>(handle)->Value();
-  NDArray* pndarray   = new NDArray();
+  std::unique_ptr<NDArray> pndarray(new NDArray());
   *pndarray           = db.data[0];
-  *out                = pndarray;
+  *out                = pndarray.release();
   API_END();
 }
 
@@ -2923,11 +2930,15 @@ int MXDatasetGetItems(DatasetHandle handle,
   CHECK((*static_cast<std::shared_ptr<Dataset>*>(handle))->GetItem(index, &res))
       << "Error getting item at index: " << index;
   std::vector<NDArray*> ndoutputs;
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
   ndoutputs.reserve(res.size());
   if (*outputs == nullptr) {
     *num_outputs = res.size();
-    for (int i = 0; i < *num_outputs; ++i)
-      ndoutputs.push_back(new NDArray());
+    owned_outputs.reserve(*num_outputs);
+    for (int i = 0; i < *num_outputs; ++i) {
+      owned_outputs.emplace_back(new NDArray());
+      ndoutputs.push_back(owned_outputs.back().get());
+    }
   } else {
     CHECK_EQ(*num_outputs, res.size()) << "MXDatasetGetItems expects " << res.size()
                                        << " outputs, but " << *num_outputs << " was given.";
@@ -2946,6 +2957,9 @@ int MXDatasetGetItems(DatasetHandle handle,
       ret->ret_handles.push_back(ndoutputs[i]);
     }
     *outputs = dmlc::BeginPtr(ret->ret_handles);
+    for (auto& output : owned_outputs) {
+      output.release();
+    }
   }
   API_END();
 }
@@ -3010,14 +3024,18 @@ int MXBatchifyFunctionInvoke(BatchifyFunctionHandle handle,
   std::vector<NDArray> res;
   CHECK((*static_cast<BatchifyFunctionPtr*>(handle))->Batchify(ndinputs, &res))
       << "Error call batchify with " << ndinputs.size() << " inputs";
+  CHECK_EQ(num_output, res.size()) << "MXBatchifyFunctionInvoke expects " << num_output
+                                   << " outputs from batchify, but got " << res.size() << ".";
   std::vector<NDArray*> ndoutputs;
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
   ndoutputs.reserve(res.size());
   if (*outputs == nullptr) {
-    for (int i = 0; i < num_output; ++i)
-      ndoutputs.push_back(new NDArray());
+    owned_outputs.reserve(num_output);
+    for (int i = 0; i < num_output; ++i) {
+      owned_outputs.emplace_back(new NDArray());
+      ndoutputs.push_back(owned_outputs.back().get());
+    }
   } else {
-    CHECK_EQ(num_output, res.size()) << "MXBatchifyFunctionInvoke expects " << res.size()
-                                     << " outputs, but " << num_output << " was given.";
     for (int i = 0; i < num_output; ++i) {
       ndoutputs.push_back(reinterpret_cast<NDArray*>((*outputs)[i]));
     }
@@ -3034,6 +3052,9 @@ int MXBatchifyFunctionInvoke(BatchifyFunctionHandle handle,
       ret->ret_handles.push_back(ndoutputs[i]);
     }
     *outputs = dmlc::BeginPtr(ret->ret_handles);
+    for (auto& output : owned_outputs) {
+      output.release();
+    }
   }
   API_END();
 }
@@ -3471,13 +3492,14 @@ struct MXRecordIOContext {
 
 int MXRecordIOWriterCreate(const char* uri, RecordIOHandle* out) {
   API_BEGIN();
-  dmlc::Stream* stream       = dmlc::Stream::Create(uri, "w");
-  MXRecordIOContext* context = new MXRecordIOContext;
-  context->writer            = new dmlc::RecordIOWriter(stream);
+  std::unique_ptr<dmlc::Stream> stream(dmlc::Stream::Create(uri, "w"));
+  std::unique_ptr<MXRecordIOContext> context(new MXRecordIOContext);
+  std::unique_ptr<dmlc::RecordIOWriter> writer(new dmlc::RecordIOWriter(stream.get()));
+  context->writer            = writer.release();
   context->reader            = nullptr;
-  context->stream            = stream;
+  context->stream            = stream.release();
   context->read_buff         = nullptr;
-  *out                       = reinterpret_cast<RecordIOHandle>(context);
+  *out                       = reinterpret_cast<RecordIOHandle>(context.release());
   API_END();
 }
 
@@ -3506,13 +3528,15 @@ int MXRecordIOWriterTell(RecordIOHandle handle, size_t* pos) {
 
 int MXRecordIOReaderCreate(const char* uri, RecordIOHandle* out) {
   API_BEGIN();
-  dmlc::Stream* stream       = dmlc::Stream::Create(uri, "r");
-  MXRecordIOContext* context = new MXRecordIOContext;
-  context->reader            = new dmlc::RecordIOReader(stream);
+  std::unique_ptr<dmlc::Stream> stream(dmlc::Stream::Create(uri, "r"));
+  std::unique_ptr<MXRecordIOContext> context(new MXRecordIOContext);
+  std::unique_ptr<dmlc::RecordIOReader> reader(new dmlc::RecordIOReader(stream.get()));
+  std::unique_ptr<std::string> read_buff(new std::string());
+  context->reader            = reader.release();
   context->writer            = nullptr;
-  context->stream            = stream;
-  context->read_buff         = new std::string();
-  *out                       = reinterpret_cast<RecordIOHandle>(context);
+  context->stream            = stream.release();
+  context->read_buff         = read_buff.release();
+  *out                       = reinterpret_cast<RecordIOHandle>(context.release());
   API_END();
 }
 

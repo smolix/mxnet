@@ -67,6 +67,16 @@ dataset_url = "https://github.com/BIDS/BSDS500/archive/master.zip"
 data_dir = path.expanduser(path.join(datasets_dir, "BSDS500"))
 tmp_dir = path.join(data_dir, "tmp")
 
+
+def _dataset_ready():
+    return all(path.isdir(p) for p in (
+        path.join(data_dir, "images", "train"),
+        path.join(data_dir, "images", "test"),
+        path.join(data_dir, "groundTruth", "train"),
+        path.join(data_dir, "groundTruth", "test"),
+    ))
+
+
 def _safe_extract_zip(zip_file, target_dir):
     target_dir = path.abspath(target_dir)
     for member in zip_file.infolist():
@@ -79,7 +89,7 @@ def _safe_extract_zip(zip_file, target_dir):
 def get_dataset(prefetch=False):
     """Download the BSDS500 dataset and return train and test iters."""
 
-    if path.exists(data_dir):
+    if _dataset_ready():
         print(
             "Directory {} already exists, skipping.\n"
             "To force download and extraction, delete the directory and re-run."
@@ -87,26 +97,36 @@ def get_dataset(prefetch=False):
             file=sys.stderr,
         )
     else:
+        if path.exists(data_dir):
+            shutil.rmtree(data_dir)
         print("Downloading dataset...", file=sys.stderr)
         downloaded_file = download(dataset_url, dirname=datasets_tmpdir)
         print("done", file=sys.stderr)
 
         print("Extracting files...", end="", file=sys.stderr)
-        os.makedirs(data_dir)
-        os.makedirs(tmp_dir)
-        with zipfile.ZipFile(downloaded_file) as archive:
-            _safe_extract_zip(archive, tmp_dir)
-        shutil.rmtree(datasets_tmpdir)
+        try:
+            os.makedirs(data_dir)
+            os.makedirs(tmp_dir)
+            with zipfile.ZipFile(downloaded_file) as archive:
+                _safe_extract_zip(archive, tmp_dir)
 
-        shutil.copytree(
-            path.join(tmp_dir, "BSDS500-master", "BSDS500", "data", "images"),
-            path.join(data_dir, "images"),
-        )
-        shutil.copytree(
-            path.join(tmp_dir, "BSDS500-master", "BSDS500", "data", "groundTruth"),
-            path.join(data_dir, "groundTruth"),
-        )
-        shutil.rmtree(tmp_dir)
+            shutil.copytree(
+                path.join(tmp_dir, "BSDS500-master", "BSDS500", "data", "images"),
+                path.join(data_dir, "images"),
+            )
+            shutil.copytree(
+                path.join(tmp_dir, "BSDS500-master", "BSDS500", "data", "groundTruth"),
+                path.join(data_dir, "groundTruth"),
+            )
+        except Exception:
+            if path.exists(data_dir):
+                shutil.rmtree(data_dir)
+            raise
+        finally:
+            if path.exists(tmp_dir):
+                shutil.rmtree(tmp_dir)
+            if path.exists(datasets_tmpdir):
+                shutil.rmtree(datasets_tmpdir)
         print("done", file=sys.stderr)
 
     crop_size = 256

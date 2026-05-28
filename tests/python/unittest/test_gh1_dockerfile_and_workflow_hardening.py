@@ -146,6 +146,18 @@ def test_gluon_super_resolution_closes_pil_images():
     assert "y, cb, cr = img.convert('YCbCr').split()" in super_resolution
 
 
+def test_gluon_super_resolution_rejects_partial_bsds500_cache():
+    super_resolution = _read("example/gluon/super_resolution/super_resolution.py")
+
+    assert "def _dataset_ready():" in super_resolution
+    assert 'path.join(data_dir, "images", "train")' in super_resolution
+    assert 'path.join(data_dir, "groundTruth", "test")' in super_resolution
+    assert "if _dataset_ready():" in super_resolution
+    assert "if path.exists(data_dir):\n            shutil.rmtree(data_dir)" in super_resolution
+    assert "except Exception:" in super_resolution and "raise" in super_resolution
+    assert "finally:" in super_resolution and "shutil.rmtree(datasets_tmpdir)" in super_resolution
+
+
 def test_download_and_sparse_benchmark_avoid_assert_and_shell():
     test_utils = _read("python/mxnet/test_utils.py")
     sparse_dot = _read("benchmark/python/sparse/dot.py")

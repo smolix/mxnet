@@ -32,6 +32,7 @@
 #include <vector>
 #include "operator/nn/dnnl/dnnl_base-inl.h"
 #include "operator/quantization/quantize_asym-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 
 namespace mxnet {
 namespace op {
@@ -76,9 +77,13 @@ void DNNLQuantizeAsymOp::Forward(const OpContext& ctx,
 
   // Pass through quantized data
   if (inputs[0].dtype() == mshadow::kUint8) {
-    *outputs[1].data().dptr<float>() = 1;
-    *outputs[2].data().dptr<float>() = 0;
-    if (req[0] != kWriteInplace) {
+    const float out_min = 1.f;
+    const float out_max = 0.f;
+    AssignQuantizedRangeOutput(
+        outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_quantize_asym");
+    AssignQuantizedRangeOutput(
+        outputs[2].data().dptr<float>(), &out_max, req[2], "_contrib_quantize_asym");
+    if (req[0] != kNullOp && req[0] != kWriteInplace) {
       const_cast<NDArray&>(outputs[0]).CopyFrom(*inputs[0].GetDNNLData());
       DNNLStream::Get()->Submit();
     }
@@ -88,8 +93,8 @@ void DNNLQuantizeAsymOp::Forward(const OpContext& ctx,
     float* in_ptr             = in_buffer.data().dptr<float>();
     const int nthreads        = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
     if (inputs[0].dtype() == mshadow::kInt8) {
-      *outputs[1].data().dptr<float>() = 1;
-      *outputs[2].data().dptr<float>() = 128;
+      scale = 1.f;
+      shift = 128.f;
 #pragma omp parallel for num_threads(nthreads)
       for (index_t i = 0; i < static_cast<index_t>(in_buffer.shape().Size()); ++i) {
         in_ptr[i] += 128.0f;
@@ -126,8 +131,10 @@ void DNNLQuantizeAsymOp::Forward(const OpContext& ctx,
         initialized_ = false;
     }
 
-    *outputs[1].data().dptr<float>() = scale;
-    *outputs[2].data().dptr<float>() = shift;
+    AssignQuantizedRangeOutput(
+        outputs[1].data().dptr<float>(), &scale, req[1], "_contrib_quantize_asym");
+    AssignQuantizedRangeOutput(
+        outputs[2].data().dptr<float>(), &shift, req[2], "_contrib_quantize_asym");
 
     if (!initialized_) {
       cached_scale_ = scale;
@@ -171,6 +178,9 @@ void DNNLQuantizeAsymOp::Forward(const OpContext& ctx,
       // dnnl::memory handles still point at these addresses.
       cached_inv_scale_ = 1.0f / cached_scale_;
       cached_zp_        = static_cast<int32_t>(std::nearbyint(cached_shift_));
+    }
+    if (req[0] == kNullOp) {
+      return;
     }
     dnnl_output_t o_mem  = CreateDNNLMem(outputs[0], o_desc_, req[0]);
     args_[DNNL_ARG_FROM] = *i_mem;

@@ -39,6 +39,17 @@ _MX_HANDLE_PATH_SEPARATORS = ('|',) + tuple(
     chr(i) for i in range(1, 32) if chr(i) not in '\t\n\r\v\f')
 
 
+def _safe_extract_tar(tar, target_dir):
+    target_dir = os.path.abspath(target_dir)
+    for member in tar.getmembers():
+        member_path = os.path.abspath(os.path.join(target_dir, member.name))
+        if os.path.commonpath([target_dir, member_path]) != target_dir:
+            raise RuntimeError('Unsafe tar member path: {}'.format(member.name))
+        if member.issym() or member.islnk():
+            raise RuntimeError('Refusing tar link member: {}'.format(member.name))
+    tar.extractall(target_dir)
+
+
 def _encode_paths_for_mx_handle(paths):
     """Join image paths with a separator absent from every path."""
     paths = list(paths)
@@ -198,7 +209,7 @@ class CIFAR10(dataset._DownloadedDataset):
                                 sha1_hash=self._archive_file[1])
 
             with tarfile.open(filename) as tar:
-                tar.extractall(self._root)
+                _safe_extract_tar(tar, self._root)
 
         if self._train:
             data_files = self._train_data

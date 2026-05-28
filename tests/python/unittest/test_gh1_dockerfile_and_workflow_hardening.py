@@ -147,6 +147,15 @@ def test_download_and_sparse_benchmark_avoid_assert_and_shell():
         "sparse dot benchmark reintroduced shell command execution"
 
 
+def test_builtin_dataset_extractors_validate_archive_members():
+    datasets = _read("python/mxnet/gluon/data/vision/datasets.py")
+    test_utils = _read("python/mxnet/test_utils.py")
+    assert "_safe_extract_tar(tar, self._root)" in datasets and "commonpath" in datasets, \
+        "Gluon vision datasets no longer validate tar members before extraction"
+    assert "_safe_extract_zip(zf, path)" in test_utils and "commonpath" in test_utils, \
+        "test_utils CIFAR downloader no longer validates zip members before extraction"
+
+
 def test_movielens_data_avoids_shell_download_and_validates_zip():
     contents = _read("example/recommenders/movielens_data.py")
     assert "os.system" not in contents, \

@@ -1832,6 +1832,14 @@ def get_cifar10(path='data'):
     """Downloads CIFAR10 dataset into a directory in the current directory with the name `data`,
     and then extracts all files into the directory `data/cifar`.
     """
+    def _safe_extract_zip(zip_file, target_dir):
+        target_dir = os.path.abspath(target_dir)
+        for member in zip_file.infolist():
+            member_path = os.path.abspath(os.path.join(target_dir, member.filename))
+            if os.path.commonpath([target_dir, member_path]) != target_dir:
+                raise RuntimeError(f"Unsafe zip member path: {member.filename}")
+        zip_file.extractall(target_dir)
+
     if not os.path.isdir(path):
         os.makedirs(path)
     if (not os.path.exists(os.path.join(path, 'cifar', 'train.rec'))) or \
@@ -1843,7 +1851,7 @@ def get_cifar10(path='data'):
         zip_file_path = mx.gluon.utils.download(url, path=path, sha1_hash=sha1,
                                                 verify_ssl=False)
         with zipfile.ZipFile(zip_file_path) as zf:
-            zf.extractall(path)
+            _safe_extract_zip(zf, path)
 
 def get_mnist_iterator(batch_size, input_shape, num_parts=1, part_index=0, path='data'):
     """Returns training and validation iterators for MNIST dataset

@@ -1986,13 +1986,14 @@ void CreateNDArray(const DataType* shape,
         << "[CreateNDArray] Size of tensor you are trying to allocate is larger than "
            "2^31 elements. Please build with flag USE_INT64_TENSOR_SIZE=1";
   }
-  NDArray* nd = new NDArray(requested_shape,
-                            Context::Create(static_cast<Context::DeviceType>(dev_type), dev_id),
-                            delay_alloc != 0,
-                            dtype);
+  std::unique_ptr<NDArray> nd(new NDArray(
+      requested_shape,
+      Context::Create(static_cast<Context::DeviceType>(dev_type), dev_id),
+      delay_alloc != 0,
+      dtype));
   nd->AssignStorageInfo(profiler::ProfilerScope::Get()->GetCurrentProfilerScope(),
                         MXNET_STORAGE_DEFAULT_NAME_CSTR);
-  *out = nd;
+  *out = nd.release();
 }
 
 int MXNDArrayCreate64(const int64_t* shape,
@@ -2042,16 +2043,17 @@ void CreateSparseNDArray(int storage_type,
     aux_shapes.emplace_back(shape_start, shape_start + aux_ndims[i]);
     shape_start += aux_ndims[i];
   }
-  NDArray* nd = new NDArray(NDArrayStorageType(storage_type),
-                            mxnet::TShape(shape, shape + ndim),
-                            Context::Create(static_cast<Context::DeviceType>(dev_type), dev_id),
-                            delay_alloc != 0,
-                            dtype,
-                            aux_types,
-                            aux_shapes);
+  std::unique_ptr<NDArray> nd(new NDArray(
+      NDArrayStorageType(storage_type),
+      mxnet::TShape(shape, shape + ndim),
+      Context::Create(static_cast<Context::DeviceType>(dev_type), dev_id),
+      delay_alloc != 0,
+      dtype,
+      aux_types,
+      aux_shapes));
   nd->AssignStorageInfo(profiler::ProfilerScope::Get()->GetCurrentProfilerScope(),
                         MXNET_STORAGE_DEFAULT_NAME_CSTR);
-  *out = nd;
+  *out = nd.release();
 }
 
 int MXNDArrayCreateSparseEx(int storage_type,
@@ -2210,6 +2212,40 @@ int MXNDArrayLegacySave(const char* fname,
   API_END();
 }
 
+class MZZipWriterGuard {
+ public:
+  explicit MZZipWriterGuard(const char* fname) : fname_(fname) {
+    CHECK(mz_zip_writer_init_file(&archive_, fname_, 0))
+        << "Failed to open archive " << fname_ << ": "
+        << mz_zip_get_error_string(mz_zip_get_last_error(&archive_));
+    initialized_ = true;
+  }
+
+  ~MZZipWriterGuard() {
+    if (initialized_) {
+      mz_zip_writer_end(&archive_);
+    }
+  }
+
+  mz_zip_archive* get() {
+    return &archive_;
+  }
+
+  void Finalize() {
+    CHECK(mz_zip_writer_finalize_archive(&archive_))
+        << "Failed to finalize archive " << fname_
+        << mz_zip_get_error_string(mz_zip_get_last_error(&archive_));
+    CHECK(mz_zip_writer_end(&archive_)) << "Failed to end archive " << fname_
+                                        << mz_zip_get_error_string(mz_zip_get_last_error(&archive_));
+    initialized_ = false;
+  }
+
+ private:
+  const char* fname_;
+  mz_zip_archive archive_{};
+  bool initialized_{false};
+};
+
 int MXNDArraySave(const char* fname, uint32_t num_args, NDArrayHandle* args, const char** keys) {
   API_BEGIN();
 
@@ -2223,33 +2259,18 @@ int MXNDArraySave(const char* fname, uint32_t num_args, NDArrayHandle* args, con
     if (array->storage_type() == kDefaultStorage) {
       npy::save_array(fname, *array);
     } else {
-      mz_zip_archive archive{};
-      CHECK(mz_zip_writer_init_file(&archive, fname, 0))
-          << "Failed to open archive " << fname << ": "
-          << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
-      npz::save_array(&archive, "", *array);
-      CHECK(mz_zip_writer_finalize_archive(&archive))
-          << "Failed to finalize archive " << fname
-          << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
-      CHECK(mz_zip_writer_end(&archive))
-          << "Failed to end archive " << fname
-          << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
+      MZZipWriterGuard archive(fname);
+      npz::save_array(archive.get(), "", *array);
+      archive.Finalize();
     }
   } else {
-    mz_zip_archive archive{};
-    CHECK(mz_zip_writer_init_file(&archive, fname, 0))
-        << "Failed to open archive " << fname << ": "
-        << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
+    MZZipWriterGuard archive(fname);
     for (uint32_t i = 0; i < num_args; ++i) {
       NDArray* array              = static_cast<NDArray*>(args[i]);
       const std::string array_key = keys == nullptr ? "arr_" + std::to_string(i) : keys[i];
-      npz::save_array(&archive, array_key, *array);
+      npz::save_array(archive.get(), array_key, *array);
     }
-    CHECK(mz_zip_writer_finalize_archive(&archive))
-        << "Failed to finalize archive " << fname
-        << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
-    CHECK(mz_zip_writer_end(&archive)) << "Failed to end archive " << fname
-                                       << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
+    archive.Finalize();
   }
   API_END();
 }
@@ -2273,11 +2294,11 @@ int MXNDArrayLoad(const char* fname,
   if (magic == 0x04034b50 || magic == 0x504b0304 || magic == 0x06054b50 ||
       magic == 0x504b0506) {                       // zip file format; assumed to be npz
     auto [data, names] = npz::load_arrays(fname);  // NOLINT
-    ret->ret_handles.resize(data.size());
+    std::vector<std::unique_ptr<NDArray>> owned_outputs;
+    owned_outputs.reserve(data.size());
     for (size_t i = 0; i < data.size(); ++i) {
-      NDArray* ptr        = new NDArray();
-      *ptr                = data[i];
-      ret->ret_handles[i] = ptr;
+      owned_outputs.emplace_back(new NDArray());
+      *owned_outputs.back() = data[i];
     }
     ret->ret_vec_str.resize(names.size());
     for (size_t i = 0; i < names.size(); ++i) {
@@ -2287,19 +2308,27 @@ int MXNDArrayLoad(const char* fname,
     for (size_t i = 0; i < names.size(); ++i) {
       ret->ret_vec_charp[i] = ret->ret_vec_str[i].c_str();
     }
+    ret->ret_handles.resize(data.size());
+    for (size_t i = 0; i < data.size(); ++i) {
+      ret->ret_handles[i] = owned_outputs[i].get();
+    }
     *out_size      = static_cast<uint32_t>(data.size());
     *out_arr       = dmlc::BeginPtr(ret->ret_handles);
     *out_name_size = static_cast<uint32_t>(names.size());
     *out_names     = dmlc::BeginPtr(ret->ret_vec_charp);
+    for (auto& output : owned_outputs) {
+      output.release();
+    }
   } else if (magic == 0x4d554e93 || magic == 0x934e554d) {  // first bytes of npy format
+    std::unique_ptr<NDArray> ptr(new NDArray());
+    *ptr = npy::load_array(fname);  // Only supports local filesystem at this point in time
     *out_size = 1;
     ret->ret_handles.resize(1);
-    NDArray* ptr = new NDArray();
-    *ptr         = npy::load_array(fname);  // Only supports local filesystem at this point in time
-    ret->ret_handles[0] = ptr;
+    ret->ret_handles[0] = ptr.get();
     *out_arr            = dmlc::BeginPtr(ret->ret_handles);
     *out_name_size      = 0;
     *out_names          = nullptr;
+    ptr.release();
   } else {
     std::vector<NDArray> data;
     std::vector<std::string>& names = ret->ret_vec_str;
@@ -2307,20 +2336,27 @@ int MXNDArrayLoad(const char* fname,
       std::unique_ptr<dmlc::Stream> fi(dmlc::Stream::Create(fname, "r"));
       mxnet::NDArray::Load(fi.get(), &data, &names);
     }
-    ret->ret_handles.resize(data.size());
+    std::vector<std::unique_ptr<NDArray>> owned_outputs;
+    owned_outputs.reserve(data.size());
     for (size_t i = 0; i < data.size(); ++i) {
-      NDArray* ptr        = new NDArray();
-      *ptr                = data[i];
-      ret->ret_handles[i] = ptr;
+      owned_outputs.emplace_back(new NDArray());
+      *owned_outputs.back() = data[i];
     }
     ret->ret_vec_charp.resize(names.size());
     for (size_t i = 0; i < names.size(); ++i) {
       ret->ret_vec_charp[i] = names[i].c_str();
     }
+    ret->ret_handles.resize(data.size());
+    for (size_t i = 0; i < data.size(); ++i) {
+      ret->ret_handles[i] = owned_outputs[i].get();
+    }
     *out_size      = static_cast<uint32_t>(data.size());
     *out_arr       = dmlc::BeginPtr(ret->ret_handles);
     *out_name_size = static_cast<uint32_t>(names.size());
     *out_names     = dmlc::BeginPtr(ret->ret_vec_charp);
+    for (auto& output : owned_outputs) {
+      output.release();
+    }
   }
   API_END();
 }
@@ -2342,20 +2378,27 @@ int MXNDArrayLoadFromBuffer(const void* ndarray_buffer,
         new dmlc::MemoryFixedSizeStream(const_cast<void*>(ndarray_buffer), size));
     mxnet::NDArray::Load(fi.get(), &data, &names);
   }
-  ret->ret_handles.resize(data.size());
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
+  owned_outputs.reserve(data.size());
   for (size_t i = 0; i < data.size(); ++i) {
-    NDArray* ptr        = new NDArray();
-    *ptr                = data[i];
-    ret->ret_handles[i] = ptr;
+    owned_outputs.emplace_back(new NDArray());
+    *owned_outputs.back() = data[i];
   }
   ret->ret_vec_charp.resize(names.size());
   for (size_t i = 0; i < names.size(); ++i) {
     ret->ret_vec_charp[i] = names[i].c_str();
   }
+  ret->ret_handles.resize(data.size());
+  for (size_t i = 0; i < data.size(); ++i) {
+    ret->ret_handles[i] = owned_outputs[i].get();
+  }
   *out_size      = static_cast<uint32_t>(data.size());
   *out_arr       = dmlc::BeginPtr(ret->ret_handles);
   *out_name_size = static_cast<uint32_t>(names.size());
   *out_names     = dmlc::BeginPtr(ret->ret_vec_charp);
+  for (auto& output : owned_outputs) {
+    output.release();
+  }
   API_END();
 }
 

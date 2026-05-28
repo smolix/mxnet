@@ -33,6 +33,7 @@
 #include "../operator/operator_common.h"
 #include "../imperative/exec_pass.h"
 #include "../operator/subgraph/subgraph_property.h"
+#include <memory>
 
 namespace {
 
@@ -421,19 +422,23 @@ int MXSymbolCutSubgraph(SymbolHandle sym, SymbolHandle** input_symbols, int* inp
 
     std::vector<nnvm::NodeEntry> orig_entries;
     CutGraphInputs(input_entries, false, &orig_entries);
-    std::vector<nnvm::Symbol*> input_syms(orig_entries.size());
-    for (size_t i = 0; i < input_syms.size(); i++) {
-      input_syms[i] = new nnvm::Symbol();
-      input_syms[i]->outputs.push_back(orig_entries[i]);
+    std::vector<std::unique_ptr<nnvm::Symbol>> owned_input_syms;
+    owned_input_syms.reserve(orig_entries.size());
+    for (size_t i = 0; i < orig_entries.size(); i++) {
+      owned_input_syms.emplace_back(new nnvm::Symbol());
+      owned_input_syms.back()->outputs.push_back(orig_entries[i]);
     }
-    *input_size = input_syms.size();
+    *input_size = owned_input_syms.size();
 
     MXAPIThreadLocalEntry<>* ret = MXAPIThreadLocalStore<>::Get();
     ret->ret_handles.clear();
     ret->ret_handles.reserve(*input_size);
     for (int i = 0; i < *input_size; ++i)
-      ret->ret_handles.push_back(input_syms[i]);
+      ret->ret_handles.push_back(owned_input_syms[i].get());
     *input_symbols = reinterpret_cast<SymbolHandle*>(dmlc::BeginPtr(ret->ret_handles));
+    for (auto& input_sym : owned_input_syms) {
+      input_sym.release();
+    }
   } else {
     *input_size = 0;
   }

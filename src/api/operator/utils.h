@@ -27,6 +27,7 @@
 #include <mxnet/base.h>
 #include <mxnet/runtime/container.h>
 #include <nnvm/c_api.h>
+#include <memory>
 #include <vector>
 #include <string>
 
@@ -39,7 +40,8 @@ void SetInOut(std::vector<NDArray*>* ndinputs,
               int* num_outputs,
               int infered_num_outputs,
               int num_visible_outputs,
-              NDArray** out_array);
+              NDArray** out_array,
+              std::vector<std::unique_ptr<NDArray>>* owned_outputs);
 
 std::vector<NDArray*> Invoke(const nnvm::Op* op,
                              nnvm::NodeAttrs* attrs,

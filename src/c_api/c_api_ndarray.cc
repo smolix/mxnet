@@ -188,11 +188,13 @@ int MXCreateCachedOp(SymbolHandle handle,
   for (int i = 0; i < num_flags; ++i) {
     flags.emplace_back(keys[i], vals[i]);
   }
+  std::unique_ptr<CachedOpPtr> cached_op;
   if (!thread_safe) {
-    *out = new CachedOpPtr(new CachedOp(*sym, flags));
+    cached_op.reset(new CachedOpPtr(std::make_shared<CachedOp>(*sym, flags)));
   } else {
-    *out = new CachedOpPtr(new CachedOpThreadSafe(*sym, flags));
+    cached_op.reset(new CachedOpPtr(std::make_shared<CachedOpThreadSafe>(*sym, flags)));
   }
+  *out = cached_op.release();
   API_END();
 }
 

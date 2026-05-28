@@ -24,6 +24,7 @@
 #include <mxnet/api_registry.h>
 #include <mxnet/runtime/packed_func.h>
 #include <mxnet/runtime/container_ext.h>
+#include <memory>
 #include "../imperative/cached_op.h"
 #include "../imperative/cached_op_threadsafe.h"
 
@@ -45,11 +46,15 @@ MXNET_REGISTER_GLOBAL("cached_op.invoke")
       }
 
       std::vector<NDArray*> ndoutputs;
+      std::vector<std::unique_ptr<NDArray>> owned_outputs;
       ndoutputs.reserve(op->num_outputs());
       const bool caller_provided_outputs = args[num_inputs + 4].type_code() != kNull;
       if (!caller_provided_outputs) {
-        for (int i = 0; i < op->num_outputs(); ++i)
-          ndoutputs.push_back(new NDArray());
+        owned_outputs.reserve(op->num_outputs());
+        for (int i = 0; i < op->num_outputs(); ++i) {
+          owned_outputs.emplace_back(new NDArray());
+          ndoutputs.push_back(owned_outputs.back().get());
+        }
       } else {
         int array_size = args_size - num_inputs - 4;
         CHECK_EQ(array_size, op->num_outputs()) << "CachedOp expects " << op->num_outputs()
@@ -81,13 +86,14 @@ MXNET_REGISTER_GLOBAL("cached_op.invoke")
       }
       if (op->num_outputs() == 1) {
         *ret = ndoutputs[0];
+        owned_outputs[0].release();
       } else {
         std::vector<ObjectRef> outputs;
         outputs.reserve(op->num_outputs());
         for (int i = 0; i < op->num_outputs(); ++i) {
           ObjectRef out = NDArrayHandle(ndoutputs[i]);
           outputs.push_back(out);
-          delete ndoutputs[i];
+          owned_outputs[i].reset();
         }
         *ret = runtime::ADT(0, outputs.begin(), outputs.end());
       }
@@ -106,13 +112,13 @@ MXNET_REGISTER_GLOBAL("cached_op.create")
         flags.emplace_back(std::string(runtime::Downcast<runtime::String>(kv.first)),
                            std::string(runtime::Downcast<runtime::String>(kv.second)));
       }
-      mxnet::CachedOpPtr* out;
+      std::unique_ptr<mxnet::CachedOpPtr> out;
       if (!thread_safe) {
-        out = new CachedOpPtr(new CachedOp(*sym, flags));
+        out.reset(new CachedOpPtr(std::make_shared<CachedOp>(*sym, flags)));
       } else {
-        out = new CachedOpPtr(new CachedOpThreadSafe(*sym, flags));
+        out.reset(new CachedOpPtr(std::make_shared<CachedOpThreadSafe>(*sym, flags)));
       }
-      *ret = static_cast<void*>(out);
+      *ret = static_cast<void*>(out.release());
     });
 
 MXNET_REGISTER_GLOBAL("cached_op.free")

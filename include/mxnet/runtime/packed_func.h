@@ -788,6 +788,7 @@ class MXNetRetValue : public MXNetPODValue_ {
       return;
     switch (type_code_) {
       case kStr:
+      case kBytes:
         delete ptr<std::string>();
         break;
       case kObjectHandle: {

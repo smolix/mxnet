@@ -124,6 +124,20 @@ def test_quantize_out_buffers_overwrite_prefilled_sentinels():
     assert_almost_equal(out_max.asnumpy(), onp.array([expected_range], dtype=onp.float32))
 
 
+def test_quantize_uint8_uses_affine_range():
+    data = mx.nd.array([-1.0, 0.0, 3.0], dtype='float32', ctx=mx.current_device())
+    min_range = mx.nd.array([-1.0], dtype='float32', ctx=mx.current_device())
+    max_range = mx.nd.array([3.0], dtype='float32', ctx=mx.current_device())
+
+    qdata, out_min, out_max = mx.nd.contrib.quantize(
+        data, min_range, max_range, out_type='uint8')
+    dequantized = mx.nd.contrib.dequantize(qdata, out_min, out_max, out_type='float32')
+
+    assert qdata.dtype == onp.uint8
+    assert_almost_equal(qdata.asnumpy(), onp.array([0, 64, 255], dtype=onp.uint8), atol=1)
+    assert_almost_equal(dequantized.asnumpy(), data.asnumpy(), atol=2.0 / 255.0)
+
+
 def test_quantize_v2_out_buffers_overwrite_prefilled_sentinels():
     data = mx.nd.array([-3.0, -1.0, 0.5, 2.0], dtype='float32', ctx=mx.current_device())
     out_data = mx.nd.full(data.shape, 11, dtype='int8', ctx=mx.current_device())
@@ -140,6 +154,17 @@ def test_quantize_v2_out_buffers_overwrite_prefilled_sentinels():
     assert_almost_equal(out_data.asnumpy(), expected, atol=1)
     assert_almost_equal(out_min.asnumpy(), onp.array([-expected_range], dtype=onp.float32))
     assert_almost_equal(out_max.asnumpy(), onp.array([expected_range], dtype=onp.float32))
+
+def test_quantize_v2_uint8_uses_affine_range():
+    data = mx.nd.array([-1.0, 0.0, 3.0], dtype='float32', ctx=mx.current_device())
+
+    qdata, out_min, out_max = mx.nd.contrib.quantize_v2(
+        data, out_type='uint8', min_calib_range=-1.0, max_calib_range=3.0)
+    dequantized = mx.nd.contrib.dequantize(qdata, out_min, out_max, out_type='float32')
+
+    assert qdata.dtype == onp.uint8
+    assert_almost_equal(qdata.asnumpy(), onp.array([0, 64, 255], dtype=onp.uint8), atol=1)
+    assert_almost_equal(dequantized.asnumpy(), data.asnumpy(), atol=2.0 / 255.0)
 
 def test_calibrated_quantize_v2_bfloat16_to_int8():
     shape = rand_shape_nd(4)
@@ -315,6 +340,26 @@ def test_requantize_int32_to_int8():
     check_requantize((32, 3, 23, 23))
     check_requantize((3, 4, 10, 10), min_calib_range=-1050.0, max_calib_range=1040.0)
     check_requantize((32, 3, 23, 23), min_calib_range=-134.349, max_calib_range=523.43)
+
+
+def test_requantize_uint8_uses_affine_range():
+    quantized_range = float(onp.iinfo('int32').max)
+    real_values = onp.array([2.0, 4.0, 6.0], dtype='float32')
+    qdata_np = (real_values / 10.0 * quantized_range).astype('int32')
+    qdata = mx.nd.array(qdata_np, dtype='int32', ctx=mx.current_device())
+    min_range = mx.nd.array([-10.0], dtype='float32', ctx=mx.current_device())
+    max_range = mx.nd.array([10.0], dtype='float32', ctx=mx.current_device())
+
+    qout, out_min, out_max = mx.nd.contrib.requantize(
+        qdata, min_range, max_range, out_type='uint8',
+        min_calib_range=2.0, max_calib_range=6.0)
+    dequantized = mx.nd.contrib.dequantize(qout, out_min, out_max, out_type='float32')
+
+    assert qout.dtype == onp.uint8
+    assert_almost_equal(out_min.asnumpy(), onp.array([2.0], dtype=onp.float32))
+    assert_almost_equal(out_max.asnumpy(), onp.array([6.0], dtype=onp.float32))
+    assert_almost_equal(qout.asnumpy(), onp.array([0, 128, 255], dtype=onp.uint8), atol=1)
+    assert_almost_equal(dequantized.asnumpy(), real_values, atol=2.0 / 255.0)
 
 
 @use_np
@@ -749,6 +794,25 @@ def test_quantized_elemwise_mul():
         check_quantized_elemwise_mul((13, 74, 52), qtype)
         check_quantized_elemwise_mul((3, 4, 56, 56), qtype)
         check_quantized_elemwise_mul((32, 56, 64, 11), qtype)
+
+
+@use_np
+def test_quantized_elemwise_mul_calibrated_int8_saturates():
+    lhs = mx.np.array([127, -128], dtype='int8')
+    rhs = mx.np.array([127, 127], dtype='int8')
+    lhs_min = mx.np.array([-1.0], dtype='float32')
+    lhs_max = mx.np.array([1.0], dtype='float32')
+    rhs_min = mx.np.array([-1.0], dtype='float32')
+    rhs_max = mx.np.array([1.0], dtype='float32')
+
+    qout, out_min, out_max = mx.npx.quantized_elemwise_mul(
+        lhs, rhs, lhs_min, lhs_max, rhs_min, rhs_max,
+        min_calib_range=-0.25, max_calib_range=0.25)
+
+    assert qout.dtype == onp.int8
+    assert_almost_equal(qout.asnumpy(), onp.array([127, -128], dtype=onp.int8))
+    assert_almost_equal(out_min.asnumpy(), onp.array([-0.25], dtype=onp.float32))
+    assert_almost_equal(out_max.asnumpy(), onp.array([0.25], dtype=onp.float32))
 
 
 @use_np

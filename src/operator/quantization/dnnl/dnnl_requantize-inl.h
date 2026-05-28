@@ -36,6 +36,24 @@
 namespace mxnet {
 namespace op {
 
+static void DNNLRequantizeUInt8Fallback(const nnvm::NodeAttrs& attrs,
+                                        const OpContext& ctx,
+                                        const std::vector<NDArray>& inputs,
+                                        const std::vector<OpReqType>& req,
+                                        const std::vector<NDArray>& outputs) {
+  NDArray data = inputs[0];
+  if (data.IsDNNLData()) {
+    data = data.Reorder2Default();
+    DNNLStream::Get()->Submit();
+  }
+  if (req[0] != kNullOp) {
+    const_cast<NDArray&>(outputs[0]).InvalidateDNNLData();
+  }
+  std::vector<TBlob> input_blobs{data.data(), inputs[1].data(), inputs[2].data()};
+  std::vector<TBlob> output_blobs{outputs[0].data(), outputs[1].data(), outputs[2].data()};
+  RequantizeForward<cpu>(attrs, ctx, input_blobs, req, output_blobs);
+}
+
 template <typename DstType>
 static void DNNLRequantizeForwardKer(const nnvm::NodeAttrs& attrs,
                                      const OpContext& ctx,
@@ -157,7 +175,7 @@ static void DNNLRequantizeForward(const nnvm::NodeAttrs& attrs,
   }
   auto out_type = GetQuantizeOutputType(param);
   if (out_type == mshadow::kUint8) {
-    DNNLRequantizeForwardKer<uint8_t>(attrs, ctx, inputs, req, outputs, real_range);
+    DNNLRequantizeUInt8Fallback(attrs, ctx, inputs, req, outputs);
   } else if (out_type == mshadow::kInt8) {
     DNNLRequantizeForwardKer<int8_t>(attrs, ctx, inputs, req, outputs, real_range);
   } else {

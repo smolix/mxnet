@@ -88,3 +88,17 @@ def test_operator_api_uses_shared_output_adt_ownership_helper():
         "Expected multi-output operator wrappers to use "
         "CreateADTFromOutputVector; found only:\n" + "\n".join(helper_calls)
     )
+
+
+def test_c_api_ndarray_implicit_outputs_are_raii_owned():
+    """Implicit C API outputs must be cleaned up if invoke throws.
+
+    `MXImperativeInvokeImpl` and `MXInvokeCachedOp` allocate output handles
+    before the actual operator execution.  Those handles need frame-local
+    ownership until successful return to avoid leaking on API_END exception
+    paths.
+    """
+    text = (_repo_root() / "src" / "c_api" / "c_api_ndarray.cc").read_text()
+    assert "std::vector<std::unique_ptr<NDArray>> owned_outputs" in text
+    assert "owned_outputs[i].release()" in text
+    assert "delete ndoutputs" not in text

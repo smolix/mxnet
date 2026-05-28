@@ -32,7 +32,7 @@ from mxnet.operator import *
 from mxnet.base import py_str, MXNetError, _as_list
 from common import assert_raises_cudnn_not_satisfied, assert_raises_cuda_not_satisfied, assertRaises
 from common import legacy_np_semantics
-from common import xfail_when_nonstandard_decimal_separator, with_environment, requires_lapack
+from common import xfail_when_nonstandard_decimal_separator, with_environment, requires_lapack, has_lapack
 import pytest
 import os
 
@@ -4517,7 +4517,7 @@ def test_cast_float32_to_float16():
 
 
 def test_amp_multicast():
-    if default_device().device_type == 'cpu':
+    if default_device().device_type == 'cpu' and has_lapack():
         return
     x = mx.sym.Variable('x', dtype=np.float16)
     y = mx.sym.Variable('y', dtype=np.float32)
@@ -6060,6 +6060,18 @@ def test_custom_op_exc():
             c = mx.nd.Custom(a, b, op_type='Dot4')
             c.wait_to_read()
         pytest.raises(MXNetError, custom_exc4)
+
+
+@pytest.mark.skipif(has_lapack(), reason="Requires MXNet built without LAPACK support")
+def test_custom_op_potrf_without_lapack_clears_async_error():
+    dot = mx.nd.zeros((2, 2))
+    result = mx.nd.linalg.potrf(dot)
+
+    with pytest.raises(MXNetError, match="without lapack"):
+        result.wait_to_read()
+
+    mx.nd.waitall()
+    assert_almost_equal(mx.nd.ones((1,)), np.ones((1,)))
 
 
 @legacy_np_semantics()

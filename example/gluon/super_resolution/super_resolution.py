@@ -224,8 +224,8 @@ def resolve(device):
     img_dirname = path.dirname(opt.resolve_img)
 
     net.load_parameters(path.join(this_dir, 'superres.params'), device=device)
-    img = Image.open(opt.resolve_img).convert('YCbCr')
-    y, cb, cr = img.split()
+    with Image.open(opt.resolve_img) as img:
+        y, cb, cr = img.convert('YCbCr').split()
     data = mx.np.expand_dims(mx.np.expand_dims(mx.np.array(y), axis=0), axis=0)
     out_img_y = mx.np.reshape(net(data), shape=(-3, -2)).asnumpy()
     out_img_y = out_img_y.clip(0, 255)

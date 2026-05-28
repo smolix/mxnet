@@ -136,6 +136,16 @@ def test_example_zip_extractors_validate_members():
         "Super-resolution example no longer validates zip members before extraction"
 
 
+def test_gluon_super_resolution_closes_pil_images():
+    data_py = _read("example/gluon/data.py")
+    super_resolution = _read("example/gluon/super_resolution/super_resolution.py")
+
+    assert "with Image.open(fn) as img:" in data_py
+    assert "image = img.convert('YCbCr').split()[0]" in data_py
+    assert "with Image.open(opt.resolve_img) as img:" in super_resolution
+    assert "y, cb, cr = img.convert('YCbCr').split()" in super_resolution
+
+
 def test_download_and_sparse_benchmark_avoid_assert_and_shell():
     test_utils = _read("python/mxnet/test_utils.py")
     sparse_dot = _read("benchmark/python/sparse/dot.py")

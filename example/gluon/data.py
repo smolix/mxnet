@@ -180,7 +180,8 @@ class ImagePairIter(mx.io.DataIter):
             for i in range(self.batch_size):
                 fn = self.filenames[self.count]
                 self.count += 1
-                image = Image.open(fn).convert('YCbCr').split()[0]
+                with Image.open(fn) as img:
+                    image = img.convert('YCbCr').split()[0]
                 if image.size[0] > image.size[1]:
                     image = image.transpose(Image.TRANSPOSE)
                 image = mx.np.expand_dims(mx.np.array(image), axis=2)

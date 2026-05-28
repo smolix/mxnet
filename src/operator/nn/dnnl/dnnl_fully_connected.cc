@@ -284,8 +284,23 @@ void DNNLFCForwardImpl(const DNNLFCFullParam& full_param,
     f32_out.reserve(out_data.size());
     std::vector<bool> out_was_bf16;
     out_was_bf16.reserve(out_data.size());
-    for (const auto& nd : out_data) {
+    std::vector<OpReqType> f32_req;
+    f32_req.reserve(req.size());
+    for (size_t i = 0; i < out_data.size(); ++i) {
+      const auto& nd = out_data[i];
       if (nd.dtype() == mshadow::kBfloat16) {
+        if (req[i] == kNullOp) {
+          f32_out.emplace_back(nd);
+          out_was_bf16.push_back(false);
+          f32_req.push_back(kNullOp);
+          continue;
+        }
+        if (req[i] == kAddTo) {
+          f32_out.emplace_back(nd.Reorder2DefaultFloatFormat());
+          out_was_bf16.push_back(true);
+          f32_req.push_back(kAddTo);
+          continue;
+        }
         // Pass the kFloat32 enum value directly. `emplace_back` perfect-
         // forwards by reference; `mshadow::DataType<T>::kFlag` is a
         // non-inline `static const int`, so the reference odr-uses it and
@@ -293,16 +308,13 @@ void DNNLFCForwardImpl(const DNNLFCFullParam& full_param,
         f32_out.emplace_back(nd.shape(), nd.ctx(), /*delay_alloc=*/false,
                              static_cast<int>(mshadow::kFloat32));
         out_was_bf16.push_back(true);
+        f32_req.push_back(kWriteTo);
       } else {
         f32_out.emplace_back(nd);
         out_was_bf16.push_back(false);
+        f32_req.push_back(req[i]);
       }
     }
-    // Make sure the fp32 buffers participate in the same kWriteTo flow as
-    // the original outputs; we always materialise into the temp buffer and
-    // then reorder back, so kWriteTo is correct regardless of the caller's
-    // req[].
-    std::vector<OpReqType> f32_req(req.size(), kWriteTo);
     DNNLFCForwardImpl(full_param, ctx, f32_in, f32_req, f32_out);
     // Make sure the fp32 result is fully materialised before we reorder
     // back — the recursive call above may have queued reorders.

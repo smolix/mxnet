@@ -241,3 +241,16 @@ def test_python_handle_array_wrappers_free_unwrapped_handles():
 
     assert "output_vars, None, num_output.value, create_ndarray_fn, True, writable=False" in gluon_internal
     assert "output_vars, None, num_output.value, self._create_ndarray_fn, True, writable=False" in io_py
+
+
+def test_dnnl_fc_bf16_fallback_preserves_output_req():
+    contents = _read("src/operator/nn/dnnl/dnnl_fully_connected.cc")
+    body = contents.split("void DNNLFCForwardImpl", 1)[1].split("NDArray data", 1)[0]
+
+    assert "if (req[i] == kNullOp)" in body
+    assert "f32_req.push_back(kNullOp)" in body
+    assert "if (req[i] == kAddTo)" in body
+    assert "f32_out.emplace_back(nd.Reorder2DefaultFloatFormat())" in body
+    assert "f32_req.push_back(kAddTo)" in body
+    assert "f32_req.push_back(kWriteTo)" in body
+    assert "f32_req.push_back(req[i])" in body

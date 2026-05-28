@@ -2221,12 +2221,20 @@ void NDArray::SyncCopyFromCPU(const void* data, size_t size) const {
   }
   TBlob src((void*)data, dshape, cpu::kDevMask, this->dtype_, 0);  // NOLINT(*)
 
-  if (this->ctx().dev_mask() == cpu::kDevMask) {
-    this->WaitToWrite();
-    RunContext rctx{this->ctx(), nullptr, nullptr};
-    TBlob dst = this->data();
-    ndarray::Copy<cpu, cpu>(src, &dst, Context::CPU(), Context::CPU(), rctx);
-  } else {
+	  if (this->ctx().dev_mask() == cpu::kDevMask) {
+	    Engine::Get()->PushSync(
+	        [this, src](RunContext rctx) {
+	          TBlob dst = this->data();
+	          ndarray::Copy<cpu, cpu>(src, &dst, Context::CPU(), Context::CPU(), rctx);
+	        },
+	        this->ctx(),
+	        {},
+	        {this->var()},
+	        FnProperty::kNormal,
+	        0,
+	        "SyncCopyCPU2CPU");
+	    this->WaitToRead();
+	  } else {
 #if MXNET_USE_CUDA
     Engine::Get()->PushAsync(
         [&](RunContext rctx,

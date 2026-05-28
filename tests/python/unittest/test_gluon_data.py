@@ -153,6 +153,16 @@ def test_dataloader_v1_shutdown_reaps_workers_after_early_stop():
     assert all(worker.exitcode is not None for worker in iterator._workers)
 
 
+def test_dataloader_v1_worker_exception_does_not_spin():
+    loader = DataLoaderV1(_FailingDataset(), batch_size=1, num_workers=1,
+                          batchify_fn=_identity_batchify)
+    iterator = iter(loader)
+    with pytest.raises(RuntimeError, match="intentional dataloader worker failure"):
+        next(iterator)
+    assert iterator._shutdown
+    assert all(not worker.is_alive() for worker in iterator._workers)
+
+
 def test_array_dataset():
     X = np.random.uniform(size=(10, 20))
     Y = np.random.uniform(size=(10,))

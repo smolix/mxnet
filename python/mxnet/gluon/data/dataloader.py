@@ -31,6 +31,8 @@ import multiprocessing.queues
 from multiprocessing.reduction import ForkingPickler
 from multiprocessing.pool import ThreadPool
 import threading
+import time
+import traceback
 import numpy as np
 
 try:
@@ -249,8 +251,18 @@ def worker_loop_v1(dataset, key_queue, data_queue, batchify_fn):
         idx, samples = key_queue.get()
         if idx is None:
             break
-        batch = batchify_fn([dataset[i] for i in samples])
+        try:
+            batch = batchify_fn([dataset[i] for i in samples])
+        except Exception:  # pylint: disable=broad-except
+            data_queue.put((idx, _WorkerException(traceback.format_exc())))
+            continue
         data_queue.put((idx, batch))
+
+
+class _WorkerException(object):
+    def __init__(self, traceback_str):
+        self.traceback_str = traceback_str
+
 
 def fetcher_loop_v1(data_queue, data_buffer, pin_memory=False,
                     pin_device_id=0, data_buffer_lock=None):
@@ -259,7 +271,9 @@ def fetcher_loop_v1(data_queue, data_buffer, pin_memory=False,
         idx, batch = data_queue.get()
         if idx is None:
             break
-        if pin_memory:
+        if isinstance(batch, _WorkerException):
+            pass
+        elif pin_memory:
             batch = _as_in_context(batch, context.cpu_pinned(pin_device_id))
         else:
             batch = _as_in_context(batch, context.cpu())
@@ -336,9 +350,17 @@ class _MultiWorkerIterV1(object):
             if self._rcvd_idx in self._data_buffer:
                 with self._data_buffer_lock:
                     batch = self._data_buffer.pop(self._rcvd_idx)
+                if isinstance(batch, _WorkerException):
+                    self.shutdown()
+                    raise RuntimeError("DataLoader worker failed:\n" + batch.traceback_str)
                 self._rcvd_idx += 1
                 self._push_next()
                 return batch
+            if all(not w.is_alive() for w in self._workers):
+                self.shutdown()
+                raise RuntimeError("DataLoader workers exited before producing batch "
+                                   "{}".format(self._rcvd_idx))
+            time.sleep(0.001)
 
     def next(self):
         return self.__next__()

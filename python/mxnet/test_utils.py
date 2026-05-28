@@ -1688,7 +1688,7 @@ def list_gpus():
     """
     return range(mx.util.get_gpu_count())
 
-def download(url, fname=None, dirname=None, overwrite=False, retries=5):
+def download(url, fname=None, dirname=None, overwrite=False, retries=5, timeout=30):
     """Download an given URL
 
     Parameters
@@ -1708,6 +1708,8 @@ def download(url, fname=None, dirname=None, overwrite=False, retries=5):
         exists.
     retries : integer, default 5
         The number of times to attempt the download in case of failure or non 200 return codes
+    timeout : float or tuple, default 30
+        Timeout in seconds passed to requests for each download attempt.
 
     Returns
     -------
@@ -1741,7 +1743,7 @@ def download(url, fname=None, dirname=None, overwrite=False, retries=5):
         # Disable pyling too broad Exception
         # pylint: disable=W0703
         try:
-            r = requests.get(url, stream=True)
+            r = requests.get(url, stream=True, timeout=timeout)
             assert r.status_code == 200, f"failed to open {url}"
             with open(fname, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=1024):

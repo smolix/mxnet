@@ -18,6 +18,7 @@
 import ctypes
 import mxnet as mx
 from numpy.testing import assert_equal
+import mxnet.test_utils as test_utils
 from mxnet import base
 from mxnet.base import data_dir
 from mxnet.test_utils import environment
@@ -136,6 +137,30 @@ def test_retry_reports_cleanup_error_with_original_assertion(monkeypatch):
 
     with pytest.raises(AssertionError, match='primary assertion.*async cleanup failure'):
         flaky()
+
+
+def test_download_passes_timeout_to_requests(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            yield b'ok'
+
+    def fake_get(url, stream, timeout):
+        calls.append((url, stream, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr(test_utils.requests, 'get', fake_get)
+    fname = test_utils.download('https://example.invalid/file.bin',
+                                dirname=str(tmp_path),
+                                retries=1,
+                                timeout=7)
+
+    assert calls == [('https://example.invalid/file.bin', True, 7)]
+    with open(fname, 'rb') as downloaded:
+        assert downloaded.read() == b'ok'
 
 
 def test_generate_op_module_signature_closes_files_on_codegen_failure(monkeypatch):

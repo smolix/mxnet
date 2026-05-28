@@ -349,18 +349,25 @@ class _MultiWorkerIterV1(object):
     def shutdown(self):
         """Shutdown internal workers by pushing terminate signals."""
         if not self._shutdown:
-            # send shutdown signal to the fetcher and join data queue first
-            # Remark:   loop_fetcher need to be joined prior to the workers.
-            #           otherwise, the fetcher may fail at getting data
-            self._data_queue.put((None, None))
-            self._fetcher.join()
             # send shutdown signal to all worker processes
             for _ in range(self._num_workers):
                 self._key_queue.put((None, None))
-            # force shut down any alive worker processes
+            for w in self._workers:
+                w.join(timeout=1)
+            # force shut down any workers that did not observe the sentinel
             for w in self._workers:
                 if w.is_alive():
                     w.terminate()
+                w.join()
+            self._data_queue.put((None, None))
+            self._fetcher.join()
+            for queue in (self._key_queue, self._data_queue):
+                close = getattr(queue, 'close', None)
+                if close is not None:
+                    close()
+                join_thread = getattr(queue, 'join_thread', None)
+                if join_thread is not None:
+                    join_thread()
             self._shutdown = True
 
 

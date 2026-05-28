@@ -34,6 +34,7 @@ import mxnet.ndarray as nd
 from mxnet import context
 from mxnet.gluon.data.dataset import Dataset
 from mxnet.gluon.data.dataset import ArrayDataset
+from mxnet.gluon.data.dataloader import DataLoaderV1
 import pytest
 from common import has_opencv, make_test_images
 
@@ -82,6 +83,10 @@ def _skip_without_multiprocessing_fd_passing():
     if not _has_multiprocessing_fd_passing():
         pytest.skip("multiprocessing file-descriptor passing is unavailable; "
                     "DataLoader worker transport cannot run")
+
+
+def _identity_batchify(batch):
+    return batch
 
 
 def test_multiprocessing_fd_passing_probe_cleans_up_on_detach_failure(monkeypatch):
@@ -135,6 +140,17 @@ def test_multiprocessing_fd_passing_probe_cleans_up_on_success(monkeypatch):
     assert calls == ['stop']
     if fd_count_before is not None:
         assert len(os.listdir('/proc/self/fd')) == fd_count_before
+
+
+def test_dataloader_v1_shutdown_reaps_workers_after_early_stop():
+    loader = DataLoaderV1(list(range(16)), batch_size=1, num_workers=2,
+                          batchify_fn=_identity_batchify)
+    iterator = iter(loader)
+    next(iterator)
+    iterator.shutdown()
+
+    assert all(not worker.is_alive() for worker in iterator._workers)
+    assert all(worker.exitcode is not None for worker in iterator._workers)
 
 
 def test_array_dataset():

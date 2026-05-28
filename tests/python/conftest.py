@@ -23,6 +23,18 @@ import mxnet as mx
 import pytest
 
 
+@pytest.fixture
+def set_np_semantics():
+    prev_array = mx.util.is_np_array()
+    prev_shape = mx.util.is_np_shape()
+    prev_dtype = mx.npx.is_np_default_dtype()
+    mx.npx.set_np()
+    try:
+        yield
+    finally:
+        mx.npx.set_np(array=prev_array, shape=prev_shape, dtype=prev_dtype)
+
+
 @pytest.fixture(autouse=True)
 def check_leak_ndarray(request):
     garbage_expected = request.node.get_closest_marker('garbage_expected')

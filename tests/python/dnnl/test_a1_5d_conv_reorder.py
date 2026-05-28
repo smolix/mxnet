@@ -39,7 +39,7 @@ import mxnet as mx
 from mxnet import npx
 import pytest
 
-npx.set_np()
+pytestmark = pytest.mark.usefixtures("set_np_semantics")
 
 
 _SYMBOL_TEMPLATE = {

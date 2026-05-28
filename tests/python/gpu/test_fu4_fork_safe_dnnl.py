@@ -37,7 +37,7 @@ import mxnet as mx
 from mxnet import np as mnp, npx, gluon
 from mxnet.gluon.data import DataLoader, ArrayDataset
 
-npx.set_np()
+pytestmark = pytest.mark.usefixtures("set_np_semantics")
 
 
 # ---------------------------------------------------------------------------

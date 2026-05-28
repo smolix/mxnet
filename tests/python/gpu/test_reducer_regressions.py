@@ -16,12 +16,13 @@
 # under the License.
 
 import numpy as onp
+import pytest
 
 import mxnet as mx
 from mxnet import np as mxnp, npx
 
 
-npx.set_np()
+pytestmark = pytest.mark.usefixtures("set_np_semantics")
 
 
 def check_bool_all(ctx):

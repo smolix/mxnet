@@ -31,7 +31,7 @@ import numpy as _np
 from mxnet import np, npx
 import mxnet as mx
 
-npx.set_np()
+pytestmark = pytest.mark.usefixtures("set_np_semantics")
 
 
 # Boundary sizes around the known oneDNN failure (513 inputs).

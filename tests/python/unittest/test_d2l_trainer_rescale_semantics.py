@@ -42,7 +42,7 @@ import pytest
 import mxnet as mx
 from mxnet import autograd, gluon, np as mnp, npx
 
-npx.set_np()
+pytestmark = pytest.mark.usefixtures("set_np_semantics")
 
 
 class _Lin(gluon.HybridBlock):

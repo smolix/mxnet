@@ -442,6 +442,61 @@ def test_quantized_conv():
 
 
 @use_np
+def test_quantized_conv_uint8_uses_affine_zero_point():
+    if not is_test_for_dnnl() or not supports_dnnl_quantized_ops():
+        return
+
+    qdata = mx.np.array([[[[0, 128, 255]]]], dtype='uint8')
+    min_data = mx.np.array([1.0], dtype='float32')
+    max_data = mx.np.array([3.0], dtype='float32')
+    weight = mx.np.array([[[[127]]]], dtype='int8')
+    min_weight = mx.np.array([-1.0], dtype='float32')
+    max_weight = mx.np.array([1.0], dtype='float32')
+
+    out, min_out, max_out = npx.quantized_conv(data=qdata, weight=weight,
+                                               min_data=min_data, max_data=max_data,
+                                               min_weight=min_weight, max_weight=max_weight,
+                                               kernel=(1, 1), num_filter=1,
+                                               no_bias=True, num_group=1, layout='NCHW')
+
+    data_scale = 255.5 / (max_data.item() - min_data.item())
+    data_zero_point = int(onp.rint(-min_data.item() * data_scale))
+    expected = (qdata.asnumpy().astype('int32') - data_zero_point) * 127
+    assert_almost_equal(out.asnumpy(), expected)
+    assert min_out.item() < 0
+    assert max_out.item() > 0
+
+
+@use_np
+def test_quantized_conv_rescales_int8_bias_to_accumulator_units():
+    if not is_test_for_dnnl() or not supports_dnnl_quantized_ops():
+        return
+
+    qdata = mx.np.array([[[[0, 0]]]], dtype='int8')
+    weight = mx.np.array([[[[0]]]], dtype='int8')
+    bias = mx.np.array([64], dtype='int8')
+    min_data = mx.np.array([-2.0], dtype='float32')
+    max_data = mx.np.array([2.0], dtype='float32')
+    min_weight = mx.np.array([-3.0], dtype='float32')
+    max_weight = mx.np.array([3.0], dtype='float32')
+    min_bias = mx.np.array([-4.0], dtype='float32')
+    max_bias = mx.np.array([4.0], dtype='float32')
+
+    out, _, _ = npx.quantized_conv(data=qdata, weight=weight, bias=bias,
+                                   min_data=min_data, max_data=max_data,
+                                   min_weight=min_weight, max_weight=max_weight,
+                                   min_bias=min_bias, max_bias=max_bias,
+                                   kernel=(1, 1), num_filter=1,
+                                   no_bias=False, num_group=1, layout='NCHW')
+
+    data_scale = 127.5 / 2.0
+    weight_scale = 127.5 / 3.0
+    bias_scale = 127.5 / 4.0
+    expected_bias = int(64 * data_scale * weight_scale / bias_scale)
+    assert_almost_equal(out.asnumpy(), onp.full((1, 1, 1, 2), expected_bias, dtype='int32'))
+
+
+@use_np
 def test_quantized_elemwise_add():
     def check_quantized_elemwise_add(data_shape, qdtypeA, qdtypeB):
         if is_test_for_native_cpu():

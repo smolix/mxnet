@@ -271,7 +271,7 @@ def with_environment(*args_):
     return test_helper
 
 
-def run_in_spawned_process(func, env, *args):
+def run_in_spawned_process(func, env, *args, timeout=300):
     """
     Helper function to run a test in its own process.
 
@@ -305,7 +305,11 @@ def run_in_spawned_process(func, env, *args):
             # Prepend seed as first arg
             p = mpctx.Process(target=func, args=(seed,)+args)
             p.start()
-            p.join()
+            p.join(timeout)
+            if p.is_alive():
+                p.terminate()
+                p.join(10)
+                assert False, f"Timed out after {timeout} seconds in {func.__name__}()."
             assert p.exitcode == 0, f"Non-zero exit code {p.exitcode} from {func.__name__}()."
     return True
 

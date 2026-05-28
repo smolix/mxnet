@@ -70,16 +70,21 @@ def _runner(use_lt: int, shape):
     )
     env = os.environ.copy()
     env.setdefault('CUDA_VISIBLE_DEVICES', '0')
-    subprocess.run(
-        [sys.executable, '-c', code],
-        env=env,
-        capture_output=True,
-        check=True,
-        timeout=300,
-    )
-    with open(outpath, 'rb') as fh:
-        data = fh.read()
-    os.unlink(outpath)
+    try:
+        subprocess.run(
+            [sys.executable, '-c', code],
+            env=env,
+            capture_output=True,
+            check=True,
+            timeout=300,
+        )
+        with open(outpath, 'rb') as fh:
+            data = fh.read()
+    finally:
+        try:
+            os.unlink(outpath)
+        except FileNotFoundError:
+            pass
     return struct.unpack('<dddd', data)
 
 

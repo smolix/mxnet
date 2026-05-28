@@ -2209,7 +2209,11 @@ def test_kernel_error_checking():
             for f in [kernel_error_check_imperative, kernel_error_check_symbolic]:
                 p = mpctx.Process(target=f)
                 p.start()
-                p.join()
+                p.join(120)
+                if p.is_alive():
+                    p.terminate()
+                    p.join(10)
+                    assert False, f"Timed out waiting for {f.__name__} subprocess."
                 assert p.exitcode != 0,\
                     f"Expected a synchronous kernel error from {f.__name__}(), none seen."
 

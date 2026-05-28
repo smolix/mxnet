@@ -368,15 +368,19 @@ def test_image_list_dataset(prepare_record):
     # save to file as *.lst
     imglist = ['\t'.join((str(i), '0', path)) for i, path in enumerate(imlist)]
     with tempfile.NamedTemporaryFile('wt', delete=False) as fp:
-        for line in imglist:
-            fp.write(line + '\n')
-        fp.close()
+        list_path = fp.name
+        try:
+            for line in imglist:
+                fp.write(line + '\n')
+            fp.close()
 
-        dataset = gluon.data.vision.ImageListDataset(root=root, imglist=fp.name)
-        assert len(dataset) == 16, len(dataset)
-        img, label = dataset[0]
-        assert len(img.shape) == 3
-        assert label == 0
+            dataset = gluon.data.vision.ImageListDataset(root=root, imglist=list_path)
+            assert len(dataset) == 16, len(dataset)
+            img, label = dataset[0]
+            assert len(img.shape) == 3
+            assert label == 0
+        finally:
+            os.unlink(list_path)
 
 def test_image_list_dataset_handle_with_separator_in_path(tmpdir):
     root = tmpdir.mkdir('image|list')
@@ -401,15 +405,19 @@ def test_image_list_dataset_handle(prepare_record):
     # save to file as *.lst
     imglist = ['\t'.join((str(i), '0', path)) for i, path in enumerate(imlist)]
     with tempfile.NamedTemporaryFile('wt', delete=False) as fp:
-        for line in imglist:
-            fp.write(line + '\n')
-        fp.close()
+        list_path = fp.name
+        try:
+            for line in imglist:
+                fp.write(line + '\n')
+            fp.close()
 
-        dataset = gluon.data.vision.ImageListDataset(root=root, imglist=fp.name).__mx_handle__()
-        assert len(dataset) == 16
-        img, label = dataset[0]
-        assert len(img.shape) == 3
-        assert label == 0
+            dataset = gluon.data.vision.ImageListDataset(root=root, imglist=list_path).__mx_handle__()
+            assert len(dataset) == 16
+            img, label = dataset[0]
+            assert len(img.shape) == 3
+            assert label == 0
+        finally:
+            os.unlink(list_path)
 
 def test_list_dataset():
     for num_worker in range(0, 3):

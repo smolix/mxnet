@@ -117,11 +117,17 @@ def test_perdevice_image_pipeline_gpu_workers_do_not_crash_or_leak():
         for dev_id in range(worker_count)
     ]
     failures = []
-    for dev_id, proc in enumerate(procs):
-        out, err = proc.communicate(timeout=240)
-        if proc.returncode != 0:
-            failures.append(
-                f"device {dev_id} rc={proc.returncode}\nSTDOUT:\n{out}\nSTDERR:\n{err}"
-            )
+    try:
+        for dev_id, proc in enumerate(procs):
+            out, err = proc.communicate(timeout=240)
+            if proc.returncode != 0:
+                failures.append(
+                    f"device {dev_id} rc={proc.returncode}\nSTDOUT:\n{out}\nSTDERR:\n{err}"
+                )
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
 
     assert not failures, "\n\n".join(failures)

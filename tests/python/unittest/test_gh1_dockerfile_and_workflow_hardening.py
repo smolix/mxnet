@@ -198,6 +198,15 @@ def test_movielens_data_avoids_shell_download_and_validates_zip():
         "MovieLens downloader no longer validates zip members before extraction"
 
 
+def test_movielens_data_rejects_partial_cache():
+    contents = _read("example/recommenders/movielens_data.py")
+    assert "def _dataset_ready(prefix):" in contents
+    assert '"u1.base", "u1.test"' in contents
+    assert "if not _dataset_ready(prefix):" in contents
+    assert "shutil.rmtree(prefix)" in contents
+    assert "MovieLens dataset extraction incomplete" in contents
+
+
 def test_im2rec_cleans_up_worker_processes_on_failure():
     contents = _read("tools/im2rec.py")
     assert "finally:" in contents and "p.terminate()" in contents and "p.kill()" in contents, \

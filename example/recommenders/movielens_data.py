@@ -20,6 +20,7 @@
 
 import os
 import re
+import shutil
 import zipfile
 import mxnet as mx
 from mxnet import gluon
@@ -37,6 +38,12 @@ def _safe_extract_zip(zip_path, target_dir):
             if target != target_dir and not target.startswith(target_dir + os.sep):
                 raise ValueError("unsafe zip member: {}".format(info.filename))
         zf.extractall(target_dir)
+
+
+def _dataset_ready(prefix):
+    return all(os.path.isfile(os.path.join(prefix, name))
+               for name in ("u1.base", "u1.test"))
+
 
 def load_mldataset(filename):
     """Not particularly fast code to parse the text file and load it into three NDArray's
@@ -69,8 +76,12 @@ def ensure_local_data(prefix):
         # For full text of the usage license, see http://files.grouplens.org/datasets/movielens/ml-100k-README.txt
         url = f"https://files.grouplens.org/datasets/movielens/{prefix}.zip"
         mx.gluon.utils.download(url, path=f"{prefix}.zip")
-    if not os.path.isdir(prefix):
+    if not _dataset_ready(prefix):
+        if os.path.isdir(prefix):
+            shutil.rmtree(prefix)
         _safe_extract_zip(f"{prefix}.zip", ".")
+    if not _dataset_ready(prefix):
+        raise RuntimeError("MovieLens dataset extraction incomplete: {}".format(prefix))
 
 
 def get_dataset(prefix='ml-100k'):

@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -527,6 +528,46 @@ inline void DerefInputOutputRelease(const std::vector<NDArray*>& inputs,
     delete i;
 }
 
+class ScopedDerefInputOutput {
+ public:
+  ScopedDerefInputOutput(const std::vector<NDArray*>& inputs,
+                         const std::vector<NDArray*>& outputs) {
+    input_storage_.reserve(inputs.size());
+    output_storage_.reserve(outputs.size());
+    inputs_.reserve(inputs.size());
+    outputs_.reserve(outputs.size());
+    for (const auto i : inputs) {
+      input_storage_.emplace_back(new NDArray(*i));
+      inputs_.push_back(input_storage_.back().get());
+    }
+    for (const auto i : outputs) {
+      output_storage_.emplace_back(new NDArray(*i));
+      outputs_.push_back(output_storage_.back().get());
+    }
+  }
+
+  const std::vector<NDArray*>& inputs() const {
+    return inputs_;
+  }
+
+  const std::vector<NDArray*>& outputs() const {
+    return outputs_;
+  }
+
+  void Release() {
+    inputs_.clear();
+    outputs_.clear();
+    input_storage_.clear();
+    output_storage_.clear();
+  }
+
+ private:
+  std::vector<std::unique_ptr<NDArray>> input_storage_;
+  std::vector<std::unique_ptr<NDArray>> output_storage_;
+  std::vector<NDArray*> inputs_;
+  std::vector<NDArray*> outputs_;
+};
+
 /*
  * \brief setup default-storage tblobs from source NDArrays. If any source NDArray has non-default
  *        storage, it creates a temp NDArray with default storage and uses the temp tblob. The
@@ -727,11 +768,12 @@ inline void PushFComputeEx(const FComputeEx& fn,
   const bool need_grad         = Imperative::Get()->is_recording();
   const auto exec_type         = fexec_type.count(op) ? fexec_type[op](attrs) : ExecType::kSync;
   const auto cross_device_copy = exec_type == ExecType::kCrossDeviceCopy;
-  std::vector<NDArray*> inputs, outputs;
-  DerefInputOutput(p_inputs, p_outputs, &inputs, &outputs);
+  auto deref = std::make_shared<ScopedDerefInputOutput>(p_inputs, p_outputs);
   const auto& run = [=](RunContext rctx) {
     OpContext opctx{need_grad, is_train, rctx, engine::CallbackOnComplete(), requested};
-    REDEFINE_INPUTS_OUTPUTS(inputs, outputs, inputsA, outputsA);
+    std::vector<NDArray> inputsA, outputsA;
+    DerefInputOutput(deref->inputs(), deref->outputs(), &inputsA, &outputsA);
+    deref->Release();
     INVALIDATE_OUTPUTS_COND(!cross_device_copy, outputsA, req);
     CREATE_DEFAULT_INPUTS(!cross_device_copy, attrs, CreateDefaultInputs(&inputsA));
     fn(attrs, opctx, inputsA, req, outputsA);
@@ -763,8 +805,7 @@ inline void PushOperator(const OpStatePtr& state,
   bool is_train      = Imperative::Get()->is_training();
   bool need_grad     = Imperative::Get()->is_recording();
   ExecType exec_type = fexec_type.count(op) ? fexec_type[op](attrs) : ExecType::kSync;
-  std::vector<NDArray*> inputs, outputs;
-  DerefInputOutput(p_inputs, p_outputs, &inputs, &outputs);
+  auto deref = std::make_shared<ScopedDerefInputOutput>(p_inputs, p_outputs);
 
   auto fcompute_ex = common::GetFCompute<FStatefulComputeEx>(op, "FStatefulComputeEx", ctx);
   if (fcompute_ex != nullptr && dispatch_mode == DispatchMode::kFComputeEx) {
@@ -772,7 +813,9 @@ inline void PushOperator(const OpStatePtr& state,
                           engine::CallbackOnStart on_start,
                           engine::CallbackOnComplete on_complete) {
       OpContext opctx{need_grad, is_train, rctx, on_complete, requested};
-      REDEFINE_INPUTS_OUTPUTS(inputs, outputs, inputsA, outputsA);
+      std::vector<NDArray> inputsA, outputsA;
+      DerefInputOutput(deref->inputs(), deref->outputs(), &inputsA, &outputsA);
+      deref->Release();
       INVALIDATE_OUTPUTS_COND(
           exec_type != ExecType::kCrossDeviceCopy && op->name != "_CachedOp", outputsA, req);
       CREATE_DEFAULT_INPUTS(exec_type != ExecType::kCrossDeviceCopy && op->name != "_CachedOp",
@@ -819,12 +862,13 @@ inline void PushOperator(const OpStatePtr& state,
       std::vector<NDArray> pre_temp_src, pre_temp_dst, post_temp_dst, post_temp_src;
       // mapping from index in input_blobs to index in pre_temp_dst
       std::unordered_map<uint32_t, uint32_t> in_temp_idx_map;
-      INVALIDATE_OUTPUTS_COND(exec_type != ExecType::kCrossDeviceCopy, outputs, req);
+      INVALIDATE_OUTPUTS_COND(
+          exec_type != ExecType::kCrossDeviceCopy, deref->outputs(), req);
 
       std::vector<OpReqType> tmp_req = req;
       // populate input blobs and output blobs
-      SetupDefaultBlobsInOut(inputs,
-                             outputs,
+      SetupDefaultBlobsInOut(deref->inputs(),
+                             deref->outputs(),
                              nullptr,
                              nullptr,
                              &tmp_req,
@@ -843,7 +887,7 @@ inline void PushOperator(const OpStatePtr& state,
       fcompute(state, opctx, input_blobs, tmp_req, output_blobs);
       // post-fcompute fallback, cast to original storage type, if necessary
       CastNonDefaultStorage(post_temp_src, post_temp_dst, opctx, is_gpu);
-      DerefInputOutputRelease(inputs, outputs);
+      deref->Release();
     };
 
     if (exec_type == ExecType::kSubgraphExec || CheckIfSkipEngine(attrs)) {

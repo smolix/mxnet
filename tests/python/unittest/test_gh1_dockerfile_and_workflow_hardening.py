@@ -131,6 +131,24 @@ def test_movielens_data_avoids_shell_download_and_validates_zip():
         "MovieLens downloader no longer validates zip members before extraction"
 
 
+def test_im2rec_cleans_up_worker_processes_on_failure():
+    contents = _read("tools/im2rec.py")
+    assert "finally:" in contents and "p.terminate()" in contents and "p.kill()" in contents, \
+        "im2rec multiprocessing path no longer cleans up live children on failure"
+    assert "q.close()" in contents and "q_out.close()" in contents, \
+        "im2rec multiprocessing queues are no longer closed on failure"
+
+
+def test_cpp_imagenet_inference_downloads_are_bounded_and_tar_checked():
+    contents = _read("cpp-package/example/inference/unit_test_imagenet_inference.sh")
+    assert "--timeout=30" in contents and "--tries=3" in contents and "--secure-protocol=TLSv1_2" in contents, \
+        "C++ imagenet inference test wget calls no longer use bounded TLS download flags"
+    assert "https://data.mxnet.io" in contents and "http://data.mxnet.io" not in contents, \
+        "C++ imagenet inference test reintroduced plaintext data.mxnet.io downloads"
+    assert "tar -tzf inception-bn.tar.gz" in contents and "Unsafe path" in contents, \
+        "C++ imagenet inference test no longer validates tar members before extraction"
+
+
 if __name__ == "__main__":
     import sys, pytest
     sys.exit(pytest.main([__file__, "-v"]))

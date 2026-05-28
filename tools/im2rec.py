@@ -18,6 +18,7 @@
 # under the License.
 
 from __future__ import print_function
+import contextlib
 import os
 import sys
 
@@ -351,22 +352,43 @@ if __name__ == '__main__':
                     # define the process
                     read_process = [multiprocessing.Process(target=read_worker, args=(args, q_in[i], q_out)) \
                                     for i in range(args.num_thread)]
-                    # process images with num_thread process
-                    for p in read_process:
-                        p.start()
-                    # only use one process to write .rec to avoid race-condtion
                     write_process = multiprocessing.Process(target=write_worker, args=(q_out, fname, working_dir))
-                    write_process.start()
-                    # put the image list into input queue
-                    for i, item in enumerate(image_list):
-                        q_in[i % len(q_in)].put((i, item))
-                    for q in q_in:
-                        q.put(None)
-                    for p in read_process:
-                        p.join()
+                    processes = read_process + [write_process]
+                    try:
+                        # process images with num_thread process
+                        for p in read_process:
+                            p.start()
+                        # only use one process to write .rec to avoid race-condtion
+                        write_process.start()
+                        # put the image list into input queue
+                        for i, item in enumerate(image_list):
+                            q_in[i % len(q_in)].put((i, item))
+                        for q in q_in:
+                            q.put(None)
+                        for p in read_process:
+                            p.join()
 
-                    q_out.put(None)
-                    write_process.join()
+                        q_out.put(None)
+                        write_process.join()
+                    finally:
+                        for q in q_in:
+                            with contextlib.suppress(Exception):
+                                q.put_nowait(None)
+                            with contextlib.suppress(Exception):
+                                q.close()
+                        with contextlib.suppress(Exception):
+                            q_out.put_nowait(None)
+                        with contextlib.suppress(Exception):
+                            q_out.close()
+                        for p in processes:
+                            if p.is_alive():
+                                p.terminate()
+                        for p in processes:
+                            if p.is_alive():
+                                p.join(5)
+                            if p.is_alive():
+                                p.kill()
+                                p.join()
                 else:
                     print('multiprocessing not available, fall back to single threaded encoding')
                     try:

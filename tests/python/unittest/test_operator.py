@@ -3129,6 +3129,24 @@ def test_batch_dot():
                                             atol=1e-2 if data_type == 'float16' else 1e-4)
 
 
+def test_cpu_fp16_dot_and_batch_dot():
+    a = mx.nd.array([[1.0, 2.0, -1.0], [0.5, -0.5, 3.0]], ctx=mx.cpu(), dtype='float16')
+    b = mx.nd.array([[2.0, -1.0], [0.25, 4.0], [-3.0, 0.5]], ctx=mx.cpu(), dtype='float16')
+    expected = np.dot(a.asnumpy(), b.asnumpy())
+    out = mx.nd.dot(a, b)
+    assert out.dtype == np.float16
+    assert_almost_equal(out.asnumpy(), expected, rtol=1e-2, atol=1e-2)
+
+    ba = mx.nd.array(np.arange(24, dtype=np.float16).reshape(2, 3, 4) / 8 - 1,
+                     ctx=mx.cpu(), dtype='float16')
+    bb = mx.nd.array(np.arange(40, dtype=np.float16).reshape(2, 4, 5) / 7 - 2,
+                     ctx=mx.cpu(), dtype='float16')
+    expected_batch = np.matmul(ba.asnumpy(), bb.asnumpy())
+    batch_out = mx.nd.batch_dot(ba, bb)
+    assert batch_out.dtype == np.float16
+    assert_almost_equal(batch_out.asnumpy(), expected_batch, rtol=1e-2, atol=1e-2)
+
+
 def get_correlation(data1,data2,kernel_size,max_displacement,stride1,stride2,pad_size,is_multiply):
 
     img1 = mx.sym.Variable('img1')

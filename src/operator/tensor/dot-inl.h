@@ -102,6 +102,119 @@ struct DotParam : public dmlc::Parameter<DotParam> {
   }
 };
 
+inline void AssignCPUHalfDotValue(mshadow::half::half_t* out, index_t idx, OpReqType req, float val) {
+  if (req == kWriteTo || req == kWriteInplace) {
+    out[idx] = static_cast<mshadow::half::half_t>(val);
+  } else if (req == kAddTo) {
+    out[idx] = static_cast<mshadow::half::half_t>(static_cast<float>(out[idx]) + val);
+  } else {
+    CHECK_EQ(req, kNullOp);
+  }
+}
+
+inline void DotForwardCPUHalf(const DotParam& param,
+                              const std::vector<TBlob>& inputs,
+                              OpReqType req,
+                              const std::vector<TBlob>& outputs) {
+  if (req == kNullOp)
+    return;
+  CHECK(req == kWriteTo || req == kWriteInplace || req == kAddTo)
+      << "Unsupported dot request type " << req;
+
+  const TBlob& lhs = inputs[DotIn::lhs];
+  const TBlob& rhs = inputs[DotIn::rhs];
+  TBlob out        = outputs[DotOut::out];
+  index_t ma, na, mb, nb, m, n, k, rhs_k;
+  if (param.transpose_a) {
+    ma = lhs.size(0);
+    na = lhs.Size() / ma;
+    m  = na;
+    k  = ma;
+  } else {
+    na = lhs.size(lhs.ndim() - 1);
+    ma = lhs.Size() / na;
+    m  = ma;
+    k  = na;
+  }
+  if (param.transpose_b) {
+    nb = rhs.size(rhs.ndim() - 1);
+    mb = rhs.Size() / nb;
+    n     = mb;
+    rhs_k = nb;
+  } else {
+    mb = rhs.size(0);
+    nb = rhs.Size() / mb;
+    n     = nb;
+    rhs_k = mb;
+  }
+  CHECK_EQ(k, rhs_k);
+
+  const auto* lhs_ptr = lhs.dptr<mshadow::half::half_t>();
+  const auto* rhs_ptr = rhs.dptr<mshadow::half::half_t>();
+  auto* out_ptr       = out.dptr<mshadow::half::half_t>();
+#pragma omp parallel for collapse(2) num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
+  for (index_t row = 0; row < m; ++row) {
+    for (index_t col = 0; col < n; ++col) {
+      float acc = 0.0f;
+      for (index_t kk = 0; kk < k; ++kk) {
+        const index_t lhs_idx = param.transpose_a ? kk * na + row : row * na + kk;
+        const index_t rhs_idx = param.transpose_b ? col * nb + kk : kk * nb + col;
+        acc += static_cast<float>(lhs_ptr[lhs_idx]) * static_cast<float>(rhs_ptr[rhs_idx]);
+      }
+      AssignCPUHalfDotValue(out_ptr, row * n + col, req, acc);
+    }
+  }
+}
+
+inline void BatchDotForwardCPUHalf(const DotParam& param,
+                                   const std::vector<TBlob>& inputs,
+                                   OpReqType req,
+                                   const std::vector<TBlob>& outputs) {
+  if (req == kNullOp)
+    return;
+  CHECK(req == kWriteTo || req == kWriteInplace || req == kAddTo)
+      << "Unsupported batch_dot request type " << req;
+
+  const TBlob& lhs = inputs[DotIn::lhs];
+  const TBlob& rhs = inputs[DotIn::rhs];
+  TBlob out        = outputs[DotOut::out];
+  const int ndim   = out.ndim();
+  const size_t batch_size = out.shape_.ProdShape(0, ndim - 2);
+  const index_t m         = out.shape_[ndim - 2];
+  const index_t n         = out.shape_[ndim - 1];
+  const index_t lhs_rows  = lhs.shape_[ndim - 2];
+  const index_t lhs_cols  = lhs.shape_[ndim - 1];
+  const index_t rhs_rows  = rhs.shape_[ndim - 2];
+  const index_t rhs_cols  = rhs.shape_[ndim - 1];
+  const index_t k         = param.transpose_a ? lhs_rows : lhs_cols;
+  const index_t rhs_k     = param.transpose_b ? rhs_cols : rhs_rows;
+  CHECK_EQ(k, rhs_k);
+
+  const auto* lhs_ptr = lhs.dptr<mshadow::half::half_t>();
+  const auto* rhs_ptr = rhs.dptr<mshadow::half::half_t>();
+  auto* out_ptr       = out.dptr<mshadow::half::half_t>();
+  const index_t lhs_stride = lhs_rows * lhs_cols;
+  const index_t rhs_stride = rhs_rows * rhs_cols;
+  const index_t out_stride = m * n;
+#pragma omp parallel for collapse(3) num_threads(engine::OpenMP::Get()->GetRecommendedOMPThreadCount())
+  for (index_t batch = 0; batch < static_cast<index_t>(batch_size); ++batch) {
+    for (index_t row = 0; row < m; ++row) {
+      for (index_t col = 0; col < n; ++col) {
+        float acc = 0.0f;
+        for (index_t kk = 0; kk < k; ++kk) {
+          const index_t lhs_idx =
+              param.transpose_a ? kk * lhs_cols + row : row * lhs_cols + kk;
+          const index_t rhs_idx =
+              param.transpose_b ? col * rhs_cols + kk : kk * rhs_cols + col;
+          acc += static_cast<float>(lhs_ptr[batch * lhs_stride + lhs_idx]) *
+                 static_cast<float>(rhs_ptr[batch * rhs_stride + rhs_idx]);
+        }
+        AssignCPUHalfDotValue(out_ptr, batch * out_stride + row * n + col, req, acc);
+      }
+    }
+  }
+}
+
 template <typename xpu>
 void DotForward_(const nnvm::NodeAttrs& attrs,
                  const OpContext& ctx,
@@ -116,11 +229,14 @@ void DotForward_(const nnvm::NodeAttrs& attrs,
       << "Binary function only support input/output with the same type";
   CHECK_EQ(outputs[DotOut::out].type_flag_, inputs[DotIn::rhs].type_flag_)
       << "Binary function only support input/output with the same type";
-  CHECK(outputs[DotOut::out].type_flag_ == kFloat32 ||
-        outputs[DotOut::out].type_flag_ == kFloat64 ||
-        (outputs[DotOut::out].type_flag_ == kFloat16 &&
-         ctx.run_ctx.ctx.dev_mask() == mshadow::gpu::kDevMask))
-      << "dot only supports float32/float64 for CPU, and float16/float32/float64 for GPU";
+  CHECK(outputs[DotOut::out].type_flag_ == kFloat16 ||
+        outputs[DotOut::out].type_flag_ == kFloat32 ||
+        outputs[DotOut::out].type_flag_ == kFloat64)
+      << "dot only supports float16/float32/float64";
+  if (std::is_same<xpu, cpu>::value && outputs[DotOut::out].type_flag_ == kFloat16) {
+    DotForwardCPUHalf(param, inputs, req[DotOut::out], outputs);
+    return;
+  }
   MSHADOW_REAL_TYPE_SWITCH(outputs[DotOut::out].type_flag_, DType, {
     // VectorDot() with fp16 is not supported in mshadow. Dispatch to dot() instead.
     if (inputs[DotIn::lhs].ndim() == 1 && inputs[DotIn::rhs].ndim() == 1 &&
@@ -1544,11 +1660,14 @@ void BatchDotForward_(const nnvm::NodeAttrs& attrs,
       << "Binary function only support input/output with the same type";
   CHECK_EQ(outputs[DotOut::out].type_flag_, inputs[DotIn::rhs].type_flag_)
       << "Binary function only support input/output with the same type";
-  CHECK(outputs[DotOut::out].type_flag_ == kFloat32 ||
-        outputs[DotOut::out].type_flag_ == kFloat64 ||
-        (outputs[DotOut::out].type_flag_ == kFloat16 &&
-         ctx.run_ctx.ctx.dev_mask() == mshadow::gpu::kDevMask))
-      << "dot only supports float32/float64 for CPU, and float16/float32/float64 for GPU";
+  CHECK(outputs[DotOut::out].type_flag_ == kFloat16 ||
+        outputs[DotOut::out].type_flag_ == kFloat32 ||
+        outputs[DotOut::out].type_flag_ == kFloat64)
+      << "dot only supports float16/float32/float64";
+  if (std::is_same<xpu, cpu>::value && outputs[DotOut::out].type_flag_ == kFloat16) {
+    BatchDotForwardCPUHalf(param, inputs, req[DotOut::out], outputs);
+    return;
+  }
   MSHADOW_REAL_TYPE_SWITCH(outputs[DotOut::out].type_flag_, DType, {
     int ndim = outputs[DotOut::out].ndim();
     if (outputs[DotOut::out].shape_.Size() == 0 || inputs[DotIn::lhs].shape_.Size() == 0 ||

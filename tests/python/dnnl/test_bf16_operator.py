@@ -16,7 +16,9 @@
 # under the License.
 
 import os
+import subprocess
 import sys
+import textwrap
 import mxnet as mx
 import numpy as np
 from random import randint
@@ -26,6 +28,45 @@ curr_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))
 sys.path.insert(0, os.path.join(curr_path, '../unittest'))
 import pytest
 from dnnl_test_utils import require_native_onednn_bf16
+
+
+def test_bf16_falls_back_when_onednn_isa_lacks_bf16():
+    if not mx.runtime.Features().is_enabled("ONEDNN"):
+        pytest.skip("oneDNN is not enabled")
+
+    code = r"""
+import mxnet as mx
+
+a = mx.nd.ones((2, 3), dtype='bfloat16')
+b = mx.nd.ones((3, 2), dtype='bfloat16')
+mx.nd.dot(a, b).wait_to_read()
+
+x = mx.nd.ones((2, 2, 3), dtype='bfloat16')
+y = mx.nd.ones((2, 3, 2), dtype='bfloat16')
+mx.nd.batch_dot(x, y).wait_to_read()
+
+data = mx.sym.Variable('data', dtype='bfloat16')
+weight = mx.sym.Variable('weight', dtype='bfloat16')
+conv = mx.sym.Convolution(data=data, weight=weight, kernel=(1, 1),
+                          num_filter=1, no_bias=True)
+exe = conv._simple_bind(ctx=mx.cpu(), data=(1, 1, 2, 2), weight=(1, 1, 1, 1))
+exe.arg_dict['data'][:] = mx.nd.ones((1, 1, 2, 2)).astype('bfloat16')
+exe.arg_dict['weight'][:] = mx.nd.ones((1, 1, 1, 1)).astype('bfloat16')
+exe.forward()[0].wait_to_read()
+
+mx.nd.Activation(a, act_type='relu').wait_to_read()
+mx.nd.Pooling(mx.nd.ones((1, 1, 2, 2), dtype='bfloat16'),
+              kernel=(2, 2), pool_type='avg').wait_to_read()
+mx.nd.softmax(a).wait_to_read()
+"""
+    env = os.environ.copy()
+    env["ONEDNN_MAX_CPU_ISA"] = "AVX2"
+    env["DNNL_MAX_CPU_ISA"] = "AVX2"
+    proc = subprocess.run([sys.executable, "-c", textwrap.dedent(code)],
+                          env=env, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True,
+                          timeout=60, check=False)
+    assert proc.returncode == 0, proc.stderr
 
 
 def check_operator_accuracy(sym_fp32, sym_bf16, data_shape, num_input_data=1, bf16_use_fp32_params=False, rtol=1e-1, atol=5e-1, etol=0):

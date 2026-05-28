@@ -220,8 +220,9 @@ static mshadow::TypeFlag GetQuantizeOutputType(const Param& param) {
 }
 
 static inline float GetQuantizeScale(const int dtype, const float data_min, const float data_max) {
-  const float real_data_range     = MaxAbs(data_min, data_max);
-  const auto quantized_data_range = (dtype == mshadow::kInt8) ? kInt8Range : kUint8Range;
+  const float real_data_range =
+      (dtype == mshadow::kUint8) ? data_max - data_min : MaxAbs(data_min, data_max);
+  const auto quantized_data_range = (dtype == mshadow::kUint8) ? kUint8Range : kInt8Range;
   // If real_data_range == 0, to avoid `inf` in scale, use a large number here, which is MAX_INT.
   return real_data_range ? quantized_data_range / real_data_range : MaxValue<int32_t>();
 }

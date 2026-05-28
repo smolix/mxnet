@@ -20,6 +20,7 @@ Ref: http://images.nvidia.com/content/pdf/tesla/184457-Tesla-P4-Datasheet-NV-Fin
 """
 import os
 import platform
+from pathlib import Path
 import mxnet as mx
 import numpy as onp
 from mxnet import npx
@@ -74,6 +75,15 @@ def supports_dnnl_quantized_ops():
     # oneDNN quantized and RNN paths currently hit Xbyak_aarch64 ERR_INTERNAL
     # on Apple Silicon. x86 oneDNN coverage remains enabled.
     return not is_aarch64()
+
+
+def test_get_quantize_scale_treats_uint8_as_affine_range():
+    repo = Path(__file__).resolve().parents[3]
+    contents = (repo / "src/operator/quantization/quantization_utils.h").read_text()
+    body = contents.split("static inline float GetQuantizeScale", 1)[1].split("}  // namespace op", 1)[0]
+
+    assert "(dtype == mshadow::kUint8) ? data_max - data_min : MaxAbs(data_min, data_max)" in body
+    assert "(dtype == mshadow::kUint8) ? kUint8Range : kInt8Range" in body
 
 
 def get_low_high(qtype):

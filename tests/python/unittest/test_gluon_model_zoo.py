@@ -16,8 +16,10 @@
 # under the License.
 
 from __future__ import print_function
+import inspect
 import mxnet as mx
 from mxnet.gluon.model_zoo.vision import get_model
+from mxnet.gluon.model_zoo import vision
 from mxnet.gluon.model_zoo import model_store
 import sys
 import multiprocessing
@@ -123,6 +125,49 @@ def test_model_store_does_not_replace_existing_file_on_hash_mismatch(monkeypatch
         model_store.get_model_file(model_name, root=str(tmp_path))
 
     assert model_path.read_bytes() == existing
+
+
+def test_vision_model_roots_resolve_at_call_time():
+    constructors = [
+        vision.alexnet,
+        vision.densenet121,
+        vision.densenet161,
+        vision.densenet169,
+        vision.densenet201,
+        vision.inception_v3,
+        vision.mobilenet0_25,
+        vision.mobilenet0_5,
+        vision.mobilenet0_75,
+        vision.mobilenet1_0,
+        vision.mobilenet_v2_0_25,
+        vision.mobilenet_v2_0_5,
+        vision.mobilenet_v2_0_75,
+        vision.mobilenet_v2_1_0,
+        vision.resnet18_v1,
+        vision.resnet34_v1,
+        vision.resnet50_v1,
+        vision.resnet101_v1,
+        vision.resnet152_v1,
+        vision.resnet18_v2,
+        vision.resnet34_v2,
+        vision.resnet50_v2,
+        vision.resnet101_v2,
+        vision.resnet152_v2,
+        vision.squeezenet1_0,
+        vision.squeezenet1_1,
+        vision.vgg11,
+        vision.vgg11_bn,
+        vision.vgg13,
+        vision.vgg13_bn,
+        vision.vgg16,
+        vision.vgg16_bn,
+        vision.vgg19,
+        vision.vgg19_bn,
+    ]
+    for constructor in constructors:
+        params = inspect.signature(constructor).parameters
+        if "root" in params:
+            assert params["root"].default is None
 
 
 def parallel_download(model_name):

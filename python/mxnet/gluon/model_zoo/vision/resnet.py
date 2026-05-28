@@ -359,7 +359,7 @@ resnet_block_versions = [{'basic_block': BasicBlockV1, 'bottle_neck': Bottleneck
 # Constructor
 @wrap_ctx_to_device_func
 def get_resnet(version, num_layers, pretrained=False, device=cpu(),
-               root=os.path.join(base.data_dir(), 'models'), **kwargs):
+               root=None, **kwargs):
     r"""ResNet V1 model from `"Deep Residual Learning for Image Recognition"
     <http://arxiv.org/abs/1512.03385>`_ paper.
     ResNet V2 model from `"Identity Mappings in Deep Residual Networks"
@@ -378,6 +378,8 @@ def get_resnet(version, num_layers, pretrained=False, device=cpu(),
     root : str, default $MXNET_HOME/models
         Location for keeping the model parameters.
     """
+    if root is None:
+        root = os.path.join(base.data_dir(), 'models')
     assert num_layers in resnet_spec, \
         f"Invalid number of layers: {num_layers}. Options are {str(resnet_spec.keys())}"
     block_type, layers, channels = resnet_spec[num_layers]

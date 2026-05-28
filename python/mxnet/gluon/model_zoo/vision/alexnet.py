@@ -70,7 +70,7 @@ class AlexNet(HybridBlock):
 # Constructor
 @wrap_ctx_to_device_func
 def alexnet(pretrained=False, device=cpu(),
-            root=os.path.join(base.data_dir(), 'models'), **kwargs):
+            root=None, **kwargs):
     r"""AlexNet model from the `"One weird trick..." <https://arxiv.org/abs/1404.5997>`_ paper.
 
     Parameters
@@ -82,6 +82,8 @@ def alexnet(pretrained=False, device=cpu(),
     root : str, default $MXNET_HOME/models
         Location for keeping the model parameters.
     """
+    if root is None:
+        root = os.path.join(base.data_dir(), 'models')
     net = AlexNet(**kwargs)
     if pretrained:
         from ..model_store import get_model_file

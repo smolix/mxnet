@@ -123,7 +123,7 @@ densenet_spec = {121: (64, 32, [6, 12, 24, 16]),
 # Constructor
 @wrap_ctx_to_device_func
 def get_densenet(num_layers, pretrained=False, device=cpu(),
-                 root=os.path.join(base.data_dir(), 'models'), **kwargs):
+                 root=None, **kwargs):
     r"""Densenet-BC model from the
     `"Densely Connected Convolutional Networks" <https://arxiv.org/pdf/1608.06993.pdf>`_ paper.
 
@@ -138,6 +138,8 @@ def get_densenet(num_layers, pretrained=False, device=cpu(),
     root : str, default $MXNET_HOME/models
         Location for keeping the model parameters.
     """
+    if root is None:
+        root = os.path.join(base.data_dir(), 'models')
     num_init_features, growth_rate, block_config = densenet_spec[num_layers]
     net = DenseNet(num_init_features, growth_rate, block_config, **kwargs)
     if pretrained:

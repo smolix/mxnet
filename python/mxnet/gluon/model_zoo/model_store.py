@@ -71,7 +71,7 @@ def short_hash(name):
         raise ValueError('Pretrained model for {name} is not available.'.format(name=name))
     return _model_sha1[name][:8]
 
-def get_model_file(name, root=os.path.join(base.data_dir(), 'models')):
+def get_model_file(name, root=None):
     r"""Return location for the pretrained on local file system.
 
     This function will download from online model zoo when model cannot be found or has mismatch.
@@ -91,6 +91,8 @@ def get_model_file(name, root=os.path.join(base.data_dir(), 'models')):
     """
     file_name = '{name}-{short_hash}'.format(name=name,
                                              short_hash=short_hash(name))
+    if root is None:
+        root = os.path.join(base.data_dir(), 'models')
     root = os.path.expanduser(root)
     file_path = os.path.join(root, file_name+'.params')
     sha1_hash = _model_sha1[name]
@@ -118,6 +120,8 @@ def get_model_file(name, root=os.path.join(base.data_dir(), 'models')):
                 temp_file_path = os.path.join(temp_dir, file_name+'.params')
                 with zf.open(file_name+'.params') as src, open(temp_file_path, 'wb') as dst:
                     shutil.copyfileobj(src, dst)
+                if not check_sha1(temp_file_path, sha1_hash):
+                    raise ValueError('Downloaded file has different hash. Please try again.')
                 replace_file(temp_file_path, file_path)
     finally:
         try:
@@ -130,7 +134,7 @@ def get_model_file(name, root=os.path.join(base.data_dir(), 'models')):
     else:
         raise ValueError('Downloaded file has different hash. Please try again.')
 
-def purge(root=os.path.join(base.data_dir(), 'models')):
+def purge(root=None):
     r"""Purge all pretrained model files in local file store.
 
     Parameters
@@ -138,6 +142,8 @@ def purge(root=os.path.join(base.data_dir(), 'models')):
     root : str, default '$MXNET_HOME/models'
         Location for keeping the model parameters.
     """
+    if root is None:
+        root = os.path.join(base.data_dir(), 'models')
     root = os.path.expanduser(root)
     files = os.listdir(root)
     for f in files:

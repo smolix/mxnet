@@ -30,9 +30,10 @@ import pytest
 def _legacy_nd_semantics():
     prev_arr = mx.util.is_np_array()
     prev_shp = mx.util.is_np_shape()
+    prev_dtype = mx.npx.is_np_default_dtype()
     mx.npx.reset_np()
     yield
-    mx.npx.set_np(shape=prev_shp, array=prev_arr)
+    mx.npx.set_np(shape=prev_shp, array=prev_arr, dtype=prev_dtype)
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -99,6 +100,30 @@ def test_model_store_extracts_only_expected_params_member(monkeypatch, tmp_path)
 
     assert open(model_path, 'rb').read() == params
     assert not (tmp_path.parent / 'escaped').exists()
+
+
+def test_model_store_does_not_replace_existing_file_on_hash_mismatch(monkeypatch, tmp_path):
+    model_name = 'unit_test_model'
+    expected = b'expected model params'
+    existing = b'previous partial contents'
+    downloaded = b'wrong model params'
+    monkeypatch.setitem(model_store._model_sha1, model_name,
+                        hashlib.sha1(expected).hexdigest())
+    file_name = '{}-{}'.format(model_name, model_store.short_hash(model_name))
+    model_path = tmp_path / (file_name + '.params')
+    model_path.write_bytes(existing)
+
+    def fake_download(url, path=None, overwrite=False):
+        with zipfile.ZipFile(path, 'w') as zf:
+            zf.writestr(file_name + '.params', downloaded)
+
+    monkeypatch.setattr(model_store, 'download', fake_download)
+
+    with pytest.raises(ValueError, match='different hash'):
+        model_store.get_model_file(model_name, root=str(tmp_path))
+
+    assert model_path.read_bytes() == existing
+
 
 def parallel_download(model_name):
     model = get_model(model_name, pretrained=True, root='./parallel_download')

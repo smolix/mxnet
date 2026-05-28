@@ -209,6 +209,10 @@ def test_tests_do_not_leak_print_options_or_kvstore_env():
 def test_dlpack_error_paths_release_owned_resources():
     contents = _read("python/mxnet/dlpack.py")
 
+    assert "class _NumpyDLPackManager:" in contents
+    assert "self.shape = (ctypes.c_int64 * array.ndim)(*array.shape)" in contents
+    assert "manager.array.flags['WRITEABLE'] = manager.was_writeable" in contents
+    assert "c_obj.manager_ctx = _make_manager_ctx(manager)" in contents
     assert "was_writeable = ndarray.flags['WRITEABLE']" in contents
     assert "dl_managed_tensor_deleter(ctypes.byref(c_obj))" in contents
     assert "ndarray.flags['WRITEABLE'] = was_writeable" in contents

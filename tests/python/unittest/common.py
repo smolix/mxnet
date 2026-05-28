@@ -27,7 +27,8 @@ from mxnet.base import MXNetError
 from mxnet.test_utils import environment
 curr_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))
 sys.path.append(os.path.join(curr_path, '../common/'))
-sys.path.insert(0, os.path.join(curr_path, '../../../python'))
+if os.environ.get('MXNET_TEST_USE_INSTALLED_MXNET') != '1':
+    sys.path.insert(0, os.path.join(curr_path, '../../../python'))
 
 import models
 from contextlib import contextmanager

@@ -110,20 +110,52 @@ void GpuDeviceStorageProfiler::DumpProfile() const {
   }
 #if MXNET_USE_NVML
   // If NVML has been enabled, add amend term to the GPU memory profile.
+  if (gpu_dev_id_total_alloc_map.empty()) {
+    return;
+  }
+
   nvmlDevice_t nvml_device;
 
-  NVML_CALL(nvmlInit());
+  nvmlReturn_t result = nvmlInit();
+  if (result != NVML_SUCCESS) {
+    LOG(INFO) << "NVML is unable to make amendment to the GPU memory profile "
+              << "because nvmlInit() failed with error " << nvmlErrorString(result);
+    return;
+  }
   for (std::pair<const int, size_t>& dev_id_total_alloc_pair : gpu_dev_id_total_alloc_map) {
     unsigned info_count = 0;
-    std::vector<NvmlProcessInfo> infos(info_count);
 
-    NVML_CALL(nvmlDeviceGetHandleByIndex(dev_id_total_alloc_pair.first, &nvml_device));
+    result = nvmlDeviceGetHandleByIndex(dev_id_total_alloc_pair.first, &nvml_device);
+    if (result != NVML_SUCCESS) {
+      LOG(INFO) << "NVML is unable to make amendment to the GPU memory profile "
+                << "for device " << dev_id_total_alloc_pair.first << " because "
+                << "nvmlDeviceGetHandleByIndex() failed with error " << nvmlErrorString(result);
+      continue;
+    }
     // The first call to `nvmlDeviceGetComputeRunningProcesses` is to set the
     // size of info. Since `NVML_ERROR_INSUFFICIENT_SIZE` will always be
     // returned, we do not wrap the function call with `NVML_CALL`.
-    nvmlDeviceGetComputeRunningProcesses(nvml_device, &info_count, infos.data());
+    result = nvmlDeviceGetComputeRunningProcesses(nvml_device, &info_count, nullptr);
+    if (result != NVML_ERROR_INSUFFICIENT_SIZE && result != NVML_SUCCESS) {
+      LOG(INFO) << "NVML is unable to make amendment to the GPU memory profile "
+                << "for device " << dev_id_total_alloc_pair.first << " because "
+                << "nvmlDeviceGetComputeRunningProcesses() failed with error "
+                << nvmlErrorString(result);
+      continue;
+    }
+    if (info_count == 0) {
+      continue;
+    }
+    std::vector<NvmlProcessInfo> infos(info_count);
     infos.resize(info_count);
-    NVML_CALL(nvmlDeviceGetComputeRunningProcesses(nvml_device, &info_count, infos.data()));
+    result = nvmlDeviceGetComputeRunningProcesses(nvml_device, &info_count, infos.data());
+    if (result != NVML_SUCCESS) {
+      LOG(INFO) << "NVML is unable to make amendment to the GPU memory profile "
+                << "for device " << dev_id_total_alloc_pair.first << " because "
+                << "nvmlDeviceGetComputeRunningProcesses() failed with error "
+                << nvmlErrorString(result);
+      continue;
+    }
 
     bool amend_made = false;
 

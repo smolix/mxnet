@@ -64,3 +64,53 @@ def test_repair_nvidia_cudnn_soname_aliases_can_be_disabled(tmp_path, monkeypatc
 
     assert cuda_runtime.repair_nvidia_cudnn_soname_aliases() == []
     assert not (cudnn_lib_dir / "libcudnn_ops.so.9.22.0").exists()
+
+
+def test_preload_python_package_runtime_libs_loads_dependency_wheel_libs(tmp_path, monkeypatch):
+    cuda_runtime = _load_cuda_runtime_module()
+    lib_names = {
+        "scipy_openblas32/lib": ("libscipy_openblas.so",),
+        "nvidia/cu13/lib": ("libcublas.so.13", "libcublasLt.so.13", "libnvrtc.so.13"),
+        "nvidia/cudnn/lib": ("libcudnn.so.9",),
+        "nvidia/nccl/lib": ("libnccl.so.2",),
+    }
+    for rel_dir, names in lib_names.items():
+        lib_dir = tmp_path / rel_dir
+        lib_dir.mkdir(parents=True)
+        for name in names:
+            (lib_dir / name).write_text("test", encoding="utf-8")
+
+    loaded = []
+
+    class FakeCDLL:
+        def __init__(self, path, mode):
+            loaded.append((Path(path).name, mode))
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv("MXNET_PRELOAD_PACKAGE_RUNTIME_LIBS", "1")
+    monkeypatch.setattr(cuda_runtime.ctypes, "CDLL", FakeCDLL)
+
+    loaded_paths = cuda_runtime.preload_python_package_runtime_libs()
+
+    assert [Path(path).name for path in loaded_paths] == [
+        "libscipy_openblas.so",
+        "libcublas.so.13",
+        "libcublasLt.so.13",
+        "libnvrtc.so.13",
+        "libcudnn.so.9",
+        "libnccl.so.2",
+    ]
+    assert [name for name, _ in loaded] == [Path(path).name for path in loaded_paths]
+    assert len(cuda_runtime._RUNTIME_LIB_HANDLES) == len(loaded_paths)
+
+
+def test_preload_python_package_runtime_libs_can_be_disabled(tmp_path, monkeypatch):
+    cuda_runtime = _load_cuda_runtime_module()
+    lib_dir = tmp_path / "nvidia" / "cudnn" / "lib"
+    lib_dir.mkdir(parents=True)
+    (lib_dir / "libcudnn.so.9").write_text("test", encoding="utf-8")
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv("MXNET_PRELOAD_PACKAGE_RUNTIME_LIBS", "0")
+
+    assert cuda_runtime.preload_python_package_runtime_libs() == []

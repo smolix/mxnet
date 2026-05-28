@@ -20,6 +20,7 @@ from __future__ import absolute_import
 
 import os
 import sys
+import ctypes
 from pathlib import Path
 
 try:
@@ -33,6 +34,14 @@ _CUDNN_DISTRIBUTIONS = (
     "nvidia-cudnn-cu12",
     "nvidia-cudnn-cu11",
 )
+
+_RUNTIME_LIBRARY_CANDIDATES = (
+    ("scipy_openblas32/lib", ("libscipy_openblas.so",)),
+    ("nvidia/cu13/lib", ("libcublas.so.13", "libcublasLt.so.13", "libnvrtc.so.13")),
+    ("nvidia/cudnn/lib", ("libcudnn.so.9",)),
+    ("nvidia/nccl/lib", ("libnccl.so.2",)),
+)
+_RUNTIME_LIB_HANDLES = []
 
 
 def _cudnn_package_version():
@@ -80,6 +89,65 @@ def _candidate_cudnn_lib_dirs():
         seen.add(resolved)
         if path.is_dir():
             yield path
+
+
+def _candidate_package_lib_dirs(relative_dir):
+    dirs = []
+    for entry in sys.path:
+        if entry:
+            dirs.append(Path(entry) / relative_dir)
+    for entry in os.environ.get("LD_LIBRARY_PATH", "").split(":"):
+        if entry:
+            path = Path(entry)
+            if str(path).endswith(relative_dir):
+                dirs.append(path)
+
+    seen = set()
+    for path in dirs:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path.absolute()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if path.is_dir():
+            yield path
+
+
+def preload_python_package_runtime_libs():
+    """Preload Python-package runtime libraries before loading libmxnet.
+
+    A wheel-installed libmxnet uses RPATH entries relative to site-packages, but
+    source-tree tests often execute the same staged library from python/mxnet/.
+    In that layout, the RPATH no longer points at the dependency wheels. Loading
+    the package-provided runtime libraries first lets the dynamic linker satisfy
+    libmxnet's NEEDED entries without requiring every test runner or subprocess
+    to reconstruct LD_LIBRARY_PATH by hand.
+    """
+    if os.environ.get("MXNET_PRELOAD_PACKAGE_RUNTIME_LIBS", "1").lower() in (
+            "0", "false", "off", "no"):
+        return []
+    if os.name != "posix":
+        return []
+
+    loaded = []
+    mode = getattr(ctypes, "RTLD_GLOBAL", 0)
+    for relative_dir, lib_names in _RUNTIME_LIBRARY_CANDIDATES:
+        lib_dirs = list(_candidate_package_lib_dirs(relative_dir))
+        for lib_name in lib_names:
+            for lib_dir in lib_dirs:
+                lib_path = lib_dir / lib_name
+                if not lib_path.is_file():
+                    continue
+                try:
+                    handle = ctypes.CDLL(str(lib_path), mode)
+                except OSError:
+                    continue
+                _RUNTIME_LIB_HANDLES.append(handle)
+                loaded.append(str(lib_path))
+                break
+    return loaded
 
 
 def _ensure_cudnn_versioned_aliases(lib_dir, major, suffix):

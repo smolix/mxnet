@@ -62,6 +62,7 @@ export OPENBLAS_NUM_THREADS=1
 export OMP_NUM_THREADS=2
 export MKL_NUM_THREADS=1
 export PYTHONUNBUFFERED=1
+export MXNET_TEST_USE_INSTALLED_MXNET=1
 PARALLEL_CPU=${PARALLEL_CPU:-8}
 PARALLEL_DNNL=${PARALLEL_DNNL:-1}     # DNNL tests have global state
 PARALLEL_GPU=${PARALLEL_GPU:-4}
@@ -82,16 +83,28 @@ log "Venv: $VENV_DIR"
 # ----------------------------------------------------------------------
 section "Create fresh venv"
 rm -rf "$VENV_DIR"
-python3 -m venv "$VENV_DIR"
+if command -v uv >/dev/null 2>&1; then
+    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}" uv venv --python python3 "$VENV_DIR"
+else
+    python3 -m venv "$VENV_DIR"
+fi
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
-python -m pip install --upgrade pip wheel setuptools
+if command -v uv >/dev/null 2>&1; then
+    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}" uv pip install --python "$VENV_DIR/bin/python" --upgrade pip wheel setuptools
+else
+    python -m pip install --upgrade pip wheel setuptools
+fi
 
 section "Install wheel + test dependencies (clean venv)"
 # The wheel declares its install_requires (numpy, requests, graphviz,
 # nvidia-cudnn-cu13, nvidia-nccl-cu13).  Pip resolves them here, ensuring the
 # install path the wheel describes actually works on this host.
-python -m pip install "$WHEEL"
+if command -v uv >/dev/null 2>&1; then
+    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}" uv pip install --python "$VENV_DIR/bin/python" "$WHEEL"
+else
+    python -m pip install "$WHEEL"
+fi
 # Test-time extras: pytest + xdist + timeout.  These are not part of the
 # wheel's install_requires intentionally.
 #
@@ -99,7 +112,11 @@ python -m pip install "$WHEEL"
 # test_operator, and gpu_operator shards; without it pytest collect-errors
 # the file instead of running it, which makes acceptance summaries
 # unreadable.  matplotlib covers a handful of plotting-adjacent nodes.
-python -m pip install pytest pytest-xdist pytest-timeout scipy matplotlib
+if command -v uv >/dev/null 2>&1; then
+    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}" uv pip install --python "$VENV_DIR/bin/python" pytest pytest-xdist pytest-timeout scipy matplotlib
+else
+    python -m pip install pytest pytest-xdist pytest-timeout scipy matplotlib
+fi
 
 section "Verify wheel-installed mxnet is the one we get"
 python - <<PY

@@ -83,11 +83,24 @@ class CustomOperator {
             const std::vector<NDArray>& outputs,
             const std::string op_type = "") {
     if (naive_engine_) {
-      if (profiler::Profiler::Get()->IsProfiling(profiler::Profiler::kImperative)) {
-        profiler::CustomOpProfiler::Scope custom_op_profile(op_type);
-        func();
-      } else {
-        func();
+      try {
+        if (profiler::Profiler::Get()->IsProfiling(profiler::Profiler::kImperative)) {
+          profiler::CustomOpProfiler::Scope custom_op_profile(op_type);
+          func();
+        } else {
+          func();
+        }
+      } catch (dmlc::Error& err) {
+        ctx.async_on_complete(&err);
+        return;
+      } catch (const std::exception& err) {
+        dmlc::Error dmlc_err(err.what());
+        ctx.async_on_complete(&dmlc_err);
+        return;
+      } catch (...) {
+        dmlc::Error dmlc_err("Unknown exception in CustomOperator");
+        ctx.async_on_complete(&dmlc_err);
+        return;
       }
       for (size_t i = 0, out_idx = 0; i < arrs.size(); i++) {
         if (output_tags.count(tags[i]) > 0) {
@@ -122,7 +135,7 @@ class CustomOperator {
         } else {
           func();
         }
-      } catch (dmlc::Error& e) {
+      } catch (...) {
         *exception = std::current_exception();
       }
 
@@ -143,6 +156,14 @@ class CustomOperator {
               }
             } catch (dmlc::Error& err) {
               ctx.async_on_complete(&err);
+              return;
+            } catch (const std::exception& err) {
+              dmlc::Error dmlc_err(err.what());
+              ctx.async_on_complete(&dmlc_err);
+              return;
+            } catch (...) {
+              dmlc::Error dmlc_err("Unknown exception in CustomOperator");
+              ctx.async_on_complete(&dmlc_err);
               return;
             }
 

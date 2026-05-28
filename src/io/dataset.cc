@@ -64,13 +64,12 @@ class RecordFileDataset final : public Dataset {
     std::vector<std::pair<std::string, std::string>> kwargs_left;
     param_.InitAllowUnknown(kwargs);
     // read and process idx file
-    dmlc::Stream* idx_stream = dmlc::Stream::Create(param_.idx_file.c_str(), "r");
-    dmlc::istream is(idx_stream);
+    std::unique_ptr<dmlc::Stream> idx_stream(dmlc::Stream::Create(param_.idx_file.c_str(), "r"));
+    dmlc::istream is(idx_stream.get());
     size_t key, idx;
     while (is >> key >> idx) {
       idx_[key] = idx;
     }
-    delete idx_stream;
   }
 
   uint64_t GetLen() const override {

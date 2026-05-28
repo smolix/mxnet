@@ -61,6 +61,60 @@ def _dequant_uint8(qarray, min_range, max_range):
         float(min_range)
 
 
+def test_selfatt_qk_consumes_onednn_backed_inputs():
+    B, T_q, T_k, heads, head_dim = 1, 3, 4, 2, 4
+    embed_dim = heads * head_dim
+    queries_np = np.linspace(
+        -0.5, 0.7, B * T_q * embed_dim).reshape(B, T_q, embed_dim).astype('float32')
+    keys_np = np.linspace(
+        -0.3, 0.9, B * T_k * embed_dim).reshape(B, T_k, embed_dim).astype('float32')
+    queries = mx.nd.Activation(mx.nd.array(queries_np), act_type='relu')
+    keys = mx.nd.Activation(mx.nd.array(keys_np), act_type='relu')
+
+    out = mx.nd._internal._sg_onednn_selfatt_qk(
+        queries=queries, keys=keys, heads=heads)
+
+    q = np.maximum(queries_np, 0).reshape(B, T_q, heads, head_dim)
+    k = np.maximum(keys_np, 0).reshape(B, T_k, heads, head_dim)
+    expected = np.einsum('bqhd,bkhd->bhqk', q, k)
+    np.testing.assert_allclose(out.asnumpy(), expected, rtol=1e-5, atol=1e-5)
+
+
+def test_selfatt_qk_split_consumes_onednn_backed_qkv():
+    B, T, heads, head_dim = 1, 3, 2, 4
+    embed_dim = heads * head_dim
+    qkv_np = np.linspace(
+        -0.6, 0.8, B * T * 3 * embed_dim).reshape(B, T, 3 * embed_dim).astype('float32')
+    qkv = mx.nd.Activation(mx.nd.array(qkv_np), act_type='relu')
+
+    out = mx.nd._internal._sg_onednn_selfatt_qk_split(qkv, heads=heads)
+
+    qkv_ref = np.maximum(qkv_np, 0)
+    q = qkv_ref[:, :, :embed_dim].reshape(B, T, heads, head_dim)
+    k = qkv_ref[:, :, embed_dim:2 * embed_dim].reshape(B, T, heads, head_dim)
+    expected = np.einsum('bqhd,bkhd->bhqk', q, k)
+    np.testing.assert_allclose(out.asnumpy(), expected, rtol=1e-5, atol=1e-5)
+
+
+def test_selfatt_valatt_consumes_onednn_backed_qkv():
+    B, T, heads, head_dim = 1, 3, 2, 4
+    embed_dim = heads * head_dim
+    attention_np = np.linspace(
+        -0.2, 0.9, B * heads * T * T).reshape(B, heads, T, T).astype('float32')
+    qkv_np = np.linspace(
+        -0.6, 0.8, B * T * 3 * embed_dim).reshape(B, T, 3 * embed_dim).astype('float32')
+    attention = mx.nd.Activation(mx.nd.array(attention_np), act_type='relu')
+    qkv = mx.nd.Activation(mx.nd.array(qkv_np), act_type='relu')
+
+    out = mx.nd._internal._sg_onednn_selfatt_valatt(attention, qkv, heads=heads)
+
+    att_ref = np.maximum(attention_np, 0)
+    qkv_ref = np.maximum(qkv_np, 0)
+    value = qkv_ref[:, :, 2 * embed_dim:].reshape(B, T, heads, head_dim)
+    expected = np.einsum('bhqk,bkhd->bqhd', att_ref, value).reshape(B, T, embed_dim)
+    np.testing.assert_allclose(out.asnumpy(), expected, rtol=1e-5, atol=1e-5)
+
+
 def test_selfatt_qk_quantized_backward_matches_reference():
     B, T_q, T_k, heads, head_dim = 2, 3, 4, 2, 4
     ctx = mx.cpu()

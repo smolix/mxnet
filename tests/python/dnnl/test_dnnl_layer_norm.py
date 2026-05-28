@@ -60,6 +60,25 @@ def test_dnnl_layer_norm_output_mean_std_visible():
     assert_almost_equal(std.asnumpy(), std_np, rtol=1e-5, atol=1e-5)
 
 
+def test_dnnl_layer_norm_accepts_onednn_backed_gamma_beta():
+    shape = (1024, 1024)
+    eps = 1e-3
+    rng = np.random.default_rng(4321)
+    data_np = rng.normal(size=shape).astype("float32")
+    gamma_np = rng.uniform(0.1, 1.0, size=(shape[-1],)).astype("float32")
+    beta_np = rng.uniform(0.0, 0.5, size=(shape[-1],)).astype("float32")
+
+    data = mx.nd.array(data_np)
+    gamma = mx.nd.Activation(mx.nd.array(gamma_np), act_type="relu")
+    beta = mx.nd.Activation(mx.nd.array(beta_np), act_type="relu")
+    out = mx.nd.LayerNorm(data, gamma, beta, axis=-1, eps=eps)
+
+    mean_np = data_np.mean(axis=-1, keepdims=True)
+    std_np = np.sqrt(data_np.var(axis=-1, keepdims=True) + eps)
+    out_np = (data_np - mean_np) / std_np * gamma_np.reshape((1, -1)) + beta_np.reshape((1, -1))
+    assert_almost_equal(out.asnumpy(), out_np, rtol=1e-5, atol=1e-5)
+
+
 def test_dnnl_layer_norm_gamma_beta_grad_req_add():
     shape = (1024, 1024)
     eps = 1e-3

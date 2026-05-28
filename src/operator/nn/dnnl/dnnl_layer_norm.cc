@@ -126,11 +126,16 @@ inline dnnl::memory::desc GetMeanVarDesc(const dnnl::memory::data_type& dtype,
 
 // v3: SCALE_SHIFT was split into SCALE + SHIFT, each a 1-D tensor of length C.
 inline dnnl::memory GetGammaOrBetaMem(const NDArray& tensor) {
+  NDArray tensor_buffer = tensor;
+  if (tensor_buffer.IsDNNLData()) {
+    tensor_buffer = tensor_buffer.Reorder2Default();
+    DNNLStream::Get()->Submit();
+  }
   const dnnl::memory::desc md(dnnl::memory::dims{tensor.shape()[0]},
                               get_dnnl_type(tensor.dtype()),
                               dnnl::memory::format_tag::a);
   auto mem = dnnl::memory(md, CpuEngine::Get()->get_engine());
-  memcpy(mem.get_data_handle(), tensor.data().dptr_, md.get_size());
+  memcpy(mem.get_data_handle(), tensor_buffer.data().dptr_, md.get_size());
   return mem;
 }
 

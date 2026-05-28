@@ -31,6 +31,7 @@ import mxnet.ndarray.numpy._internal as _npi
 from functools import reduce
 from packaging.version import Version, parse
 from mxnet import np, npx
+from mxnet.base import MXNetError
 from mxnet.gluon import HybridBlock
 from mxnet.test_utils import same, assert_almost_equal, rand_shape_nd, rand_ndarray
 from mxnet.test_utils import check_numeric_gradient, use_np, collapse_sum_like, effective_dtype

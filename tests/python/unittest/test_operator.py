@@ -5857,6 +5857,86 @@ def test_custom_op_mixed_dense_sparse_outputs():
     assert_almost_equal(sparse_out.asnumpy(), 2 * data.asnumpy())
 
 
+@pytest.mark.parametrize('arg_name', ['out', 'name', 'attr'])
+def test_symbol_custom_accepts_input_names_that_match_wrapper_controls(arg_name):
+    op_type = 'custom_symbol_arg_' + arg_name
+
+    @mx.operator.register(op_type)
+    class CustomSymbolArgProp(mx.operator.CustomOpProp):
+        def __init__(self):
+            super(CustomSymbolArgProp, self).__init__(need_top_grad=False)
+
+        def list_arguments(self):
+            return [arg_name]
+
+        def list_outputs(self):
+            return ['output']
+
+        def infer_shape(self, in_shape):
+            return in_shape, [in_shape[0]], []
+
+        def create_operator(self, ctx, shapes, dtypes):
+            class Identity(mx.operator.CustomOp):
+                def forward(self, is_train, req, in_data, out_data, aux):
+                    self.assign(out_data[0], req[0], in_data[0])
+
+                def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
+                    pass
+
+            return Identity()
+
+    x = mx.sym.Variable('x')
+    y = mx.sym.Custom(op_type=op_type, **{arg_name: x})
+    assert y.list_arguments() == ['x']
+    exe = y._simple_bind(ctx=mx.cpu(), x=(2, 3))
+    exe.arg_dict['x'][:] = 3
+    assert_almost_equal(exe.forward()[0].asnumpy(), np.full((2, 3), 3))
+
+
+@legacy_np_semantics()
+@pytest.mark.parametrize('attr_name', ['name', 'out'])
+def test_ndarray_custom_accepts_attrs_that_match_wrapper_controls(attr_name):
+    op_type = 'custom_nd_attr_' + attr_name
+
+    @mx.operator.register(op_type)
+    class CustomNDAttrProp(mx.operator.CustomOpProp):
+        def __init__(self, name='unset', out='unset'):
+            super(CustomNDAttrProp, self).__init__(need_top_grad=False)
+            self.value = name if attr_name == 'name' else out
+
+        def list_arguments(self):
+            return []
+
+        def list_outputs(self):
+            return ['output']
+
+        def infer_shape(self, in_shape):
+            return [], [(1,)], []
+
+        def infer_type(self, in_type):
+            return [], [np.float32], []
+
+        def create_operator(self, ctx, shapes, dtypes):
+            value = float(self.value)
+
+            class AttrEcho(mx.operator.CustomOp):
+                def forward(self, is_train, req, in_data, out_data, aux):
+                    self.assign(out_data[0], req[0], mx.nd.array([value], ctx=out_data[0].context))
+
+                def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
+                    pass
+
+            return AttrEcho()
+
+    result = mx.nd.Custom(op_type=op_type, **{attr_name: '7'})
+    assert_almost_equal(result.asnumpy(), np.array([7], dtype=np.float32))
+
+    if attr_name == 'name':
+        out_buf = mx.nd.empty((1,))
+        mx.nd.Custom(op_type=op_type, name='5', out=out_buf)
+        assert_almost_equal(out_buf.asnumpy(), np.array([5], dtype=np.float32))
+
+
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
 # @pytest.mark.skip(reason="Flaky test, tracked at https://github.com/apache/mxnet/issues/17467")
 @legacy_np_semantics()

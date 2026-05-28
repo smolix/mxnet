@@ -486,7 +486,11 @@ class Symbol(SymbolBase):
         -------
             The resulting symbol.
         """
-        name = kwargs.pop('name', None)
+        name = kwargs.get('name', None)
+        if isinstance(name, Symbol):
+            name = None
+        else:
+            name = kwargs.pop('name', None)
 
         if name:
             name = c_str(name)

@@ -195,7 +195,17 @@ def %s(*%s, **kwargs):"""%(func_name, arr_name))
                 code.append("""
     if '%s' in kwargs:
         kwargs['%s'] = get_dtype_name(kwargs['%s'])"""%(dtype_name, dtype_name, dtype_name))
-            code.append("""
+            if op_name == 'Custom':
+                code.append("""
+    out = kwargs.get('out', None)
+    if isinstance(out, NDArrayBase) or isinstance(out, (list, tuple)):
+        out = kwargs.pop('out', None)
+    else:
+        out = None
+    param_keys = list(kwargs.keys())
+    param_vals = list(kwargs.values())""")
+            else:
+                code.append("""
     _ = kwargs.pop('name', None)
     out = kwargs.pop('out', None)
     param_keys = list(kwargs.keys())

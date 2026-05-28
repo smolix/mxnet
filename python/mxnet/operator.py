@@ -22,6 +22,7 @@
 import traceback
 import warnings
 import collections
+import inspect
 
 from array import array
 from threading import Lock
@@ -741,7 +742,20 @@ def register(reg_name):
                                '__force_mirroring__',
                                '__mirror_stage__', '__profiler_scope__']:
                     kwargs[key] = py_str(vals[i])
-            op_prop = prop_cls(**kwargs)
+            try:
+                op_prop = prop_cls(**kwargs)
+            except TypeError:
+                compat_kwargs = kwargs.copy()
+                signature = inspect.signature(prop_cls.__init__)
+                accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD
+                                     for param in signature.parameters.values())
+                if not accepts_kwargs:
+                    for reserved in ('name', 'out'):
+                        if reserved not in signature.parameters:
+                            compat_kwargs.pop(reserved, None)
+                if compat_kwargs == kwargs:
+                    raise
+                op_prop = prop_cls(**compat_kwargs)
 
             def infer_shape_entry(num_tensor, tensor_dims,
                                   tensor_shapes, _):

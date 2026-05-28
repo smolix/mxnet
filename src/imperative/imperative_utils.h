@@ -56,7 +56,7 @@ template <typename T>
 void InvalidateOutputs(const std::vector<T>* pArrs, const std::vector<OpReqType>& reqs) {
   auto arrs = *pArrs;
   for (size_t i = 0; i < arrs.size(); i++) {
-    if (reqs[i] == kWriteTo || reqs[i] == kNullOp)
+    if (reqs[i] == kWriteTo)
       pntr(arrs[i])->InvalidateDNNLData();
   }
 }

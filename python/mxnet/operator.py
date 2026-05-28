@@ -1083,12 +1083,12 @@ def register(reg_name):
                                  fb_functype(backward_entry)]
                     callbacks = [cast(i, CFUNCTYPE(c_int)) for i in callbacks]
                     contexts = [None, None, None]
+                    callback_array = c_array(CFUNCTYPE(c_int), callbacks)
+                    context_array = c_array(c_void_p, contexts)
                     ret[0] = MXCallbackList(c_int(len(callbacks)),
-                                            cast(c_array(CFUNCTYPE(c_int), callbacks),
-                                                 POINTER(CFUNCTYPE(c_int))),
-                                            cast(c_array(c_void_p, contexts),
-                                                 POINTER(c_void_p)))
-                    op._ref_holder = [ret]
+                                            cast(callback_array, POINTER(CFUNCTYPE(c_int))),
+                                            cast(context_array, POINTER(c_void_p)))
+                    op._ref_holder = [ret, callbacks, callback_array, context_array]
                     _registry.ref_holder[cur] = op
                 except Exception:
                     print(f'Error in {reg_name}.create_operator: {traceback.format_exc()}')
@@ -1118,12 +1118,12 @@ def register(reg_name):
                          inferstorage_backward_functype(infer_storage_type_backward_entry)]
             callbacks = [cast(i, CFUNCTYPE(c_int)) for i in callbacks]
             contexts = [None]*len(callbacks)
+            callback_array = c_array(CFUNCTYPE(c_int), callbacks)
+            context_array = c_array(c_void_p, contexts)
             ret[0] = MXCallbackList(c_int(len(callbacks)),
-                                    cast(c_array(CFUNCTYPE(c_int), callbacks),
-                                         POINTER(CFUNCTYPE(c_int))),
-                                    cast(c_array(c_void_p, contexts),
-                                         POINTER(c_void_p)))
-            op_prop._ref_holder = [ret]
+                                    cast(callback_array, POINTER(CFUNCTYPE(c_int))),
+                                    cast(context_array, POINTER(c_void_p)))
+            op_prop._ref_holder = [ret, callbacks, callback_array, context_array]
             _registry.ref_holder[cur] = op_prop
             return True
 

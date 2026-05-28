@@ -26,6 +26,8 @@
 #include <mxnet/base.h>
 #include <mxnet/ndarray.h>
 
+#include <memory>
+
 #include "../elemwise_op_common.h"
 #include "../operator_common.h"
 
@@ -277,18 +279,18 @@ OpStatePtr CreateState(const NodeAttrs& attrs,
   std::ostringstream os;
   os << ctx;
 
-  MXCallbackList* op_info = new MXCallbackList;
+  std::unique_ptr<MXCallbackList> op_info(new MXCallbackList);
   CHECK(reinterpret_cast<CustomOpCreateFunc>(params.info->callbacks[kCustomOpPropCreateOperator])(
       os.str().c_str(),
       shapes.size(),
       shapes.data(),
       ndims.data(),
       in_type.data(),
-      op_info,
+      op_info.get(),
       params.info->contexts[kCustomOpPropCreateOperator]));
 
   CustomParam state = params;
-  state.info.reset(op_info, [](MXCallbackList* ptr) {
+  state.info.reset(op_info.release(), [](MXCallbackList* ptr) {
     reinterpret_cast<CustomOpDelFunc>(ptr->callbacks[kCustomOpDelete])(
         ptr->contexts[kCustomOpDelete]);
     delete ptr;

@@ -516,12 +516,12 @@ class Function(object):
         callbacks = [Function._bwd_functype(backward_entry),
                      Function._del_functype(delete_entry)]
         callbacks = [cast(i, CFUNCTYPE(c_int)) for i in callbacks]
+        callback_array = c_array(CFUNCTYPE(c_int), callbacks)
+        context_array = c_array(c_void_p, [None]*len(callbacks))
         context = MXCallbackList(c_int(len(callbacks)),
-                                 cast(c_array(CFUNCTYPE(c_int), callbacks),
-                                      POINTER(CFUNCTYPE(c_int))),
-                                 cast(c_array(c_void_p, [None]*len(callbacks)),
-                                      POINTER(c_void_p)))
-        Function._registry.ref_holder[key] = context
+                                 cast(callback_array, POINTER(CFUNCTYPE(c_int))),
+                                 cast(context_array, POINTER(c_void_p)))
+        Function._registry.ref_holder[key] = (context, callbacks, callback_array, context_array)
         check_call(_LIB.MXCustomFunctionRecord(
             c_int(len(inputs)),
             c_handle_array(inputs),

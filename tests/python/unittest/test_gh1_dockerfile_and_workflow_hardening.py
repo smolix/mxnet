@@ -139,12 +139,24 @@ def test_example_zip_extractors_validate_members():
 def test_download_and_sparse_benchmark_avoid_assert_and_shell():
     test_utils = _read("python/mxnet/test_utils.py")
     sparse_dot = _read("benchmark/python/sparse/dot.py")
+    sparse_op = _read("benchmark/python/sparse/sparse_op.py")
     assert "assert r.status_code == 200" not in test_utils, \
         "download helper must not rely on assert for HTTP status validation"
     assert "raise RuntimeError(f\"failed to open {url}: HTTP {r.status_code}\")" in test_utils, \
         "download helper no longer raises an explicit HTTP status error"
     assert "shell=True" not in sparse_dot and "os.system" not in sparse_dot, \
         "sparse dot benchmark reintroduced shell command execution"
+    assert "os.system" not in sparse_op, \
+        "sparse op benchmark reintroduced shell command execution"
+
+
+def test_quantization_examples_use_https_datasets():
+    inference = _read("example/quantization/imagenet_inference.py")
+    qsym = _read("example/quantization/imagenet_gen_qsym_onednn.py")
+    assert "https://data.mxnet.io/data/val_256_q90.rec" in inference
+    assert "http://data.mxnet.io/data/val_256_q90.rec" not in inference
+    assert "https://data.mxnet.io/data/val_256_q90.rec" in qsym
+    assert "http://data.mxnet.io/data/val_256_q90.rec" not in qsym
 
 
 def test_builtin_dataset_extractors_validate_archive_members():

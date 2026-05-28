@@ -94,7 +94,11 @@ def test_dot_real(data_dict):
 
     mini_path = os.path.join(data_dir, data_dict['data_mini'])
     if not os.path.exists(mini_path):
-        os.system(f"head -n 2000 {repr(path)} > {repr(mini_path)}")
+        with open(path, "rb") as src, open(mini_path, "wb") as dst:
+            for line_number, line in enumerate(src):
+                if line_number >= 2000:
+                    break
+                dst.write(line)
         assert os.path.exists(mini_path)
 
     print(f"Running Benchmarking on {repr(data_dict['data_mini'])} data")

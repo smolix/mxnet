@@ -156,7 +156,7 @@ if __name__ == '__main__':
 
     if not args.benchmark:
         dataset = args.dataset
-        download_dataset('http://data.mxnet.io/data/val_256_q90.rec', dataset)
+        download_dataset('https://data.mxnet.io/data/val_256_q90.rec', dataset)
         logger.info(f'Dataset for inference: {dataset}')
 
         dataset = mx.gluon.data.vision.ImageRecordDataset(dataset)

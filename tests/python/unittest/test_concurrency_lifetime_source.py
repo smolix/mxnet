@@ -194,3 +194,12 @@ def test_tests_do_not_leak_print_options_or_kvstore_env():
     assert "os.putenv('MXNET_UPDATE_ON_KVSTORE'" not in test_trainer
     assert "previous_update_on_kvstore = os.environ.get('MXNET_UPDATE_ON_KVSTORE')" in test_trainer
     assert "os.environ.pop('MXNET_UPDATE_ON_KVSTORE', None)" in test_trainer
+
+
+def test_dlpack_error_paths_release_owned_resources():
+    contents = _read("python/mxnet/dlpack.py")
+
+    assert "was_writeable = ndarray.flags['WRITEABLE']" in contents
+    assert "dl_managed_tensor_deleter(ctypes.byref(c_obj))" in contents
+    assert "ndarray.flags['WRITEABLE'] = was_writeable" in contents
+    assert "check_call(_LIB.MXNDArrayFree(handle))" in contents

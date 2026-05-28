@@ -132,7 +132,11 @@ def ndarray_from_dlpack(array_cls):
         ctypes.pythonapi.PyCapsule_SetName(dlpack, _c_str_used_dltensor)
         # delete the deleter of the old dlpack
         ctypes.pythonapi.PyCapsule_SetDestructor(dlpack, None)
-        return array_cls(handle=handle)
+        try:
+            return array_cls(handle=handle)
+        except Exception:
+            check_call(_LIB.MXNDArrayFree(handle))
+            raise
     return from_dlpack
 
 
@@ -205,9 +209,19 @@ def ndarray_from_numpy(array_cls, array_create_fn):
         if not ndarray.flags['C_CONTIGUOUS']:
             raise ValueError("Only c-contiguous arrays are supported for zero-copy")
 
+        was_writeable = ndarray.flags['WRITEABLE']
         ndarray.flags['WRITEABLE'] = False
         c_obj = _make_dl_managed_tensor(ndarray)
         handle = NDArrayHandle()
-        check_call(_LIB.MXNDArrayFromDLPack(ctypes.byref(c_obj), True, ctypes.byref(handle)))
-        return array_cls(handle=handle)
+        try:
+            check_call(_LIB.MXNDArrayFromDLPack(ctypes.byref(c_obj), True, ctypes.byref(handle)))
+        except Exception:
+            dl_managed_tensor_deleter(ctypes.byref(c_obj))
+            ndarray.flags['WRITEABLE'] = was_writeable
+            raise
+        try:
+            return array_cls(handle=handle)
+        except Exception:
+            check_call(_LIB.MXNDArrayFree(handle))
+            raise
     return from_numpy

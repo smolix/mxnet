@@ -570,6 +570,52 @@ def test_quantized_elemwise_add():
     check_quantized_elemwise_add((32, 56, 64, 11), 'int8', 'int8')
 
 @use_np
+def test_quantized_elemwise_add_uint8_affine_ranges():
+    if is_test_for_native_cpu() or is_test_for_gpu():
+        return
+
+    a = mx.np.array([[0, 255], [128, 64]], dtype='uint8')
+    b = mx.np.array([[0, 255], [128, 64]], dtype='uint8')
+    a_min = mx.np.array([1.0], dtype='float32')
+    a_max = mx.np.array([3.0], dtype='float32')
+    b_min = mx.np.array([4.0], dtype='float32')
+    b_max = mx.np.array([6.0], dtype='float32')
+
+    qout, out_min, out_max = npx.quantized_elemwise_add(
+        a, b, a_min, a_max, b_min, b_max,
+        min_calib_range=5.0, max_calib_range=9.0)
+
+    expected = (a.asnumpy().astype('float32') * 2.0 / 255.0 + 1.0 +
+                b.asnumpy().astype('float32') * 2.0 / 255.0 + 4.0)
+    actual = qout.asnumpy().astype('float32') * 4.0 / 255.0 + 5.0
+    assert qout.dtype == onp.uint8
+    assert_almost_equal(out_min.asnumpy(), onp.array([5.0], dtype='float32'))
+    assert_almost_equal(out_max.asnumpy(), onp.array([9.0], dtype='float32'))
+    assert_almost_equal(actual, expected, atol=4.0 / 255.0)
+
+@use_np
+def test_quantized_npi_add_uint8_affine_broadcast_int32():
+    if is_test_for_native_cpu() or is_test_for_gpu():
+        return
+
+    a = mx.np.array([[0, 255], [128, 64]], dtype='uint8')
+    b = mx.np.array([[0], [255]], dtype='uint8')
+    a_min = mx.np.array([1.0], dtype='float32')
+    a_max = mx.np.array([3.0], dtype='float32')
+    b_min = mx.np.array([4.0], dtype='float32')
+    b_max = mx.np.array([6.0], dtype='float32')
+
+    qout, out_min, out_max = npx.quantized_npi_add(a, b, a_min, a_max, b_min, b_max)
+
+    expected = (a.asnumpy().astype('float32') * 2.0 / 255.0 + 1.0 +
+                (b.asnumpy().astype('float32') * 2.0 / 255.0 + 4.0))
+    actual = qout.asnumpy().astype('float64') * out_max.asnumpy()[0] / 0x7fffffff
+    assert qout.dtype == onp.int32
+    assert_almost_equal(out_min.asnumpy(), onp.array([-9.0], dtype='float32'))
+    assert_almost_equal(out_max.asnumpy(), onp.array([9.0], dtype='float32'))
+    assert_almost_equal(actual, expected, atol=0.01)
+
+@use_np
 def test_quantized_npi_add():
     def check_quantized_npi_add(data_shape,  qdtypeA, qdtypeB, broadcast=None):
         if is_test_for_native_cpu():

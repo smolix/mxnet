@@ -23,7 +23,14 @@
  */
 
 #if MXNET_USE_ONEDNN == 1
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <vector>
+
+#include "operator/mxnet_op.h"
 #include "operator/nn/dnnl/dnnl_base-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/quantization/quantization_utils.h"
 #include "operator/quantization/quantized_elemwise_add-inl.h"
 
@@ -144,6 +151,165 @@ DNNLQuantizedBinAddFwd& DNNLQuantizedBinAddFwd::GetCached(
   return it->second;
 }
 
+static float DequantizeElemwiseAddValue(const NDArray& data, size_t offset, float min, float max) {
+  if (data.dtype() == mshadow::kUint8) {
+    if (max <= min) {
+      return min;
+    }
+    const uint8_t* dptr = data.data().dptr<uint8_t>();
+    return static_cast<float>(dptr[offset]) * (max - min) / kUint8Range + min;
+  }
+  const int8_t* dptr = data.data().dptr<int8_t>();
+  return static_cast<float>(dptr[offset]) * MaxAbs(min, max) / kInt8Range;
+}
+
+static int32_t QuantizeElemwiseAddInt32(float real, float output_absmax) {
+  if (output_absmax <= 0.0f) {
+    return 0;
+  }
+  const double scaled =
+      std::round(std::min(std::abs(static_cast<double>(real)) *
+                              static_cast<double>(kInt32Range) /
+                              static_cast<double>(output_absmax),
+                          static_cast<double>(kInt32Range)));
+  const double signed_scaled = real < 0.0f ? -scaled : scaled;
+  return static_cast<int32_t>(
+      std::max(static_cast<double>(std::numeric_limits<int32_t>::min()),
+               std::min(static_cast<double>(std::numeric_limits<int32_t>::max()),
+                        signed_scaled)));
+}
+
+static int8_t QuantizeElemwiseAddInt8(float real, float output_absmax) {
+  if (output_absmax <= 0.0f) {
+    return 0;
+  }
+  const float scaled =
+      std::round(std::min(std::abs(real) * kInt8Range / output_absmax, kInt8Range));
+  const int32_t q = static_cast<int32_t>(real < 0.0f ? -scaled : scaled);
+  return static_cast<int8_t>(
+      std::max(static_cast<int32_t>(std::numeric_limits<int8_t>::min()),
+               std::min(static_cast<int32_t>(std::numeric_limits<int8_t>::max()), q)));
+}
+
+static uint8_t QuantizeElemwiseAddUInt8(float real, float output_min, float output_max) {
+  if (output_max <= output_min) {
+    return 0;
+  }
+  const float scaled = std::round((real - output_min) * kUint8Range /
+                                  (output_max - output_min));
+  const int32_t q =
+      static_cast<int32_t>(std::max(0.0f, std::min(kUint8Range, scaled)));
+  return static_cast<uint8_t>(q);
+}
+
+static size_t BroadcastOffset(const mxnet::TShape& in_shape,
+                              const std::vector<size_t>& in_strides,
+                              const mxnet::TShape& out_shape,
+                              size_t out_offset) {
+  size_t in_offset = 0;
+  const int out_ndim = out_shape.ndim();
+  const int in_ndim  = in_shape.ndim();
+  for (int out_axis = out_ndim - 1; out_axis >= 0; --out_axis) {
+    const size_t coord = out_offset % out_shape[out_axis];
+    out_offset /= out_shape[out_axis];
+    const int in_axis = in_ndim - (out_ndim - out_axis);
+    if (in_axis >= 0 && in_shape[in_axis] != 1) {
+      in_offset += coord * in_strides[in_axis];
+    }
+  }
+  return in_offset;
+}
+
+static std::vector<size_t> CompactStrides(const mxnet::TShape& shape) {
+  std::vector<size_t> strides(shape.ndim(), 1);
+  size_t stride = 1;
+  for (int i = shape.ndim() - 1; i >= 0; --i) {
+    strides[i] = stride;
+    stride *= shape[i];
+  }
+  return strides;
+}
+
+static bool DNNLQuantizedElemwiseAddAffineFallback(const std::vector<NDArray>& inputs,
+                                                   const std::vector<OpReqType>& req,
+                                                   const std::vector<NDArray>& outputs,
+                                                   float A_min,
+                                                   float A_max,
+                                                   float B_min,
+                                                   float B_max,
+                                                   float output_min,
+                                                   float output_max) {
+  const auto out_dtype = outputs[q_elemwise_add::kOut].dtype();
+  if (out_dtype != mshadow::kInt32 && out_dtype != mshadow::kInt8 &&
+      out_dtype != mshadow::kUint8) {
+    return false;
+  }
+  const bool needs_affine =
+      inputs[q_elemwise_add::kDataA].dtype() == mshadow::kUint8 ||
+      inputs[q_elemwise_add::kDataB].dtype() == mshadow::kUint8 ||
+      out_dtype == mshadow::kUint8;
+  if (!needs_affine) {
+    return false;
+  }
+
+  AssignQuantizedRangeOutput(outputs[q_elemwise_add::kMin].data().dptr<float>(),
+                             &output_min,
+                             req[q_elemwise_add::kMin],
+                             "quantized_elemwise_add");
+  AssignQuantizedRangeOutput(outputs[q_elemwise_add::kMax].data().dptr<float>(),
+                             &output_max,
+                             req[q_elemwise_add::kMax],
+                             "quantized_elemwise_add");
+  if (req[q_elemwise_add::kOut] == kNullOp) {
+    return true;
+  }
+
+  const NDArray A = inputs[q_elemwise_add::kDataA].Reorder2Default();
+  const NDArray B = inputs[q_elemwise_add::kDataB].Reorder2Default();
+  const auto& out = outputs[q_elemwise_add::kOut];
+  const auto out_shape = out.shape();
+  const auto A_strides = CompactStrides(A.shape());
+  const auto B_strides = CompactStrides(B.shape());
+  const size_t total = out_shape.Size();
+  const float output_absmax = MaxAbs(output_min, output_max);
+
+  if (out_dtype == mshadow::kInt32) {
+    int32_t* out_ptr = out.data().dptr<int32_t>();
+    for (size_t i = 0; i < total; ++i) {
+      const float real =
+          DequantizeElemwiseAddValue(A, BroadcastOffset(A.shape(), A_strides, out_shape, i),
+                                     A_min, A_max) +
+          DequantizeElemwiseAddValue(B, BroadcastOffset(B.shape(), B_strides, out_shape, i),
+                                     B_min, B_max);
+      KERNEL_ASSIGN(out_ptr[i], req[q_elemwise_add::kOut],
+                    QuantizeElemwiseAddInt32(real, output_absmax));
+    }
+  } else if (out_dtype == mshadow::kInt8) {
+    int8_t* out_ptr = out.data().dptr<int8_t>();
+    for (size_t i = 0; i < total; ++i) {
+      const float real =
+          DequantizeElemwiseAddValue(A, BroadcastOffset(A.shape(), A_strides, out_shape, i),
+                                     A_min, A_max) +
+          DequantizeElemwiseAddValue(B, BroadcastOffset(B.shape(), B_strides, out_shape, i),
+                                     B_min, B_max);
+      KERNEL_ASSIGN(out_ptr[i], req[q_elemwise_add::kOut],
+                    QuantizeElemwiseAddInt8(real, output_absmax));
+    }
+  } else {
+    uint8_t* out_ptr = out.data().dptr<uint8_t>();
+    for (size_t i = 0; i < total; ++i) {
+      const float real =
+          DequantizeElemwiseAddValue(A, BroadcastOffset(A.shape(), A_strides, out_shape, i),
+                                     A_min, A_max) +
+          DequantizeElemwiseAddValue(B, BroadcastOffset(B.shape(), B_strides, out_shape, i),
+                                     B_min, B_max);
+      KERNEL_ASSIGN(out_ptr[i], req[q_elemwise_add::kOut],
+                    QuantizeElemwiseAddUInt8(real, output_min, output_max));
+    }
+  }
+  return true;
+}
+
 static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
                                             const OpContext& ctx,
                                             const std::vector<NDArray>& inputs,
@@ -192,6 +358,11 @@ static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
     output_max   = A_absmax + B_absmax;
     output_min   = -output_max;
     output_scale = output_data_range / output_max;
+  }
+
+  if (DNNLQuantizedElemwiseAddAffineFallback(
+          inputs, req, outputs, A_min, A_max, B_min, B_max, output_min, output_max)) {
+    return;
   }
 
   std::vector<float> scales(2);  // 2: scale 0 for input A, scale 1 for input B

@@ -90,6 +90,9 @@ static bool DNNLQuantizedConcatAffineUInt8Fallback(const ConcatParam& param,
     return true;
   }
 
+  auto& out_arr = const_cast<NDArray&>(out_data[quantized_concat_enum::kOut]);
+  out_arr.InvalidateDNNLData();
+
   std::vector<NDArray> inputs;
   inputs.reserve(param.num_args);
   for (int i = 0; i < param.num_args; ++i) {
@@ -108,10 +111,10 @@ static bool DNNLQuantizedConcatAffineUInt8Fallback(const ConcatParam& param,
   }
 
   uint8_t* out_u8 = out_dtype == mshadow::kUint8 ?
-                        out_data[quantized_concat_enum::kOut].data().dptr<uint8_t>() :
+                        out_arr.data().dptr<uint8_t>() :
                         nullptr;
   int8_t* out_s8 = out_dtype == mshadow::kInt8 ?
-                       out_data[quantized_concat_enum::kOut].data().dptr<int8_t>() :
+                       out_arr.data().dptr<int8_t>() :
                        nullptr;
   const float output_absmax = MaxAbs(output_min, output_max);
   size_t out_offset = 0;

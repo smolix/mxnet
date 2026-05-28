@@ -749,15 +749,11 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
         full_param_.output_scales[i] = 1.0f / weight_scales_[i];
       }
     } else {
-      float tmp_scale_ = 1.0f;
-      if (dnnl_param.with_eltwise) {
-        tmp_scale_ = 1.0 / data_scale_;
-        full_param_.eltwise_param.scale =
-            GetQuantizeScale(output.dtype(), cached_output_min_, cached_output_max_);
-      } else {
-        out_scale  = GetQuantizeScale(output.dtype(), cached_output_min_, cached_output_max_);
-        tmp_scale_ = out_scale / data_scale_;
-      }
+      out_scale = GetQuantizeScale(output.dtype(), cached_output_min_, cached_output_max_);
+      // oneDNN v3 removed the eltwise post-op scale argument. Fold the output
+      // quantization scale into the actual DST scale for both plain FC and
+      // FC+activation; eltwise_param.scale is no longer consumed.
+      float tmp_scale_ = out_scale / data_scale_;
 
       if (support_channelwise_scale) {
         // Per-OC: scale binds to WEIGHTS as v3 multiplier (s_w * weight = real).

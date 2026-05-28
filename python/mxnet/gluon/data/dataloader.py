@@ -86,6 +86,10 @@ def _multiprocessing_fd_passing_available():
                 _MULTIPROCESSING_FD_PASSING_ERROR = str(err)
             else:
                 os.close(dup_fd)
+                try:
+                    multiprocessing.resource_sharer.stop()
+                except Exception:  # pylint: disable=broad-except
+                    pass
                 _MULTIPROCESSING_FD_PASSING_AVAILABLE = True
                 _MULTIPROCESSING_FD_PASSING_ERROR = None
         finally:

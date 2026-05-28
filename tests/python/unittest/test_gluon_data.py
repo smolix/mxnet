@@ -110,6 +110,33 @@ def test_multiprocessing_fd_passing_probe_cleans_up_on_detach_failure(monkeypatc
         assert len(os.listdir('/proc/self/fd')) == fd_count_before
 
 
+def test_multiprocessing_fd_passing_probe_cleans_up_on_success(monkeypatch):
+    import mxnet.gluon.data.dataloader as dataloader_module
+
+    calls = []
+
+    class SuccessfulDupFd:
+        def __init__(self, fd):
+            self.fd = os.dup(fd)
+
+        def detach(self):
+            return self.fd
+
+    def fake_stop():
+        calls.append('stop')
+
+    monkeypatch.setattr(multiprocessing.reduction, 'DupFd', SuccessfulDupFd)
+    monkeypatch.setattr(multiprocessing.resource_sharer, 'stop', fake_stop)
+    monkeypatch.setattr(dataloader_module, '_MULTIPROCESSING_FD_PASSING_AVAILABLE', None)
+    monkeypatch.setattr(dataloader_module, '_MULTIPROCESSING_FD_PASSING_ERROR', None)
+    fd_count_before = len(os.listdir('/proc/self/fd')) if os.path.isdir('/proc/self/fd') else None
+
+    assert dataloader_module._multiprocessing_fd_passing_available()
+    assert calls == ['stop']
+    if fd_count_before is not None:
+        assert len(os.listdir('/proc/self/fd')) == fd_count_before
+
+
 def test_array_dataset():
     X = np.random.uniform(size=(10, 20))
     Y = np.random.uniform(size=(10,))

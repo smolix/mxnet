@@ -1268,6 +1268,29 @@ def test_quantized_act_uint8_affine_relu_clamps_real_zero():
 
 
 @use_np
+def test_quantized_concat_uint8_preserves_affine_ranges():
+    if not is_test_for_dnnl():
+        print('skipped testing quantized_concat affine uint8 for non-oneDNN backend')
+        return
+
+    lhs = mx.nd.array([0, 255], dtype='uint8')
+    rhs = mx.nd.array([0, 255], dtype='uint8')
+    out, min_out, max_out = mx.nd.contrib.quantized_concat(
+        lhs, rhs,
+        mx.nd.array([1.0], dtype='float32'), mx.nd.array([3.0], dtype='float32'),
+        mx.nd.array([4.0], dtype='float32'), mx.nd.array([6.0], dtype='float32'),
+        num_args=2, dim=0)
+    dequantized = mx.nd.contrib.dequantize(out, min_out, max_out, out_type='float32')
+
+    assert_almost_equal(min_out.asscalar(), 1.0)
+    assert_almost_equal(max_out.asscalar(), 6.0)
+    assert_almost_equal(dequantized.asnumpy(),
+                        onp.array([1.0, 3.0, 4.0, 6.0]),
+                        atol=0.03,
+                        rtol=0.03)
+
+
+@use_np
 def test_quantized_bn():
     def get_mean_var(data):
         axes = list(range(data.ndim))

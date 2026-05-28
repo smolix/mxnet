@@ -37,7 +37,7 @@ from mxnet.test_utils import same, assert_almost_equal, rand_shape_nd, rand_ndar
 from mxnet.test_utils import check_numeric_gradient, use_np, collapse_sum_like, effective_dtype
 from mxnet.test_utils import new_matrix_with_real_eigvals_nd
 from mxnet.test_utils import new_sym_matrix_with_real_eigvals_nd
-from common import assertRaises, retry, xfail_when_nonstandard_decimal_separator, requires_lapack
+from common import assertRaises, retry, xfail_when_nonstandard_decimal_separator, requires_lapack, has_lapack
 import random
 from mxnet.test_utils import verify_generator, gen_buckets_probs_with_ppf
 from mxnet.numpy_op_signature import _get_builtin_op
@@ -5454,6 +5454,7 @@ def test_np_randn():
 
 
 @use_np
+@requires_lapack
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
 # @pytest.mark.skip(reason='Test hangs. Tracked in #18144')
 def test_np_multivariate_normal():
@@ -5498,6 +5499,19 @@ def test_np_multivariate_normal():
 
         assert list(desired_shape) == list(test_shape)
         assert list(desired_shape) == list(actual_shape)
+
+
+@use_np
+@pytest.mark.skipif(has_lapack(), reason="Only exercises no-LAPACK error cleanup")
+def test_np_multivariate_normal_without_lapack_reports_and_clears_error():
+    mean = np.array([0.0, 1.0])
+    cov = np.array([[1.0, 0.0], [0.0, 1.0]])
+    sample = np.random.multivariate_normal(mean, cov)
+
+    with pytest.raises(MXNetError, match="without lapack"):
+        sample.asnumpy()
+
+    mx.nd.waitall()
 
 
 @use_np

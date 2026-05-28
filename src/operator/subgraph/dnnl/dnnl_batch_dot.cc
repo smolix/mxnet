@@ -84,7 +84,7 @@ bool DNNLBatchDotType(const nnvm::NodeAttrs& attrs,
     CHECK(in_types->at(DotIn::lhs) == mshadow::kInt8 || in_types->at(DotIn::lhs) == mshadow::kUint8)
         << "Quantized batch-dot lhs only supports int8/uint8 input, while "
         << in_types->at(DotIn::lhs) << " is given.";
-    CHECK(in_types->at(DotIn::rhs) == mshadow::kInt8 || in_types->at(DotIn::rhs) == mshadow::kUint8)
+    CHECK(in_types->at(DotIn::rhs) == mshadow::kInt8)
         << "Quantized batch-dot rhs only supports int8 input, while " << in_types->at(DotIn::rhs)
         << " is given.";
 

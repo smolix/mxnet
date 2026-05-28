@@ -83,6 +83,13 @@ dnnl::primitive_attr GetQuantizationAttributes(const DNNLDotParam& param,
                                                const std::vector<NDArray>& outputs,
                                                float* out_scale) {
   dnnl::primitive_attr attr;
+  CHECK_EQ(inputs[DotIn::rhs].dtype(), mshadow::kInt8)
+      << "oneDNN quantized batch_dot supports only int8 rhs input";
+  CHECK(inputs[DotIn::lhs].dtype() != mshadow::kUint8 ||
+        inputs[DotIn::lhs_min].data().dptr<float>()[0] == 0.0f)
+      << "oneDNN quantized batch_dot requires uint8 lhs_min == 0.0 because "
+         "the primitive path does not apply source zero points; use int8 for "
+         "ranges with a nonzero offset.";
   float lhs_scale_ = GetQuantizeScale(inputs[DotIn::lhs].dtype(),
                                       inputs[DotIn::lhs_min].data().dptr<float>()[0],
                                       inputs[DotIn::lhs_max].data().dptr<float>()[0]);

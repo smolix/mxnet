@@ -264,3 +264,14 @@ def test_onednn_quantized_subgraphs_reject_uint8_nonzero_offsets():
     assert "the primitive path does not apply source zero points" in conv
     assert "data.dtype() != mshadow::kUint8 || cached_data_min_ == 0.0f" in fc
     assert "the primitive path does not apply source zero points" in fc
+
+
+def test_onednn_quantized_batch_dot_rejects_unsupported_uint8_cases():
+    subgraph = _read("src/operator/subgraph/dnnl/dnnl_batch_dot.cc")
+    runtime = _read("src/operator/nn/dnnl/dnnl_batch_dot.cc")
+
+    assert "CHECK(in_types->at(DotIn::rhs) == mshadow::kInt8)" in subgraph
+    assert "oneDNN quantized batch_dot supports only int8 rhs input" in runtime
+    assert "inputs[DotIn::lhs].dtype() != mshadow::kUint8" in runtime
+    assert "inputs[DotIn::lhs_min].data().dptr<float>()[0] == 0.0f" in runtime
+    assert "the primitive path does not apply source zero points" in runtime

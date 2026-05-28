@@ -101,7 +101,9 @@ void SgDNNLDequantizeOperator::Forward(const OpContext& ctx,
     if (inputs[0].dtype() == mshadow::kUint8) {
       quantized_range = kUint8Range;
     } else if (inputs[0].dtype() == mshadow::kInt8) {
-      quantized_range = kInt8Range;
+      quantized_range =
+          MinAbs(mshadow::red::limits::MaxValue<int8_t>(),
+                 mshadow::red::limits::MinValue<int8_t>());
       real_range      = MaxAbs(*inputs[1].data().dptr<float>(), *inputs[2].data().dptr<float>());
     } else {
       LOG(FATAL) << "dnnl dequantize op only supports int8 and uint8 as output type";

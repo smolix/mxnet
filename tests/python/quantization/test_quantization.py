@@ -282,6 +282,19 @@ def test_dequantize_uint8_uses_affine_range():
     assert_almost_equal(data.asnumpy(), expected, atol=1e-6, rtol=1e-6)
 
 
+def test_dequantize_int8_uses_symmetric_127_range():
+    qdata_np = onp.array([-127, 0, 127], dtype=onp.int8)
+    qdata = mx.nd.array(qdata_np, dtype=onp.int8, ctx=mx.current_device())
+    min_range = mx.nd.array([-1.0], dtype=onp.float32, ctx=mx.current_device())
+    max_range = mx.nd.array([1.0], dtype=onp.float32, ctx=mx.current_device())
+
+    data = mx.nd.contrib.dequantize(qdata, min_range, max_range, out_type='float32')
+
+    assert_almost_equal(data.asnumpy(),
+                        onp.array([-1.0, 0.0, 1.0], dtype=onp.float32),
+                        atol=1e-6, rtol=1e-6)
+
+
 def test_dequantize_out_buffer_overwrites_prefilled_sentinel():
     qdata_np = onp.array([-127, -64, 0, 127], dtype=onp.int8)
     qdata = mx.nd.array(qdata_np, dtype=onp.int8, ctx=mx.current_device())

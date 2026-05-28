@@ -3741,6 +3741,11 @@ void AssertValidNumberVars(int num_const_vars, int num_mutable_vars) {
   CHECK_GE(num_mutable_vars, 0) << "Non-negative number of mutable vars expected.";
 }
 
+void AssertValidVarArray(EngineVarHandle vars_handle, int num_vars, const char* name) {
+  CHECK(vars_handle != nullptr || num_vars == 0)
+      << name << " must be non-null when the corresponding count is positive.";
+}
+
 int MXEnginePushAsync(EngineAsyncFunc async_func,
                       void* func_param,
                       EngineFuncParamDeleter deleter,
@@ -3780,6 +3785,8 @@ int MXEnginePushAsync(EngineAsyncFunc async_func,
   }
 
   AssertValidNumberVars(num_const_vars, num_mutable_vars);
+  AssertValidVarArray(const_vars_handle, num_const_vars, "const_vars_handle");
+  AssertValidVarArray(mutable_vars_handle, num_mutable_vars, "mutable_vars_handle");
   std::vector<VarHandle> const_var_vec(const_vars, const_vars + num_const_vars);
   std::vector<VarHandle> mutable_var_vec(mutable_vars, mutable_vars + num_mutable_vars);
   Engine::Get()->DeduplicateVarHandle(&const_var_vec, &mutable_var_vec);
@@ -3823,6 +3830,8 @@ int MXEnginePushSync(EngineSyncFunc sync_func,
   }
 
   AssertValidNumberVars(num_const_vars, num_mutable_vars);
+  AssertValidVarArray(const_vars_handle, num_const_vars, "const_vars_handle");
+  AssertValidVarArray(mutable_vars_handle, num_mutable_vars, "mutable_vars_handle");
   std::vector<VarHandle> const_var_vec(const_vars, const_vars + num_const_vars);
   std::vector<VarHandle> mutable_var_vec(mutable_vars, mutable_vars + num_mutable_vars);
   Engine::Get()->DeduplicateVarHandle(&const_var_vec, &mutable_var_vec);

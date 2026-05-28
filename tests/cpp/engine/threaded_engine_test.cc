@@ -554,6 +554,30 @@ TEST(Engine, PushFunc) {
   LOG(INFO) << "===== Test #8: PushSync invalid number of mutable vars =====";
   res = MXEnginePushSync(FooSyncFunc, nullptr, nullptr, &ctx, nullptr, 0, &var, -1);
   EXPECT_EQ(res, -1);
+
+  // Test #9
+  LOG(INFO) << "===== Test #9: PushAsync positive const count with null array =====";
+  res = MXEnginePushAsync(FooAsyncFunc, nullptr, nullptr, &ctx, nullptr, 1, &var, 1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("const_vars_handle"), std::string::npos);
+
+  // Test #10
+  LOG(INFO) << "===== Test #10: PushAsync positive mutable count with null array =====";
+  res = MXEnginePushAsync(FooAsyncFunc, nullptr, nullptr, &ctx, &var, 1, nullptr, 1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("mutable_vars_handle"), std::string::npos);
+
+  // Test #11
+  LOG(INFO) << "===== Test #11: PushSync positive const count with null array =====";
+  res = MXEnginePushSync(FooSyncFunc, nullptr, nullptr, &ctx, nullptr, 1, &var, 1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("const_vars_handle"), std::string::npos);
+
+  // Test #12
+  LOG(INFO) << "===== Test #12: PushSync positive mutable count with null array =====";
+  res = MXEnginePushSync(FooSyncFunc, nullptr, nullptr, &ctx, &var, 1, nullptr, 1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("mutable_vars_handle"), std::string::npos);
 }
 
 TEST(Engine, PushFuncDeduplicatesReadWriteVars) {

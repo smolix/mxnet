@@ -804,6 +804,19 @@ def test_quantized_fc():
         weight_max = mx.np.max(new_args['weight']).astype('float32')
         data_range = maxabs(data_min, data_max)
         weight_range = maxabs(weight_min, weight_max)
+        if qdtype == 'uint8':
+            # The uint8 FC path consumes affine quantized values. Use a symmetric
+            # uint8 range whose zero point rounds to 128 so the accumulator still
+            # matches the integer-valued fp32 reference used below.
+            qdata_min = -127.5
+            qdata_max = 127.5
+            qdata = (data + 128).astype('uint8')
+            data_scale_for_bias = 255.5 / (qdata_max - qdata_min)
+        else:
+            qdata_min = -data_range
+            qdata_max = data_range
+            qdata = data.astype(qdtype)
+            data_scale_for_bias = quantized_range / data_range
 
         if use_bias:
             bias = mx.np.random.uniform(low=data_low,
@@ -815,7 +828,7 @@ def test_quantized_fc():
             bias_range = maxabs(bias_min, bias_max)
 
             bias_scale = int8_range / bias_range
-            data_scale = quantized_range / data_range
+            data_scale = data_scale_for_bias
             weight_scale = int8_range / weight_range
             bias_int32_rescale = data_scale * weight_scale / bias_scale
             new_bias = bias.astype('float32') * bias_int32_rescale
@@ -862,8 +875,8 @@ def test_quantized_fc():
         fc_int8 = QuantFC(num_hidden=num_hidden, use_bias=use_bias, flatten=flatten)
         qargs = {
             'weight': new_args['weight'].astype('int8'),
-            'min_data': mx.np.array([-data_range]),
-            'max_data': mx.np.array([data_range]),
+            'min_data': mx.np.array([qdata_min]),
+            'max_data': mx.np.array([qdata_max]),
             'min_weight': mx.np.array([-weight_range]),
             'max_weight': mx.np.array([weight_range])
         }
@@ -876,7 +889,7 @@ def test_quantized_fc():
 
         fc_int8.load_dict(qargs, cast_dtype=True, dtype_source='saved')
 
-        qoutput, min_range, max_range = fc_int8(data.astype(qdtype))
+        qoutput, min_range, max_range = fc_int8(qdata)
 
         if use_bias:
             # with adding bias, accuracy loss should not be greater than one
@@ -931,6 +944,38 @@ def test_quantized_fc_accepts_dnnl_quantize_v2_input():
     expected = onp.dot(qdata.asnumpy().reshape((2, 12)).astype('int32'),
                        weight.asnumpy().astype('int32').T)
     assert_almost_equal(out.asnumpy(), expected)
+
+
+@use_np
+def test_quantized_fc_uint8_uses_affine_zero_point():
+    if not is_test_for_dnnl() or not supports_dnnl_quantized_ops():
+        return
+
+    qdata = mx.np.array([[0, 128, 255]], dtype='uint8')
+    min_data = mx.np.array([1.0], dtype='float32')
+    max_data = mx.np.array([3.0], dtype='float32')
+    weight = mx.np.array([[127, 127, 127]], dtype='int8')
+    min_weight = mx.np.array([-1.0], dtype='float32')
+    max_weight = mx.np.array([1.0], dtype='float32')
+
+    out, min_out, max_out = npx.quantized_fully_connected(
+        data=qdata,
+        weight=weight,
+        min_data=min_data,
+        max_data=max_data,
+        min_weight=min_weight,
+        max_weight=max_weight,
+        num_hidden=1,
+        no_bias=True,
+        flatten=True)
+
+    data_scale = 255.5 / (max_data.item() - min_data.item())
+    data_zero_point = int(onp.rint(-min_data.item() * data_scale))
+    expected = onp.dot((qdata.asnumpy().astype('int32') - data_zero_point),
+                       weight.asnumpy().astype('int32').T)
+    assert_almost_equal(out.asnumpy(), expected)
+    assert min_out.item() < 0
+    assert max_out.item() > 0
 
 
 @use_np

@@ -24,6 +24,8 @@
  */
 
 #if MXNET_USE_ONEDNN == 1
+#include <cmath>
+
 #include "operator/nn/dnnl/dnnl_fully_connected-inl.h"
 #include "operator/quantization/quantization_utils.h"
 
@@ -63,9 +65,15 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
   float* min_output_ptr = out_data[quantized_fullc::kOutMin].data().dptr<float>();
   float* max_output_ptr = out_data[quantized_fullc::kOutMax].data().dptr<float>();
 
-  auto data_range    = (data.dtype() == mshadow::kInt8) ? kInt8Range : kUint8Range;
-  float data_scale   = data_range / MaxAbs(min_data, max_data);
+  const bool data_is_int8 = data.dtype() == mshadow::kInt8;
+  if (!data_is_int8) {
+    CHECK_GT(max_data, min_data) << "uint8 quantized fully connected expects max_data > min_data";
+  }
+  float data_scale =
+      data_is_int8 ? kInt8Range / MaxAbs(min_data, max_data) : kUint8Range / (max_data - min_data);
   float weight_scale = kInt8Range / MaxAbs(min_weight, max_weight);
+  const int32_t data_zero_point =
+      data_is_int8 ? 0 : static_cast<int32_t>(std::nearbyint(-min_data * data_scale));
 
   NDArray quantized_bias;
   if (!param.no_bias) {
@@ -94,12 +102,16 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
   }
 
   Stream<cpu>* s = ctx.get_stream<cpu>();
-  if (data.dtype() == mshadow::kInt8) {
+  if (data_is_int8) {
     mxnet_op::Kernel<QuantizationRangeForS8S8MultiplicationStruct, cpu>::Launch(
         s, 1, min_output_ptr, max_output_ptr, &min_data, &max_data, &min_weight, &max_weight);
   } else {
-    mxnet_op::Kernel<QuantizationRangeForS8U8MultiplicationStruct, cpu>::Launch(
-        s, 1, min_output_ptr, max_output_ptr, &min_data, &max_data, &min_weight, &max_weight);
+    const float data_float_for_one_quant_level   = (max_data - min_data) / kUint8Range;
+    const float weight_float_for_one_quant_level = MaxAbs(min_weight, max_weight) / kInt8Range;
+    const float output_range =
+        data_float_for_one_quant_level * weight_float_for_one_quant_level * kInt32Range;
+    *min_output_ptr = -output_range;
+    *max_output_ptr = output_range;
   }
 
   const auto& data_shape   = data.shape();
@@ -128,11 +140,11 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
       for (index_t col = 0; col < n; ++col) {
         int32_t acc = bias_ptr == nullptr ? 0 : bias_ptr[col];
         for (index_t inner = 0; inner < k; ++inner) {
-          if (data.dtype() == mshadow::kInt8) {
+          if (data_is_int8) {
             acc += static_cast<int32_t>(data_s8[row * k + inner]) *
                    static_cast<int32_t>(weight_ptr[col * k + inner]);
           } else {
-            acc += static_cast<int32_t>(data_u8[row * k + inner]) *
+            acc += (static_cast<int32_t>(data_u8[row * k + inner]) - data_zero_point) *
                    static_cast<int32_t>(weight_ptr[col * k + inner]);
           }
         }
@@ -145,11 +157,11 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
       for (index_t col = 0; col < n; ++col) {
         int32_t acc = bias_ptr == nullptr ? 0 : bias_ptr[col];
         for (index_t inner = 0; inner < k; ++inner) {
-          if (data.dtype() == mshadow::kInt8) {
+          if (data_is_int8) {
             acc += static_cast<int32_t>(data_s8[row * k + inner]) *
                    static_cast<int32_t>(weight_ptr[col * k + inner]);
           } else {
-            acc += static_cast<int32_t>(data_u8[row * k + inner]) *
+            acc += (static_cast<int32_t>(data_u8[row * k + inner]) - data_zero_point) *
                    static_cast<int32_t>(weight_ptr[col * k + inner]);
           }
         }

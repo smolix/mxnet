@@ -31,11 +31,15 @@ BASE_INSTALL_REQUIRES = [
     'graphviz<0.9.0,>=0.8.1',
     'packaging>=20.0',
     'contextvars;python_version<"3.7"',
+    'scipy-openblas32>=0.3.33,<0.4',
 ]
 
 # CUDA / cuDNN / NCCL runtime libraries are NOT bundled in Linux CUDA wheels.
-# libmxnet.so is patched with RUNPATH=$ORIGIN/lib:$ORIGIN/../nvidia/<pkg>/lib:/usr/local/cuda/lib64
+# libmxnet.so is patched with RUNPATH=$ORIGIN/lib:$ORIGIN/../nvidia/<pkg>/lib:
+# $ORIGIN/../scipy_openblas32/lib:/usr/local/cuda/lib64
 # so the loader finds:
+#   - OpenBLAS via the pip-installed scipy-openblas32 wheel under
+#     site-packages/scipy_openblas32/lib/
 #   - cuDNN / NCCL via the pip-installed nvidia-*-cu13 wheels under
 #     site-packages/nvidia/<pkg>/lib/  (PyTorch/JAX install layout)
 #   - libcudart / libcublas / libcufft / libcusolver / libcurand /

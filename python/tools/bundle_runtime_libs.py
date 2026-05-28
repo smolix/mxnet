@@ -35,7 +35,7 @@ with --bundle-opencv, build the wheel with USE_OPENCV=OFF, or deliberately pass
 After running this script with --drop-bundled and without --bundle-opencv:
   - python/mxnet/lib/ is gone (no bundled libs)
   - python/mxnet/libmxnet.so has RUNPATH pointing at $ORIGIN/lib + each
-    nvidia/<pkg>/lib relative to site-packages/mxnet/
+    scipy_openblas32/lib and nvidia/<pkg>/lib relative to site-packages/mxnet/
 
 Requires:
   - patchelf  (apt install patchelf)
@@ -58,6 +58,7 @@ from pathlib import Path
 # only ships these two for cu13 on PyPI; the rest are placeholder 0.0.1
 # stubs and so come from the system toolkit at /usr/local/cuda/ for now).
 NVIDIA_PIP_DEPS = [
+    ("scipy_openblas32/lib", ["libscipy_openblas.so"]),
     ("nvidia/cudnn/lib", ["libcudnn.so.9"]),
     ("nvidia/nccl/lib", ["libnccl.so.2"]),
     ("nvidia/cu13/lib", ["libnvrtc.so.13", "libcublas.so.13", "libcublasLt.so.13"]),

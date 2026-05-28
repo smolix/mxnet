@@ -74,7 +74,9 @@ void SgDNNLDequantizeOperator::Forward(const OpContext& ctx,
   if (inputs[0].dtype() == mshadow::kUint8) {
     in_buffer = in_buffer.Reorder2Default();
     const uint8_t* in_ptr = in_buffer.data().dptr<uint8_t>();
-    float* out_ptr        = outputs[0].data().dptr<float>();
+    auto& out_arr         = const_cast<NDArray&>(outputs[0]);
+    out_arr.InvalidateDNNLData();
+    float* out_ptr        = out_arr.data().dptr<float>();
     const float scale =
         (data_max - data_min) / (mshadow::red::limits::MaxValue<uint8_t>() -
                                  mshadow::red::limits::MinValue<uint8_t>());

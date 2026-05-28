@@ -27,6 +27,7 @@
 #include <cmath>
 
 #include "operator/nn/dnnl/dnnl_fully_connected-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/quantization/quantization_utils.h"
 
 namespace mxnet {
@@ -62,8 +63,8 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
       in_data[num_inputs + quantized_fullc::kWeightMin].data().dptr<float>()[0];
   const float max_weight =
       in_data[num_inputs + quantized_fullc::kWeightMax].data().dptr<float>()[0];
-  float* min_output_ptr = out_data[quantized_fullc::kOutMin].data().dptr<float>();
-  float* max_output_ptr = out_data[quantized_fullc::kOutMax].data().dptr<float>();
+  float min_output = 0.0f;
+  float max_output = 0.0f;
 
   const bool data_is_int8 = data.dtype() == mshadow::kInt8;
   if (!data_is_int8) {
@@ -101,18 +102,25 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
     DNNLStream::Get()->Submit();
   }
 
-  Stream<cpu>* s = ctx.get_stream<cpu>();
   if (data_is_int8) {
-    mxnet_op::Kernel<QuantizationRangeForS8S8MultiplicationStruct, cpu>::Launch(
-        s, 1, min_output_ptr, max_output_ptr, &min_data, &max_data, &min_weight, &max_weight);
+    QuantizationRangeForMultiplication<int8_t, int8_t, int32_t>(
+        min_data, max_data, min_weight, max_weight, &min_output, &max_output, true);
   } else {
     const float data_float_for_one_quant_level   = (max_data - min_data) / kUint8Range;
     const float weight_float_for_one_quant_level = MaxAbs(min_weight, max_weight) / kInt8Range;
     const float output_range =
         data_float_for_one_quant_level * weight_float_for_one_quant_level * kInt32Range;
-    *min_output_ptr = -output_range;
-    *max_output_ptr = output_range;
+    min_output = -output_range;
+    max_output = output_range;
   }
+  AssignQuantizedRangeOutput(out_data[quantized_fullc::kOutMin].data().dptr<float>(),
+                             &min_output,
+                             req[quantized_fullc::kOutMin],
+                             "quantized_fully_connected");
+  AssignQuantizedRangeOutput(out_data[quantized_fullc::kOutMax].data().dptr<float>(),
+                             &max_output,
+                             req[quantized_fullc::kOutMax],
+                             "quantized_fully_connected");
 
   const auto& data_shape   = data.shape();
   const auto& weight_shape = weight.shape();
@@ -124,6 +132,10 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
       param.flatten ? data_shape.ProdShape(1, data_shape.ndim()) : data_shape[data_shape.ndim() - 1];
   const index_t n = weight_shape[0];
   CHECK_EQ(weight_shape[1], k);
+
+  if (req[fullc::kOut] == kNullOp) {
+    return;
+  }
 
   auto& out_arr = const_cast<NDArray&>(out_data[fullc::kOut]);
   out_arr.InvalidateDNNLData();

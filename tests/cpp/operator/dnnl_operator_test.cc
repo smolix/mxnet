@@ -38,6 +38,7 @@
 #include "../../src/operator/nn/dnnl/dnnl_base-inl.h"
 #include "../../src/operator/nn/dnnl/dnnl_pooling-inl.h"
 #include "../../src/operator/nn/pooling-inl.h"
+#include "../../src/operator/quantization/quantized_elemwise_add-inl.h"
 #include "../include/test_dnnl.h"
 #include "../include/test_util.h"
 #include "gtest/gtest.h"
@@ -46,6 +47,7 @@
 using namespace mxnet;
 using namespace mxnet::test;
 namespace qbn = mxnet::op::quantized_batchnorm;
+namespace qadd = mxnet::op::q_elemwise_add;
 
 void InvokeDNNLOp(const nnvm::NodeAttrs& attrs,
                   std::vector<NDArray>* inputs,
@@ -1728,6 +1730,225 @@ TEST(DNNL_QUANTIZE_ASYM, RangeOutputRequestContract) {
   EXPECT_EQ(out_sentinel, out);
   EXPECT_FLOAT_EQ(3.f, out_scale[0]);
   EXPECT_FLOAT_EQ(90.f, out_shift[0]);
+}
+
+TEST(DNNL_QUANTIZED_POOLING, RangeOutputRequestContract) {
+  nnvm::NodeAttrs attrs;
+  attrs.op = Op::Get("_contrib_quantized_pooling");
+  attrs.dict["kernel"] = "(2, 2)";
+  attrs.dict["stride"] = "(1, 1)";
+  attrs.dict["pad"] = "(0, 0)";
+  attrs.dict["pool_type"] = "max";
+  attrs.op->attr_parser(&attrs);
+
+  const std::vector<uint8_t> data_values{1, 2, 3, 4};
+  const std::vector<float> in_min{-3.f};
+  const std::vector<float> in_max{9.f};
+  std::vector<NDArray> inputs{
+      NDArray(TShape({1, 1, 2, 2}), Context::CPU(), false, mshadow::kUint8),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  inputs[0].SyncCopyFromCPU(data_values.data(), data_values.size());
+  inputs[1].SyncCopyFromCPU(in_min.data(), in_min.size());
+  inputs[2].SyncCopyFromCPU(in_max.data(), in_max.size());
+
+  std::vector<NDArray> outputs{
+      NDArray(TShape({1, 1, 1, 1}), Context::CPU(), false, mshadow::kUint8),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  const std::vector<float> min_sentinel{2.f};
+  const std::vector<float> max_sentinel{4.f};
+  outputs[1].SyncCopyFromCPU(min_sentinel.data(), min_sentinel.size());
+  outputs[2].SyncCopyFromCPU(max_sentinel.data(), max_sentinel.size());
+
+  InvokeDNNLOp(attrs, &inputs, &outputs, {kWriteTo, kNullOp, kAddTo});
+  std::vector<float> out_min(1);
+  std::vector<float> out_max(1);
+  outputs[1].SyncCopyToCPU(out_min.data(), out_min.size());
+  outputs[2].SyncCopyToCPU(out_max.data(), out_max.size());
+  EXPECT_FLOAT_EQ(2.f, out_min[0]);
+  EXPECT_FLOAT_EQ(13.f, out_max[0]);
+}
+
+TEST(DNNL_QUANTIZED_CONV, RequestContract) {
+  nnvm::NodeAttrs attrs;
+  attrs.op = Op::Get("_contrib_quantized_conv");
+  attrs.dict["kernel"] = "(1, 1)";
+  attrs.dict["num_filter"] = "1";
+  attrs.dict["stride"] = "(1, 1)";
+  attrs.dict["pad"] = "(0, 0)";
+  attrs.dict["no_bias"] = "True";
+  attrs.op->attr_parser(&attrs);
+
+  const std::vector<int8_t> data_values{2};
+  const std::vector<int8_t> weight_values{3};
+  const std::vector<float> data_min{-2.f};
+  const std::vector<float> data_max{2.f};
+  const std::vector<float> weight_min{-4.f};
+  const std::vector<float> weight_max{4.f};
+  std::vector<NDArray> inputs{
+      NDArray(TShape({1, 1, 1, 1}), Context::CPU(), false, mshadow::kInt8),
+      NDArray(TShape({1, 1, 1, 1}), Context::CPU(), false, mshadow::kInt8),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  inputs[0].SyncCopyFromCPU(data_values.data(), data_values.size());
+  inputs[1].SyncCopyFromCPU(weight_values.data(), weight_values.size());
+  inputs[2].SyncCopyFromCPU(data_min.data(), data_min.size());
+  inputs[3].SyncCopyFromCPU(data_max.data(), data_max.size());
+  inputs[4].SyncCopyFromCPU(weight_min.data(), weight_min.size());
+  inputs[5].SyncCopyFromCPU(weight_max.data(), weight_max.size());
+
+  std::vector<NDArray> outputs{
+      NDArray(TShape({1, 1, 1, 1}), Context::CPU(), false, mshadow::kInt32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  const std::vector<int32_t> out_sentinel{77};
+  const std::vector<float> min_sentinel{2.f};
+  const std::vector<float> max_sentinel{4.f};
+  outputs[0].SyncCopyFromCPU(out_sentinel.data(), out_sentinel.size());
+  outputs[1].SyncCopyFromCPU(min_sentinel.data(), min_sentinel.size());
+  outputs[2].SyncCopyFromCPU(max_sentinel.data(), max_sentinel.size());
+
+  InvokeDNNLOp(attrs, &inputs, &outputs, {kNullOp, kAddTo, kNullOp});
+  std::vector<int32_t> out(1);
+  std::vector<float> out_min(1);
+  std::vector<float> out_max(1);
+  outputs[0].SyncCopyToCPU(out.data(), out.size());
+  outputs[1].SyncCopyToCPU(out_min.data(), out_min.size());
+  outputs[2].SyncCopyToCPU(out_max.data(), out_max.size());
+  EXPECT_EQ(out_sentinel, out);
+  EXPECT_LT(out_min[0], 2.f);
+  EXPECT_FLOAT_EQ(4.f, out_max[0]);
+}
+
+TEST(DNNL_QUANTIZED_FC, RequestContract) {
+  nnvm::NodeAttrs attrs;
+  attrs.op = Op::Get("_contrib_quantized_fully_connected");
+  attrs.dict["num_hidden"] = "1";
+  attrs.dict["no_bias"] = "True";
+  attrs.op->attr_parser(&attrs);
+
+  const std::vector<int8_t> data_values{2};
+  const std::vector<int8_t> weight_values{3};
+  const std::vector<float> data_min{-2.f};
+  const std::vector<float> data_max{2.f};
+  const std::vector<float> weight_min{-4.f};
+  const std::vector<float> weight_max{4.f};
+  std::vector<NDArray> inputs{
+      NDArray(TShape({1, 1}), Context::CPU(), false, mshadow::kInt8),
+      NDArray(TShape({1, 1}), Context::CPU(), false, mshadow::kInt8),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  inputs[0].SyncCopyFromCPU(data_values.data(), data_values.size());
+  inputs[1].SyncCopyFromCPU(weight_values.data(), weight_values.size());
+  inputs[2].SyncCopyFromCPU(data_min.data(), data_min.size());
+  inputs[3].SyncCopyFromCPU(data_max.data(), data_max.size());
+  inputs[4].SyncCopyFromCPU(weight_min.data(), weight_min.size());
+  inputs[5].SyncCopyFromCPU(weight_max.data(), weight_max.size());
+
+  std::vector<NDArray> outputs{
+      NDArray(TShape({1, 1}), Context::CPU(), false, mshadow::kInt32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  const std::vector<int32_t> out_sentinel{77};
+  const std::vector<float> min_sentinel{2.f};
+  const std::vector<float> max_sentinel{4.f};
+  outputs[0].SyncCopyFromCPU(out_sentinel.data(), out_sentinel.size());
+  outputs[1].SyncCopyFromCPU(min_sentinel.data(), min_sentinel.size());
+  outputs[2].SyncCopyFromCPU(max_sentinel.data(), max_sentinel.size());
+
+  InvokeDNNLOp(attrs, &inputs, &outputs, {kNullOp, kAddTo, kNullOp});
+  std::vector<int32_t> out(1);
+  std::vector<float> out_min(1);
+  std::vector<float> out_max(1);
+  outputs[0].SyncCopyToCPU(out.data(), out.size());
+  outputs[1].SyncCopyToCPU(out_min.data(), out_min.size());
+  outputs[2].SyncCopyToCPU(out_max.data(), out_max.size());
+  EXPECT_EQ(out_sentinel, out);
+  EXPECT_LT(out_min[0], 2.f);
+  EXPECT_FLOAT_EQ(4.f, out_max[0]);
+}
+
+TEST(DNNL_QUANTIZED_ELEMWISE_ADD, SymmetricRequestContract) {
+  nnvm::NodeAttrs attrs;
+  attrs.op = Op::Get("_contrib_quantized_elemwise_add");
+  attrs.op->attr_parser(&attrs);
+
+  const std::vector<int8_t> lhs{1, 2};
+  const std::vector<int8_t> rhs{3, 4};
+  const std::vector<float> lhs_min{-2.f};
+  const std::vector<float> lhs_max{2.f};
+  const std::vector<float> rhs_min{-4.f};
+  const std::vector<float> rhs_max{4.f};
+  std::vector<NDArray> inputs{
+      NDArray(TShape({2}), Context::CPU(), false, mshadow::kInt8),
+      NDArray(TShape({2}), Context::CPU(), false, mshadow::kInt8),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  inputs[qadd::kDataA].SyncCopyFromCPU(lhs.data(), lhs.size());
+  inputs[qadd::kDataB].SyncCopyFromCPU(rhs.data(), rhs.size());
+  inputs[qadd::kAMin].SyncCopyFromCPU(lhs_min.data(), lhs_min.size());
+  inputs[qadd::kAMax].SyncCopyFromCPU(lhs_max.data(), lhs_max.size());
+  inputs[qadd::kBMin].SyncCopyFromCPU(rhs_min.data(), rhs_min.size());
+  inputs[qadd::kBMax].SyncCopyFromCPU(rhs_max.data(), rhs_max.size());
+
+  std::vector<NDArray> outputs{
+      NDArray(TShape({2}), Context::CPU(), false, mshadow::kInt32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  const std::vector<int32_t> out_sentinel{77, 78};
+  const std::vector<float> min_sentinel{2.f};
+  const std::vector<float> max_sentinel{4.f};
+  outputs[qadd::kOut].SyncCopyFromCPU(out_sentinel.data(), out_sentinel.size());
+  outputs[qadd::kMin].SyncCopyFromCPU(min_sentinel.data(), min_sentinel.size());
+  outputs[qadd::kMax].SyncCopyFromCPU(max_sentinel.data(), max_sentinel.size());
+
+  InvokeDNNLOp(attrs, &inputs, &outputs, {kNullOp, kNullOp, kAddTo});
+  std::vector<int32_t> out(2);
+  std::vector<float> out_min(1);
+  std::vector<float> out_max(1);
+  outputs[qadd::kOut].SyncCopyToCPU(out.data(), out.size());
+  outputs[qadd::kMin].SyncCopyToCPU(out_min.data(), out_min.size());
+  outputs[qadd::kMax].SyncCopyToCPU(out_max.data(), out_max.size());
+  EXPECT_EQ(out_sentinel, out);
+  EXPECT_FLOAT_EQ(2.f, out_min[0]);
+  EXPECT_FLOAT_EQ(10.f, out_max[0]);
+}
+
+TEST(DNNL_DEQUANTIZE, UInt8InvalidatesOutputBeforeRawWrite) {
+  nnvm::NodeAttrs attrs;
+  attrs.op = Op::Get("_contrib_dequantize");
+  attrs.op->attr_parser(&attrs);
+
+  const std::vector<uint8_t> data_values{0, 255};
+  const std::vector<float> in_min{-1.f};
+  const std::vector<float> in_max{1.f};
+  std::vector<NDArray> inputs{
+      NDArray(TShape({2}), Context::CPU(), false, mshadow::kUint8),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32),
+      NDArray(TShape({1}), Context::CPU(), false, mshadow::kFloat32)};
+  inputs[0].SyncCopyFromCPU(data_values.data(), data_values.size());
+  inputs[1].SyncCopyFromCPU(in_min.data(), in_min.size());
+  inputs[2].SyncCopyFromCPU(in_max.data(), in_max.size());
+
+  std::vector<NDArray> outputs{
+      NDArray(TShape({2}), Context::CPU(), false, mshadow::kFloat32)};
+  static auto& createop = nnvm::Op::GetAttr<FCreateOpState>("FCreateOpState");
+  std::vector<TShape> input_shapes{TShape({2}), TShape({1}), TShape({1})};
+  std::vector<int> input_types{mshadow::kUint8, mshadow::kFloat32, mshadow::kFloat32};
+  OpStatePtr state = createop[attrs.op](attrs, Context::CPU(), input_shapes, input_types);
+  InvokeDNNLOp(attrs, &inputs, &outputs, {kWriteTo}, state);
+
+  std::vector<float> out(2);
+  outputs[0].SyncCopyToCPU(out.data(), out.size());
+  EXPECT_FLOAT_EQ(-1.f, out[0]);
+  EXPECT_FLOAT_EQ(1.f, out[1]);
 }
 
 #endif  // MXNET_USE_ONEDNN == 1

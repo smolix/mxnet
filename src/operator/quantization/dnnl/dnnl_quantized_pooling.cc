@@ -26,6 +26,7 @@
 #if MXNET_USE_ONEDNN == 1
 
 #include "operator/nn/dnnl/dnnl_pooling-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 
 namespace mxnet {
 namespace op {
@@ -46,8 +47,14 @@ static void DNNLQuantizedPoolingForward(const nnvm::NodeAttrs& attrs,
   } else {
     DNNLRun(DNNLPoolingCompute, attrs, ctx, in_data, req, out_data);
   }
-  out_data[1].data().dptr<float>()[0] = in_data[1].data().dptr<float>()[0];
-  out_data[2].data().dptr<float>()[0] = in_data[2].data().dptr<float>()[0];
+  AssignQuantizedRangeOutput(out_data[1].data().dptr<float>(),
+                             in_data[1].data().dptr<float>(),
+                             req[1],
+                             "quantized_pooling");
+  AssignQuantizedRangeOutput(out_data[2].data().dptr<float>(),
+                             in_data[2].data().dptr<float>(),
+                             req[2],
+                             "quantized_pooling");
 }
 
 NNVM_REGISTER_OP(_contrib_quantized_pooling)

@@ -31,6 +31,7 @@
 #include "operator/nn/dnnl/dnnl_base-inl.h"
 #include "operator/nn/dnnl/dnnl_convolution-inl.h"
 #include "operator/tensor/matrix_op-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/quantization/quantization_utils.h"
 
 namespace mxnet {
@@ -103,27 +104,27 @@ static void DNNLQuantizedConvForward(const nnvm::NodeAttrs& attrs,
     }
   }
 
-  float* min_output_ptr = out_data[1].data().dptr<float>();
-  float* max_output_ptr = out_data[2].data().dptr<float>();
+  float min_output = 0.0f;
+  float max_output = 0.0f;
   if (data_is_int8) {
-    Stream<cpu>* s = ctx.get_stream<cpu>();
-    mxnet_op::Kernel<QuantizationRangeForS8S8MultiplicationStruct, cpu>::Launch(
-        s,
-        1,
-        min_output_ptr,
-        max_output_ptr,
-        in_data[num_inputs].data().dptr<float>(),
-        in_data[num_inputs + 1].data().dptr<float>(),
-        in_data[num_inputs + 2].data().dptr<float>(),
-        in_data[num_inputs + 3].data().dptr<float>());
+    QuantizationRangeForMultiplication<int8_t, int8_t, int32_t>(
+        min_data, max_data, min_weight, max_weight, &min_output, &max_output, true);
   } else {
     const float data_float_for_one_quant_level   = (max_data - min_data) / kUint8Range;
     const float weight_float_for_one_quant_level = MaxAbs(min_weight, max_weight) / kInt8Range;
     const float output_range =
         data_float_for_one_quant_level * weight_float_for_one_quant_level * kInt32Range;
-    *min_output_ptr = -output_range;
-    *max_output_ptr = output_range;
+    min_output = -output_range;
+    max_output = output_range;
   }
+  AssignQuantizedRangeOutput(out_data[1].data().dptr<float>(),
+                             &min_output,
+                             req[1],
+                             "quantized_conv");
+  AssignQuantizedRangeOutput(out_data[2].data().dptr<float>(),
+                             &max_output,
+                             req[2],
+                             "quantized_conv");
 
   const auto& dshape = data.shape();
   const auto& wshape = weight.shape();
@@ -132,6 +133,10 @@ static void DNNLQuantizedConvForward(const nnvm::NodeAttrs& attrs,
   CHECK(ndim == 2 || ndim == 3) << "oneDNN quantized_conv only supports 2D and 3D convolution";
   CHECK_EQ(dshape.ndim(), static_cast<uint32_t>(ndim + 2));
   CHECK_EQ(wshape.ndim(), static_cast<uint32_t>(ndim + 2));
+
+  if (req[conv::kOut] == kNullOp) {
+    return;
+  }
 
   auto& out_arr = const_cast<NDArray&>(out_data[conv::kOut]);
   out_arr.InvalidateDNNLData();

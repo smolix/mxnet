@@ -415,6 +415,18 @@ static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
   in_desc.push_back(B_mem->get_desc());
 
   dnnl_output_t out_mem;
+  AssignQuantizedRangeOutput(outputs[q_elemwise_add::kMin].data().dptr<float>(),
+                             &output_min,
+                             req[q_elemwise_add::kMin],
+                             "quantized_elemwise_add");
+  AssignQuantizedRangeOutput(outputs[q_elemwise_add::kMax].data().dptr<float>(),
+                             &output_max,
+                             req[q_elemwise_add::kMax],
+                             "quantized_elemwise_add");
+  if (req[q_elemwise_add::kOut] == kNullOp) {
+    return;
+  }
+
   auto output_md     = outputs[q_elemwise_add::kOut].GetDNNLData()->get_desc();
   DNNLStream* stream = DNNLStream::Get();
 
@@ -455,8 +467,6 @@ static void DNNLQuantizedElemwiseAddForward(const nnvm::NodeAttrs& attrs,
   CommitOutput(outputs[q_elemwise_add::kOut], out_mem);
   stream->Submit();
 
-  outputs[q_elemwise_add::kMin].data().dptr<float>()[0] = output_min;
-  outputs[q_elemwise_add::kMax].data().dptr<float>()[0] = output_max;
 }
 
 inline static bool ElemwiseAddStorageType(const nnvm::NodeAttrs& attrs,

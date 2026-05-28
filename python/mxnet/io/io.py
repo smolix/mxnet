@@ -387,6 +387,7 @@ class PrefetchingIter(DataIter):
         self.started = True
         self.current_batch = [None for i in range(self.n_iter)]
         self.next_batch = [None for i in range(self.n_iter)]
+        self._prefetch_exceptions = [None for i in range(self.n_iter)]
         def prefetch_func(self, i):
             """Thread entry"""
             while True:
@@ -396,6 +397,9 @@ class PrefetchingIter(DataIter):
                 try:
                     self.next_batch[i] = self.iters[i].next()
                 except StopIteration:
+                    self.next_batch[i] = None
+                except Exception as err:  # pylint: disable=broad-except
+                    self._prefetch_exceptions[i] = err
                     self.next_batch[i] = None
                 self.data_taken[i].clear()
                 self.data_ready[i].set()
@@ -410,7 +414,12 @@ class PrefetchingIter(DataIter):
         for i in self.data_taken:
             i.set()
         for thread in self.prefetch_threads:
-            thread.join()
+            thread.join(timeout=5)
+
+    def _check_prefetch_errors(self):
+        for err in self._prefetch_exceptions:
+            if err is not None:
+                raise err
 
     @property
     def provide_data(self):
@@ -437,8 +446,10 @@ class PrefetchingIter(DataIter):
     def reset(self):
         for i in self.data_ready:
             i.wait()
+        self._check_prefetch_errors()
         for i in self.iters:
             i.reset()
+        self._prefetch_exceptions = [None for i in range(self.n_iter)]
         for i in self.data_ready:
             i.clear()
         for i in self.data_taken:
@@ -447,6 +458,7 @@ class PrefetchingIter(DataIter):
     def iter_next(self):
         for i in self.data_ready:
             i.wait()
+        self._check_prefetch_errors()
         if self.next_batch[0] is None:
             for i in self.next_batch:
                 assert i is None, "Number of entry mismatches between iterators"

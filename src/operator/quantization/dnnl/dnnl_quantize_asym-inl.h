@@ -83,9 +83,20 @@ void DNNLQuantizeAsymOp::Forward(const OpContext& ctx,
         outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_quantize_asym");
     AssignQuantizedRangeOutput(
         outputs[2].data().dptr<float>(), &out_max, req[2], "_contrib_quantize_asym");
-    if (req[0] != kNullOp && req[0] != kWriteInplace) {
+    if (req[0] == kWriteTo) {
       const_cast<NDArray&>(outputs[0]).CopyFrom(*inputs[0].GetDNNLData());
       DNNLStream::Get()->Submit();
+    } else if (req[0] == kAddTo) {
+      NDArray input_buffer = inputs[0].Reorder2Default();
+      const uint8_t* input_ptr = input_buffer.data().dptr<uint8_t>();
+      uint8_t* output_ptr      = outputs[0].data().dptr<uint8_t>();
+      const int nthreads       = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+#pragma omp parallel for num_threads(nthreads)
+      for (index_t i = 0; i < static_cast<index_t>(input_buffer.shape().Size()); ++i) {
+        KERNEL_ASSIGN(output_ptr[i], req[0], input_ptr[i]);
+      }
+    } else if (req[0] != kNullOp && req[0] != kWriteInplace) {
+      LOG(FATAL) << "Unsupported request type for _contrib_quantize_asym data output";
     }
   } else {
     in_buffer                 = inputs[0].Reorder2Default();

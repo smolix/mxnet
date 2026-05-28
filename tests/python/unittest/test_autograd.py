@@ -521,6 +521,23 @@ def test_function():
     assert_almost_equal(y.grad.asnumpy(), dy1, atol=atol)
 
 
+def test_function_forward_exception_restores_recording_state():
+    class Failing(Function):
+        def forward(self, x):
+            raise RuntimeError("forward failed")
+
+        def backward(self, dy):
+            return dy
+
+    x = mx.nd.ones((1,))
+    x.attach_grad()
+    with record():
+        assert is_recording()
+        with pytest.raises(RuntimeError):
+            Failing()(x)
+        assert is_recording()
+
+
 @pytest.mark.garbage_expected
 def test_function1():
     class Foo(mx.autograd.Function):

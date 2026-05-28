@@ -46,7 +46,7 @@ def _get_global_func(name, allow_missing=False):
     handle = FunctionHandle()
     check_call(_LIB.MXNetFuncGetGlobal(c_str(name), ctypes.byref(handle)))
     if handle.value:
-        return _make_packed_func(handle, False)
+        return _make_packed_func(handle, True)
 
     if allow_missing:
         return None
@@ -84,8 +84,10 @@ def _make_mxnet_args(args, temp_args):
             values[i].v_float64 = arg
             type_codes[i] = TypeCode.FLOAT
         elif isinstance(arg, str):
-            values[i].v_str = c_str(arg)
+            cstr = c_str(arg)
+            values[i].v_str = cstr
             type_codes[i] = TypeCode.STR
+            temp_args.append(cstr)
         elif isinstance(arg, (list, tuple, dict)):
             arg = _FUNC_CONVERT_TO_NODE(arg)
             values[i].v_handle = arg.handle

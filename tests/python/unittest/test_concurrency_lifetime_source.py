@@ -65,6 +65,14 @@ def test_dnnl_activation_backward_uses_commit_output_path():
     assert "CreateDNNLData" not in body
 
 
+def test_dnnl_rnn_backward_guards_null_state_cell_commit():
+    contents = _read("src/operator/nn/dnnl/dnnl_rnn.cc")
+    body = contents.split("void DNNLRnnOp::Backward", 1)[1].split("// Commit weights diff", 1)[0]
+
+    assert "req[rnn_enum::kStateCell] != kNullOp" in body
+    assert "CommitOutput(outputs[rnn_enum::kStateCell], diff_statecell_mem)" in body
+
+
 def test_dnnl_batch_norm_forward_honors_output_requests():
     contents = _read("src/operator/nn/dnnl/dnnl_batch_norm.cc")
     body = contents.split("void DNNLBNForward::Execute", 1)[1].split("// v3: build", 1)[0]
@@ -90,6 +98,48 @@ def test_python_custom_callbacks_keep_ctypes_arrays_alive():
     assert "callback_array = c_array(CFUNCTYPE(c_int), callbacks)" in autograd_py
     assert "context_array = c_array(c_void_p, [None]*len(callbacks))" in autograd_py
     assert "Function._registry.ref_holder[key] = (context, callbacks, callback_array, context_array)" in autograd_py
+
+
+def test_python_custom_prop_keeps_returned_pointer_buffers_alive():
+    operator_py = _read("python/mxnet/operator.py")
+
+    assert "shape_buffers = []" in operator_py
+    assert "infer_shape_entry._ref_holder = [tensor_shapes, shape_buffers]" in operator_py
+    assert "list_outputs_entry._ref_holder = [out, ret]" in operator_py
+    assert "list_arguments_entry._ref_holder = [out, ret]" in operator_py
+    assert "list_auxiliary_states_entry._ref_holder = [out, ret]" in operator_py
+    assert "dep_buffer = c_array_buf(c_int, array('i', rdeps))" in operator_py
+    assert "declare_backward_dependency_entry._ref_holder = [deps, dep_buffer]" in operator_py
+
+
+def test_ctypes_ffi_keeps_global_handles_and_string_args_alive():
+    contents = _read("python/mxnet/_ffi/_ctypes/function.py")
+
+    assert "return _make_packed_func(handle, True)" in contents
+    assert "cstr = c_str(arg)" in contents
+    assert "temp_args.append(cstr)" in contents
+
+
+def test_prefetching_iter_propagates_worker_errors_without_deadlock():
+    contents = _read("python/mxnet/io/io.py")
+
+    assert "self._prefetch_exceptions = [None for i in range(self.n_iter)]" in contents
+    assert "except Exception as err" in contents
+    assert "self._prefetch_exceptions[i] = err" in contents
+    assert "self.data_ready[i].set()" in contents
+    assert "def _check_prefetch_errors(self):" in contents
+    assert "thread.join(timeout=5)" in contents
+
+
+def test_quantize_asym_saturates_and_honors_output_requests():
+    native = _read("src/operator/quantization/quantize_asym-inl.h")
+    dnnl = _read("src/operator/quantization/dnnl/dnnl_quantize_asym-inl.h")
+
+    assert "Min(Max(rounded, 0.0f)" in native
+    assert "KERNEL_ASSIGN(out[i], req, quantized)" in native
+    assert "AssignQuantizedRangeOutput<xpu>(s, outputs[1], scale, req[1])" in native
+    assert "req[0] == kAddTo" in dnnl
+    assert "KERNEL_ASSIGN(output_ptr[i], req[0], input_ptr[i])" in dnnl
 
 
 def test_custom_create_operator_releases_callback_list_only_after_success():

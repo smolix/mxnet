@@ -445,8 +445,10 @@ class Function(object):
         self._used = True
 
         prev_recording = set_recording(False)
-        outputs = self.forward(*inputs)
-        set_recording(prev_recording)
+        try:
+            outputs = self.forward(*inputs)
+        finally:
+            set_recording(prev_recording)
 
         if not prev_recording:
             return outputs

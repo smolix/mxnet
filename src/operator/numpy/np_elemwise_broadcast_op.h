@@ -906,6 +906,27 @@ void NumpyDivideBroadcastComputeCPU(const nnvm::NodeAttrs& attrs,
                                     const std::vector<TBlob>& outputs);
 
 template <typename OP>
+void NumpyBinaryOperatorFallbackCPU(const nnvm::NodeAttrs& attrs,
+                                    const OpContext& ctx,
+                                    const std::vector<TBlob>& inputs,
+                                    const std::vector<OpReqType>& req,
+                                    const std::vector<TBlob>& outputs) {
+  using namespace op::mshadow_op;
+  if (std::is_same<OP, plus>::value) {
+    NumpyBinaryBroadcastComputeWithBool<cpu, OP, mixed_plus, mixed_plus>(
+        attrs, ctx, inputs, req, outputs);
+  } else if (std::is_same<OP, minus>::value) {
+    NumpyBinaryBroadcastCompute<cpu, OP, mixed_minus, mixed_rminus>(
+        attrs, ctx, inputs, req, outputs);
+  } else if (std::is_same<OP, mul>::value) {
+    NumpyBinaryBroadcastComputeWithBool<cpu, OP, mixed_mul, mixed_mul>(
+        attrs, ctx, inputs, req, outputs);
+  } else if (std::is_same<OP, div>::value) {
+    NumpyDivideBroadcastComputeCPU(attrs, ctx, inputs, req, outputs);
+  }
+}
+
+template <typename OP>
 void NumpyBinaryOperatorComputeExCPU(const nnvm::NodeAttrs& attrs,
                                      const OpContext& ctx,
                                      const std::vector<mxnet::NDArray>& inputs,
@@ -916,21 +937,7 @@ void NumpyBinaryOperatorComputeExCPU(const nnvm::NodeAttrs& attrs,
     DNNLRun(DNNLBinaryOpForward<alg>, attrs, ctx, inputs, req, outputs);
     return;
   }
-  using namespace op::mshadow_op;
-  std::vector<mxnet::TBlob> in_data  = {inputs[0].data(), inputs[1].data()};
-  std::vector<mxnet::TBlob> out_data = {outputs[0].data()};
-  if (std::is_same<OP, plus>::value) {
-    NumpyBinaryBroadcastComputeWithBool<cpu, OP, mixed_plus, mixed_plus>(
-        attrs, ctx, in_data, req, out_data);
-  } else if (std::is_same<OP, minus>::value) {
-    NumpyBinaryBroadcastCompute<cpu, OP, mixed_minus, mixed_rminus>(
-        attrs, ctx, in_data, req, out_data);
-  } else if (std::is_same<OP, mul>::value) {
-    NumpyBinaryBroadcastComputeWithBool<cpu, OP, mixed_mul, mixed_mul>(
-        attrs, ctx, in_data, req, out_data);
-  } else if (std::is_same<OP, div>::value) {
-    NumpyDivideBroadcastComputeCPU(attrs, ctx, in_data, req, out_data);
-  }
+  FallBackCompute(NumpyBinaryOperatorFallbackCPU<OP>, attrs, ctx, inputs, req, outputs);
 }
 #endif  // MXNET_USE_ONEDNN
 

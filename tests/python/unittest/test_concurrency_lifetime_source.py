@@ -159,3 +159,25 @@ def test_packed_ret_value_owns_copied_ndarray_handles_until_handoff():
     assert "ndarray_handle_is_owned_   = true" in body
     assert "delete ptr<NDArray>()" in body
     assert "ndarray_handle_is_owned_   = false" in body
+
+
+def test_python_callback_ndarray_handles_are_python_owned():
+    custom_cc = _read("src/operator/custom/custom.cc")
+    c_api_function_cc = _read("src/c_api/c_api_function.cc")
+    ctypes_ndarray = _read("python/mxnet/_ctypes/ndarray.py")
+    c_api_cc = _read("src/c_api/c_api.cc")
+
+    assert "check_call(_LIB.MXNDArrayFree(self.handle))" in ctypes_ndarray
+    assert "delete static_cast<NDArray*>(handle)" in c_api_cc
+
+    assert "std::unique_ptr<NDArray>" not in custom_cc
+    assert "std::unique_ptr<NDArray>" not in c_api_function_cc
+
+
+def test_numpy_binary_onednn_fallback_uses_layout_safe_fallback_compute():
+    contents = _read("src/operator/numpy/np_elemwise_broadcast_op.h")
+    body = contents.split("void NumpyBinaryOperatorComputeExCPU", 1)[1].split("#endif  // MXNET_USE_ONEDNN", 1)[0]
+
+    assert "FallBackCompute(NumpyBinaryOperatorFallbackCPU<OP>, attrs, ctx, inputs, req, outputs)" in body
+    assert "inputs[0].data()" not in body
+    assert "outputs[0].data()" not in body

@@ -1247,6 +1247,27 @@ def test_quantized_act():
 
 
 @use_np
+def test_quantized_act_uint8_affine_relu_clamps_real_zero():
+    if not is_test_for_dnnl():
+        print('skipped testing quantized_act affine uint8 for non-oneDNN backend')
+        return
+
+    qdata = mx.np.array([0, 212, 255], dtype='uint8')
+    min_data = mx.np.array([-5.0], dtype='float32')
+    max_data = mx.np.array([1.0], dtype='float32')
+
+    qout, min_out, max_out = npx.quantized_act(qdata, min_data, max_data, act_type='relu')
+    dequantized = mx.nd.contrib.dequantize(qout.as_nd_ndarray(),
+                                           min_out.as_nd_ndarray(),
+                                           max_out.as_nd_ndarray(),
+                                           out_type='float32')
+
+    assert_almost_equal(min_out.item(), 0.0)
+    assert_almost_equal(max_out.item(), 1.0)
+    assert_almost_equal(dequantized.asnumpy(), onp.array([0.0, 0.0, 1.0]), atol=0.02, rtol=0.02)
+
+
+@use_np
 def test_quantized_bn():
     def get_mean_var(data):
         axes = list(range(data.ndim))

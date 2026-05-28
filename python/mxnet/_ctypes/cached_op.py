@@ -34,6 +34,8 @@ def _monitor_callback_wrapper(callback):
     """A wrapper for the user-defined handle."""
     def callback_handle(name, opr_name, array, _):
         """ ctypes function """
+        array = _global_var._ndarray_cls(ctypes.cast(array, NDArrayHandle),
+                                         writable=False)
         callback(name, opr_name, array)
     return callback_handle
 

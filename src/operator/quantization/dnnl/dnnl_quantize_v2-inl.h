@@ -105,14 +105,14 @@ void SgDNNLQuantizeOperator::Forward(const OpContext& ctx,
     } else {
       if (inputs[0].dtype() == mshadow::kUint8) {
         const float out_min = 0;
-        const float out_max = kUint8Range;
+        const float out_max = mshadow::red::limits::MaxValue<uint8_t>();
         AssignQuantizedRangeOutput(
             outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_quantize_v2");
         AssignQuantizedRangeOutput(
             outputs[2].data().dptr<float>(), &out_max, req[2], "_contrib_quantize_v2");
       } else {
-        const float out_min = -kInt8Range;
-        const float out_max = kInt8Range;
+        const float out_min = mshadow::red::limits::MinValue<int8_t>() + 1;
+        const float out_max = mshadow::red::limits::MaxValue<int8_t>();
         AssignQuantizedRangeOutput(
             outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_quantize_v2");
         AssignQuantizedRangeOutput(

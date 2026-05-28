@@ -26,17 +26,14 @@
 #include <mxnet/c_api.h>
 #include <mxnet/kvstore.h>
 #include <ps/ps.h>
-#include <queue>
 #include <string>
-#include <mutex>
-#include <condition_variable>
 #include <memory>
 #include <functional>
-#include <future>
 #include <vector>
 #include "../profiler/profiler.h"
 #include "../operator/tensor/elemwise_binary_op-inl.h"
 #include "../operator/tensor/init_op.h"
+#include "./kvstore_executor.h"
 
 namespace mxnet {
 namespace kvstore {
@@ -89,70 +86,6 @@ static DataHandleType DepairDataHandleType(int cmd) {
   type.dtype       = y;
   return type;
 }
-
-/**
- * \brief executor runs a function using the thread called \ref Start
- */
-class Executor {
- public:
-  /**
-   * \brief start the executor
-   */
-  void Start() {
-    std::unique_lock<std::mutex> lk(mu_);
-    while (true) {
-      cond_.wait(lk, [this] { return !queue_.empty(); });
-      Block blk = std::move(queue_.front());
-      queue_.pop();
-      lk.unlock();
-
-      if (blk.f) {
-        blk.f();
-        blk.p->set_value();
-      } else {
-        blk.p->set_value();
-        break;
-      }
-      lk.lock();
-    }
-  }
-
-  /**
-   * \brief function
-   */
-  typedef std::function<void()> Func;
-
-  /**
-   * \brief let the thread called \ref Start to exec a function. threadsafe
-   */
-  void Exec(const Func& func) {
-    Block blk(func);
-    auto fut = blk.p->get_future();
-    {
-      std::lock_guard<std::mutex> lk(mu_);
-      queue_.push(std::move(blk));
-      cond_.notify_one();
-    }
-    fut.wait();
-  }
-
-  /**
-   * \brief stop the thread, threadsafe
-   */
-  void Stop() {
-    Exec(Func());
-  }
-
- private:
-  struct Block {
-    explicit Block(const Func& func) : f(func), p(std::make_shared<std::promise<void>>()) {}
-    Func f;
-    std::shared_ptr<std::promise<void>> p;
-  };
-  std::queue<Block> queue_;
-  std::mutex mu_;
-  std::condition_variable cond_;
-};
 
 class KVStoreDistServer {
  public:

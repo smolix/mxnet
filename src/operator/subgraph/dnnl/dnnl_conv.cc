@@ -702,6 +702,10 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
         CHECK_EQ(data.dtype(), mshadow::kInt8)
             << "Expect int8 when data_min < 0.0, consider quantize model with int8.";
       }
+      CHECK(data.dtype() != mshadow::kUint8 || cached_data_min_ == 0.0f)
+          << "oneDNN quantized convolution requires uint8 data_min == 0.0 because "
+             "the primitive path does not apply source zero points; use int8 for "
+             "ranges with a nonzero offset.";
       auto weight_channelwise_scale = false;
       if (dnnl_param.min_calib_range.has_value() && dnnl_param.max_calib_range.has_value()) {
         cached_output_min_       = dnnl_param.min_calib_range.value();

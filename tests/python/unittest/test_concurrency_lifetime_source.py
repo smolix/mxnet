@@ -254,3 +254,13 @@ def test_dnnl_fc_bf16_fallback_preserves_output_req():
     assert "f32_req.push_back(kAddTo)" in body
     assert "f32_req.push_back(kWriteTo)" in body
     assert "f32_req.push_back(req[i])" in body
+
+
+def test_onednn_quantized_subgraphs_reject_uint8_nonzero_offsets():
+    conv = _read("src/operator/subgraph/dnnl/dnnl_conv.cc")
+    fc = _read("src/operator/subgraph/dnnl/dnnl_fc.cc")
+
+    assert "data.dtype() != mshadow::kUint8 || cached_data_min_ == 0.0f" in conv
+    assert "the primitive path does not apply source zero points" in conv
+    assert "data.dtype() != mshadow::kUint8 || cached_data_min_ == 0.0f" in fc
+    assert "the primitive path does not apply source zero points" in fc

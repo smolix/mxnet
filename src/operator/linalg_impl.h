@@ -436,20 +436,28 @@ inline void linalg_gemm<gpu, double>(const Tensor<gpu, 2, double>& A,
     used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
   }
   if (!used_lt) {
-    CUBLAS_CALL(cublasDgemm(handle,
-                            op_a,
-                            op_b,
-                            gemm_m,
-                            gemm_n,
-                            gemm_k,
-                            &alpha,
-                            B.dptr_,
-                            B.stride_,
-                            A.dptr_,
-                            A.stride_,
-                            &beta,
-                            C.dptr_,
-                            C.stride_));
+    // CUDA 13's legacy cublasDgemm returns CUBLAS_STATUS_NOT_INITIALIZED on this
+    // runtime; use cublasGemmEx with fp64 I/O and CUBLAS_COMPUTE_64F, mirroring the
+    // fp32 SgemmEx fallback above. See docs/cuda_wheel_build.md.
+    CUBLAS_CALL(cublasGemmEx(handle,
+                             op_a,
+                             op_b,
+                             gemm_m,
+                             gemm_n,
+                             gemm_k,
+                             &alpha,
+                             B.dptr_,
+                             CUDA_R_64F,
+                             B.stride_,
+                             A.dptr_,
+                             CUDA_R_64F,
+                             A.stride_,
+                             &beta,
+                             C.dptr_,
+                             CUDA_R_64F,
+                             C.stride_,
+                             CUBLAS_COMPUTE_64F,
+                             CUBLAS_GEMM_DEFAULT));
   }
 }
 

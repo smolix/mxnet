@@ -328,6 +328,43 @@ calls it through the C API.
 
 ---
 
+## 6a. cuBLAS / driver compatibility (the `NOT_INITIALIZED` trap)
+
+The wheel pins `nvidia-cublas>=13.0,<13.2` in `setup.py`. This is not
+cosmetic. `nvidia-cudnn-cu13` declares an **unversioned** `nvidia-cublas`
+dependency, so a bare resolve installs the newest cuBLAS (13.4.x / 13.5.x
+at time of writing). Those **CUDA 13.2+ cuBLAS builds fail to load their
+large-GEMM kernels on the CUDA 13.0 driver line (R580)**:
+
+```
+Cublas: Check failed: err == CUBLAS_STATUS_SUCCESS (1 vs. 0) : Sgemm fail
+```
+
+The tell is **size-dependent** failure: tiny GEMMs (N≤16) and convolutions
+succeed, but any non-trivial `mx.nd.dot` / `np.dot` / `FullyConnected`
+(and conv classifiers like AlexNet/NIN) return
+`CUBLAS_STATUS_NOT_INITIALIZED` (status `1`). It is **not** an API problem
+(swapping `cublasSgemm`→`cublasSgemmEx` does not help), not a workspace
+problem (`CUBLAS_WORKSPACE_CONFIG` / `CUDA_MODULE_LOADING=EAGER` /
+`MXNET_USE_CUBLASLT=1` do not help), and not an MXNet bug — PyTorch with
+its bundled CUDA 12.8 cuBLAS does the same GEMM fine on the same GPU.
+
+Pin to the 13.0/13.1 cuBLAS generation (`13.1.1.3` ships with the CUDA
+13.0.3 toolkit and is what the wheel is built against). An older cuBLAS
+also runs on newer drivers (forward compatible), so the pin is safe across
+the R580 → R590+ range. The alternative fix is upgrading the driver to the
+R590+ line that matches a 13.2+ cuBLAS.
+
+To diagnose which cuBLAS is actually loaded:
+
+```bash
+CUBLAS_LOGINFO_DBG=1 CUBLAS_LOGDEST_DBG=stdout python -c \
+  "import mxnet as mx; mx.nd.dot(mx.nd.ones((256,256),ctx=mx.gpu(0)),
+   mx.nd.ones((256,256),ctx=mx.gpu(0))).wait_to_read()" 2>&1 | grep -m1 'cuBLAS (v'
+# prints e.g. "cuBLAS (v13.1.1) ..."  -- if it says v13.4/v13.5 on an
+# R580 host, that is the bug.
+```
+
 ## 7. The provenance gate — why a green build is trustworthy
 
 `tools/release_provenance.py <wheel> --cmake-cache build/CMakeCache.txt

@@ -99,6 +99,30 @@ def test_quantized_embedding_imperative_forward():
     np.testing.assert_array_equal(out_max.asnumpy(), [127.0])
 
 
+def test_quantized_embedding_range_outputs_do_not_require_primary_output():
+    data = mx.sym.Variable('data', dtype='int32')
+    weight = mx.sym.Variable('weight', dtype='int8')
+    min_weight = mx.sym.Variable('min_weight', dtype='float32')
+    max_weight = mx.sym.Variable('max_weight', dtype='float32')
+    outputs = mx.sym.contrib.quantized_embedding(
+        data=data, weight=weight,
+        min_weight=min_weight, max_weight=max_weight,
+        input_dim=4, output_dim=3)
+    range_only = mx.sym.Group([outputs[1], outputs[2]])
+    exe = range_only._simple_bind(ctx=mx.cpu(),
+                                  data=(2,),
+                                  weight=(4, 3),
+                                  min_weight=(1,),
+                                  max_weight=(1,))
+    exe.arg_dict['data'][:] = mx.nd.array([0, 1], dtype='int32')
+    exe.arg_dict['weight'][:] = mx.nd.zeros((4, 3), dtype='int8')
+    exe.arg_dict['min_weight'][:] = mx.nd.array([-7.0], dtype='float32')
+    exe.arg_dict['max_weight'][:] = mx.nd.array([9.0], dtype='float32')
+    exe.forward(is_train=False)
+    np.testing.assert_array_equal(exe.outputs[0].asnumpy(), [-7.0])
+    np.testing.assert_array_equal(exe.outputs[1].asnumpy(), [9.0])
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

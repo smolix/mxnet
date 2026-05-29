@@ -8750,6 +8750,20 @@ def test_np_tril_indices():
 
 
 @use_np
+def test_np_tril_indices_partial_outputs():
+    row, col = mx.sym.np.tril_indices(4, k=0, m=4)
+    expected = onp.tril_indices(4, k=0, m=4)
+
+    row_exe = row._simple_bind(ctx=mx.cpu())
+    row_exe.forward(is_train=False)
+    assert same(row_exe.outputs[0], expected[0])
+
+    col_exe = col._simple_bind(ctx=mx.cpu())
+    col_exe.forward(is_train=False)
+    assert same(col_exe.outputs[0], expected[1])
+
+
+@use_np
 def test_np_fill_diagonal():
     class TestFillDiagonal(HybridBlock):
         def __init__(self, val, wrap=False):

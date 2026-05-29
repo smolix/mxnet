@@ -8429,6 +8429,22 @@ def test_histogram_cpu_edge_and_invalid_bins():
             mx.nd.histogram(x, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
 
 
+def test_histogram_symbol_partial_outputs():
+    data = mx.sym.Variable("data")
+    counts, edges = mx.sym.histogram(a=data, bins=3, range=(0.0, 3.0))
+    x = mx.nd.array([0.0, 1.0, 2.0, 3.0], ctx=mx.cpu(), dtype=np.float64)
+
+    counts_exe = counts._simple_bind(ctx=mx.cpu(), data=x.shape)
+    counts_exe.arg_dict["data"][:] = x
+    counts_exe.forward(is_train=False)
+    assert_almost_equal(counts_exe.outputs[0].asnumpy(), np.array([1, 1, 2]))
+
+    edges_exe = edges._simple_bind(ctx=mx.cpu(), data=x.shape)
+    edges_exe.arg_dict["data"][:] = x
+    edges_exe.forward(is_train=False)
+    assert_almost_equal(edges_exe.outputs[0].asnumpy(), np.array([0.0, 1.0, 2.0, 3.0]))
+
+
 # Re-enabled 2026-05-17 — audit at HEAD f103c5491 (cuDNN 9.22 + B2 SoftReLU/LogSigmoid fix).
 # @pytest.mark.skip(reason="test fails intermittently. temporarily disabled till it gets fixed. tracked at https://github.com/apache/mxnet/issues/13915")
 def test_activation():

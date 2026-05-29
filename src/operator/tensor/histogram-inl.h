@@ -150,8 +150,10 @@ void HistogramOpForward(const nnvm::NodeAttrs& attrs,
                         const std::vector<OpReqType>& req,
                         const std::vector<TBlob>& outputs) {
   CHECK_EQ(req.size(), 2U);
-  CHECK_EQ(req[0], kWriteTo);
-  CHECK_EQ(req[1], kWriteTo);
+  CHECK(req[0] == kWriteTo || req[0] == kNullOp)
+      << "histogram output only supports kWriteTo or kNullOp";
+  CHECK(req[1] == kWriteTo || req[1] == kNullOp)
+      << "histogram bin-edge output only supports kWriteTo or kNullOp";
   const HistogramParam& param = nnvm::get<HistogramParam>(attrs.parsed);
   const bool has_cnt          = param.bin_cnt.has_value();
   const bool has_range        = param.range.has_value();

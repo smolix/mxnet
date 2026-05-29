@@ -441,6 +441,9 @@ class KVStoreLocal : public KVStore {
                     const FValidate& is_valid,
                     bool ignore_sparse) {
     CHECK_EQ(keys.size(), values.size());
+    if (keys.empty()) {
+      return;
+    }
     // TODO(mli) check if already sorted as an optimization
     using Idx = std::pair<int, int>;
     std::vector<Idx> idx(keys.size());

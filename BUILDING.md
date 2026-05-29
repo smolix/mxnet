@@ -5,10 +5,20 @@ This document describes the actual recipe used to produce the
 MXNet on Blackwell, install the wheel from the GitHub release instead —
 see [`README.md`](README.md).
 
+> **The authoritative, end-to-end release-wheel recipe now lives in
+> [`docs/cuda_wheel_build.md`](docs/cuda_wheel_build.md)** — it wraps the
+> whole build → bundle OpenCV → package → *verify* pipeline behind
+> `tools/build_cleanup_wheel.sh` and a provenance gate. Prefer it for
+> producing a release wheel. This file is kept for the manual/legacy
+> recipe and the macOS arm64 CPU smoke build.
+
 The recipe targets an explicit multi-arch CUDA fatbin: `sm_80`, `sm_86`,
-`sm_89`, `sm_90`, and `sm_120` SASS, plus `compute_120` PTX fallback.
-This is the release-wheel matrix used to keep Ampere, Ada, Hopper, and
-Blackwell coverage explicit.
+`sm_89`, `sm_90`, `sm_100`, and `sm_120` SASS, plus `compute_120` PTX
+fallback. This is the release-wheel matrix used to keep Ampere, Ada,
+Hopper, and Blackwell (both datacenter `sm_100` and consumer `sm_120`)
+coverage explicit. **OpenCV is built `ON`** and bundled into the wheel —
+the C++ image I/O path (`mx.image`, `gluon.data.vision`) requires it and
+there is no Python-level fallback; see `docs/cuda_wheel_build.md` §1.
 
 ## Tested host
 
@@ -36,17 +46,19 @@ CUDA compile phase dominates; expect `nvcc` to be the long pole.
 | CMake       | 3.27+      | older 3.16 in CMakeLists.txt is too lax        |
 | Python      | 3.10-3.13  | 3.11 used for the release wheel                |
 | OpenBLAS    | 0.3.x      | `libopenblas-dev`                              |
-| OpenCV      | 4.x        | optional, off in the release build             |
+| OpenCV      | 4.6        | **ON** in the release build (`libopencv-dev`); native libs bundled into the wheel — required for image I/O |
+| patchelf    | any        | RUNPATH patching + OpenCV bundling             |
 
 ## Required apt packages
 
 ```bash
 sudo apt update
 sudo apt install -y \
-  build-essential ninja-build cmake git \
+  build-essential ninja-build cmake git patchelf \
   libopenblas-dev liblapack-dev \
   libnccl-dev libnccl2 \
   cuda-13 libcudnn9-cuda-13 libcudnn9-dev-cuda-13 \
+  libopencv-dev \
   python3-dev python3-pip
 ```
 
@@ -77,21 +89,30 @@ cmake .. -G Ninja \
   -DUSE_ONEDNN=ON \
   -DUSE_OPENMP=ON \
   -DUSE_F16C=ON \
-  -DUSE_OPENCV=OFF \
+  -DUSE_OPENCV=ON \
   -DUSE_LAPACK=ON \
   -DUSE_BLAS=open \
-  -DMXNET_CUDA_ARCH="8.0;8.6;8.9;9.0;12.0+PTX" \
+  -DMXNET_CUDA_ARCH="8.0;8.6;8.9;9.0;10.0;12.0+PTX" \
   -DCMAKE_INSTALL_PREFIX=/opt/mxnet
 ```
 
 Key flags:
 
-- `MXNET_CUDA_ARCH="8.0;8.6;8.9;9.0;12.0+PTX"` is the release matrix:
-  `sm_80`, `sm_86`, `sm_89`, `sm_90`, and `sm_120` SASS, plus
-  `compute_120` PTX fallback. Leave `CMAKE_CUDA_ARCHITECTURES` unset; the
-  top-level CMake config sets it to `OFF` so MXNet's
+- `MXNET_CUDA_ARCH="8.0;8.6;8.9;9.0;10.0;12.0+PTX"` is the release matrix:
+  `sm_80`, `sm_86`, `sm_89`, `sm_90`, `sm_100`, and `sm_120` SASS, plus
+  `compute_120` PTX fallback. Note that Blackwell is **two** non-compatible
+  families — datacenter `sm_100` and consumer `sm_120` — and `compute_120`
+  PTX does *not* JIT down to `sm_100`, so both must be listed explicitly to
+  cover B200 *and* RTX 50-series. Leave `CMAKE_CUDA_ARCHITECTURES` unset;
+  the top-level CMake config sets it to `OFF` so MXNet's
   `CUDA_SELECT_NVCC_ARCH_FLAGS` emits the fatbin matrix from
   `MXNET_CUDA_ARCH`.
+- `USE_OPENCV=ON` is **required** for the release wheel: `mx.image` and
+  `gluon.data.vision` decode/resize images through OpenCV at the C++ layer.
+  An OpenCV-off wheel raises `Build with USE_OPENCV=1 for image io` at
+  runtime with no Python fallback. The native `libopencv_*.so` files are
+  bundled into the wheel by `tools/build_cleanup_wheel.sh`; see
+  [`docs/cuda_wheel_build.md`](docs/cuda_wheel_build.md).
 - `USE_F16C=ON` enables the F16C intrinsics path for fp16 (de)serialization.
 - `USE_ONEDNN=ON` picks up the vendored v3.11 submodule.
 - `USE_DIST_KVSTORE=OFF` skips ps-lite; not needed for single-host

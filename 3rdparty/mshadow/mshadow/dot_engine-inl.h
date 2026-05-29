@@ -639,9 +639,20 @@ struct BLASEngine<gpu, float> {
                           const float *A, int lda,
                           const float *B, int ldb, float beta,
                           float *C, int ldc) {
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 8000
+    // CUDA 13's legacy cublasSgemm (3m API) returns CUBLAS_STATUS_NOT_INITIALIZED
+    // on this runtime, while the strided-batched and *Ex entry points work. Route
+    // fp32 GEMM through cublasSgemmEx (fp32 I/O + fp32 compute) -- the same modern
+    // entry point the pseudo-fp16 dot path above and linalg_impl.h (FC/RNN) already
+    // use successfully. See docs/cuda_wheel_build.md.
+    cublasStatus_t err = cublasSgemmEx(Stream<gpu>::GetBlasHandle(stream),
+                GetT(transa), GetT(transb), m, n, k, &alpha,
+                A, CUDA_R_32F, lda, B, CUDA_R_32F, ldb, &beta, C, CUDA_R_32F, ldc);
+#else
     cublasStatus_t err = cublasSgemm(Stream<gpu>::GetBlasHandle(stream),
                 GetT(transa), GetT(transb), m, n, k, &alpha,
                 A, lda, B, ldb, &beta, C, ldc);
+#endif
     CHECK_EQ(err, CUBLAS_STATUS_SUCCESS) << "Cublas: Sgemm fail";
   }
   inline static void batched_gemm(Stream<gpu> *stream,
@@ -756,9 +767,19 @@ struct BLASEngine<gpu, double> {
                           const double *A, int lda,
                           const double *B, int ldb,
                           double beta, double *C, int ldc) {
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 11000
+    // CUDA 13's legacy cublasDgemm returns CUBLAS_STATUS_NOT_INITIALIZED on this
+    // runtime (same as the fp32 path); use cublasGemmEx with fp64 I/O and
+    // CUBLAS_COMPUTE_64F. See docs/cuda_wheel_build.md.
+    cublasStatus_t err = cublasGemmEx(Stream<gpu>::GetBlasHandle(stream),
+                GetT(transa), GetT(transb), m, n, k, &alpha,
+                A, CUDA_R_64F, lda, B, CUDA_R_64F, ldb, &beta, C, CUDA_R_64F, ldc,
+                CUBLAS_COMPUTE_64F, CUBLAS_GEMM_DEFAULT);
+#else
     cublasStatus_t err = cublasDgemm(Stream<gpu>::GetBlasHandle(stream),
                 GetT(transa), GetT(transb), m, n, k, &alpha,
                 A, lda, B, ldb, &beta, C, ldc);
+#endif
     CHECK_EQ(err, CUBLAS_STATUS_SUCCESS) << "Cublas: Dgemm fail";
   }
   inline static void batched_gemm(Stream<gpu> *stream,

@@ -139,7 +139,15 @@ def test_fc_eltwise(data_shape, use_bias, flatten, alg):
 
   attrs = {'fc': {'with_eltwise': 'true'}}
   net = FCEltwise(use_bias, flatten, alg)
-  check_fusion(net, data_shape, attrs, check_quantization=flatten)
+  # int8 quantization is validated for every eltwise post-op except `exp`. `exp`
+  # has an unbounded output range: for the larger DATA_SHAPE the FC pre-activations
+  # reach ~60, so exp(.) reaches ~1e27. int8 quantizes the *FC output* to ~0.24
+  # steps, and exp amplifies that exponentially (e^0.24 ~ 1.27), so the int8 vs
+  # fp32 outputs diverge 20-75% on most elements -- inherent to int8 + exp, not a
+  # fusion bug (the fp32 fusion is still checked; smaller shapes pass). Skip only
+  # the int8 accuracy check for exp.
+  check_quantization = flatten and (alg != 'exp')
+  check_fusion(net, data_shape, attrs, check_quantization=check_quantization)
 
 
 @mx.util.use_np

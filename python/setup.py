@@ -49,9 +49,19 @@ BASE_INSTALL_REQUIRES = [
 # (9.22) and `nvidia-nccl-cu13` (2.30) on PyPI for CUDA 13; the other
 # nvidia-*-cu13 packages are placeholder stubs (0.0.1). When they
 # ship real, append them here.
+# `nvidia-cudnn-cu13` declares an *unversioned* `nvidia-cublas` dependency, so a
+# bare resolve pulls the newest cuBLAS (e.g. 13.4.x / 13.5.x). Those CUDA 13.2+
+# cuBLAS builds fail to load their large-GEMM kernels on the CUDA 13.0 driver
+# line (R580): cublasSgemm/cublasLtMatmul return CUBLAS_STATUS_NOT_INITIALIZED
+# for any non-trivial matrix while small GEMMs and convs succeed. Pin cuBLAS to
+# the 13.0/13.1 generation this wheel is built and tested against (13.1.1.3,
+# which ships with the CUDA 13.0.3 toolkit). An older cuBLAS also runs fine on
+# newer drivers (forward compatible), so this is safe across the R580->R590+
+# range. See docs/cuda_wheel_build.md.
 CUDA_RUNTIME_INSTALL_REQUIRES = [
     'nvidia-cudnn-cu13>=9.22,<10',
     'nvidia-nccl-cu13>=2.28,<3',
+    'nvidia-cublas>=13.0,<13.2',
 ]
 
 # Python image/RecordIO helpers import cv2 when OpenCV support is enabled.

@@ -6160,7 +6160,7 @@ def test_custom_op_exc():
 
 @pytest.mark.skipif(has_lapack(), reason="Requires MXNet built without LAPACK support")
 def test_custom_op_potrf_without_lapack_clears_async_error():
-    dot = mx.nd.zeros((2, 2))
+    dot = mx.nd.zeros((2, 2), ctx=mx.cpu())
     result = mx.nd.linalg.potrf(dot)
 
     with pytest.raises(MXNetError, match="without lapack"):

@@ -18,7 +18,7 @@
 # pylint: skip-file
 import mxnet as mx
 import numpy as np
-from common import models
+from common import models, requires_lapack
 from mxnet import autograd
 from mxnet.test_utils import assert_almost_equal
 
@@ -32,6 +32,7 @@ def test_infer_multiout_op():
     assert data.grad.dtype == np.float64
     mx.nd.waitall()
 
+@requires_lapack
 def test_infer_multiout_op2():
     def test_func(a):
         q, l = mx.nd.linalg.gelqf(a)
@@ -49,4 +50,3 @@ def test_infer_multiout_op2():
         test64 = test_func(data64)
         test64.backward()
     assert_almost_equal(data64.grad.asnumpy(), data32.grad.asnumpy(), atol=1e-5, rtol=1e-5)
-

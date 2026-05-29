@@ -142,13 +142,12 @@ void DNNLConcatBackward(const nnvm::NodeAttrs& attrs,
     auto gradi_mem   = CreateDNNLMem(outputs[i], diff_src_md, req[i]);
 
     auto from_md = gradz_mem->get_desc().submemory_desc(diff_src_tz, offsets);
-    auto from_mem =
-        new dnnl::memory(from_md, gradz_mem->get_engine(), gradz_mem->get_data_handle());
+    dnnl::memory from_mem(from_md, gradz_mem->get_engine(), gradz_mem->get_data_handle());
     offsets[concat_dim] += diff_src_tz[concat_dim];
 
     std::unordered_map<int, dnnl::memory> net_args(
-        {{DNNL_ARG_FROM, *gradz_mem}, {DNNL_ARG_TO, *gradi_mem.second}});
-    DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(*from_mem, *gradi_mem.second), net_args);
+        {{DNNL_ARG_FROM, from_mem}, {DNNL_ARG_TO, *gradi_mem.second}});
+    DNNLStream::Get()->RegisterPrimArgs(dnnl::reorder(from_mem, *gradi_mem.second), net_args);
     CommitOutput(outputs[i], gradi_mem);
   }
 

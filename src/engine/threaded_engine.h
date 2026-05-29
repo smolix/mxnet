@@ -358,6 +358,7 @@ class ThreadedEngine : public Engine {
                        OprBlock* opr_block,
                        CallbackOnStart on_start,
                        CallbackOnComplete callback) {
+    callback.InitOnceGuard();
     ThreadedOpr* threaded_opr = opr_block->opr;
     if (opr_block->profiling && threaded_opr->opr_name.size()) {
       std::unique_ptr<profiler::ProfileOperator::Attributes> attrs;
@@ -374,7 +375,7 @@ class ThreadedEngine : public Engine {
       LOG(INFO) << "ExecuteOprBlock " << opr_block << "shutdown_phase=" << shutdown_phase_;
     }
     // still run cleanup in shutdown_phase
-    if (!shutdown_phase_ || threaded_opr->prop == FnProperty::kDeleteVar ||
+    if (!shutdown_phase_ || threaded_opr->wait || threaded_opr->prop == FnProperty::kDeleteVar ||
         threaded_opr->prop == FnProperty::kNoSkip) {
       try {
         OnStart(threaded_opr);
@@ -392,10 +393,12 @@ class ThreadedEngine : public Engine {
             callback();
           }
         } catch (const std::exception& e) {
-          on_start();
-          threaded_opr->opr_exception =
-              std::make_shared<std::exception_ptr>(std::current_exception());
-          callback();
+          if (!callback.completed()) {
+            on_start();
+            threaded_opr->opr_exception =
+                std::make_shared<std::exception_ptr>(std::current_exception());
+            callback();
+          }
         }
         if (debug_info) {
           LOG(INFO) << "Fin ExecuteOprFn ";

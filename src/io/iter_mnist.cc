@@ -26,6 +26,7 @@
 #include <dmlc/io.h>
 #include <dmlc/logging.h>
 #include <dmlc/parameter.h>
+#include <memory>
 #include <string>
 #include <vector>
 #include <utility>
@@ -152,11 +153,12 @@ class MNISTIter : public IIterator<TBlobBatch> {
   }
 
   inline void LoadImage() {
-    dmlc::SeekStream* stdimg = dmlc::SeekStream::CreateForRead(param_.image.c_str());
-    ReadInt(stdimg);
-    int image_count = ReadInt(stdimg);
-    int image_rows  = ReadInt(stdimg);
-    int image_cols  = ReadInt(stdimg);
+    std::unique_ptr<dmlc::SeekStream> stdimg(
+        dmlc::SeekStream::CreateForRead(param_.image.c_str()));
+    ReadInt(stdimg.get());
+    int image_count = ReadInt(stdimg.get());
+    int image_rows  = ReadInt(stdimg.get());
+    int image_cols  = ReadInt(stdimg.get());
 
     int start, end;
     GetPart(image_count, &start, &end);
@@ -174,19 +176,19 @@ class MNISTIter : public IIterator<TBlobBatch> {
       for (int j = 0; j < image_rows; ++j) {
         for (int k = 0; k < image_cols; ++k) {
           unsigned char ch;
-          CHECK(stdimg->Read(&ch, sizeof(ch) != 0));
+          CHECK(stdimg->Read(&ch, sizeof(ch)) != 0);
           img_[i][j][k] = ch;
         }
       }
     }
     // normalize to 0-1
     img_ *= 1.0f / 256.0f;
-    delete stdimg;
   }
   inline void LoadLabel() {
-    dmlc::SeekStream* stdlabel = dmlc::SeekStream::CreateForRead(param_.label.c_str());
-    ReadInt(stdlabel);
-    int labels_count = ReadInt(stdlabel);
+    std::unique_ptr<dmlc::SeekStream> stdlabel(
+        dmlc::SeekStream::CreateForRead(param_.label.c_str()));
+    ReadInt(stdlabel.get());
+    int labels_count = ReadInt(stdlabel.get());
 
     int start, end;
     GetPart(labels_count, &start, &end);
@@ -198,11 +200,10 @@ class MNISTIter : public IIterator<TBlobBatch> {
     labels_.resize(labels_count);
     for (int i = 0; i < labels_count; ++i) {
       unsigned char ch;
-      CHECK(stdlabel->Read(&ch, sizeof(ch) != 0));
+      CHECK(stdlabel->Read(&ch, sizeof(ch)) != 0);
       labels_[i] = ch;
       inst_.push_back((unsigned)i + inst_offset_);
     }
-    delete stdlabel;
   }
   inline void Shuffle() {
     std::shuffle(inst_.begin(), inst_.end(), common::RANDOM_ENGINE(kRandMagic + param_.seed));

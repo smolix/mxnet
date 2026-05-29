@@ -69,6 +69,60 @@ def test_download_successful(tmpdir):
     shutil.rmtree(tmp)
 
 
+def test_download_passes_timeout_to_requests(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            yield b'ok'
+
+        def close(self):
+            pass
+
+    def fake_get(url, stream, verify, timeout):
+        calls.append((url, stream, verify, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr(mx.gluon.utils.requests, 'get', fake_get)
+    fname = mx.gluon.utils.download('https://example.invalid/file.bin',
+                                    path=str(tmp_path),
+                                    retries=1,
+                                    timeout=7)
+
+    assert calls == [('https://example.invalid/file.bin', True, True, 7)]
+    with open(fname, 'rb') as downloaded:
+        assert downloaded.read() == b'ok'
+
+
+def test_download_stream_error_closes_response_and_removes_temp(monkeypatch, tmp_path):
+    closed = []
+    target = tmp_path / 'file.bin'
+
+    class FakeResponse:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            yield b'partial'
+            raise RuntimeError('stream failed')
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(mx.gluon.utils.requests, 'get',
+                        lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(RuntimeError, match='stream failed'):
+        mx.gluon.utils.download('https://example.invalid/file.bin',
+                                path=str(target),
+                                retries=0)
+
+    assert closed == [True]
+    assert not target.exists()
+    assert list(tmp_path.glob('file.bin.*')) == []
+
+
 def test_multiprocessing_download_successful(tmpdir):
     """ test download with multiprocessing """
     tmp = str(tmpdir)

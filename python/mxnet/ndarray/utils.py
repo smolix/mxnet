@@ -19,8 +19,9 @@
 """Utility functions for NDArray and BaseSparseNDArray."""
 import ctypes
 
-from ..base import _LIB, check_call, py_str, c_str, string_types, mx_uint, NDArrayHandle
+from ..base import _LIB, check_call, py_str, c_str, string_types, mx_uint, NDArrayHandle, MXNetError
 from ..base import c_array, c_handle_array, c_str_array
+from .._ctypes.ndarray import _make_ndarray_outputs
 from .ndarray import NDArray
 from .ndarray import array as _array
 from .ndarray import empty as _empty_ndarray
@@ -174,12 +175,14 @@ def load(fname):
                                   ctypes.byref(out_name_size),
                                   ctypes.byref(names)))
     if out_name_size.value == 0:
-        return [_ndarray_cls(NDArrayHandle(handles[i])) for i in range(out_size.value)]
-    else:
-        assert out_name_size.value == out_size.value
-        return dict(
-            (py_str(names[i]), _ndarray_cls(NDArrayHandle(handles[i])))
-            for i in range(out_size.value))
+        return _make_ndarray_outputs(handles, None, out_size.value, _ndarray_cls, True)
+    if out_name_size.value != out_size.value:
+        for i in range(out_size.value):
+            check_call(_LIB.MXNDArrayFree(handles[i]))
+        raise MXNetError('Loaded NDArray names and handles have inconsistent sizes')
+    py_names = [py_str(names[i]) for i in range(out_size.value)]
+    out = _make_ndarray_outputs(handles, None, out_size.value, _ndarray_cls, True)
+    return dict(zip(py_names, out))
 
 
 def load_frombuffer(buf):
@@ -211,12 +214,14 @@ def load_frombuffer(buf):
                                             ctypes.byref(out_name_size),
                                             ctypes.byref(names)))
     if out_name_size.value == 0:
-        return [_ndarray_cls(NDArrayHandle(handles[i])) for i in range(out_size.value)]
-    else:
-        assert out_name_size.value == out_size.value
-        return dict(
-            (py_str(names[i]), _ndarray_cls(NDArrayHandle(handles[i])))
-            for i in range(out_size.value))
+        return _make_ndarray_outputs(handles, None, out_size.value, _ndarray_cls, True)
+    if out_name_size.value != out_size.value:
+        for i in range(out_size.value):
+            check_call(_LIB.MXNDArrayFree(handles[i]))
+        raise MXNetError('Loaded NDArray names and handles have inconsistent sizes')
+    py_names = [py_str(names[i]) for i in range(out_size.value)]
+    out = _make_ndarray_outputs(handles, None, out_size.value, _ndarray_cls, True)
+    return dict(zip(py_names, out))
 
 
 def save(fname, data):

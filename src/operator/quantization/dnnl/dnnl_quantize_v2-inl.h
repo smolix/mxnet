@@ -39,7 +39,7 @@ namespace op {
 class SgDNNLQuantizeOperator {
  public:
   explicit SgDNNLQuantizeOperator(const nnvm::NodeAttrs& attrs)
-      : param_(nnvm::get<QuantizeV2Param>(attrs.parsed)) {}
+      : attrs_(attrs), param_(nnvm::get<QuantizeV2Param>(attrs.parsed)) {}
 
   void Forward(const OpContext& ctx,
                const std::vector<NDArray>& inputs,
@@ -47,6 +47,12 @@ class SgDNNLQuantizeOperator {
                const std::vector<NDArray>& outputs);
 
  private:
+  void RunNativeCPUFallback(const OpContext& ctx,
+                            const std::vector<NDArray>& inputs,
+                            const std::vector<OpReqType>& req,
+                            const std::vector<NDArray>& outputs);
+
+  nnvm::NodeAttrs attrs_;
   bool initalized_{false};
   QuantizeV2Param param_;
   float cached_data_min_{0.f};
@@ -57,6 +63,24 @@ class SgDNNLQuantizeOperator {
   // v3: runtime scale tensor for set_scales_mask reorder attr.
   dnnl::memory scale_mem_;
 };
+
+void SgDNNLQuantizeOperator::RunNativeCPUFallback(const OpContext& ctx,
+                                                 const std::vector<NDArray>& inputs,
+                                                 const std::vector<OpReqType>& req,
+                                                 const std::vector<NDArray>& outputs) {
+  NDArray data = inputs[0];
+  if (data.IsDNNLData()) {
+    data = data.Reorder2Default();
+    DNNLStream::Get()->Submit();
+  }
+  if (req[0] != kNullOp) {
+    const_cast<NDArray&>(outputs[0]).InvalidateDNNLData();
+  }
+  std::vector<TBlob> input_blobs{data.data()};
+  std::vector<TBlob> output_blobs{outputs[0].data(), outputs[1].data(), outputs[2].data()};
+  QuantizeV2Operator<cpu> native_op(attrs_);
+  native_op.Forward(ctx, input_blobs, req, output_blobs);
+}
 
 void SgDNNLQuantizeOperator::Forward(const OpContext& ctx,
                                      const std::vector<NDArray>& inputs,
@@ -81,14 +105,14 @@ void SgDNNLQuantizeOperator::Forward(const OpContext& ctx,
     } else {
       if (inputs[0].dtype() == mshadow::kUint8) {
         const float out_min = 0;
-        const float out_max = kUint8Range;
+        const float out_max = mshadow::red::limits::MaxValue<uint8_t>();
         AssignQuantizedRangeOutput(
             outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_quantize_v2");
         AssignQuantizedRangeOutput(
             outputs[2].data().dptr<float>(), &out_max, req[2], "_contrib_quantize_v2");
       } else {
-        const float out_min = -kInt8Range;
-        const float out_max = kInt8Range;
+        const float out_min = mshadow::red::limits::MinValue<int8_t>() + 1;
+        const float out_max = mshadow::red::limits::MaxValue<int8_t>();
         AssignQuantizedRangeOutput(
             outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_quantize_v2");
         AssignQuantizedRangeOutput(
@@ -136,11 +160,8 @@ void SgDNNLQuantizeOperator::Forward(const OpContext& ctx,
     // Write output min/max
     auto out_type = GetQuantizeOutputType(param_);
     if (out_type == mshadow::kUint8) {
-      quantized_range = kUint8Range;
-      AssignQuantizedRangeOutput(
-          outputs[1].data().dptr<float>(), &data_min, req[1], "_contrib_quantize_v2");
-      AssignQuantizedRangeOutput(
-          outputs[2].data().dptr<float>(), &data_max, req[2], "_contrib_quantize_v2");
+      RunNativeCPUFallback(ctx, inputs, req, outputs);
+      return;
     } else if (out_type == mshadow::kInt8) {
       float real_range = MaxAbs(data_min, data_max);
       quantized_range  = kInt8Range;

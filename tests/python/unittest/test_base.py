@@ -18,11 +18,12 @@
 import ctypes
 import mxnet as mx
 from numpy.testing import assert_equal
+import mxnet.test_utils as test_utils
 from mxnet import base
 from mxnet.base import data_dir
 from mxnet.test_utils import environment
 from mxnet.util import getenv
-from common import with_environment
+from common import with_environment, retry
 import os
 import logging
 import os.path as op
@@ -109,6 +110,57 @@ def test_data_dir():
         assert_equal(data_dir(), '/tmp/mxnet_data')
     # Test that this test has not disturbed the MXNET_HOME value existing before the test
     assert_equal(data_dir(), prev_data_dir)
+
+
+def test_environment_preserves_primary_exception_when_waitall_fails(monkeypatch):
+    name = 'MXNET_TEST_ENV_VAR_PRIMARY_EXCEPTION'
+
+    def fail_waitall():
+        raise RuntimeError('async cleanup failure')
+
+    monkeypatch.setattr(mx.nd, 'waitall', fail_waitall)
+    with pytest.raises(AssertionError, match='primary failure'):
+        with environment(name, 'set'):
+            raise AssertionError('primary failure')
+    assert os.environ.get(name) is None
+
+
+def test_retry_reports_cleanup_error_with_original_assertion(monkeypatch):
+    def fail_waitall():
+        raise mx.base.MXNetError('async cleanup failure')
+
+    monkeypatch.setattr(mx.nd, 'waitall', fail_waitall)
+
+    @retry(2)
+    def flaky():
+        raise AssertionError('primary assertion')
+
+    with pytest.raises(AssertionError, match='primary assertion.*async cleanup failure'):
+        flaky()
+
+
+def test_download_passes_timeout_to_requests(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def iter_content(self, chunk_size=1024):
+            yield b'ok'
+
+    def fake_get(url, stream, timeout):
+        calls.append((url, stream, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr(test_utils.requests, 'get', fake_get)
+    fname = test_utils.download('https://example.invalid/file.bin',
+                                dirname=str(tmp_path),
+                                retries=1,
+                                timeout=7)
+
+    assert calls == [('https://example.invalid/file.bin', True, 7)]
+    with open(fname, 'rb') as downloaded:
+        assert downloaded.read() == b'ok'
 
 
 def test_generate_op_module_signature_closes_files_on_codegen_failure(monkeypatch):

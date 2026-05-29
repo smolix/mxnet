@@ -38,6 +38,19 @@ static void DNNLQuantizedReshapeForward(const nnvm::NodeAttrs& attrs,
   CHECK(inputs[0].dtype() == mshadow::kUint8 || inputs[0].dtype() == mshadow::kInt8)
       << "dnnl_quantized_reshape op only supports uint8 and int8 as input type";
 
+  CHECK_NE(req[0], kAddTo) << "kAddTo is not supported yet";
+  AssignQuantizedRangeOutput(outputs[1].data().dptr<float>(),
+                             inputs[1].data().dptr<float>(),
+                             req[1],
+                             "quantized_reshape");
+  AssignQuantizedRangeOutput(outputs[2].data().dptr<float>(),
+                             inputs[2].data().dptr<float>(),
+                             req[2],
+                             "quantized_reshape");
+  if (req[0] == kNullOp) {
+    return;
+  }
+
   if (SupportDNNLReshape(inputs[0])) {
     OpReqType reqType;
     if (inputs[0].GetDNNLData()->get_data_handle() != outputs[0].GetDNNLData()->get_data_handle())
@@ -48,15 +61,6 @@ static void DNNLQuantizedReshapeForward(const nnvm::NodeAttrs& attrs,
   } else {
     FallBackCompute(UnaryOp::IdentityCompute<cpu>, attrs, ctx, inputs, req, outputs);
   }
-
-  AssignQuantizedRangeOutput(outputs[1].data().dptr<float>(),
-                             inputs[1].data().dptr<float>(),
-                             req[1],
-                             "quantized_reshape");
-  AssignQuantizedRangeOutput(outputs[2].data().dptr<float>(),
-                             inputs[2].data().dptr<float>(),
-                             req[2],
-                             "quantized_reshape");
 }
 
 inline bool QuantizedReshapeStorageType(const nnvm::NodeAttrs& attrs,

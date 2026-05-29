@@ -25,6 +25,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cmath>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -487,6 +488,9 @@ void SgDNNLFCOp::Forward(const OpContext& ctx,
     if (auto* ssm = fwd_->GetSrcScaleMem()) {
       args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = *ssm;
     }
+    if (auto* zpm = fwd_->GetSrcZeroPointMem()) {
+      args_[DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_SRC] = *zpm;
+    }
     initialized_        = true;
   }
 
@@ -648,6 +652,10 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
 
   CHECK(data.dtype() == mshadow::kInt8 || data.dtype() == mshadow::kUint8);
   data_scale_ = GetQuantizeScale(data.dtype(), cached_data_min_, cached_data_max_);
+  full_param_.src_zero_point =
+      (data.dtype() == mshadow::kUint8) ?
+          static_cast<int32_t>(std::nearbyint(-cached_data_min_ * data_scale_)) :
+          0;
 
   bool fuse_requantize = false;
   // Channelwise scaling is only supported when fusion is enabled (requantize or dequantize).
@@ -749,15 +757,11 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
         full_param_.output_scales[i] = 1.0f / weight_scales_[i];
       }
     } else {
-      float tmp_scale_ = 1.0f;
-      if (dnnl_param.with_eltwise) {
-        tmp_scale_ = 1.0 / data_scale_;
-        full_param_.eltwise_param.scale =
-            GetQuantizeScale(output.dtype(), cached_output_min_, cached_output_max_);
-      } else {
-        out_scale  = GetQuantizeScale(output.dtype(), cached_output_min_, cached_output_max_);
-        tmp_scale_ = out_scale / data_scale_;
-      }
+      out_scale = GetQuantizeScale(output.dtype(), cached_output_min_, cached_output_max_);
+      // oneDNN v3 removed the eltwise post-op scale argument. Fold the output
+      // quantization scale into the actual DST scale for both plain FC and
+      // FC+activation; eltwise_param.scale is no longer consumed.
+      float tmp_scale_ = out_scale / data_scale_;
 
       if (support_channelwise_scale) {
         // Per-OC: scale binds to WEIGHTS as v3 multiplier (s_w * weight = real).

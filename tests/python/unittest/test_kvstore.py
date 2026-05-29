@@ -65,6 +65,15 @@ def test_single_kv_pair():
         check_single_kv_pair(init_kv(), 3, stype)
         check_single_kv_pair(init_kv_with_str(), 'a', stype)
 
+
+def test_kvstore_empty_key_value_lists_are_noop():
+    kv = mx.kv.create('local')
+    kv.init([], [])
+    kv.push([], [])
+    kv.pull([], [])
+    mx.nd.waitall()
+
+
 def test_row_sparse_pull():
     kv = init_kv_with_str('row_sparse')
     kv.init('e', mx.nd.ones(shape).tostype('row_sparse'))

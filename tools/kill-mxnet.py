@@ -24,6 +24,8 @@ import shlex
 import sys
 import subprocess
 
+REMOTE_TIMEOUT_SECONDS = 30
+
 REMOTE_SCRIPT = """
 user=$1
 prog_name=$2
@@ -98,17 +100,30 @@ def main(argv):
   print(kill_cmd)
 
   # Kill program on remote machines
+  remote_processes = []
   with open(host_file, "r") as f:
     for host in f:
       host = _host_name(host)
       if not host:
         continue
       print(host)
-      subprocess.Popen(["ssh", "-oStrictHostKeyChecking=no", host, kill_cmd],
-              shell=False,
-              stdout=subprocess.PIPE,
-              stderr=subprocess.PIPE)
+      remote_processes.append((
+          host,
+          subprocess.Popen(["ssh", "-oStrictHostKeyChecking=no", host, kill_cmd],
+                  shell=False,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE)))
       print("Done killing")
+  for host, proc in remote_processes:
+    try:
+      _, stderr = proc.communicate(timeout=REMOTE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+      proc.kill()
+      _, stderr = proc.communicate()
+      print("Timed out killing on {}".format(host), file=sys.stderr)
+    if proc.returncode != 0:
+      print("Remote kill command failed on {}: {}".format(
+          host, stderr.decode("utf-8", "replace").strip()), file=sys.stderr)
 
   # Kill program on local machine
   _kill_local(user, prog_name)

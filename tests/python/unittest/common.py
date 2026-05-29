@@ -27,7 +27,8 @@ from mxnet.base import MXNetError
 from mxnet.test_utils import environment
 curr_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))
 sys.path.append(os.path.join(curr_path, '../common/'))
-sys.path.insert(0, os.path.join(curr_path, '../../../python'))
+if os.environ.get('MXNET_TEST_USE_INSTALLED_MXNET') != '1':
+    sys.path.insert(0, os.path.join(curr_path, '../../../python'))
 
 import models
 from contextlib import contextmanager
@@ -48,9 +49,20 @@ def has_opencv():
     return mx.runtime.Features().is_enabled("OPENCV")
 
 
+def has_lapack():
+    """Return whether the loaded MXNet library was built with LAPACK support."""
+    return mx.runtime.Features().is_enabled("LAPACK")
+
+
 requires_opencv = pytest.mark.skipif(
     not has_opencv(),
     reason="MXNet built without OpenCV support"
+)
+
+
+requires_lapack = pytest.mark.skipif(
+    not has_lapack(),
+    reason="MXNet built without LAPACK support"
 )
 
 
@@ -260,7 +272,7 @@ def with_environment(*args_):
     return test_helper
 
 
-def run_in_spawned_process(func, env, *args):
+def run_in_spawned_process(func, env, *args, timeout=300):
     """
     Helper function to run a test in its own process.
 
@@ -294,7 +306,11 @@ def run_in_spawned_process(func, env, *args):
             # Prepend seed as first arg
             p = mpctx.Process(target=func, args=(seed,)+args)
             p.start()
-            p.join()
+            p.join(timeout)
+            if p.is_alive():
+                p.terminate()
+                p.join(10)
+                assert False, f"Timed out after {timeout} seconds in {func.__name__}()."
             assert p.exitcode == 0, f"Non-zero exit code {p.exitcode} from {func.__name__}()."
     return True
 
@@ -315,6 +331,11 @@ def retry(n):
                 except AssertionError as e:
                     if i == n-1:
                         raise e
-                    mx.nd.waitall()
+                    try:
+                        mx.nd.waitall()
+                    except MXNetError as wait_err:
+                        raise AssertionError(
+                            "Retry cleanup failed after assertion '{}': {}".format(e, wait_err)
+                        ) from e
         return test_new
     return test_helper

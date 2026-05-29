@@ -272,7 +272,8 @@ else:
         ), src)
 
 
-def download(url, path=None, overwrite=False, sha1_hash=None, retries=5, verify_ssl=True):
+def download(url, path=None, overwrite=False, sha1_hash=None, retries=5,
+             verify_ssl=True, timeout=30):
     """Download a given URL
 
     Parameters
@@ -291,6 +292,8 @@ def download(url, path=None, overwrite=False, sha1_hash=None, retries=5, verify_
         The number of times to attempt the download in case of failure or non 200 return codes
     verify_ssl : bool, default True
         Verify SSL certificates.
+    timeout : float or tuple, default 30
+        Timeout in seconds passed to requests for each download attempt.
 
     Returns
     -------
@@ -323,14 +326,17 @@ def download(url, path=None, overwrite=False, sha1_hash=None, retries=5, verify_
         while retries + 1 > 0:
             # Disable pyling too broad Exception
             # pylint: disable=W0703
+            r = None
+            temp_fname = None
             try:
                 print('Downloading {} from {}...'.format(fname, url))
-                r = requests.get(url, stream=True, verify=verify_ssl)
+                r = requests.get(url, stream=True, verify=verify_ssl, timeout=timeout)
                 if r.status_code != 200:
                     raise RuntimeError('Failed downloading url {}'.format(url))
                 # create uuid for temporary files
                 random_uuid = str(uuid.uuid4())
-                with open('{}.{}'.format(fname, random_uuid), 'wb') as f:
+                temp_fname = '{}.{}'.format(fname, random_uuid)
+                with open(temp_fname, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=1024):
                         if chunk: # filter out keep-alive new chunks
                             f.write(chunk)
@@ -339,10 +345,12 @@ def download(url, path=None, overwrite=False, sha1_hash=None, retries=5, verify_
                 # delete the temporary file
                 if not os.path.exists(fname) or (sha1_hash and not check_sha1(fname, sha1_hash)):
                     # atmoic operation in the same file system
-                    replace_file('{}.{}'.format(fname, random_uuid), fname)
+                    replace_file(temp_fname, fname)
+                    temp_fname = None
                 else:
                     try:
-                        os.remove('{}.{}'.format(fname, random_uuid))
+                        os.remove(temp_fname)
+                        temp_fname = None
                     except OSError:
                         pass
                     finally:
@@ -356,12 +364,21 @@ def download(url, path=None, overwrite=False, sha1_hash=None, retries=5, verify_
                         'the default repo.'.format(fname))
                 break
             except Exception as e:
+                if temp_fname is not None:
+                    try:
+                        os.remove(temp_fname)
+                    except OSError:
+                        pass
                 retries -= 1
                 if retries <= 0:
                     raise e
 
                 print('download failed due to {}, retrying, {} attempt{} left'
                       .format(repr(e), retries, 's' if retries > 1 else ''))
+            finally:
+                close = getattr(r, 'close', None)
+                if close is not None:
+                    close()
 
     return fname
 

@@ -32,7 +32,7 @@ from mxnet.operator import *
 from mxnet.base import py_str, MXNetError, _as_list
 from common import assert_raises_cudnn_not_satisfied, assert_raises_cuda_not_satisfied, assertRaises
 from common import legacy_np_semantics
-from common import xfail_when_nonstandard_decimal_separator, with_environment
+from common import xfail_when_nonstandard_decimal_separator, with_environment, requires_lapack, has_lapack
 import pytest
 import os
 
@@ -2044,8 +2044,6 @@ def check_binary_op_forward(symbol, baseline, gen_data, rtol=1e-3, atol=1e-5, mx
         y = y.outputs[0].asnumpy()
         x = baseline(d[0], d[1]).astype(y.dtype)
 
-        #np.set_printoptions(precision=20)
-
         a = d[0]
         b = d[1]
         #print("a: {} {}".format(a.dtype, a))
@@ -2060,14 +2058,14 @@ def check_binary_op_forward(symbol, baseline, gen_data, rtol=1e-3, atol=1e-5, mx
         idx = np.abs(x-y) > atol+rtol*np.abs(x)
         if idx.any():
             import binascii
-            np.set_printoptions(precision=20)
             logging.error('found precision problem:')
             d[0] = np.broadcast_to(d[0], x.shape)
             d[1] = np.broadcast_to(d[1], x.shape)
-            logging.error('input a: {}'.format(d[0][idx]))
-            logging.error('input b: {}'.format(d[1][idx]))
-            logging.error("output x: {} {}".format(x.dtype, x))
-            logging.error("output y: {} {}".format(y.dtype, y))
+            with np.printoptions(precision=20):
+                logging.error('input a: {}'.format(d[0][idx]))
+                logging.error('input b: {}'.format(d[1][idx]))
+                logging.error("output x: {} {}".format(x.dtype, x))
+                logging.error("output y: {} {}".format(y.dtype, y))
             def ftohex(xs):
                 import struct
                 return list(map(lambda x: binascii.hexlify(struct.pack('d', x)), xs.flatten()))
@@ -2897,8 +2895,6 @@ def test_flip():
 
 
 def test_stn():
-    import sys
-    np.set_printoptions(threshold=sys.maxsize)
     num_filter = 2  # conv of loc net
     kernel = (3, 3)  # conv of loc net
     num_hidden = 6  # fc of loc net
@@ -3127,6 +3123,214 @@ def test_batch_dot():
                                             bgrad_npy + b_init_grad_npy,
                                             rtol=1e-2 if data_type == 'float16' else 1e-3,
                                             atol=1e-2 if data_type == 'float16' else 1e-4)
+
+
+def test_cpu_fp16_dot_and_batch_dot():
+    a = mx.nd.array([[1.0, 2.0, -1.0], [0.5, -0.5, 3.0]], ctx=mx.cpu(), dtype='float16')
+    b = mx.nd.array([[2.0, -1.0], [0.25, 4.0], [-3.0, 0.5]], ctx=mx.cpu(), dtype='float16')
+    expected = np.dot(a.asnumpy(), b.asnumpy())
+    out = mx.nd.dot(a, b)
+    assert out.dtype == np.float16
+    assert_almost_equal(out.asnumpy(), expected, rtol=1e-2, atol=1e-2)
+
+    ba = mx.nd.array(np.arange(24, dtype=np.float16).reshape(2, 3, 4) / 8 - 1,
+                     ctx=mx.cpu(), dtype='float16')
+    bb = mx.nd.array(np.arange(40, dtype=np.float16).reshape(2, 4, 5) / 7 - 2,
+                     ctx=mx.cpu(), dtype='float16')
+    expected_batch = np.matmul(ba.asnumpy(), bb.asnumpy())
+    batch_out = mx.nd.batch_dot(ba, bb)
+    assert batch_out.dtype == np.float16
+    assert_almost_equal(batch_out.asnumpy(), expected_batch, rtol=1e-2, atol=1e-2)
+
+
+def test_cpu_fp16_fully_connected():
+    ctx = mx.cpu()
+    data_np = np.array([[1.0, -2.0, 0.5], [0.25, 3.0, -1.5]], dtype=np.float16)
+    weight_np = np.array([[0.5, -1.0, 2.0],
+                          [-1.5, 0.25, 0.75],
+                          [2.0, 1.5, -0.5],
+                          [0.125, -0.25, 1.25]], dtype=np.float16)
+    bias_np = np.array([0.25, -0.5, 1.0, -1.0], dtype=np.float16)
+    ograd_np = np.array([[1.0, -0.5, 2.0, 0.25],
+                         [-1.5, 0.75, -0.25, 1.25]], dtype=np.float16)
+
+    data = mx.nd.array(data_np, ctx=ctx, dtype='float16')
+    weight = mx.nd.array(weight_np, ctx=ctx, dtype='float16')
+    bias = mx.nd.array(bias_np, ctx=ctx, dtype='float16')
+    data.attach_grad()
+    weight.attach_grad()
+    bias.attach_grad()
+
+    with mx.autograd.record():
+        out = mx.nd.FullyConnected(data, weight, bias, num_hidden=weight_np.shape[0],
+                                   no_bias=False)
+    out.backward(mx.nd.array(ograd_np, ctx=ctx, dtype='float16'))
+
+    expected_out = np.dot(data_np.astype(np.float32), weight_np.astype(np.float32).T)
+    expected_out += bias_np.astype(np.float32)
+    expected_data_grad = np.dot(ograd_np.astype(np.float32), weight_np.astype(np.float32))
+    expected_weight_grad = np.dot(ograd_np.astype(np.float32).T, data_np.astype(np.float32))
+    expected_bias_grad = ograd_np.astype(np.float32).sum(axis=0)
+
+    assert out.dtype == np.float16
+    assert_almost_equal(out.asnumpy(), expected_out.astype(np.float16), rtol=1e-2, atol=1e-2)
+    assert_almost_equal(data.grad.asnumpy(), expected_data_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
+    assert_almost_equal(weight.grad.asnumpy(), expected_weight_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
+    assert_almost_equal(bias.grad.asnumpy(), expected_bias_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
+
+
+def _conv2d_nchw_reference(data, weight, bias, ograd, stride=(1, 1), pad=(0, 0),
+                           dilate=(1, 1), groups=1):
+    data = data.astype(np.float32)
+    weight = weight.astype(np.float32)
+    bias = None if bias is None else bias.astype(np.float32)
+    ograd = ograd.astype(np.float32)
+    batch, in_channels, in_h, in_w = data.shape
+    out_channels, channels_per_group, kernel_h, kernel_w = weight.shape
+    out_h = (in_h + 2 * pad[0] - (dilate[0] * (kernel_h - 1) + 1)) // stride[0] + 1
+    out_w = (in_w + 2 * pad[1] - (dilate[1] * (kernel_w - 1) + 1)) // stride[1] + 1
+    out = np.zeros((batch, out_channels, out_h, out_w), dtype=np.float32)
+    data_grad = np.zeros_like(data, dtype=np.float32)
+    weight_grad = np.zeros_like(weight, dtype=np.float32)
+    channels_out_per_group = out_channels // groups
+
+    for n in range(batch):
+        for g in range(groups):
+            for ocg in range(channels_out_per_group):
+                oc = g * channels_out_per_group + ocg
+                for oy in range(out_h):
+                    for ox in range(out_w):
+                        acc = 0.0
+                        grad = ograd[n, oc, oy, ox]
+                        for icg in range(channels_per_group):
+                            ic = g * channels_per_group + icg
+                            for ky in range(kernel_h):
+                                iy = oy * stride[0] + ky * dilate[0] - pad[0]
+                                if iy < 0 or iy >= in_h:
+                                    continue
+                                for kx in range(kernel_w):
+                                    ix = ox * stride[1] + kx * dilate[1] - pad[1]
+                                    if ix < 0 or ix >= in_w:
+                                        continue
+                                    val = data[n, ic, iy, ix]
+                                    w = weight[oc, icg, ky, kx]
+                                    acc += val * w
+                                    data_grad[n, ic, iy, ix] += grad * w
+                                    weight_grad[oc, icg, ky, kx] += grad * val
+                        out[n, oc, oy, ox] = acc + (0.0 if bias is None else bias[oc])
+    bias_grad = None if bias is None else ograd.sum(axis=(0, 2, 3))
+    return out, data_grad, weight_grad, bias_grad
+
+
+def _check_cpu_fp16_convolution_case(data_np, weight_np, ograd_np, bias_np=None,
+                                     stride=(1, 1), pad=(0, 0), dilate=(1, 1),
+                                     groups=1):
+    ctx = mx.cpu()
+    data = mx.nd.array(data_np, ctx=ctx, dtype='float16')
+    weight = mx.nd.array(weight_np, ctx=ctx, dtype='float16')
+    data.attach_grad()
+    weight.attach_grad()
+    if bias_np is not None:
+        bias = mx.nd.array(bias_np, ctx=ctx, dtype='float16')
+        bias.attach_grad()
+    else:
+        bias = None
+
+    with mx.autograd.record():
+        out = mx.nd.Convolution(data, weight, bias,
+                                kernel=weight_np.shape[2:],
+                                stride=stride, pad=pad, dilate=dilate,
+                                num_filter=weight_np.shape[0],
+                                num_group=groups,
+                                no_bias=bias_np is None)
+    out.backward(mx.nd.array(ograd_np, ctx=ctx, dtype='float16'))
+
+    expected_out, expected_data_grad, expected_weight_grad, expected_bias_grad = \
+        _conv2d_nchw_reference(data_np, weight_np, bias_np, ograd_np,
+                               stride=stride, pad=pad, dilate=dilate, groups=groups)
+
+    assert out.dtype == np.float16
+    assert np.isfinite(data.grad.asnumpy()).all()
+    assert_almost_equal(out.asnumpy(), expected_out.astype(np.float16), rtol=1e-2, atol=1e-2)
+    assert_almost_equal(data.grad.asnumpy(), expected_data_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
+    assert_almost_equal(weight.grad.asnumpy(), expected_weight_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
+    if bias_np is not None:
+        assert_almost_equal(bias.grad.asnumpy(), expected_bias_grad.astype(np.float16),
+                            rtol=1e-2, atol=1e-2)
+
+
+def test_cpu_fp16_convolution():
+    data_np = (np.arange(9, dtype=np.float16).reshape(1, 1, 3, 3) / 4 - 1)
+    weight_np = np.array([[[[0.5, -1.0],
+                            [1.5, 0.25]]]], dtype=np.float16)
+    ograd_np = np.array([[[[1.0, -0.5],
+                           [0.25, 1.5]]]], dtype=np.float16)
+    _check_cpu_fp16_convolution_case(data_np, weight_np, ograd_np)
+
+
+def test_cpu_fp16_convolution_grouped_dilated_and_bias():
+    data_np = (np.arange(2 * 4 * 5 * 6, dtype=np.float16).reshape(2, 4, 5, 6) / 32 - 1.5)
+    weight_np = (np.arange(4 * 2 * 3 * 2, dtype=np.float16).reshape(4, 2, 3, 2) / 16 - 0.75)
+    bias_np = np.array([0.25, -0.5, 0.75, -1.0], dtype=np.float16)
+    ograd_np = (np.arange(2 * 4 * 5 * 3, dtype=np.float16).reshape(2, 4, 5, 3) / 20 - 1.0)
+    _check_cpu_fp16_convolution_case(data_np, weight_np, ograd_np, bias_np=bias_np,
+                                     stride=(1, 2), pad=(1, 0), groups=2)
+
+    data_np = (np.arange(1 * 2 * 5 * 5, dtype=np.float16).reshape(1, 2, 5, 5) / 16 - 1.0)
+    weight_np = (np.arange(3 * 2 * 2 * 2, dtype=np.float16).reshape(3, 2, 2, 2) / 8 - 0.5)
+    ograd_np = (np.arange(1 * 3 * 5 * 6, dtype=np.float16).reshape(1, 3, 5, 6) / 18 - 0.75)
+    _check_cpu_fp16_convolution_case(data_np, weight_np, ograd_np,
+                                     pad=(1, 1), dilate=(2, 1))
+
+
+def test_cpu_fp16_deconvolution_forward_matches_conv_backward_data():
+    ctx = mx.cpu()
+    data_np = (np.arange(1 * 2 * 4 * 4, dtype=np.float16).reshape(1, 2, 4, 4) / 16 - 1.0)
+    weight_np = (np.arange(3 * 2 * 3 * 3, dtype=np.float16).reshape(3, 2, 3, 3) / 24 - 0.75)
+    deconv_data_np = (np.arange(1 * 3 * 4 * 4, dtype=np.float16).reshape(1, 3, 4, 4) / 20 - 0.5)
+    _, expected, _, _ = _conv2d_nchw_reference(data_np, weight_np, None, deconv_data_np,
+                                               pad=(1, 1))
+
+    deconv_data = mx.nd.array(deconv_data_np, ctx=ctx, dtype='float16')
+    weight = mx.nd.array(weight_np, ctx=ctx, dtype='float16')
+    out = mx.nd.Deconvolution(deconv_data, weight, kernel=(3, 3), pad=(1, 1),
+                              num_filter=2, no_bias=True)
+
+    assert out.dtype == np.float16
+    assert np.isfinite(out.asnumpy()).all()
+    assert_almost_equal(out.asnumpy(), expected.astype(np.float16), rtol=1e-2, atol=1e-2)
+
+
+def test_cpu_fp16_deconvolution_backward_bias_uses_float_sum():
+    ctx = mx.cpu()
+    data_np = (np.arange(1 * 3 * 4 * 4, dtype=np.float16).reshape(1, 3, 4, 4) / 20 - 0.5)
+    weight_np = (np.arange(3 * 2 * 3 * 3, dtype=np.float16).reshape(3, 2, 3, 3) / 24 - 0.75)
+    bias_np = np.array([0.25, -0.5], dtype=np.float16)
+    ograd_np = (np.arange(1 * 2 * 4 * 4, dtype=np.float16).reshape(1, 2, 4, 4) / 18 - 0.75)
+
+    data = mx.nd.array(data_np, ctx=ctx, dtype='float16')
+    weight = mx.nd.array(weight_np, ctx=ctx, dtype='float16')
+    bias = mx.nd.array(bias_np, ctx=ctx, dtype='float16')
+    data.attach_grad()
+    weight.attach_grad()
+    bias.attach_grad()
+
+    with mx.autograd.record():
+        out = mx.nd.Deconvolution(data, weight, bias, kernel=(3, 3), pad=(1, 1),
+                                  num_filter=2, no_bias=False)
+    out.backward(mx.nd.array(ograd_np, ctx=ctx, dtype='float16'))
+
+    expected_bias_grad = ograd_np.astype(np.float32).sum(axis=(0, 2, 3))
+
+    assert out.dtype == np.float16
+    assert np.isfinite(data.grad.asnumpy()).all()
+    assert_almost_equal(bias.grad.asnumpy(), expected_bias_grad.astype(np.float16),
+                        rtol=1e-2, atol=1e-2)
 
 
 def get_correlation(data1,data2,kernel_size,max_displacement,stride1,stride2,pad_size,is_multiply):
@@ -4517,7 +4721,7 @@ def test_cast_float32_to_float16():
 
 
 def test_amp_multicast():
-    if default_device().device_type == 'cpu':
+    if default_device().device_type == 'cpu' and has_lapack():
         return
     x = mx.sym.Variable('x', dtype=np.float16)
     y = mx.sym.Variable('y', dtype=np.float32)
@@ -5739,6 +5943,11 @@ def test_custom_op():
     assert_almost_equal(rhs, lhs.grad, rtol=rtol, atol=atol)
     assert_almost_equal(lhs, rhs.grad, rtol=rtol, atol=atol)
 
+    x_dup = mx.nd.array(np.random.uniform(-1, 1, size=(4, 10)))
+    y_dup = mx.nd.Custom(x_dup, x_dup, name='mult_dup_input', op_type='mult')
+    y_dup.wait_to_read()
+    assert_almost_equal(y_dup, x_dup * x_dup, rtol=rtol, atol=atol)
+
     class MultNoGrad(mx.operator.CustomOp):
         def forward(self, is_train, req, in_data, out_data, aux):
             self.assign(out_data[0], req[0], in_data[0]*in_data[1])
@@ -5809,6 +6018,133 @@ def test_custom_op():
     with mx.autograd.record():
         x = mx.nd.Custom(length=10, depth=10, op_type="no_input_op")
     assert_almost_equal(x, np.ones(shape=(10, 10), dtype=np.float32))
+
+
+@legacy_np_semantics()
+def test_custom_op_mixed_dense_sparse_outputs():
+    @mx.operator.register("mixed_dense_sparse_outputs")
+    class MixedDenseSparseOutputsProp(mx.operator.CustomOpProp):
+        def __init__(self):
+            super(MixedDenseSparseOutputsProp, self).__init__(need_top_grad=False)
+
+        def list_arguments(self):
+            return ['data']
+
+        def list_outputs(self):
+            return ['dense_output', 'sparse_output']
+
+        def infer_shape(self, in_shape):
+            return in_shape, [in_shape[0], in_shape[0]], []
+
+        def infer_type(self, in_type):
+            return in_type, [in_type[0], in_type[0]], []
+
+        def infer_storage_type(self, in_stype):
+            return ['csr'], ['default', 'csr'], []
+
+        def create_operator(self, ctx, shapes, dtypes):
+            class MixedDenseSparseOutputs(mx.operator.CustomOp):
+                def forward(self, is_train, req, in_data, out_data, aux):
+                    dense = mx.nd.ones(in_data[0].shape, ctx=in_data[0].context)
+                    inp = in_data[0]
+                    sparse_data = inp.data + inp.data
+                    sparse = mx.nd.sparse.csr_matrix(
+                        (sparse_data, inp.indices, inp.indptr), shape=inp.shape)
+                    self.assign(out_data[0], req[0], dense)
+                    self.assign(out_data[1], req[1], sparse)
+
+                def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
+                    pass
+
+            return MixedDenseSparseOutputs()
+
+    data = mx.nd.array(np.array([[0, 1, 0], [2, 0, 3]], dtype=np.float32)).tostype('csr')
+    dense_out, sparse_out = mx.nd.Custom(data, op_type='mixed_dense_sparse_outputs')
+    assert dense_out.stype == 'default'
+    assert sparse_out.stype == 'csr'
+    assert_almost_equal(dense_out.asnumpy(), np.ones(data.shape, dtype=np.float32))
+    assert_almost_equal(sparse_out.asnumpy(), 2 * data.asnumpy())
+
+
+@pytest.mark.parametrize('arg_name', ['out', 'name', 'attr'])
+def test_symbol_custom_accepts_input_names_that_match_wrapper_controls(arg_name):
+    op_type = 'custom_symbol_arg_' + arg_name
+
+    @mx.operator.register(op_type)
+    class CustomSymbolArgProp(mx.operator.CustomOpProp):
+        def __init__(self):
+            super(CustomSymbolArgProp, self).__init__(need_top_grad=False)
+
+        def list_arguments(self):
+            return [arg_name]
+
+        def list_outputs(self):
+            return ['output']
+
+        def infer_shape(self, in_shape):
+            return in_shape, [in_shape[0]], []
+
+        def create_operator(self, ctx, shapes, dtypes):
+            class Identity(mx.operator.CustomOp):
+                def forward(self, is_train, req, in_data, out_data, aux):
+                    self.assign(out_data[0], req[0], in_data[0])
+
+                def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
+                    pass
+
+            return Identity()
+
+    x = mx.sym.Variable('x')
+    y = mx.sym.Custom(op_type=op_type, **{arg_name: x})
+    assert y.list_arguments() == ['x']
+    exe = y._simple_bind(ctx=mx.cpu(), x=(2, 3))
+    exe.arg_dict['x'][:] = 3
+    assert_almost_equal(exe.forward()[0].asnumpy(), np.full((2, 3), 3))
+
+
+@legacy_np_semantics()
+@pytest.mark.parametrize('attr_name', ['name', 'out'])
+def test_ndarray_custom_accepts_attrs_that_match_wrapper_controls(attr_name):
+    op_type = 'custom_nd_attr_' + attr_name
+
+    @mx.operator.register(op_type)
+    class CustomNDAttrProp(mx.operator.CustomOpProp):
+        def __init__(self, name='unset', out='unset'):
+            super(CustomNDAttrProp, self).__init__(need_top_grad=False)
+            self.value = name if attr_name == 'name' else out
+
+        def list_arguments(self):
+            return []
+
+        def list_outputs(self):
+            return ['output']
+
+        def infer_shape(self, in_shape):
+            return [], [(1,)], []
+
+        def infer_type(self, in_type):
+            return [], [np.float32], []
+
+        def create_operator(self, ctx, shapes, dtypes):
+            value = float(self.value)
+
+            class AttrEcho(mx.operator.CustomOp):
+                def forward(self, is_train, req, in_data, out_data, aux):
+                    self.assign(out_data[0], req[0], mx.nd.array([value], ctx=out_data[0].context))
+
+                def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
+                    pass
+
+            return AttrEcho()
+
+    result = mx.nd.Custom(op_type=op_type, **{attr_name: '7'})
+    assert_almost_equal(result.asnumpy(), np.array([7], dtype=np.float32))
+
+    if attr_name == 'name':
+        out_buf = mx.nd.empty((1,))
+        mx.nd.Custom(op_type=op_type, name='5', out=out_buf)
+        assert_almost_equal(out_buf.asnumpy(), np.array([5], dtype=np.float32))
+
 
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
 # @pytest.mark.skip(reason="Flaky test, tracked at https://github.com/apache/mxnet/issues/17467")
@@ -5933,6 +6269,18 @@ def test_custom_op_exc():
             c = mx.nd.Custom(a, b, op_type='Dot4')
             c.wait_to_read()
         pytest.raises(MXNetError, custom_exc4)
+
+
+@pytest.mark.skipif(has_lapack(), reason="Requires MXNet built without LAPACK support")
+def test_custom_op_potrf_without_lapack_clears_async_error():
+    dot = mx.nd.zeros((2, 2), ctx=mx.cpu())
+    result = mx.nd.linalg.potrf(dot)
+
+    with pytest.raises(MXNetError, match="without lapack"):
+        result.wait_to_read()
+
+    mx.nd.waitall()
+    assert_almost_equal(mx.nd.ones((1,)), np.ones((1,)))
 
 
 @legacy_np_semantics()
@@ -6385,6 +6733,7 @@ def _make_triangle_symm(a, ndims, m, lower, dtype=np.float32):
 # @ankkhedia: Getting rid of fixed seed as flakiness could not be reproduced
 # tracked at https://github.com/apache/mxnet/issues/11718
 @xfail_when_nonstandard_decimal_separator
+@requires_lapack
 def test_laop():
     dtype = np.float64
     rtol_fw = 1e-7
@@ -6552,6 +6901,7 @@ def _syevd_combined_symbol(a):
                                    transpose_b=False, name='Ut_L_U')
     return mx.sym.Group([u_ut, ut_lam_u])
 
+@requires_lapack
 def test_laop_2():
     dtype = np.float64
     rtol_fw = 1e-7
@@ -6676,6 +7026,7 @@ def _syevd_backward(grad_u, grad_l, u, l):
 
 # Seed set because the test is not robust enough to operate on random data
 @pytest.mark.seed(1896893923)
+@requires_lapack
 def test_laop_3():
     # Currently disabled on GPU as syevd needs cuda8
     # and MxNet builds use cuda 7.5
@@ -6745,6 +7096,7 @@ def test_laop_3():
 
 # @piyushghai - Removing the fixed seed for this test.
 # Issue for flakiness is tracked at - https://github.com/apache/mxnet/issues/11721
+@requires_lapack
 def test_laop_4():
     # Currently disabled on GPU as syevd needs cuda8
     # and MxNet builds use cuda 7.5
@@ -6820,6 +7172,7 @@ def test_laop_5():
 # Tests for linalg.inverse
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
 # @pytest.mark.skip(reason="Test crashes https://github.com/apache/mxnet/issues/15975")
+@requires_lapack
 def test_laop_6():
     dtype = np.float64
     rtol_fw = 1e-7
@@ -8074,6 +8427,22 @@ def test_histogram_cpu_edge_and_invalid_bins():
     for bin_cnt in (0, -1):
         with pytest.raises(MXNetError, match="bin_cnt"):
             mx.nd.histogram(x, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
+
+
+def test_histogram_symbol_partial_outputs():
+    data = mx.sym.Variable("data")
+    counts, edges = mx.sym.histogram(a=data, bins=3, range=(0.0, 3.0))
+    x = mx.nd.array([0.0, 1.0, 2.0, 3.0], ctx=mx.cpu(), dtype=np.float64)
+
+    counts_exe = counts._simple_bind(ctx=mx.cpu(), data=x.shape)
+    counts_exe.arg_dict["data"][:] = x
+    counts_exe.forward(is_train=False)
+    assert_almost_equal(counts_exe.outputs[0].asnumpy(), np.array([1, 1, 2]))
+
+    edges_exe = edges._simple_bind(ctx=mx.cpu(), data=x.shape)
+    edges_exe.arg_dict["data"][:] = x
+    edges_exe.forward(is_train=False)
+    assert_almost_equal(edges_exe.outputs[0].asnumpy(), np.array([0.0, 1.0, 2.0, 3.0]))
 
 
 # Re-enabled 2026-05-17 — audit at HEAD f103c5491 (cuDNN 9.22 + B2 SoftReLU/LogSigmoid fix).

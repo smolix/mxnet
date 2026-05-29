@@ -26,6 +26,7 @@
 
 #if DMLC_USE_CXX11
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <functional>
 #endif
@@ -171,7 +172,20 @@ class CallbackOnComplete {
   // use implicit copy and assign
   /*! \brief involve the callback */
   inline void operator()(const dmlc::Error* error = nullptr) const {
+    if (completion_state_ != nullptr && completion_state_->exchange(true)) {
+      return;
+    }
     (*callback_)(engine_, param_, error);
+  }
+
+  /*! \brief enable exactly-once callback semantics for a copied callback family. */
+  inline void InitOnceGuard() {
+    completion_state_.reset(new std::atomic<bool>(false));
+  }
+
+  /*! \brief whether this guarded callback has already completed. */
+  inline bool completed() const {
+    return completion_state_ != nullptr && completion_state_->load();
   }
 
  private:
@@ -183,6 +197,8 @@ class CallbackOnComplete {
   Engine* engine_;
   /*! \brief the parameter set on callback */
   void* param_;
+  /*! \brief shared state used to ignore duplicate completions. */
+  std::shared_ptr<std::atomic<bool>> completion_state_;
 };
 }  // namespace engine
 

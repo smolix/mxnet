@@ -19,6 +19,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cmath>
 #include <string>
 #include <utility>
 #include <vector>
@@ -698,10 +699,6 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
     // Quantize weight and bias.
     if (dnnl_param.quantized) {
       CHECK(data.dtype() == mshadow::kInt8 || data.dtype() == mshadow::kUint8);
-      if (cached_data_min_ < 0.0f) {
-        CHECK_EQ(data.dtype(), mshadow::kInt8)
-            << "Expect int8 when data_min < 0.0, consider quantize model with int8.";
-      }
       auto weight_channelwise_scale = false;
       if (dnnl_param.min_calib_range.has_value() && dnnl_param.max_calib_range.has_value()) {
         cached_output_min_       = dnnl_param.min_calib_range.value();
@@ -713,6 +710,10 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
         weight_channelwise_scale = true;
       }
       data_scale_ = GetQuantizeScale(data.dtype(), cached_data_min_, cached_data_max_);
+      full_conv_param.src_zero_point =
+          (data.dtype() == mshadow::kUint8) ?
+              static_cast<int32_t>(std::nearbyint(-cached_data_min_ * data_scale_)) :
+              0;
       DNNL_REAL_TYPE_SWITCH(cached_weight_.dtype(), DType, {
         weight_scales_ = GetWeightScales<DType>(cached_weight_,
                                                 has_bias ? &cached_bias_ : nullptr,
@@ -748,32 +749,13 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
           for (size_t c = 0; c < full_conv_param.requantize_scales.size(); c++) {
             full_conv_param.requantize_scales[c] = 1.0 / data_scale_ / weight_scales_[c];
           }
-          // FU-1 refinement: when GetConvFwdImpl will skip the eltwise_relu
-          // post-op (AVX2-only + quantized + with_act eltwise_relu + ic<8
-          // + u8 dst -- see src/operator/nn/dnnl/dnnl_convolution.cc),
-          // treat this as the !with_act case for scale folding so that
-          // output_scale ends up in requantize_scales rather than the
-          // dead-code act_param.scale slot. Weight shape is [oc, ic*,
-          // kh, kw] (where ic* = ic / num_group for grouped conv); IC
-          // here means the per-group input channel count, which is
-          // what jit_uni_int8_1x1:avx2 dispatches against.
-          const auto& weight_shape = cached_weight_.shape();
-          const size_t fu1_ic =
-              weight_shape.ndim() >= 2 ? static_cast<size_t>(weight_shape[1]) : 0;
-          static const bool fu1_avx2_only = []() {
-            const auto isa = dnnl::get_effective_cpu_isa();
-            return isa < dnnl::cpu_isa::avx512_core;
-          }();
-          const bool fu1_skip_relu_post_op =
-              fu1_avx2_only && dnnl_param.with_act &&
-              full_conv_param.act_param.alg == dnnl::algorithm::eltwise_relu &&
-              IsOutputUInt8(param_) && fu1_ic > 0 && fu1_ic < 8;
-          if (dnnl_param.with_act && !fu1_skip_relu_post_op) {
-            full_conv_param.act_param.scale = output_scale;
-          } else {
-            for (size_t c = 0; c < full_conv_param.requantize_scales.size(); c++) {
-              full_conv_param.requantize_scales[c] *= output_scale;
-            }
+          // oneDNN v3 removed the eltwise post-op scale argument, so the
+          // output quantization scale must be folded into the DST scale even
+          // when conv+activation is fused. Leaving it in act_param.scale makes
+          // u8 ReLU outputs encode real values as tiny integers, which later
+          // requantize to zeros.
+          for (size_t c = 0; c < full_conv_param.requantize_scales.size(); c++) {
+            full_conv_param.requantize_scales[c] *= output_scale;
           }
         }
       } else {
@@ -858,6 +840,9 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
     }
     if (auto* ssm = fwd_->GetSrcScaleMem()) {
       args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = *ssm;
+    }
+    if (auto* zpm = fwd_->GetSrcZeroPointMem()) {
+      args_[DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_SRC] = *zpm;
     }
     initialized_        = true;
   }

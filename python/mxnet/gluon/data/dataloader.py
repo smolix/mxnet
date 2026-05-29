@@ -23,6 +23,7 @@ __all__ = ['DataLoader']
 import pickle
 import logging
 import io
+import os
 import sys
 import signal
 import multiprocessing
@@ -30,6 +31,8 @@ import multiprocessing.queues
 from multiprocessing.reduction import ForkingPickler
 from multiprocessing.pool import ThreadPool
 import threading
+import time
+import traceback
 import numpy as np
 
 try:
@@ -47,6 +50,8 @@ from ... import numpy as _mx_np  # pylint: disable=reimported
 _CPU_SHARED = Device('cpu_shared', 0)
 _CPU_SHARED_MEMORY_AVAILABLE = None
 _CPU_SHARED_MEMORY_ERROR = None
+_MULTIPROCESSING_FD_PASSING_AVAILABLE = None
+_MULTIPROCESSING_FD_PASSING_ERROR = None
 
 
 def _cpu_shared_memory_available():
@@ -63,6 +68,40 @@ def _cpu_shared_memory_available():
             _CPU_SHARED_MEMORY_AVAILABLE = True
             _CPU_SHARED_MEMORY_ERROR = None
     return _CPU_SHARED_MEMORY_AVAILABLE
+
+
+def _multiprocessing_fd_passing_available():
+    """Return whether multiprocessing can pass shared-memory fds in this process."""
+    global _MULTIPROCESSING_FD_PASSING_AVAILABLE, _MULTIPROCESSING_FD_PASSING_ERROR
+    if _MULTIPROCESSING_FD_PASSING_AVAILABLE is None:
+        fd = os.open(os.devnull, os.O_RDONLY)
+        try:
+            try:
+                wrapper = multiprocessing.reduction.DupFd(fd)
+                dup_fd = wrapper.detach()
+            except Exception as err:  # pylint: disable=broad-except
+                try:
+                    multiprocessing.resource_sharer.stop()
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                _MULTIPROCESSING_FD_PASSING_AVAILABLE = False
+                _MULTIPROCESSING_FD_PASSING_ERROR = str(err)
+            else:
+                os.close(dup_fd)
+                try:
+                    multiprocessing.resource_sharer.stop()
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                _MULTIPROCESSING_FD_PASSING_AVAILABLE = True
+                _MULTIPROCESSING_FD_PASSING_ERROR = None
+        finally:
+            os.close(fd)
+    return _MULTIPROCESSING_FD_PASSING_AVAILABLE
+
+
+def _multiprocessing_shared_memory_available():
+    """Return whether DataLoader can use cpu_shared transport between workers."""
+    return _cpu_shared_memory_available() and _multiprocessing_fd_passing_available()
 
 if sys.platform == 'darwin' or sys.platform == 'win32':
     def rebuild_ndarray(*args):
@@ -212,8 +251,18 @@ def worker_loop_v1(dataset, key_queue, data_queue, batchify_fn):
         idx, samples = key_queue.get()
         if idx is None:
             break
-        batch = batchify_fn([dataset[i] for i in samples])
+        try:
+            batch = batchify_fn([dataset[i] for i in samples])
+        except Exception:  # pylint: disable=broad-except
+            data_queue.put((idx, _WorkerException(traceback.format_exc())))
+            continue
         data_queue.put((idx, batch))
+
+
+class _WorkerException(object):
+    def __init__(self, traceback_str):
+        self.traceback_str = traceback_str
+
 
 def fetcher_loop_v1(data_queue, data_buffer, pin_memory=False,
                     pin_device_id=0, data_buffer_lock=None):
@@ -222,7 +271,9 @@ def fetcher_loop_v1(data_queue, data_buffer, pin_memory=False,
         idx, batch = data_queue.get()
         if idx is None:
             break
-        if pin_memory:
+        if isinstance(batch, _WorkerException):
+            pass
+        elif pin_memory:
             batch = _as_in_context(batch, context.cpu_pinned(pin_device_id))
         else:
             batch = _as_in_context(batch, context.cpu())
@@ -299,9 +350,17 @@ class _MultiWorkerIterV1(object):
             if self._rcvd_idx in self._data_buffer:
                 with self._data_buffer_lock:
                     batch = self._data_buffer.pop(self._rcvd_idx)
+                if isinstance(batch, _WorkerException):
+                    self.shutdown()
+                    raise RuntimeError("DataLoader worker failed:\n" + batch.traceback_str)
                 self._rcvd_idx += 1
                 self._push_next()
                 return batch
+            if all(not w.is_alive() for w in self._workers):
+                self.shutdown()
+                raise RuntimeError("DataLoader workers exited before producing batch "
+                                   "{}".format(self._rcvd_idx))
+            time.sleep(0.001)
 
     def next(self):
         return self.__next__()
@@ -312,18 +371,25 @@ class _MultiWorkerIterV1(object):
     def shutdown(self):
         """Shutdown internal workers by pushing terminate signals."""
         if not self._shutdown:
-            # send shutdown signal to the fetcher and join data queue first
-            # Remark:   loop_fetcher need to be joined prior to the workers.
-            #           otherwise, the fetcher may fail at getting data
-            self._data_queue.put((None, None))
-            self._fetcher.join()
             # send shutdown signal to all worker processes
             for _ in range(self._num_workers):
                 self._key_queue.put((None, None))
-            # force shut down any alive worker processes
+            for w in self._workers:
+                w.join(timeout=1)
+            # force shut down any workers that did not observe the sentinel
             for w in self._workers:
                 if w.is_alive():
                     w.terminate()
+                w.join()
+            self._data_queue.put((None, None))
+            self._fetcher.join()
+            for queue in (self._key_queue, self._data_queue):
+                close = getattr(queue, 'close', None)
+                if close is not None:
+                    close()
+                join_thread = getattr(queue, 'join_thread', None)
+                if join_thread is not None:
+                    join_thread()
             self._shutdown = True
 
 
@@ -562,7 +628,7 @@ class _MultiWorkerIter(object):
         self._worker_pool = None
 
     def __del__(self):
-        self.close()
+        self.close(shutdown_pool=False)
 
 
 class DataLoader(object):
@@ -679,7 +745,7 @@ class DataLoader(object):
         self._prefetch = max(0, int(prefetch) if prefetch is not None else 2 * self._num_workers)
         shared_memory_available = True
         if self._num_workers > 0 and not self._thread_pool:
-            shared_memory_available = _cpu_shared_memory_available()
+            shared_memory_available = _multiprocessing_shared_memory_available()
         self._use_multiprocessing_shared_memory = shared_memory_available
         if batchify_fn is None:
             if self._num_workers > 0 and not self._thread_pool and shared_memory_available:
@@ -714,9 +780,11 @@ class DataLoader(object):
             nd.waitall()
             if self._num_workers > 0:
                 if not self._thread_pool and not shared_memory_available:
-                    logging.info("MXNet cpu_shared memory is unavailable; falling back to "
-                                 "DataLoader pickle transport for %s workers. Last error: %s",
-                                 self._num_workers, _CPU_SHARED_MEMORY_ERROR)
+                    logging.info("MXNet multiprocessing shared-memory transport is unavailable; "
+                                 "falling back to DataLoader pickle transport for %s workers. "
+                                 "Last cpu_shared error: %s. Last fd-passing error: %s",
+                                 self._num_workers, _CPU_SHARED_MEMORY_ERROR,
+                                 _MULTIPROCESSING_FD_PASSING_ERROR)
                 self._create_worker_pool()
 
     def _create_worker_pool(self):

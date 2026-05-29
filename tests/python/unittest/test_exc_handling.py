@@ -92,25 +92,18 @@ def test_exc_multiple_waits():
         # Test calling failed op followed by wait_to_read or waitall twice
         # Intention is to test rethrow for multiple wait_to_reads and waitalls
         # for vars with exceptions in same scope
-        caught = False
-        try:
+        with pytest.raises(MXNetError):
             a = mx.nd.random.normal(0, -1, (2, 2)).copyto(default_device())
             if waitall:
                 mx.nd.waitall()
             else:
                 a.wait_to_read()
-        except MXNetError:
-            caught = True
-        assert caught, "No exception thrown, exception should be rethrown with wait_to_read/waitall"
-        try:
+        with pytest.raises(MXNetError):
             b = mx.nd.random.normal(0, -1, (2, 2)).copyto(default_device())
             if waitall:
                 mx.nd.waitall()
             else:
                 b.wait_to_read()
-        except MXNetError:
-            caught = True
-        assert caught, "No exception thrown, exception should be rethrown with wait_to_read/waitall"
 
     multiple_waits(waitall=False)
     multiple_waits(waitall=True)
@@ -193,4 +186,3 @@ def test_np_random_incorrect_named_arguments():
         assert op is not None
         pytest.raises(TypeError, op, shape=())
         pytest.raises(TypeError, op, shape=None)
-

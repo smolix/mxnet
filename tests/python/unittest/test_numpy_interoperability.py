@@ -32,6 +32,7 @@ from mxnet.test_utils import is_op_runnable
 from common import assertRaises, random_seed
 from mxnet.numpy_dispatch_protocol import with_array_function_protocol, with_array_ufunc_protocol
 from mxnet.numpy_dispatch_protocol import _NUMPY_ARRAY_FUNCTION_LIST, _NUMPY_ARRAY_UFUNC_LIST
+from common import has_lapack
 
 
 _INT_DTYPES = [np.int8, np.int32, np.int64, np.uint8]
@@ -3354,6 +3355,8 @@ def _check_interoperability_helper(op_name, rel_tol, abs_tol, *args, **kwargs):
 def check_interoperability(op_list):
     OpArgMngr.randomize_workloads()
     for name in op_list:
+        if name.startswith('linalg.') and not has_lapack():
+            continue
         if name in _TVM_OPS and not is_op_runnable():
             continue
         if name in ['shares_memory', 'may_share_memory', 'empty_like', 'round_', 'product',

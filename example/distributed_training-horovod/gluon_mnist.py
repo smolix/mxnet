@@ -52,15 +52,24 @@ logging.basicConfig(level=logging.INFO)
 logging.info(args)
 
 
+def _safe_extract_zip(zip_file, target_dir):
+    target_dir = os.path.abspath(target_dir)
+    for member in zip_file.infolist():
+        member_path = os.path.abspath(os.path.join(target_dir, member.filename))
+        if os.path.commonpath([target_dir, member_path]) != target_dir:
+            raise RuntimeError(f"Unsafe zip member path: {member.filename}")
+    zip_file.extractall(target_dir)
+
+
 # Function to get mnist iterator given a rank
 def get_mnist_iterator(rank):
     data_dir = f"data-{rank}"
     if not os.path.isdir(data_dir):
         os.makedirs(data_dir)
-    zip_file_path = download('http://data.mxnet.io/mxnet/data/mnist.zip',
+    zip_file_path = download('https://data.mxnet.io/mxnet/data/mnist.zip',
                              dirname=data_dir)
     with zipfile.ZipFile(zip_file_path) as zf:
-        zf.extractall(data_dir)
+        _safe_extract_zip(zf, data_dir)
 
     input_shape = (1, 28, 28)
     batch_size = args.batch_size

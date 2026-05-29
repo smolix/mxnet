@@ -23,7 +23,11 @@
  */
 
 #if MXNET_USE_ONEDNN == 1
+#include <limits>
+
 #include "operator/nn/dnnl/dnnl_concat-inl.h"
+#include "operator/mxnet_op.h"
+#include "operator/quantization/quantized_range_utils.h"
 #include "operator/quantization/quantization_utils.h"
 
 namespace mxnet {
@@ -36,6 +40,129 @@ enum QuantizedConcatOutputs { kOut, kMin, kMax };
 static float GetScale(const NDArray& data, float min, float max) {
   auto data_range = (data.dtype() == mshadow::kInt8) ? kInt8Range : kUint8Range;
   return data_range / MaxAbs(min, max);
+}
+
+static uint8_t QuantizeAffineUInt8(float real, float min, float max) {
+  if (max <= min)
+    return 0;
+  const float scaled = floorf((real - min) * kUint8Range / (max - min) + 0.5f);
+  const int32_t q =
+      static_cast<int32_t>(std::min(kUint8Range, std::max(0.0f, scaled)));
+  return static_cast<uint8_t>(q);
+}
+
+static bool DNNLQuantizedConcatAffineUInt8Fallback(const ConcatParam& param,
+                                                  const std::vector<NDArray>& in_data,
+                                                  const std::vector<OpReqType>& req,
+                                                  const std::vector<NDArray>& out_data,
+                                                  const std::vector<float>& data_min,
+                                                  const std::vector<float>& data_max,
+                                                  float output_min,
+                                                  float output_max) {
+  const auto out_dtype = out_data[quantized_concat_enum::kOut].dtype();
+  if (out_dtype != mshadow::kUint8 && out_dtype != mshadow::kInt8) {
+    return false;
+  }
+
+  bool needs_rescale = false;
+  for (int i = 0; i < param.num_args; ++i) {
+    if (in_data[i].dtype() != mshadow::kUint8 && in_data[i].dtype() != mshadow::kInt8) {
+      return false;
+    }
+    needs_rescale = needs_rescale || in_data[i].dtype() != out_dtype ||
+                    data_min[i] != output_min || data_max[i] != output_max;
+  }
+  if (!needs_rescale) {
+    return false;
+  }
+
+  AssignQuantizedRangeOutput(
+      out_data[quantized_concat_enum::kMin].data().dptr<float>(),
+      &output_min,
+      req[quantized_concat_enum::kMin],
+      "quantized_concat");
+  AssignQuantizedRangeOutput(
+      out_data[quantized_concat_enum::kMax].data().dptr<float>(),
+      &output_max,
+      req[quantized_concat_enum::kMax],
+      "quantized_concat");
+  if (req[quantized_concat_enum::kOut] == kNullOp) {
+    return true;
+  }
+
+  auto& out_arr = const_cast<NDArray&>(out_data[quantized_concat_enum::kOut]);
+  out_arr.InvalidateDNNLData();
+
+  std::vector<NDArray> inputs;
+  inputs.reserve(param.num_args);
+  for (int i = 0; i < param.num_args; ++i) {
+    inputs.emplace_back(in_data[i].Reorder2Default());
+  }
+
+  const int param_dim = CheckAxis(param.dim.has_value() ? param.dim.value() : 0,
+                                  inputs[0].shape().ndim());
+  size_t before_axis = 1;
+  for (int i = 0; i < param_dim; ++i) {
+    before_axis *= inputs[0].shape()[i];
+  }
+  size_t after_axis = 1;
+  for (int i = param_dim + 1; i < inputs[0].shape().ndim(); ++i) {
+    after_axis *= inputs[0].shape()[i];
+  }
+
+  uint8_t* out_u8 = out_dtype == mshadow::kUint8 ?
+                        out_arr.data().dptr<uint8_t>() :
+                        nullptr;
+  int8_t* out_s8 = out_dtype == mshadow::kInt8 ?
+                       out_arr.data().dptr<int8_t>() :
+                       nullptr;
+  const float output_absmax = MaxAbs(output_min, output_max);
+  size_t out_offset = 0;
+  for (size_t prefix = 0; prefix < before_axis; ++prefix) {
+    for (int input_idx = 0; input_idx < param.num_args; ++input_idx) {
+      const size_t axis_size = inputs[input_idx].shape()[param_dim];
+      const size_t block_size = axis_size * after_axis;
+      const size_t in_offset = prefix * block_size;
+      if (inputs[input_idx].dtype() == mshadow::kUint8) {
+        const uint8_t* in = inputs[input_idx].data().dptr<uint8_t>();
+        const float scale = (data_max[input_idx] - data_min[input_idx]) / kUint8Range;
+        for (size_t j = 0; j < block_size; ++j) {
+          const float real = static_cast<float>(in[in_offset + j]) * scale + data_min[input_idx];
+          if (out_dtype == mshadow::kUint8) {
+            const uint8_t q = QuantizeAffineUInt8(real, output_min, output_max);
+            KERNEL_ASSIGN(out_u8[out_offset + j], req[quantized_concat_enum::kOut], q);
+          } else {
+            const float scaled = output_absmax > 0.0f ?
+                                     floorf(std::min(std::abs(real) * kInt8Range / output_absmax,
+                                                     kInt8Range) +
+                                            0.5f) :
+                                     0.0f;
+            const int32_t q = static_cast<int32_t>(real < 0.0f ? -scaled : scaled);
+            KERNEL_ASSIGN(out_s8[out_offset + j],
+                          req[quantized_concat_enum::kOut],
+                          static_cast<int8_t>(q));
+          }
+        }
+      } else {
+        const int8_t* in = inputs[input_idx].data().dptr<int8_t>();
+        const float scale = MaxAbs(data_min[input_idx], data_max[input_idx]) / kInt8Range;
+        for (size_t j = 0; j < block_size; ++j) {
+          const float real = static_cast<float>(in[in_offset + j]) * scale;
+          const float scaled = output_absmax > 0.0f ?
+                                   floorf(std::min(std::abs(real) * kInt8Range / output_absmax,
+                                                   kInt8Range) +
+                                          0.5f) :
+                                   0.0f;
+          const int32_t q = static_cast<int32_t>(real < 0.0f ? -scaled : scaled);
+          KERNEL_ASSIGN(out_s8[out_offset + j],
+                        req[quantized_concat_enum::kOut],
+                        static_cast<int8_t>(q));
+        }
+      }
+      out_offset += block_size;
+    }
+  }
+  return true;
 }
 
 static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
@@ -60,8 +187,8 @@ static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
   // Collect data min/max and output_neg_min, output_pos_max
   std::vector<float> data_min(param_.num_args);
   std::vector<float> data_max(param_.num_args);
-  float output_neg_min = 0.f;  // 0.f is the maximum for output_neg_min
-  float output_pos_max = 0.f;  // 0.f is the minimum for output_pos_max
+  float output_neg_min = std::numeric_limits<float>::max();
+  float output_pos_max = std::numeric_limits<float>::lowest();
   for (int i = 0; i < param_.num_args; ++i) {
     data_min[i] = in_data[param_.num_args + 2 * i].data().dptr<float>()[0];
     if (data_min[i] < output_neg_min)
@@ -70,12 +197,26 @@ static void DNNLQuantizedConcatForward(const nnvm::NodeAttrs& attrs,
     if (data_max[i] > output_pos_max)
       output_pos_max = data_max[i];
   }
-  out_data[quantized_concat_enum::kMin].data().dptr<float>()[0] = output_neg_min;
-  out_data[quantized_concat_enum::kMax].data().dptr<float>()[0] = output_pos_max;
+  const auto out_dtype = out_data[quantized_concat_enum::kOut].dtype();
+  if (out_dtype != mshadow::kUint8) {
+    output_neg_min = std::min(output_neg_min, 0.0f);
+    output_pos_max = std::max(output_pos_max, 0.0f);
+  }
+  if (DNNLQuantizedConcatAffineUInt8Fallback(
+          param_, in_data, req, out_data, data_min, data_max, output_neg_min, output_pos_max)) {
+    return;
+  }
+  AssignQuantizedRangeOutput(out_data[quantized_concat_enum::kMin].data().dptr<float>(),
+                             &output_neg_min,
+                             req[quantized_concat_enum::kMin],
+                             "quantized_concat");
+  AssignQuantizedRangeOutput(out_data[quantized_concat_enum::kMax].data().dptr<float>(),
+                             &output_pos_max,
+                             req[quantized_concat_enum::kMax],
+                             "quantized_concat");
   auto out_scale = GetScale(out_data[quantized_concat_enum::kOut], output_neg_min, output_pos_max);
   std::vector<dnnl::memory::desc> data_md;
   std::vector<const dnnl::memory*> data_mem;
-  const auto out_dtype = out_data[quantized_concat_enum::kOut].dtype();
   // Hold per-input f32 scale buffers so their backing memory outlives
   // DNNLStream::Submit(). Without this, the local `dnnl::memory` ctor
   // path would tie scale storage to oneDNN's internal allocator (see

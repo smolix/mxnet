@@ -37,6 +37,24 @@
 namespace mxnet {
 namespace op {
 
+static void DNNLQuantizeUInt8Fallback(const nnvm::NodeAttrs& attrs,
+                                      const OpContext& ctx,
+                                      const std::vector<NDArray>& inputs,
+                                      const std::vector<OpReqType>& req,
+                                      const std::vector<NDArray>& outputs) {
+  NDArray data = inputs[0];
+  if (data.IsDNNLData()) {
+    data = data.Reorder2Default();
+    DNNLStream::Get()->Submit();
+  }
+  if (req[0] != kNullOp) {
+    const_cast<NDArray&>(outputs[0]).InvalidateDNNLData();
+  }
+  std::vector<TBlob> input_blobs{data.data(), inputs[1].data(), inputs[2].data()};
+  std::vector<TBlob> output_blobs{outputs[0].data(), outputs[1].data(), outputs[2].data()};
+  QuantizeCompute<cpu>(attrs, ctx, input_blobs, req, output_blobs);
+}
+
 template <typename SrcType, typename DstType>
 static void DNNLQuantizeComputeKer(const std::vector<NDArray>& inputs,
                                    const std::vector<NDArray>& outputs,
@@ -118,7 +136,7 @@ static void DNNLQuantizeCompute(const nnvm::NodeAttrs& attrs,
                                 const std::vector<NDArray>& outputs) {
   const QuantizeParam& param = nnvm::get<QuantizeParam>(attrs.parsed);
   if (param.out_type == mshadow::kUint8) {
-    DNNLQuantizeComputeKer<float, uint8_t>(inputs, outputs, param, req);
+    DNNLQuantizeUInt8Fallback(attrs, ctx, inputs, req, outputs);
   } else if (param.out_type == mshadow::kInt8) {
     DNNLQuantizeComputeKer<float, int8_t>(inputs, outputs, param, req);
   } else {

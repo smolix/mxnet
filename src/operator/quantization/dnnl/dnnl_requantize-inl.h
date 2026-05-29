@@ -31,9 +31,28 @@
 
 #include "operator/nn/dnnl/dnnl_base-inl.h"
 #include "operator/quantization/requantize-inl.h"
+#include "operator/quantization/quantized_range_utils.h"
 
 namespace mxnet {
 namespace op {
+
+static void DNNLRequantizeUInt8Fallback(const nnvm::NodeAttrs& attrs,
+                                        const OpContext& ctx,
+                                        const std::vector<NDArray>& inputs,
+                                        const std::vector<OpReqType>& req,
+                                        const std::vector<NDArray>& outputs) {
+  NDArray data = inputs[0];
+  if (data.IsDNNLData()) {
+    data = data.Reorder2Default();
+    DNNLStream::Get()->Submit();
+  }
+  if (req[0] != kNullOp) {
+    const_cast<NDArray&>(outputs[0]).InvalidateDNNLData();
+  }
+  std::vector<TBlob> input_blobs{data.data(), inputs[1].data(), inputs[2].data()};
+  std::vector<TBlob> output_blobs{outputs[0].data(), outputs[1].data(), outputs[2].data()};
+  RequantizeForward<cpu>(attrs, ctx, input_blobs, req, output_blobs);
+}
 
 template <typename DstType>
 static void DNNLRequantizeForwardKer(const nnvm::NodeAttrs& attrs,
@@ -58,12 +77,20 @@ static void DNNLRequantizeForwardKer(const nnvm::NodeAttrs& attrs,
   float second_quantized_range = 0.f;
   if (std::is_same<DstType, int8_t>::value) {
     second_quantized_range           = MinAbs(MaxValue<DstType>(), MinValue<DstType>());
-    *outputs[1].data().dptr<float>() = -second_real_range;
-    *outputs[2].data().dptr<float>() = second_real_range;
+    const float out_min              = -second_real_range;
+    const float out_max              = second_real_range;
+    AssignQuantizedRangeOutput(
+        outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_requantize");
+    AssignQuantizedRangeOutput(
+        outputs[2].data().dptr<float>(), &out_max, req[2], "_contrib_requantize");
   } else if (std::is_same<DstType, uint8_t>::value) {
     second_quantized_range           = MaxValue<DstType>();
-    *outputs[1].data().dptr<float>() = 0.f;
-    *outputs[2].data().dptr<float>() = second_real_range;
+    const float out_min              = 0.f;
+    const float out_max              = second_real_range;
+    AssignQuantizedRangeOutput(
+        outputs[1].data().dptr<float>(), &out_min, req[1], "_contrib_requantize");
+    AssignQuantizedRangeOutput(
+        outputs[2].data().dptr<float>(), &out_max, req[2], "_contrib_requantize");
   } else {
     LOG(FATAL) << "Unsupported requantize output type";
   }
@@ -148,7 +175,7 @@ static void DNNLRequantizeForward(const nnvm::NodeAttrs& attrs,
   }
   auto out_type = GetQuantizeOutputType(param);
   if (out_type == mshadow::kUint8) {
-    DNNLRequantizeForwardKer<uint8_t>(attrs, ctx, inputs, req, outputs, real_range);
+    DNNLRequantizeUInt8Fallback(attrs, ctx, inputs, req, outputs);
   } else if (out_type == mshadow::kInt8) {
     DNNLRequantizeForwardKer<int8_t>(attrs, ctx, inputs, req, outputs, real_range);
   } else {

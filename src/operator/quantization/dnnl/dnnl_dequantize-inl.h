@@ -30,6 +30,7 @@
 #include <string>
 #include <vector>
 
+#include "operator/mxnet_op.h"
 #include "operator/nn/dnnl/dnnl_base-inl.h"
 
 namespace mxnet {
@@ -70,6 +71,25 @@ void SgDNNLDequantizeOperator::Forward(const OpContext& ctx,
   float data_min = *inputs[1].data().dptr<float>();
   float data_max = *inputs[2].data().dptr<float>();
 
+  if (inputs[0].dtype() == mshadow::kUint8) {
+    in_buffer = in_buffer.Reorder2Default();
+    const uint8_t* in_ptr = in_buffer.data().dptr<uint8_t>();
+    auto& out_arr         = const_cast<NDArray&>(outputs[0]);
+    out_arr.InvalidateDNNLData();
+    float* out_ptr        = out_arr.data().dptr<float>();
+    const float scale =
+        (data_max - data_min) / (mshadow::red::limits::MaxValue<uint8_t>() -
+                                 mshadow::red::limits::MinValue<uint8_t>());
+    const index_t size    = outputs[0].shape().Size();
+    const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+#pragma omp parallel for num_threads(nthreads)
+    for (index_t i = 0; i < size; ++i) {
+      const float dequantized = in_ptr[i] * scale + data_min;
+      KERNEL_ASSIGN(out_ptr[i], req[0], dequantized);
+    }
+    return;
+  }
+
   if (initialized_ && (cached_data_min_ != data_min || cached_data_max_ != data_max))
     initialized_ = false;
 
@@ -81,7 +101,9 @@ void SgDNNLDequantizeOperator::Forward(const OpContext& ctx,
     if (inputs[0].dtype() == mshadow::kUint8) {
       quantized_range = kUint8Range;
     } else if (inputs[0].dtype() == mshadow::kInt8) {
-      quantized_range = kInt8Range;
+      quantized_range =
+          MinAbs(mshadow::red::limits::MaxValue<int8_t>(),
+                 mshadow::red::limits::MinValue<int8_t>());
       real_range      = MaxAbs(*inputs[1].data().dptr<float>(), *inputs[2].data().dptr<float>());
     } else {
       LOG(FATAL) << "dnnl dequantize op only supports int8 and uint8 as output type";

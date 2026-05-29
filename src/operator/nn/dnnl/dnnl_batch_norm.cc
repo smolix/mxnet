@@ -131,7 +131,7 @@ void DNNLBNForward::Execute(const OpContext& ctx,
 
   // for output memory
   auto fwd_dst_desc = GetPd().dst_desc();
-  auto out_mem      = const_cast<NDArray&>(out).CreateDNNLData(&fwd_dst_desc);
+  auto out_mem      = CreateDNNLMem(out, fwd_dst_desc, req[batchnorm::kOut], &data);
 
   // mxnet will always use scale shift.
   // But if fix_gamma is true, then all scale elements will be set to 1.0f
@@ -173,7 +173,7 @@ void DNNLBNForward::Execute(const OpContext& ctx,
     net_args[DNNL_ARG_SRC]   = *data_mem;
     net_args[DNNL_ARG_SCALE] = scale_mem;
     net_args[DNNL_ARG_SHIFT] = shift_mem;
-    net_args[DNNL_ARG_DST]   = *out_mem;
+    net_args[DNNL_ARG_DST]   = *out_mem.second;
     if (!ctx.is_train || param.use_global_stats) {
       float* omean  = outputs[batchnorm::kMean].data().dptr<float>();
       float* ovar   = outputs[batchnorm::kVar].data().dptr<float>();
@@ -181,19 +181,25 @@ void DNNLBNForward::Execute(const OpContext& ctx,
       float* invar  = aux_states[batchnorm::kMovingVar].data().dptr<float>();
       // to align with origin implmentation: batch_norm.cc: L164
       for (index_t i = 0; i < channels_; i++) {
-        omean[i] = inmean[i];
-        ovar[i]  = VARIANCE_TO_INVSTD(invar[i], param.eps);
+        KERNEL_ASSIGN(omean[i], req[batchnorm::kMean], inmean[i]);
+        KERNEL_ASSIGN(ovar[i], req[batchnorm::kVar], VARIANCE_TO_INVSTD(invar[i], param.eps));
       }
       net_args[DNNL_ARG_MEAN]     = *(aux_states[batchnorm::kMovingMean].GetDNNLData());
       net_args[DNNL_ARG_VARIANCE] = *(aux_states[batchnorm::kMovingVar].GetDNNLData());
       DNNLStream::Get()->RegisterPrimArgs(GetFwd(), net_args);
+      CommitOutput(out, out_mem);
       DNNLStream::Get()->Submit();
     } else {  // training
       const NDArray& outMean      = outputs[batchnorm::kMean];
       const NDArray& outVar       = outputs[batchnorm::kVar];
-      net_args[DNNL_ARG_MEAN]     = *(outMean.GetDNNLData());
-      net_args[DNNL_ARG_VARIANCE] = *(outVar.GetDNNLData());
+      NDArray saved_mean(outMean.shape(), outMean.ctx(), false, outMean.dtype());
+      NDArray saved_var(outVar.shape(), outVar.ctx(), false, outVar.dtype());
+      auto saved_mean_mem         = saved_mean.GetDNNLData();
+      auto saved_var_mem          = saved_var.GetDNNLData();
+      net_args[DNNL_ARG_MEAN]     = *saved_mean_mem;
+      net_args[DNNL_ARG_VARIANCE] = *saved_var_mem;
       DNNLStream::Get()->RegisterPrimArgs(GetFwd(), net_args);
+      CommitOutput(out, out_mem);
       DNNLStream::Get()->Submit();
 
       // Update running mean/variance here in the forward pass so that they
@@ -203,18 +209,21 @@ void DNNLBNForward::Execute(const OpContext& ctx,
       // the backward pass skips it (see DNNLBNBackward::Execute).
       float* moving_mean_ptr = aux_states[batchnorm::kMovingMean].data().dptr<float>();
       float* moving_var_ptr  = aux_states[batchnorm::kMovingVar].data().dptr<float>();
-      float* out_mean_ptr    = outMean.data().dptr<float>();
-      float* out_var_ptr     = outVar.data().dptr<float>();
+      NDArray saved_mean_buffer = saved_mean.Reorder2Default();
+      NDArray saved_var_buffer  = saved_var.Reorder2Default();
+      float* saved_mean_ptr     = saved_mean_buffer.data().dptr<float>();
+      float* saved_var_ptr      = saved_var_buffer.data().dptr<float>();
+      float* out_mean_ptr       = outMean.data().dptr<float>();
+      float* out_var_ptr        = outVar.data().dptr<float>();
       float minus_mom        = 1.0f - param.momentum;
       for (index_t i = 0; i < channels_; i++) {
-        moving_mean_ptr[i] = moving_mean_ptr[i] * param.momentum + out_mean_ptr[i] * minus_mom;
-        // outVar currently holds the raw variance (before inv-std conversion below)
-        moving_var_ptr[i] = moving_var_ptr[i] * param.momentum + out_var_ptr[i] * minus_mom;
-      }
-
-      // Convert saved variance to inv-std for use in the backward pass.
-      for (index_t i = 0; i < channels_; i++) {
-        out_var_ptr[i] = VARIANCE_TO_INVSTD(out_var_ptr[i], param.eps);
+        moving_mean_ptr[i] = moving_mean_ptr[i] * param.momentum + saved_mean_ptr[i] * minus_mom;
+        // oneDNN returns raw variance; MXNet saves inv-std for backward.
+        moving_var_ptr[i] = moving_var_ptr[i] * param.momentum + saved_var_ptr[i] * minus_mom;
+        KERNEL_ASSIGN(out_mean_ptr[i], req[batchnorm::kMean], saved_mean_ptr[i]);
+        KERNEL_ASSIGN(out_var_ptr[i],
+                      req[batchnorm::kVar],
+                      VARIANCE_TO_INVSTD(saved_var_ptr[i], param.eps));
       }
     }
   } else {  // no input gamma and beta

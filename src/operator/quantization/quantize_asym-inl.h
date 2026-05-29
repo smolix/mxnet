@@ -33,6 +33,7 @@
 #include "../mshadow_op.h"
 #include "../mxnet_op.h"
 #include "../tensor/broadcast_reduce_op.h"
+#include "./quantized_range_utils.h"
 #include "./quantization_utils.h"
 
 namespace mxnet {
@@ -63,14 +64,17 @@ struct quantize_asymmetric {
   template <typename DstDType, typename SrcDType>
   MSHADOW_XINLINE static void Map(int i,
                                   DstDType* out,
-                                  float* oscale,
-                                  float* oshift,
+                                  float*,
+                                  float*,
                                   const SrcDType* in,
                                   const float scale,
-                                  const float shift) {
-    out[i]  = static_cast<DstDType>(in[i] * scale + shift + 0.5);
-    *oscale = scale;
-    *oshift = shift;
+                                  const float shift,
+                                  const OpReqType req) {
+    const float rounded = in[i] * scale + shift + 0.5f;
+    const DstDType quantized =
+        static_cast<DstDType>(Min(Max(rounded, 0.0f),
+                                  static_cast<float>(mshadow::red::limits::MaxValue<DstDType>())));
+    KERNEL_ASSIGN(out[i], req, quantized);
   }
 };
 
@@ -93,8 +97,8 @@ class QuantizeAsymOp {
     mshadow::Stream<xpu>* s    = ctx.get_stream<xpu>();
     const int input_data_dtype = inputs[0].type_flag_;
     if (input_data_dtype == mshadow::kUint8) {
-      *outputs[1].dptr<float>() = 1;
-      *outputs[2].dptr<float>() = 0;
+      AssignQuantizedRangeOutput<xpu>(s, outputs[1], 1.f, req[1]);
+      AssignQuantizedRangeOutput<xpu>(s, outputs[2], 0.f, req[2]);
       UnaryOp::IdentityCompute<xpu>(attrs_, ctx, {inputs[0]}, req, outputs);
     } else if (input_data_dtype == mshadow::kInt8) {
       const float scale = 1;
@@ -106,7 +110,10 @@ class QuantizeAsymOp {
                                                outputs[2].dptr<float>(),
                                                inputs[0].dptr<int8_t>(),
                                                scale,
-                                               shift);
+                                               shift,
+                                               req[0]);
+      AssignQuantizedRangeOutput<xpu>(s, outputs[1], scale, req[1]);
+      AssignQuantizedRangeOutput<xpu>(s, outputs[2], shift, req[2]);
     } else if (input_data_dtype == mshadow::kFloat32) {
       const QuantizeAsymParam& param = nnvm::get<QuantizeAsymParam>(attrs_.parsed);
       if (param.min_calib_range.has_value() && param.max_calib_range.has_value()) {
@@ -120,7 +127,10 @@ class QuantizeAsymOp {
                                                  outputs[2].dptr<float>(),
                                                  inputs[0].dptr<float>(),
                                                  scale,
-                                                 shift);
+                                                 shift,
+                                                 req[0]);
+        AssignQuantizedRangeOutput<xpu>(s, outputs[1], scale, req[1]);
+        AssignQuantizedRangeOutput<xpu>(s, outputs[2], shift, req[2]);
       } else {
         mxnet::TShape src_shape, dst_shape;
         const size_t float_bytes      = sizeof(float);
@@ -149,7 +159,10 @@ class QuantizeAsymOp {
                                                  outputs[2].dptr<float>(),
                                                  inputs[0].dptr<float>(),
                                                  scale,
-                                                 shift);
+                                                 shift,
+                                                 req[0]);
+        AssignQuantizedRangeOutput<xpu>(s, outputs[1], scale, req[1]);
+        AssignQuantizedRangeOutput<xpu>(s, outputs[2], shift, req[2]);
       }
     } else {
       LOG(FATAL) << "Asymmetric quantizaiton only supports int8, uint8 and "

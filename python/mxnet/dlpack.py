@@ -95,11 +95,24 @@ DLManagedTensor._fields_ = [("dl_tensor", DLTensor),           # pylint: disable
                             ("manager_ctx", ctypes.c_void_p),
                             ("deleter", DeleterFunc)]
 
+
+class _NumpyDLPackManager:
+    def __init__(self, array, was_writeable):
+        self.array = array
+        self.was_writeable = was_writeable
+        self.shape = (ctypes.c_int64 * array.ndim)(*array.shape)
+
+
 @DeleterFunc
 def dl_managed_tensor_deleter(dl_managed_tensor_handle):
     void_p = dl_managed_tensor_handle.contents.manager_ctx
     pyobj = ctypes.cast(void_p, ctypes.py_object)
-    ctypes.pythonapi.Py_DecRef(pyobj)
+    try:
+        manager = pyobj.value
+        if isinstance(manager, _NumpyDLPackManager):
+            manager.array.flags['WRITEABLE'] = manager.was_writeable
+    finally:
+        ctypes.pythonapi.Py_DecRef(pyobj)
 
 def ndarray_from_dlpack(array_cls):
     """Returns a function that returns specified array_cls from dlpack.
@@ -132,7 +145,11 @@ def ndarray_from_dlpack(array_cls):
         ctypes.pythonapi.PyCapsule_SetName(dlpack, _c_str_used_dltensor)
         # delete the deleter of the old dlpack
         ctypes.pythonapi.PyCapsule_SetDestructor(dlpack, None)
-        return array_cls(handle=handle)
+        try:
+            return array_cls(handle=handle)
+        except Exception:
+            check_call(_LIB.MXNDArrayFree(handle))
+            raise
     return from_dlpack
 
 
@@ -179,7 +196,7 @@ def ndarray_from_numpy(array_cls, array_create_fn):
             ctypes.pythonapi.Py_IncRef(pyobj)
             return void_p
 
-        def _make_dl_tensor(array):
+        def _make_dl_tensor(array, manager):
             if str(array.dtype) not in DLDataType.TYPE_MAP:
                 raise ValueError(str(array.dtype) + " is not supported.")
             dl_tensor = DLTensor()
@@ -187,15 +204,16 @@ def ndarray_from_numpy(array_cls, array_create_fn):
             dl_tensor.ctx = DLContext(1, 0)
             dl_tensor.ndim = array.ndim
             dl_tensor.dtype = DLDataType.TYPE_MAP[str(array.dtype)]
-            dl_tensor.shape = array.ctypes.shape_as(ctypes.c_int64)
+            dl_tensor.shape = manager.shape
             dl_tensor.strides = None
             dl_tensor.byte_offset = 0
             return dl_tensor
 
-        def _make_dl_managed_tensor(array):
+        def _make_dl_managed_tensor(array, was_writeable):
+            manager = _NumpyDLPackManager(array, was_writeable)
             c_obj = DLManagedTensor()
-            c_obj.dl_tensor = _make_dl_tensor(array)
-            c_obj.manager_ctx = _make_manager_ctx(array)
+            c_obj.dl_tensor = _make_dl_tensor(array, manager)
+            c_obj.manager_ctx = _make_manager_ctx(manager)
             c_obj.deleter = dl_managed_tensor_deleter
             return c_obj
 
@@ -205,9 +223,19 @@ def ndarray_from_numpy(array_cls, array_create_fn):
         if not ndarray.flags['C_CONTIGUOUS']:
             raise ValueError("Only c-contiguous arrays are supported for zero-copy")
 
+        was_writeable = ndarray.flags['WRITEABLE']
         ndarray.flags['WRITEABLE'] = False
-        c_obj = _make_dl_managed_tensor(ndarray)
+        c_obj = _make_dl_managed_tensor(ndarray, was_writeable)
         handle = NDArrayHandle()
-        check_call(_LIB.MXNDArrayFromDLPack(ctypes.byref(c_obj), True, ctypes.byref(handle)))
-        return array_cls(handle=handle)
+        try:
+            check_call(_LIB.MXNDArrayFromDLPack(ctypes.byref(c_obj), True, ctypes.byref(handle)))
+        except Exception:
+            dl_managed_tensor_deleter(ctypes.byref(c_obj))
+            ndarray.flags['WRITEABLE'] = was_writeable
+            raise
+        try:
+            return array_cls(handle=handle)
+        except Exception:
+            check_call(_LIB.MXNDArrayFree(handle))
+            raise
     return from_numpy

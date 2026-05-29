@@ -77,6 +77,11 @@ def test_main_starts_remote_kills_and_local_kill(monkeypatch, tmp_path):
     class FakePopen:
         def __init__(self, argv, **kwargs):
             popen_calls.append((argv, kwargs))
+            self.returncode = 0
+
+        def communicate(self, timeout=None):
+            assert timeout == module.REMOTE_TIMEOUT_SECONDS
+            return b"", b""
 
     monkeypatch.setattr(module.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(module, "_kill_local", lambda user, prog: local_calls.append((user, prog)))

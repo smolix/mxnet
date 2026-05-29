@@ -20,6 +20,7 @@ Ref: http://images.nvidia.com/content/pdf/tesla/184457-Tesla-P4-Datasheet-NV-Fin
 """
 import os
 import platform
+from pathlib import Path
 import mxnet as mx
 import numpy as onp
 from mxnet import npx
@@ -76,6 +77,15 @@ def supports_dnnl_quantized_ops():
     return not is_aarch64()
 
 
+def test_get_quantize_scale_treats_uint8_as_affine_range():
+    repo = Path(__file__).resolve().parents[3]
+    contents = (repo / "src/operator/quantization/quantization_utils.h").read_text()
+    body = contents.split("static inline float GetQuantizeScale", 1)[1].split("}  // namespace op", 1)[0]
+
+    assert "(dtype == mshadow::kUint8) ? data_max - data_min : MaxAbs(data_min, data_max)" in body
+    assert "(dtype == mshadow::kUint8) ? kUint8Range : kInt8Range" in body
+
+
 def get_low_high(qtype):
     """ Return low and high value for given integer type as float number"""
     if qtype == 'uint8':
@@ -124,6 +134,33 @@ def test_quantize_out_buffers_overwrite_prefilled_sentinels():
     assert_almost_equal(out_max.asnumpy(), onp.array([expected_range], dtype=onp.float32))
 
 
+def test_quantize_uint8_uses_affine_range():
+    data = mx.nd.array([-1.0, 0.0, 3.0], dtype='float32', ctx=mx.current_device())
+    min_range = mx.nd.array([-1.0], dtype='float32', ctx=mx.current_device())
+    max_range = mx.nd.array([3.0], dtype='float32', ctx=mx.current_device())
+
+    qdata, out_min, out_max = mx.nd.contrib.quantize(
+        data, min_range, max_range, out_type='uint8')
+    dequantized = mx.nd.contrib.dequantize(qdata, out_min, out_max, out_type='float32')
+
+    assert qdata.dtype == onp.uint8
+    assert_almost_equal(qdata.asnumpy(), onp.array([0, 64, 255], dtype=onp.uint8), atol=1)
+    assert_almost_equal(dequantized.asnumpy(), data.asnumpy(), atol=2.0 / 255.0)
+
+
+def test_quantize_uint8_saturates_out_of_range_values():
+    data = mx.nd.array([0.0, 1.0, 2.0, 3.0], dtype='float32', ctx=mx.current_device())
+    min_range = mx.nd.array([1.0], dtype='float32', ctx=mx.current_device())
+    max_range = mx.nd.array([2.0], dtype='float32', ctx=mx.current_device())
+
+    qdata, out_min, out_max = mx.nd.contrib.quantize(
+        data, min_range, max_range, out_type='uint8')
+
+    assert_almost_equal(qdata.asnumpy(), onp.array([0, 0, 255, 255], dtype=onp.uint8))
+    assert_almost_equal(out_min.asnumpy(), onp.array([1.0], dtype=onp.float32))
+    assert_almost_equal(out_max.asnumpy(), onp.array([2.0], dtype=onp.float32))
+
+
 def test_quantize_v2_out_buffers_overwrite_prefilled_sentinels():
     data = mx.nd.array([-3.0, -1.0, 0.5, 2.0], dtype='float32', ctx=mx.current_device())
     out_data = mx.nd.full(data.shape, 11, dtype='int8', ctx=mx.current_device())
@@ -140,6 +177,38 @@ def test_quantize_v2_out_buffers_overwrite_prefilled_sentinels():
     assert_almost_equal(out_data.asnumpy(), expected, atol=1)
     assert_almost_equal(out_min.asnumpy(), onp.array([-expected_range], dtype=onp.float32))
     assert_almost_equal(out_max.asnumpy(), onp.array([expected_range], dtype=onp.float32))
+
+def test_quantize_v2_uint8_uses_affine_range():
+    data = mx.nd.array([-1.0, 0.0, 3.0], dtype='float32', ctx=mx.current_device())
+
+    qdata, out_min, out_max = mx.nd.contrib.quantize_v2(
+        data, out_type='uint8', min_calib_range=-1.0, max_calib_range=3.0)
+    dequantized = mx.nd.contrib.dequantize(qdata, out_min, out_max, out_type='float32')
+
+    assert qdata.dtype == onp.uint8
+    assert_almost_equal(qdata.asnumpy(), onp.array([0, 64, 255], dtype=onp.uint8), atol=1)
+    assert_almost_equal(dequantized.asnumpy(), data.asnumpy(), atol=2.0 / 255.0)
+
+def test_quantize_v2_uint8_saturates_out_of_range_values():
+    data = mx.nd.array([0.0, 1.0, 2.0, 3.0], dtype='float32', ctx=mx.current_device())
+
+    qdata, out_min, out_max = mx.nd.contrib.quantize_v2(
+        data, out_type='uint8', min_calib_range=1.0, max_calib_range=2.0)
+
+    assert_almost_equal(qdata.asnumpy(), onp.array([0, 0, 255, 255], dtype=onp.uint8))
+    assert_almost_equal(out_min.asnumpy(), onp.array([1.0], dtype=onp.float32))
+    assert_almost_equal(out_max.asnumpy(), onp.array([2.0], dtype=onp.float32))
+
+def test_quantize_v2_quantized_passthrough_reports_exact_ranges():
+    qdata = mx.nd.array([0, 255], dtype='uint8', ctx=mx.current_device())
+
+    qout, out_min, out_max = mx.nd.contrib.quantize_v2(qdata, out_type='uint8')
+    dequantized = mx.nd.contrib.dequantize(qout, out_min, out_max, out_type='float32')
+
+    assert_almost_equal(qout.asnumpy(), qdata.asnumpy())
+    assert_almost_equal(out_min.asnumpy(), onp.array([0.0], dtype=onp.float32))
+    assert_almost_equal(out_max.asnumpy(), onp.array([255.0], dtype=onp.float32))
+    assert_almost_equal(dequantized.asnumpy(), onp.array([0.0, 255.0], dtype=onp.float32))
 
 def test_calibrated_quantize_v2_bfloat16_to_int8():
     shape = rand_shape_nd(4)
@@ -199,6 +268,31 @@ def test_dequantize_int8_to_float32():
     test_nd_array_dequantization(qdata, min_range, max_range, expected_result)
     # test symbolic api implementaion.
     test_symbolic_api_dequantization(qdata, min_range, max_range, expected_result)
+
+
+def test_dequantize_uint8_uses_affine_range():
+    qdata_np = onp.array([0, 64, 128, 255], dtype=onp.uint8)
+    qdata = mx.nd.array(qdata_np, dtype=onp.uint8, ctx=mx.current_device())
+    min_range = mx.nd.array([-1.0], dtype=onp.float32, ctx=mx.current_device())
+    max_range = mx.nd.array([3.0], dtype=onp.float32, ctx=mx.current_device())
+
+    data = mx.nd.contrib.dequantize(qdata, min_range, max_range, out_type='float32')
+
+    expected = qdata_np.astype('float32') * (4.0 / 255.0) - 1.0
+    assert_almost_equal(data.asnumpy(), expected, atol=1e-6, rtol=1e-6)
+
+
+def test_dequantize_int8_uses_symmetric_127_range():
+    qdata_np = onp.array([-127, 0, 127], dtype=onp.int8)
+    qdata = mx.nd.array(qdata_np, dtype=onp.int8, ctx=mx.current_device())
+    min_range = mx.nd.array([-1.0], dtype=onp.float32, ctx=mx.current_device())
+    max_range = mx.nd.array([1.0], dtype=onp.float32, ctx=mx.current_device())
+
+    data = mx.nd.contrib.dequantize(qdata, min_range, max_range, out_type='float32')
+
+    assert_almost_equal(data.asnumpy(),
+                        onp.array([-1.0, 0.0, 1.0], dtype=onp.float32),
+                        atol=1e-6, rtol=1e-6)
 
 
 def test_dequantize_out_buffer_overwrites_prefilled_sentinel():
@@ -303,6 +397,26 @@ def test_requantize_int32_to_int8():
     check_requantize((32, 3, 23, 23))
     check_requantize((3, 4, 10, 10), min_calib_range=-1050.0, max_calib_range=1040.0)
     check_requantize((32, 3, 23, 23), min_calib_range=-134.349, max_calib_range=523.43)
+
+
+def test_requantize_uint8_uses_affine_range():
+    quantized_range = float(onp.iinfo('int32').max)
+    real_values = onp.array([2.0, 4.0, 6.0], dtype='float32')
+    qdata_np = (real_values / 10.0 * quantized_range).astype('int32')
+    qdata = mx.nd.array(qdata_np, dtype='int32', ctx=mx.current_device())
+    min_range = mx.nd.array([-10.0], dtype='float32', ctx=mx.current_device())
+    max_range = mx.nd.array([10.0], dtype='float32', ctx=mx.current_device())
+
+    qout, out_min, out_max = mx.nd.contrib.requantize(
+        qdata, min_range, max_range, out_type='uint8',
+        min_calib_range=2.0, max_calib_range=6.0)
+    dequantized = mx.nd.contrib.dequantize(qout, out_min, out_max, out_type='float32')
+
+    assert qout.dtype == onp.uint8
+    assert_almost_equal(out_min.asnumpy(), onp.array([2.0], dtype=onp.float32))
+    assert_almost_equal(out_max.asnumpy(), onp.array([6.0], dtype=onp.float32))
+    assert_almost_equal(qout.asnumpy(), onp.array([0, 128, 255], dtype=onp.uint8), atol=1)
+    assert_almost_equal(dequantized.asnumpy(), real_values, atol=2.0 / 255.0)
 
 
 @use_np
@@ -442,6 +556,61 @@ def test_quantized_conv():
 
 
 @use_np
+def test_quantized_conv_uint8_uses_affine_zero_point():
+    if not is_test_for_dnnl() or not supports_dnnl_quantized_ops():
+        return
+
+    qdata = mx.np.array([[[[0, 128, 255]]]], dtype='uint8')
+    min_data = mx.np.array([1.0], dtype='float32')
+    max_data = mx.np.array([3.0], dtype='float32')
+    weight = mx.np.array([[[[127]]]], dtype='int8')
+    min_weight = mx.np.array([-1.0], dtype='float32')
+    max_weight = mx.np.array([1.0], dtype='float32')
+
+    out, min_out, max_out = npx.quantized_conv(data=qdata, weight=weight,
+                                               min_data=min_data, max_data=max_data,
+                                               min_weight=min_weight, max_weight=max_weight,
+                                               kernel=(1, 1), num_filter=1,
+                                               no_bias=True, num_group=1, layout='NCHW')
+
+    data_scale = 255.5 / (max_data.item() - min_data.item())
+    data_zero_point = int(onp.rint(-min_data.item() * data_scale))
+    expected = (qdata.asnumpy().astype('int32') - data_zero_point) * 127
+    assert_almost_equal(out.asnumpy(), expected)
+    assert min_out.item() < 0
+    assert max_out.item() > 0
+
+
+@use_np
+def test_quantized_conv_rescales_int8_bias_to_accumulator_units():
+    if not is_test_for_dnnl() or not supports_dnnl_quantized_ops():
+        return
+
+    qdata = mx.np.array([[[[0, 0]]]], dtype='int8')
+    weight = mx.np.array([[[[0]]]], dtype='int8')
+    bias = mx.np.array([64], dtype='int8')
+    min_data = mx.np.array([-2.0], dtype='float32')
+    max_data = mx.np.array([2.0], dtype='float32')
+    min_weight = mx.np.array([-3.0], dtype='float32')
+    max_weight = mx.np.array([3.0], dtype='float32')
+    min_bias = mx.np.array([-4.0], dtype='float32')
+    max_bias = mx.np.array([4.0], dtype='float32')
+
+    out, _, _ = npx.quantized_conv(data=qdata, weight=weight, bias=bias,
+                                   min_data=min_data, max_data=max_data,
+                                   min_weight=min_weight, max_weight=max_weight,
+                                   min_bias=min_bias, max_bias=max_bias,
+                                   kernel=(1, 1), num_filter=1,
+                                   no_bias=False, num_group=1, layout='NCHW')
+
+    data_scale = 127.5 / 2.0
+    weight_scale = 127.5 / 3.0
+    bias_scale = 127.5 / 4.0
+    expected_bias = int(64 * data_scale * weight_scale / bias_scale)
+    assert_almost_equal(out.asnumpy(), onp.full((1, 1, 1, 2), expected_bias, dtype='int32'))
+
+
+@use_np
 def test_quantized_elemwise_add():
     def check_quantized_elemwise_add(data_shape, qdtypeA, qdtypeB):
         if is_test_for_native_cpu():
@@ -501,6 +670,52 @@ def test_quantized_elemwise_add():
     check_quantized_elemwise_add((13, 74, 52), 'uint8', 'uint8')
     check_quantized_elemwise_add((3, 4, 56, 56), 'int8', 'uint8')
     check_quantized_elemwise_add((32, 56, 64, 11), 'int8', 'int8')
+
+@use_np
+def test_quantized_elemwise_add_uint8_affine_ranges():
+    if is_test_for_native_cpu() or is_test_for_gpu():
+        return
+
+    a = mx.np.array([[0, 255], [128, 64]], dtype='uint8')
+    b = mx.np.array([[0, 255], [128, 64]], dtype='uint8')
+    a_min = mx.np.array([1.0], dtype='float32')
+    a_max = mx.np.array([3.0], dtype='float32')
+    b_min = mx.np.array([4.0], dtype='float32')
+    b_max = mx.np.array([6.0], dtype='float32')
+
+    qout, out_min, out_max = npx.quantized_elemwise_add(
+        a, b, a_min, a_max, b_min, b_max,
+        min_calib_range=5.0, max_calib_range=9.0)
+
+    expected = (a.asnumpy().astype('float32') * 2.0 / 255.0 + 1.0 +
+                b.asnumpy().astype('float32') * 2.0 / 255.0 + 4.0)
+    actual = qout.asnumpy().astype('float32') * 4.0 / 255.0 + 5.0
+    assert qout.dtype == onp.uint8
+    assert_almost_equal(out_min.asnumpy(), onp.array([5.0], dtype='float32'))
+    assert_almost_equal(out_max.asnumpy(), onp.array([9.0], dtype='float32'))
+    assert_almost_equal(actual, expected, atol=4.0 / 255.0)
+
+@use_np
+def test_quantized_npi_add_uint8_affine_broadcast_int32():
+    if is_test_for_native_cpu() or is_test_for_gpu():
+        return
+
+    a = mx.np.array([[0, 255], [128, 64]], dtype='uint8')
+    b = mx.np.array([[0], [255]], dtype='uint8')
+    a_min = mx.np.array([1.0], dtype='float32')
+    a_max = mx.np.array([3.0], dtype='float32')
+    b_min = mx.np.array([4.0], dtype='float32')
+    b_max = mx.np.array([6.0], dtype='float32')
+
+    qout, out_min, out_max = npx.quantized_npi_add(a, b, a_min, a_max, b_min, b_max)
+
+    expected = (a.asnumpy().astype('float32') * 2.0 / 255.0 + 1.0 +
+                (b.asnumpy().astype('float32') * 2.0 / 255.0 + 4.0))
+    actual = qout.asnumpy().astype('float64') * out_max.asnumpy()[0] / 0x7fffffff
+    assert qout.dtype == onp.int32
+    assert_almost_equal(out_min.asnumpy(), onp.array([-9.0], dtype='float32'))
+    assert_almost_equal(out_max.asnumpy(), onp.array([9.0], dtype='float32'))
+    assert_almost_equal(actual, expected, atol=0.01)
 
 @use_np
 def test_quantized_npi_add():
@@ -636,6 +851,25 @@ def test_quantized_elemwise_mul():
         check_quantized_elemwise_mul((13, 74, 52), qtype)
         check_quantized_elemwise_mul((3, 4, 56, 56), qtype)
         check_quantized_elemwise_mul((32, 56, 64, 11), qtype)
+
+
+@use_np
+def test_quantized_elemwise_mul_calibrated_int8_saturates():
+    lhs = mx.np.array([127, -128], dtype='int8')
+    rhs = mx.np.array([127, 127], dtype='int8')
+    lhs_min = mx.np.array([-1.0], dtype='float32')
+    lhs_max = mx.np.array([1.0], dtype='float32')
+    rhs_min = mx.np.array([-1.0], dtype='float32')
+    rhs_max = mx.np.array([1.0], dtype='float32')
+
+    qout, out_min, out_max = mx.npx.quantized_elemwise_mul(
+        lhs, rhs, lhs_min, lhs_max, rhs_min, rhs_max,
+        min_calib_range=-0.25, max_calib_range=0.25)
+
+    assert qout.dtype == onp.int8
+    assert_almost_equal(qout.asnumpy(), onp.array([127, -128], dtype=onp.int8))
+    assert_almost_equal(out_min.asnumpy(), onp.array([-0.25], dtype=onp.float32))
+    assert_almost_equal(out_max.asnumpy(), onp.array([0.25], dtype=onp.float32))
 
 
 @use_np
@@ -804,6 +1038,19 @@ def test_quantized_fc():
         weight_max = mx.np.max(new_args['weight']).astype('float32')
         data_range = maxabs(data_min, data_max)
         weight_range = maxabs(weight_min, weight_max)
+        if qdtype == 'uint8':
+            # The uint8 FC path consumes affine quantized values. Use a symmetric
+            # uint8 range whose zero point rounds to 128 so the accumulator still
+            # matches the integer-valued fp32 reference used below.
+            qdata_min = -127.5
+            qdata_max = 127.5
+            qdata = (data + 128).astype('uint8')
+            data_scale_for_bias = 255.5 / (qdata_max - qdata_min)
+        else:
+            qdata_min = -data_range
+            qdata_max = data_range
+            qdata = data.astype(qdtype)
+            data_scale_for_bias = quantized_range / data_range
 
         if use_bias:
             bias = mx.np.random.uniform(low=data_low,
@@ -815,7 +1062,7 @@ def test_quantized_fc():
             bias_range = maxabs(bias_min, bias_max)
 
             bias_scale = int8_range / bias_range
-            data_scale = quantized_range / data_range
+            data_scale = data_scale_for_bias
             weight_scale = int8_range / weight_range
             bias_int32_rescale = data_scale * weight_scale / bias_scale
             new_bias = bias.astype('float32') * bias_int32_rescale
@@ -862,8 +1109,8 @@ def test_quantized_fc():
         fc_int8 = QuantFC(num_hidden=num_hidden, use_bias=use_bias, flatten=flatten)
         qargs = {
             'weight': new_args['weight'].astype('int8'),
-            'min_data': mx.np.array([-data_range]),
-            'max_data': mx.np.array([data_range]),
+            'min_data': mx.np.array([qdata_min]),
+            'max_data': mx.np.array([qdata_max]),
             'min_weight': mx.np.array([-weight_range]),
             'max_weight': mx.np.array([weight_range])
         }
@@ -876,7 +1123,7 @@ def test_quantized_fc():
 
         fc_int8.load_dict(qargs, cast_dtype=True, dtype_source='saved')
 
-        qoutput, min_range, max_range = fc_int8(data.astype(qdtype))
+        qoutput, min_range, max_range = fc_int8(qdata)
 
         if use_bias:
             # with adding bias, accuracy loss should not be greater than one
@@ -900,6 +1147,70 @@ def test_quantized_fc():
         check_quantized_fc((256, 111, 2, 2), 800, True, qdtype)
         check_quantized_fc((256, 2048, 2, 2), 800, False, qdtype)
         check_quantized_fc((256, 111, 2, 2), 800, False, qdtype)
+
+
+@use_np
+def test_quantized_fc_accepts_dnnl_quantize_v2_input():
+    if not is_test_for_dnnl() or not supports_dnnl_quantized_ops():
+        return
+
+    data = mx.np.arange(24, dtype='float32').reshape((2, 3, 2, 2)) - 12
+    qdata, min_data, max_data = mx.nd.contrib.quantize_v2(
+        data.as_nd_ndarray(), out_type='int8', min_calib_range=-16.0, max_calib_range=16.0)
+    qdata = qdata.as_np_ndarray()
+    min_data = min_data.as_np_ndarray()
+    max_data = max_data.as_np_ndarray()
+    weight = mx.np.array(onp.arange(-24, 24, dtype=onp.int8).reshape((4, 12))).astype('int8')
+    min_weight = mx.np.array([-24.0], dtype='float32')
+    max_weight = mx.np.array([23.0], dtype='float32')
+
+    out, _, _ = npx.quantized_fully_connected(
+        data=qdata,
+        weight=weight,
+        min_data=min_data,
+        max_data=max_data,
+        min_weight=min_weight,
+        max_weight=max_weight,
+        num_hidden=4,
+        no_bias=True,
+        flatten=True)
+
+    expected = onp.dot(qdata.asnumpy().reshape((2, 12)).astype('int32'),
+                       weight.asnumpy().astype('int32').T)
+    assert_almost_equal(out.asnumpy(), expected)
+
+
+@use_np
+def test_quantized_fc_uint8_uses_affine_zero_point():
+    if not is_test_for_dnnl() or not supports_dnnl_quantized_ops():
+        return
+
+    qdata = mx.np.array([[0, 128, 255]], dtype='uint8')
+    min_data = mx.np.array([1.0], dtype='float32')
+    max_data = mx.np.array([3.0], dtype='float32')
+    weight = mx.np.array([[127, 127, 127]], dtype='int8')
+    min_weight = mx.np.array([-1.0], dtype='float32')
+    max_weight = mx.np.array([1.0], dtype='float32')
+
+    out, min_out, max_out = npx.quantized_fully_connected(
+        data=qdata,
+        weight=weight,
+        min_data=min_data,
+        max_data=max_data,
+        min_weight=min_weight,
+        max_weight=max_weight,
+        num_hidden=1,
+        no_bias=True,
+        flatten=True)
+
+    data_scale = 255.5 / (max_data.item() - min_data.item())
+    data_zero_point = int(onp.rint(-min_data.item() * data_scale))
+    expected = onp.dot((qdata.asnumpy().astype('int32') - data_zero_point),
+                       weight.asnumpy().astype('int32').T)
+    assert_almost_equal(out.asnumpy(), expected)
+    assert min_out.item() < 0
+    assert max_out.item() > 0
+
 
 @use_np
 def test_quantized_transpose():
@@ -1100,6 +1411,122 @@ def test_quantized_act():
         check_quantized_act((10, 15), qdtype)
         check_quantized_act((10, 15, 18), qdtype)
         check_quantized_act((3, 4, 23, 23), qdtype)
+
+
+@use_np
+def test_quantized_act_uint8_affine_relu_clamps_real_zero():
+    if not is_test_for_dnnl():
+        print('skipped testing quantized_act affine uint8 for non-oneDNN backend')
+        return
+
+    qdata = mx.np.array([0, 212, 255], dtype='uint8')
+    min_data = mx.np.array([-5.0], dtype='float32')
+    max_data = mx.np.array([1.0], dtype='float32')
+
+    qout, min_out, max_out = npx.quantized_act(qdata, min_data, max_data, act_type='relu')
+    dequantized = mx.nd.contrib.dequantize(qout.as_nd_ndarray(),
+                                           min_out.as_nd_ndarray(),
+                                           max_out.as_nd_ndarray(),
+                                           out_type='float32')
+
+    assert_almost_equal(min_out.item(), 0.0)
+    assert_almost_equal(max_out.item(), 1.0)
+    assert_almost_equal(dequantized.asnumpy(), onp.array([0.0, 0.0, 1.0]), atol=0.02, rtol=0.02)
+
+
+@use_np
+def test_quantized_act_int8_relu_clamps_real_zero():
+    if not is_test_for_dnnl():
+        print('skipped testing quantized_act int8 for non-oneDNN backend')
+        return
+
+    qdata = mx.np.array([-127, 0, 127], dtype='int8')
+    min_data = mx.np.array([-2.0], dtype='float32')
+    max_data = mx.np.array([2.0], dtype='float32')
+
+    qout, min_out, max_out = npx.quantized_act(qdata, min_data, max_data, act_type='relu')
+    dequantized = mx.nd.contrib.dequantize(qout.as_nd_ndarray(),
+                                           min_out.as_nd_ndarray(),
+                                           max_out.as_nd_ndarray(),
+                                           out_type='float32')
+
+    assert_almost_equal(min_out.item(), 0.0)
+    assert_almost_equal(max_out.item(), 2.0)
+    assert_almost_equal(dequantized.asnumpy(), onp.array([0.0, 0.0, 2.0]), atol=0.02, rtol=0.02)
+
+
+@use_np
+def test_quantized_concat_uint8_preserves_affine_ranges():
+    if not is_test_for_dnnl():
+        print('skipped testing quantized_concat affine uint8 for non-oneDNN backend')
+        return
+
+    lhs = mx.nd.array([0, 255], dtype='uint8')
+    rhs = mx.nd.array([0, 255], dtype='uint8')
+    out, min_out, max_out = mx.nd.contrib.quantized_concat(
+        lhs, rhs,
+        mx.nd.array([1.0], dtype='float32'), mx.nd.array([3.0], dtype='float32'),
+        mx.nd.array([4.0], dtype='float32'), mx.nd.array([6.0], dtype='float32'),
+        num_args=2, dim=0)
+    dequantized = mx.nd.contrib.dequantize(out, min_out, max_out, out_type='float32')
+
+    assert_almost_equal(min_out.asscalar(), 1.0)
+    assert_almost_equal(max_out.asscalar(), 6.0)
+    assert_almost_equal(dequantized.asnumpy(),
+                        onp.array([1.0, 3.0, 4.0, 6.0]),
+                        atol=0.03,
+                        rtol=0.03)
+
+
+@use_np
+def test_quantized_concat_int8_rescales_input_ranges():
+    if not is_test_for_dnnl():
+        print('skipped testing quantized_concat int8 rescale for non-oneDNN backend')
+        return
+
+    lhs = mx.nd.array([-127, 127], dtype='int8')
+    rhs = mx.nd.array([127], dtype='int8')
+    out, min_out, max_out = mx.nd.contrib.quantized_concat(
+        lhs, rhs,
+        mx.nd.array([-2.0], dtype='float32'), mx.nd.array([2.0], dtype='float32'),
+        mx.nd.array([-4.0], dtype='float32'), mx.nd.array([4.0], dtype='float32'),
+        num_args=2, dim=0)
+    dequantized = mx.nd.contrib.dequantize(out, min_out, max_out, out_type='float32')
+
+    assert_almost_equal(min_out.asscalar(), -4.0)
+    assert_almost_equal(max_out.asscalar(), 4.0)
+    assert_almost_equal(dequantized.asnumpy(),
+                        onp.array([-2.0, 2.0, 4.0]),
+                        atol=0.04,
+                        rtol=0.04)
+
+
+@use_np
+def test_quantized_bn_uint8_uses_affine_input_range():
+    if not is_test_for_dnnl():
+        print('skipped testing quantized_bn affine uint8 for non-oneDNN backend')
+        return
+
+    data = mx.nd.array([[[[0, 255]]]], dtype='uint8')
+    gamma = mx.nd.array([1.0], dtype='float32')
+    beta = mx.nd.array([0.0], dtype='float32')
+    mean = mx.nd.array([0.0], dtype='float32')
+    var = mx.nd.array([1.0], dtype='float32')
+    min_data = mx.nd.array([1.0], dtype='float32')
+    max_data = mx.nd.array([3.0], dtype='float32')
+
+    out, min_out, max_out = mx.nd.contrib.quantized_batch_norm(
+        data, gamma, beta, mean, var, min_data, max_data,
+        use_global_stats=True, axis=1, eps=0.0,
+        min_calib_range=0.0, max_calib_range=4.0)
+    dequantized = mx.nd.contrib.dequantize(out, min_out, max_out, out_type='float32')
+
+    assert_almost_equal(min_out.asscalar(), 0.0)
+    assert_almost_equal(max_out.asscalar(), 4.0)
+    assert_almost_equal(dequantized.asnumpy(),
+                        onp.array([[[[1.0, 3.0]]]]),
+                        atol=0.04,
+                        rtol=0.04)
 
 
 @use_np
@@ -1439,7 +1866,8 @@ def test_quantize_gluon_with_forward():
 
         data_shape = (32, 3, 224, 224)
         batch_size = 1
-        resnet18_v1 = vision.resnet18_v1(pretrained=True)
+        resnet18_v1 = vision.resnet18_v1(pretrained=False)
+        resnet18_v1.initialize(device=mx.current_device())
         resnet18_v1.reset_device(mx.current_device())
         excluded_names_match = []
         if mx.current_device() == mx.gpu():
@@ -1512,6 +1940,34 @@ def test_quantize_sym_with_calib():
         lhs = float(attr_dict[name]['max_calib_range'])
         rhs = min_max_dict[op_name_to_th_name[name]][1]
         assert_almost_equal(onp.array([lhs]), onp.array([rhs]), rtol=1e-3, atol=1e-4)
+
+
+@use_np
+def test_quantize_sym_with_calib_rejects_missing_required_entries():
+    if is_test_for_native_cpu():
+        print('skipped testing missing calibration table entries for native cpu since quantize '
+              'model is not supported yet')
+        return
+    if is_test_for_gpu():
+        print('skipped testing missing calibration table entries for gpu')
+        return
+
+    data = mx.sym.Variable('data')
+    conv = mx.sym.Convolution(data, kernel=(1, 1), num_filter=16, name='conv')
+    bn = mx.sym.BatchNorm(data=conv, eps=2e-05, fix_gamma=False, momentum=0.9,
+                          use_global_stats=False, name='bn')
+    act = mx.sym.Activation(data=bn, act_type='relu', name='relu')
+    pool = mx.sym.Pooling(act, kernel=(4, 4), pool_type='avg', name='pool')
+    fc = mx.sym.FullyConnected(pool, num_hidden=10, flatten=True, name='fc')
+    sym = mx.sym.softmax(fc, name='softmax')
+    offline_params = [name for name in sym.list_arguments()
+                      if not name.startswith('data') and not name.endswith('label')]
+    qsym, _ = mx.contrib.quant._quantize_symbol(
+        sym, device=mx.current_device(), offline_params=offline_params, quantize_mode='full')
+    min_max_dict = {'conv_output': (-1.0, 1.0)}
+
+    with _pytest_for_reset_np_fixture.raises(mx.base.MXNetError, match='Missing calibration result'):
+        mx.contrib.quant._calibrate_quantized_sym(qsym, min_max_dict)
 
 
 @use_np

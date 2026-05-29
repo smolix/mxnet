@@ -30,6 +30,7 @@
 #include <mxnet/imperative.h>
 #include <nnvm/node.h>
 #include <nnvm/op_attr_types.h>
+#include <memory>
 #include <string>
 #include "./c_api_common.h"
 #include "../common/utils.h"
@@ -49,7 +50,8 @@ void SetNDInputsOutputs(const nnvm::Op* op,
                         int* num_outputs,
                         int infered_num_outputs,
                         int num_visible_outputs,
-                        NDArrayHandle** outputs) {
+                        NDArrayHandle** outputs,
+                        std::vector<std::unique_ptr<NDArray>>* owned_outputs) {
   NDArray** out_array = *reinterpret_cast<NDArray***>(outputs);
 
   ndinputs->clear();
@@ -68,9 +70,12 @@ void SetNDInputsOutputs(const nnvm::Op* op,
 
   ndoutputs->clear();
   ndoutputs->reserve(infered_num_outputs);
+  owned_outputs->clear();
+  owned_outputs->resize(infered_num_outputs);
   if (out_array == nullptr) {
     for (int i = 0; i < infered_num_outputs; ++i) {
-      ndoutputs->emplace_back(new NDArray());
+      owned_outputs->at(i).reset(new NDArray());
+      ndoutputs->emplace_back(owned_outputs->at(i).get());
     }
     *num_outputs = num_visible_outputs;
   } else {
@@ -81,7 +86,8 @@ void SetNDInputsOutputs(const nnvm::Op* op,
       ndoutputs->emplace_back(out_array[i]);
     }
     for (int i = *num_outputs; i < infered_num_outputs; ++i) {
-      ndoutputs->emplace_back(new NDArray());
+      owned_outputs->at(i).reset(new NDArray());
+      ndoutputs->emplace_back(owned_outputs->at(i).get());
     }
   }
 }
@@ -109,6 +115,7 @@ void MXImperativeInvokeImpl(AtomicSymbolCreator creator,
   imperative::SetNumOutputs(op, attrs, num_inputs, &infered_num_outputs, &num_visible_outputs);
 
   std::vector<NDArray*> ndinputs, ndoutputs;
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
   SetNDInputsOutputs(op,
                      &ndinputs,
                      &ndoutputs,
@@ -117,7 +124,8 @@ void MXImperativeInvokeImpl(AtomicSymbolCreator creator,
                      num_outputs,
                      infered_num_outputs,
                      num_visible_outputs,
-                     outputs);
+                     outputs,
+                     &owned_outputs);
 
   if (Imperative::Get()->is_deferred_compute()) {
     Imperative::Get()->RecordDeferredCompute(std::move(attrs), ndinputs, ndoutputs);
@@ -131,14 +139,13 @@ void MXImperativeInvokeImpl(AtomicSymbolCreator creator,
     }
   }
 
-  for (int i = *num_outputs; i < infered_num_outputs; ++i)
-    delete ndoutputs[i];
-
   if (*outputs == nullptr) {
     ret->ret_handles.clear();
     ret->ret_handles.reserve(*num_outputs);
-    for (int i = 0; i < *num_outputs; ++i)
+    for (int i = 0; i < *num_outputs; ++i) {
       ret->ret_handles.push_back(ndoutputs[i]);
+      owned_outputs[i].release();
+    }
     *outputs = reinterpret_cast<NDArrayHandle*>(dmlc::BeginPtr(ret->ret_handles));
   }
 }
@@ -181,11 +188,13 @@ int MXCreateCachedOp(SymbolHandle handle,
   for (int i = 0; i < num_flags; ++i) {
     flags.emplace_back(keys[i], vals[i]);
   }
+  std::unique_ptr<CachedOpPtr> cached_op;
   if (!thread_safe) {
-    *out = new CachedOpPtr(new CachedOp(*sym, flags));
+    cached_op.reset(new CachedOpPtr(std::make_shared<CachedOp>(*sym, flags)));
   } else {
-    *out = new CachedOpPtr(new CachedOpThreadSafe(*sym, flags));
+    cached_op.reset(new CachedOpPtr(std::make_shared<CachedOpThreadSafe>(*sym, flags)));
   }
+  *out = cached_op.release();
   API_END();
 }
 
@@ -230,11 +239,15 @@ int MXInvokeCachedOp(CachedOpHandle handle,
   }
 
   std::vector<NDArray*> ndoutputs;
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
   ndoutputs.reserve(op->num_outputs());
   if (*outputs == nullptr) {
     *num_outputs = op->num_outputs();
-    for (int i = 0; i < *num_outputs; ++i)
-      ndoutputs.push_back(new NDArray());
+    owned_outputs.resize(*num_outputs);
+    for (int i = 0; i < *num_outputs; ++i) {
+      owned_outputs[i].reset(new NDArray());
+      ndoutputs.push_back(owned_outputs[i].get());
+    }
   } else {
     CHECK_EQ(*num_outputs, op->num_outputs()) << "CachedOp expects " << op->num_outputs()
                                               << " outputs, but " << *num_outputs << " was given.";
@@ -251,6 +264,7 @@ int MXInvokeCachedOp(CachedOpHandle handle,
     ret->ret_handles.reserve(*num_outputs);
     for (int i = 0; i < *num_outputs; ++i) {
       ret->ret_handles.push_back(ndoutputs[i]);
+      owned_outputs[i].release();
     }
     *outputs = dmlc::BeginPtr(ret->ret_handles);
   }

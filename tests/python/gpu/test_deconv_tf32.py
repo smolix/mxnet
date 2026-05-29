@@ -36,7 +36,7 @@ import mxnet as mx
 from mxnet import np as mnp, npx, gluon
 from mxnet.util import get_cuda_compute_capability
 
-npx.set_np()
+pytestmark = pytest.mark.usefixtures("set_np_semantics")
 
 # ---------------------------------------------------------------------------
 # Skip markers

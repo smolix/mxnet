@@ -44,7 +44,8 @@ void SetInOut(std::vector<NDArray*>* ndinputs,
               int* num_outputs,
               int infered_num_outputs,
               int num_visible_outputs,
-              NDArray** out_array) {
+              NDArray** out_array,
+              std::vector<std::unique_ptr<NDArray>>* owned_outputs) {
   ndinputs->clear();
   ndinputs->reserve(num_inputs);
   for (int i = 0; i < num_inputs; ++i) {
@@ -60,10 +61,13 @@ void SetInOut(std::vector<NDArray*>* ndinputs,
   }
 
   ndoutputs->clear();
+  owned_outputs->clear();
   ndoutputs->reserve(infered_num_outputs);
+  owned_outputs->reserve(infered_num_outputs);
   if (out_array == nullptr) {
     for (int i = 0; i < infered_num_outputs; ++i) {
-      ndoutputs->emplace_back(new NDArray());
+      owned_outputs->emplace_back(new NDArray());
+      ndoutputs->emplace_back(owned_outputs->back().get());
     }
     *num_outputs = num_visible_outputs;
   } else {
@@ -74,7 +78,26 @@ void SetInOut(std::vector<NDArray*>* ndinputs,
       ndoutputs->emplace_back(out_array[i]);
     }
     for (int i = *num_outputs; i < infered_num_outputs; ++i) {
-      ndoutputs->emplace_back(new NDArray());
+      owned_outputs->emplace_back(new NDArray());
+      ndoutputs->emplace_back(owned_outputs->back().get());
+    }
+  }
+}
+
+void ResetOwnedOutput(NDArray* output, std::vector<std::unique_ptr<NDArray>>* owned_outputs) {
+  for (auto& owned : *owned_outputs) {
+    if (owned.get() == output) {
+      owned.reset();
+      return;
+    }
+  }
+}
+
+void ReleaseOwnedOutput(NDArray* output, std::vector<std::unique_ptr<NDArray>>* owned_outputs) {
+  for (auto& owned : *owned_outputs) {
+    if (owned.get() == output) {
+      owned.release();
+      return;
     }
   }
 }
@@ -90,6 +113,7 @@ std::vector<NDArray*> Invoke(const nnvm::Op* op,
   imperative::SetNumOutputs(op, *attrs, num_inputs, &infered_num_outputs, &num_visible_outputs);
 
   std::vector<NDArray*> ndinputs, ndoutputs;
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
   SetInOut(&ndinputs,
            &ndoutputs,
            num_inputs,
@@ -97,7 +121,8 @@ std::vector<NDArray*> Invoke(const nnvm::Op* op,
            num_outputs,
            infered_num_outputs,
            num_visible_outputs,
-           outputs);
+           outputs,
+           &owned_outputs);
 
   if (Imperative::Get()->is_deferred_compute()) {
     Imperative::Get()->RecordDeferredCompute(std::move(*attrs), ndinputs, ndoutputs);
@@ -110,8 +135,12 @@ std::vector<NDArray*> Invoke(const nnvm::Op* op,
       Imperative::Get()->RecordOp(std::move(*attrs), ndinputs, ndoutputs, state);
     }
   }
-  for (int i = *num_outputs; i < infered_num_outputs; ++i)
-    delete ndoutputs[i];
+  for (int i = *num_outputs; i < infered_num_outputs; ++i) {
+    ResetOwnedOutput(ndoutputs[i], &owned_outputs);
+  }
+  for (int i = 0; i < *num_outputs; ++i) {
+    ReleaseOwnedOutput(ndoutputs[i], &owned_outputs);
+  }
   return ndoutputs;
 }
 

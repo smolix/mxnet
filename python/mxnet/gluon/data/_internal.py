@@ -26,6 +26,7 @@ from ...base import _LIB
 from ...base import c_str_array, mx_uint, py_str
 from ...base import DatasetHandle, NDArrayHandle, BatchifyFunctionhandle
 from ...base import check_call, build_param_doc as _build_param_doc
+from ..._ctypes.ndarray import _make_ndarray_outputs
 from ...ndarray import NDArray
 from ...ndarray import _ndarray_cls
 from ...numpy.multiarray import _np_ndarray_cls
@@ -71,8 +72,8 @@ class MXDataset(Dataset):
                                           ctypes.c_uint64(idx),
                                           ctypes.byref(num_output),
                                           ctypes.byref(output_vars)))
-        out = [create_ndarray_fn(ctypes.cast(output_vars[i], NDArrayHandle),
-                                 False) for i in range(num_output.value)]
+        out = _make_ndarray_outputs(
+            output_vars, None, num_output.value, create_ndarray_fn, True, writable=False)
         for i in range(num_output.value):
             if out[i].size == 1:
                 out[i] = out[i].asnumpy()
@@ -165,8 +166,8 @@ class MXBatchifyFunction(object):
                                                      num_output,
                                                      input_vars,
                                                      ctypes.byref(output_vars)))
-            out = [create_ndarray_fn(ctypes.cast(output_vars[i], NDArrayHandle), \
-                False) for i in range(num_output.value)]
+            out = _make_ndarray_outputs(
+                output_vars, None, num_output.value, create_ndarray_fn, True, writable=False)
             if len(out) == 1:
                 out = out[0]
             return out

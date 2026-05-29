@@ -160,6 +160,25 @@ def test_cached_op_init():
     check_init(True, False)
     check_init(True, True)
 
+
+def test_cached_op_monitor_callback_receives_owned_ndarray():
+    data = mx.sym.var('data')
+    op = mx.ndarray.CachedOp(data + 1)
+    seen = []
+
+    def monitor(name, opr_name, array):
+        seen.append((name, opr_name, array.asnumpy()))
+        assert isinstance(array, mx.nd.NDArray)
+
+    op._register_op_hook(monitor, monitor_all=True)
+    out = op(mx.nd.ones((2,)))
+    out.wait_to_read()
+
+    assert seen
+    assert any(np.allclose(value, np.array([2.0, 2.0], dtype=np.float32))
+               for _, _, value in seen)
+
+
 def test_elemwise_add_grad():
     json = "{\"nodes\": [{\"op\":\"null\",\"name\":\".Inputs.Input1\",\"inputs\":[]},{\"op\":\"null\",\"name\":\".Inputs.Input2\",\"inputs\":[]},{\"op\":\"elemwise_add\",\"name\":\".$0\",\"inputs\":[[0,0,0],[1,0,0]]},{\"op\":\"_copy\",\"name\":\".Outputs.Output\",\"inputs\":[[2,0,0]]}],\"arg_nodes\":[0,1],\"heads\":[[3,0,0]]}"
     sym = mx.symbol.fromjson(json)

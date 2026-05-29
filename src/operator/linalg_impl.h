@@ -287,7 +287,26 @@ inline void linalg_gemm<cpu, mshadow::half::half_t>(const Tensor<cpu, 2, mshadow
                                                     bool tA,
                                                     bool tB,
                                                     Stream<cpu>* s) {
-  LOG(FATAL) << "FP16 gemm on cpu not implemented!";
+  check_gemm(A, B, C, alpha, beta, tA, tB);
+  const index_t m = C.size(0);
+  const index_t n = C.size(1);
+  const index_t k = tA ? A.size(0) : A.size(1);
+  const float alpha_f = static_cast<float>(alpha);
+  const float beta_f  = static_cast<float>(beta);
+#pragma omp parallel for collapse(2)
+  for (index_t row = 0; row < m; ++row) {
+    for (index_t col = 0; col < n; ++col) {
+      float acc = 0.0f;
+      for (index_t kk = 0; kk < k; ++kk) {
+        const index_t a_idx = tA ? kk * A.stride_ + row : row * A.stride_ + kk;
+        const index_t b_idx = tB ? col * B.stride_ + kk : kk * B.stride_ + col;
+        acc += static_cast<float>(A.dptr_[a_idx]) * static_cast<float>(B.dptr_[b_idx]);
+      }
+      const index_t c_idx = row * C.stride_ + col;
+      C.dptr_[c_idx] = static_cast<mshadow::half::half_t>(
+          alpha_f * acc + beta_f * static_cast<float>(C.dptr_[c_idx]));
+    }
+  }
 }
 
 #ifdef __CUDACC__

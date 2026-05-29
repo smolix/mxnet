@@ -96,7 +96,7 @@ vgg_spec = {11: ([1, 1, 2, 2, 2], [64, 128, 256, 512, 512]),
 # Constructors
 @wrap_ctx_to_device_func
 def get_vgg(num_layers, pretrained=False, device=cpu(),
-            root=os.path.join(base.data_dir(), 'models'), **kwargs):
+            root=None, **kwargs):
     r"""VGG model from the `"Very Deep Convolutional Networks for Large-Scale Image Recognition"
     <https://arxiv.org/abs/1409.1556>`_ paper.
 
@@ -111,6 +111,8 @@ def get_vgg(num_layers, pretrained=False, device=cpu(),
     root : str, default $MXNET_HOME/models
         Location for keeping the model parameters.
     """
+    if root is None:
+        root = os.path.join(base.data_dir(), 'models')
     layers, filters = vgg_spec[num_layers]
     net = VGG(layers, filters, **kwargs)
     if pretrained:

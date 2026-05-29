@@ -141,24 +141,28 @@ def test_trainer():
     assert (x.data(mx.cpu(1)).asnumpy() == -1).all(), x.data(mx.cpu(1)).asnumpy()
 
 def test_trainer_save_load():
-    previous_update_on_kvstore = os.getenv('MXNET_UPDATE_ON_KVSTORE', "1")
-    os.putenv('MXNET_UPDATE_ON_KVSTORE', '1')
-
-    x = gluon.Parameter('x', shape=(10,), lr_mult=1.0)
-    x.initialize(ctx=[mx.cpu(0), mx.cpu(1)], init='zeros')
-    trainer = gluon.Trainer([x], 'sgd', {'learning_rate': 0.1})
-    with mx.autograd.record():
-        for w in x.list_data():
-            y = w + 1
-            y.backward()
-    trainer.step(1)
-    assert trainer._kvstore._updater.optimizer._get_lr(0) == 0.1
-    trainer.save_states('test_trainer_save_load.states')
-    trainer.load_states('test_trainer_save_load.states')
-    x.lr_mult = 2.0
-    # check if parameter dict is correctly associated with optimizer after load_state
-    assert trainer._kvstore._updater.optimizer._get_lr(0) == 0.2
-    os.putenv('MXNET_UPDATE_ON_KVSTORE', previous_update_on_kvstore)
+    previous_update_on_kvstore = os.environ.get('MXNET_UPDATE_ON_KVSTORE')
+    os.environ['MXNET_UPDATE_ON_KVSTORE'] = '1'
+    try:
+        x = gluon.Parameter('x', shape=(10,), lr_mult=1.0)
+        x.initialize(ctx=[mx.cpu(0), mx.cpu(1)], init='zeros')
+        trainer = gluon.Trainer([x], 'sgd', {'learning_rate': 0.1})
+        with mx.autograd.record():
+            for w in x.list_data():
+                y = w + 1
+                y.backward()
+        trainer.step(1)
+        assert trainer._kvstore._updater.optimizer._get_lr(0) == 0.1
+        trainer.save_states('test_trainer_save_load.states')
+        trainer.load_states('test_trainer_save_load.states')
+        x.lr_mult = 2.0
+        # check if parameter dict is correctly associated with optimizer after load_state
+        assert trainer._kvstore._updater.optimizer._get_lr(0) == 0.2
+    finally:
+        if previous_update_on_kvstore is None:
+            os.environ.pop('MXNET_UPDATE_ON_KVSTORE', None)
+        else:
+            os.environ['MXNET_UPDATE_ON_KVSTORE'] = previous_update_on_kvstore
 
 @mx.util.use_np
 @pytest.mark.skip(reason="Sparse not yet supported in Gluon 2.0 - tracked under T6/sparse-gluon gap")

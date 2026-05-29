@@ -20,7 +20,7 @@ import pytest
 import mxnet as mx
 import sys
 
-from subprocess import Popen, PIPE
+import subprocess
 
 @pytest.mark.skipif(not mx.device.num_gpus(), reason='Test only applicable to machines with GPUs')
 def test_nvtx_ranges_present_in_profile():
@@ -30,10 +30,13 @@ def test_nvtx_ranges_present_in_profile():
     simple_forward_path = os.path.realpath(__file__)
     simple_forward_path = simple_forward_path.replace('test_nvtx', 'simple_forward')
 
-    process = Popen(["nvprof", sys.executable, simple_forward_path], stdout=PIPE, stderr=PIPE)
-    (output, profiler_output) = process.communicate()
-    process.wait()
-    profiler_output = profiler_output.decode('ascii')
+    try:
+        process = subprocess.run(["nvprof", sys.executable, simple_forward_path],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 timeout=300, check=False)
+    except subprocess.TimeoutExpired as err:
+        pytest.fail(f"nvprof did not finish within 300 seconds: {err}")
+    profiler_output = process.stderr.decode('ascii')
 
     # Verify that some of the NVTX ranges we should have created are present
     # Verify that we have NVTX ranges for our simple operators.
@@ -42,4 +45,3 @@ def test_nvtx_ranges_present_in_profile():
 
     # Verify that we have some expected output from the engine.
     assert "Range \"WaitForVar\"" in profiler_output
-

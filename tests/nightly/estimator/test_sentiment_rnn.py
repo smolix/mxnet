@@ -35,6 +35,17 @@ from mxnet.gluon.contrib.estimator import estimator
 import pytest
 
 
+def _safe_extract_tar(tar, target_dir):
+    target_dir = os.path.abspath(target_dir)
+    for member in tar.getmembers():
+        member_path = os.path.abspath(os.path.join(target_dir, member.name))
+        if os.path.commonpath([target_dir, member_path]) != target_dir:
+            raise RuntimeError("Unsafe tar member path: {}".format(member.name))
+        if member.issym() or member.islnk():
+            raise RuntimeError("Refusing tar link member: {}".format(member.name))
+    tar.extractall(target_dir)
+
+
 class TextCNN(nn.Block):
     def __init__(self, vocab, embed_size, kernel_sizes, num_channels,
                  **kwargs):
@@ -124,8 +135,10 @@ def download_imdb(data_dir='/tmp/data'):
     file_path = os.path.join(data_dir, 'aclImdb_v1.tar.gz')
     if not os.path.isfile(file_path):
         file_path = gluon.utils.download(url, data_dir, sha1_hash=sha1)
+    elif not gluon.utils.check_sha1(file_path, sha1):
+        file_path = gluon.utils.download(url, data_dir, overwrite=True, sha1_hash=sha1)
     with tarfile.open(file_path, 'r') as f:
-        f.extractall(data_dir)
+        _safe_extract_tar(f, data_dir)
 
 
 def read_imdb(folder='train'):
@@ -275,4 +288,3 @@ def test_estimator_gpu():
     acc = run(net, train_dataloader, test_dataloader, num_epochs=num_epochs, ctx=ctx, lr=lr)
 
     assert acc.get()[1] > 0.70
-

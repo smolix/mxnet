@@ -142,7 +142,10 @@ def _symbol_creator(handle, args, kwargs, keys, vals, name, is_np_op, output_is_
     if args:
         s._compose(*args, name=name)
     elif kwargs:
-        s._compose(name=name, **kwargs)
+        if 'name' in kwargs:
+            s._compose(**kwargs)
+        else:
+            s._compose(name=name, **kwargs)
     else:
         s._compose(name=name)
     if is_np_op:

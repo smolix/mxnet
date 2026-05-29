@@ -22,6 +22,7 @@
 import traceback
 import warnings
 import collections
+import inspect
 
 from array import array
 from threading import Lock
@@ -741,7 +742,20 @@ def register(reg_name):
                                '__force_mirroring__',
                                '__mirror_stage__', '__profiler_scope__']:
                     kwargs[key] = py_str(vals[i])
-            op_prop = prop_cls(**kwargs)
+            try:
+                op_prop = prop_cls(**kwargs)
+            except TypeError:
+                compat_kwargs = kwargs.copy()
+                signature = inspect.signature(prop_cls.__init__)
+                accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD
+                                     for param in signature.parameters.values())
+                if not accepts_kwargs:
+                    for reserved in ('name', 'out'):
+                        if reserved not in signature.parameters:
+                            compat_kwargs.pop(reserved, None)
+                if compat_kwargs == kwargs:
+                    raise
+                op_prop = prop_cls(**compat_kwargs)
 
             def infer_shape_entry(num_tensor, tensor_dims,
                                   tensor_shapes, _):
@@ -772,13 +786,13 @@ def register(reg_name):
                         f"InferShape Error: expecting {n_aux} entries in returned aux state " \
                         f"shapes, got {len(ashape)}."
                     rshape = list(ishape) + list(oshape) + list(ashape)
+                    shape_buffers = []
                     for i in range(n_in+n_out+n_aux):
-                        tensor_shapes[i] = cast(c_array_buf(mx_int,
-                                                            array('i', rshape[i])),
-                                                POINTER(mx_int))
+                        shape_buffers.append(c_array_buf(mx_int, array('i', rshape[i])))
+                        tensor_shapes[i] = cast(shape_buffers[-1], POINTER(mx_int))
                         tensor_dims[i] = len(rshape[i])
 
-                    infer_shape_entry._ref_holder = [tensor_shapes]
+                    infer_shape_entry._ref_holder = [tensor_shapes, shape_buffers]
                 except Exception:
                     print(f'Error in {reg_name}.infer_shape: {traceback.format_exc()}')
                     return False
@@ -924,7 +938,7 @@ def register(reg_name):
                     ret = c_array(c_char_p, ret)
                     out[0] = cast(ret, POINTER(POINTER(c_char)))
 
-                    list_outputs_entry._ref_holder = [out]
+                    list_outputs_entry._ref_holder = [out, ret]
                 except Exception:
                     print(f'Error in {reg_name}.list_outputs: {traceback.format_exc()}')
                     return False
@@ -938,7 +952,7 @@ def register(reg_name):
                     ret = c_array(c_char_p, ret)
                     out[0] = cast(ret, POINTER(POINTER(c_char)))
 
-                    list_arguments_entry._ref_holder = [out]
+                    list_arguments_entry._ref_holder = [out, ret]
                 except Exception:
                     print(f'Error in {reg_name}.list_arguments: {traceback.format_exc()}')
                     return False
@@ -952,7 +966,7 @@ def register(reg_name):
                     ret = c_array(c_char_p, ret)
                     out[0] = cast(ret, POINTER(POINTER(c_char)))
 
-                    list_auxiliary_states_entry._ref_holder = [out]
+                    list_auxiliary_states_entry._ref_holder = [out, ret]
                 except Exception:
                     tb = traceback.format_exc()
                     print(f'Error in {reg_name}.list_auxiliary_states: {tb}')
@@ -970,10 +984,10 @@ def register(reg_name):
                     _registry.result_deps = set()
                     for dep in rdeps:
                         _registry.result_deps.add(dep)
-                    rdeps = cast(c_array_buf(c_int, array('i', rdeps)), c_int_p)
-                    deps[0] = rdeps
+                    dep_buffer = c_array_buf(c_int, array('i', rdeps))
+                    deps[0] = cast(dep_buffer, c_int_p)
 
-                    declare_backward_dependency_entry._ref_holder = [deps]
+                    declare_backward_dependency_entry._ref_holder = [deps, dep_buffer]
                 except Exception:
                     tb = traceback.format_exc()
                     print(f'Error in {reg_name}.declare_backward_dependency: {tb}')
@@ -1069,12 +1083,12 @@ def register(reg_name):
                                  fb_functype(backward_entry)]
                     callbacks = [cast(i, CFUNCTYPE(c_int)) for i in callbacks]
                     contexts = [None, None, None]
+                    callback_array = c_array(CFUNCTYPE(c_int), callbacks)
+                    context_array = c_array(c_void_p, contexts)
                     ret[0] = MXCallbackList(c_int(len(callbacks)),
-                                            cast(c_array(CFUNCTYPE(c_int), callbacks),
-                                                 POINTER(CFUNCTYPE(c_int))),
-                                            cast(c_array(c_void_p, contexts),
-                                                 POINTER(c_void_p)))
-                    op._ref_holder = [ret]
+                                            cast(callback_array, POINTER(CFUNCTYPE(c_int))),
+                                            cast(context_array, POINTER(c_void_p)))
+                    op._ref_holder = [ret, callbacks, callback_array, context_array]
                     _registry.ref_holder[cur] = op
                 except Exception:
                     print(f'Error in {reg_name}.create_operator: {traceback.format_exc()}')
@@ -1104,12 +1118,12 @@ def register(reg_name):
                          inferstorage_backward_functype(infer_storage_type_backward_entry)]
             callbacks = [cast(i, CFUNCTYPE(c_int)) for i in callbacks]
             contexts = [None]*len(callbacks)
+            callback_array = c_array(CFUNCTYPE(c_int), callbacks)
+            context_array = c_array(c_void_p, contexts)
             ret[0] = MXCallbackList(c_int(len(callbacks)),
-                                    cast(c_array(CFUNCTYPE(c_int), callbacks),
-                                         POINTER(CFUNCTYPE(c_int))),
-                                    cast(c_array(c_void_p, contexts),
-                                         POINTER(c_void_p)))
-            op_prop._ref_holder = [ret]
+                                    cast(callback_array, POINTER(CFUNCTYPE(c_int))),
+                                    cast(context_array, POINTER(c_void_p)))
+            op_prop._ref_holder = [ret, callbacks, callback_array, context_array]
             _registry.ref_holder[cur] = op_prop
             return True
 

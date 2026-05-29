@@ -165,11 +165,20 @@ def %s(*%s, **kwargs):"""%(func_name, arr_name))
     if '%s' in kwargs:
         kwargs['%s'] = get_dtype_name(kwargs['%s'])"""%(dtype_name, dtype_name, dtype_name))
             code.append("""
-    attr = kwargs.pop('attr', None)
+    attr = kwargs.get('attr', None)
+    if isinstance(attr, SymbolBase):
+        attr = None
+    else:
+        attr = kwargs.pop('attr', None)
     kwargs.update(attribute.current().get(attr))
-    name = kwargs.pop('name', None)
+    name = kwargs.get('name', None)
+    if isinstance(name, SymbolBase):
+        name = None
+    else:
+        name = kwargs.pop('name', None)
     name = _name.current().get(name, '%s')
-    _ = kwargs.pop('out', None)
+    if not isinstance(kwargs.get('out', None), SymbolBase):
+        _ = kwargs.pop('out', None)
     keys = []
     vals = []
     sym_kwargs = dict()

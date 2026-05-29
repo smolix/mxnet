@@ -29,7 +29,7 @@ import platform
 import numpy as _np
 
 from . import libinfo
-from ._cuda_runtime import repair_nvidia_cudnn_soname_aliases
+from ._cuda_runtime import preload_python_package_runtime_libs, repair_nvidia_cudnn_soname_aliases
 
 __all__ = ['MXNetError']
 #----------------------------
@@ -183,6 +183,8 @@ def c2pyerror(err_msg):
     arr = err_msg.split("\n")
     if arr[-1] == "":
         arr.pop()
+    if not arr:
+        return "Unknown MXNet C API error", None
     err_type = _find_error_type(arr[0])
     trace_mode = False
     stack_trace = []
@@ -287,6 +289,7 @@ def _load_lib():
     lib_path = libinfo.find_lib_path()
     try:
         repair_nvidia_cudnn_soname_aliases()
+        preload_python_package_runtime_libs()
         if sys.version_info >= (3, 8) and os.name == "nt":
             # use LOAD_WITH_ALTERED_SEARCH_PATH, For simplicity, let's just fill the numbers.
             # pylint: disable=E1123

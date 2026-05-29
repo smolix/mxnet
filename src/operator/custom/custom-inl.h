@@ -83,17 +83,32 @@ class CustomOperator {
             const std::vector<NDArray>& outputs,
             const std::string op_type = "") {
     if (naive_engine_) {
-      if (profiler::Profiler::Get()->IsProfiling(profiler::Profiler::kImperative)) {
-        profiler::CustomOpProfiler::Scope custom_op_profile(op_type);
-        func();
-      } else {
-        func();
+      try {
+        if (profiler::Profiler::Get()->IsProfiling(profiler::Profiler::kImperative)) {
+          profiler::CustomOpProfiler::Scope custom_op_profile(op_type);
+          func();
+        } else {
+          func();
+        }
+      } catch (dmlc::Error& err) {
+        ctx.async_on_complete(&err);
+        return;
+      } catch (const std::exception& err) {
+        dmlc::Error dmlc_err(err.what());
+        ctx.async_on_complete(&dmlc_err);
+        return;
+      } catch (...) {
+        dmlc::Error dmlc_err("Unknown exception in CustomOperator");
+        ctx.async_on_complete(&dmlc_err);
+        return;
       }
       for (size_t i = 0, out_idx = 0; i < arrs.size(); i++) {
-        if (arrs[i].storage_type() == kDefaultStorage ||
-            arrs[i].storage_type() == kUndefinedStorage)
-          continue;
         if (output_tags.count(tags[i]) > 0) {
+          if (arrs[i].storage_type() == kDefaultStorage ||
+              arrs[i].storage_type() == kUndefinedStorage) {
+            ++out_idx;
+            continue;
+          }
           outputs[out_idx].SparseUpdateChunk(arrs[i]);
           out_idx++;
         }
@@ -120,26 +135,19 @@ class CustomOperator {
         } else {
           func();
         }
-      } catch (dmlc::Error& e) {
+      } catch (...) {
         *exception = std::current_exception();
       }
 
       Imperative::Get()->set_is_training(prev_training);
       Imperative::Get()->set_is_recording(prev_recording);
 
-      std::vector<Engine::VarHandle> vars, vars2;
-      size_t idx = 0;
+      std::vector<Engine::VarHandle> vars;
       for (const auto& i : arrs) {
         vars.push_back(i.var());
-        if (output_tags.count(tags[idx]) > 0) {
-          if (i.storage_type() == kDefaultStorage || i.storage_type() == kUndefinedStorage) {
-            ++idx;
-            continue;
-          }
-          vars2.push_back(i.var());
-        }
-        ++idx;
       }
+      std::vector<Engine::VarHandle> mutable_vars;
+      Engine::Get()->DeduplicateVarHandle(&vars, &mutable_vars);
 
       Engine::Get()->PushSync(
           [=](RunContext rctx) {
@@ -151,13 +159,23 @@ class CustomOperator {
             } catch (dmlc::Error& err) {
               ctx.async_on_complete(&err);
               return;
+            } catch (const std::exception& err) {
+              dmlc::Error dmlc_err(err.what());
+              ctx.async_on_complete(&dmlc_err);
+              return;
+            } catch (...) {
+              dmlc::Error dmlc_err("Unknown exception in CustomOperator");
+              ctx.async_on_complete(&dmlc_err);
+              return;
             }
 
             for (size_t i = 0, out_idx = 0; i < arrs.size(); i++) {
-              if (arrs[i].storage_type() == kDefaultStorage ||
-                  arrs[i].storage_type() == kUndefinedStorage)
-                continue;
               if (output_tags.count(tags[i]) > 0) {
+                if (arrs[i].storage_type() == kDefaultStorage ||
+                    arrs[i].storage_type() == kUndefinedStorage) {
+                  ++out_idx;
+                  continue;
+                }
                 outputs[out_idx].SparseUpdateChunk(arrs[i]);
                 out_idx++;
               }
@@ -167,7 +185,7 @@ class CustomOperator {
           },
           ctx.run_ctx.ctx,
           vars,
-          vars2,
+          mutable_vars,
           FnProperty::kNoSkip,
           0,
           "CustomOperatorWait");

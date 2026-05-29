@@ -405,7 +405,7 @@ struct NumpyTrilindicesParam : public dmlc::Parameter<NumpyTrilindicesParam> {
   }
 };
 
-template <int req>
+template <int req0, int req1>
 struct TrilindicesOpForwardImpl {
   template <typename DType>
   MSHADOW_XINLINE static void Map(index_t i,
@@ -413,8 +413,8 @@ struct TrilindicesOpForwardImpl {
                                   DType* out_data1,
                                   index_t* data,
                                   index_t length) {
-    KERNEL_ASSIGN(out_data0[i], req, data[i]);
-    KERNEL_ASSIGN(out_data1[i], req, data[i + length]);
+    KERNEL_ASSIGN(out_data0[i], req0, data[i]);
+    KERNEL_ASSIGN(out_data1[i], req1, data[i + length]);
   }
 };
 
@@ -472,10 +472,13 @@ void TrilindicesOpForward(const nnvm::NodeAttrs& attrs,
     std::memcpy(indices, indices_cpu.data(), indices_cpu.size() * sizeof(index_t));
   }
 
+  CHECK_EQ(req.size(), 2U);
   MSHADOW_IDX_TYPE_SWITCH(out_data0.type_flag_, DType, {
-    MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
-      Kernel<TrilindicesOpForwardImpl<req_type>, xpu>::Launch(
-          s, length, out_data0.dptr<DType>(), out_data1.dptr<DType>(), indices, length);
+    MXNET_ASSIGN_REQ_SWITCH(req[0], req0_type, {
+      MXNET_ASSIGN_REQ_SWITCH(req[1], req1_type, {
+        Kernel<TrilindicesOpForwardImpl<req0_type, req1_type>, xpu>::Launch(
+            s, length, out_data0.dptr<DType>(), out_data1.dptr<DType>(), indices, length);
+      });
     });
   });
 }

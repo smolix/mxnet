@@ -148,7 +148,7 @@ fi
 
 echo "==> Patching libmxnet.so RUNPATH to include bundled and pip CUDA libraries"
 old_runpath=$(patchelf --print-rpath python/mxnet/libmxnet.so || echo "")
-new_runpath='$ORIGIN/lib:$ORIGIN/../nvidia/cudnn/lib:$ORIGIN/../nvidia/nccl/lib:$ORIGIN/../nvidia/cu13/lib'
+new_runpath='$ORIGIN/lib:$ORIGIN/../scipy_openblas32/lib:$ORIGIN/../nvidia/cudnn/lib:$ORIGIN/../nvidia/nccl/lib:$ORIGIN/../nvidia/cu13/lib'
 if [ -n "$old_runpath" ]; then
     new_runpath="$new_runpath:$old_runpath"
 fi

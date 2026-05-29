@@ -1454,7 +1454,8 @@ void DNNLRnnOp::Backward(const OpContext& ctx,
   }
   CommitOutput(outputs[rnn_enum::kData], diff_input_mem);
   CommitOutput(outputs[rnn_enum::kState], diff_state_mem);
-  if (full_param_.default_param.mode == rnn_enum::kLstm)
+  if (full_param_.default_param.mode == rnn_enum::kLstm &&
+      req[rnn_enum::kStateCell] != kNullOp)
     CommitOutput(outputs[rnn_enum::kStateCell], diff_statecell_mem);
   DNNLStream::Get()->Submit();
 

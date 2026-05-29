@@ -1444,6 +1444,22 @@ def test_from_numpy_exception():
     mx_array = mx.npx.from_numpy(np_array, zero_copy=False)
     np_array[2, 1] = 0 # no error
 
+
+def test_from_numpy_zero_copy_restores_writeable_flag_on_release():
+    import gc
+
+    np_array = _np.array([[1, 2], [3, 4], [5, 6]], dtype="float32")
+    assert np_array.flags["WRITEABLE"]
+    mx_array = mx.npx.from_numpy(np_array, zero_copy=True)
+    assert not np_array.flags["WRITEABLE"]
+
+    del mx_array
+    gc.collect()
+
+    assert np_array.flags["WRITEABLE"]
+    np_array[2, 1] = 0
+
+
 def test_mixed_array_types():
     np_array = _np.array([[1, 2], [3, 4], [5, 6]], dtype="float32")
     mx_array = mx.np.ones((3, 1))

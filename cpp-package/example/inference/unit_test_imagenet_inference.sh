@@ -18,6 +18,7 @@
 # under the License.
 
 set -ex
+WGET_FLAGS="--timeout=30 --tries=3 --secure-protocol=TLSv1_2"
 # create ./model directory if not existed
 if [ ! -d model ]; then
     mkdir -p model
@@ -30,13 +31,17 @@ fi
 model_file=./model/Inception-BN-symbol.json
 params_file=./model/Inception-BN-0126.params
 if [ ! -f ${model_file} ] || [ ! -f ${params_file} ]; then
-    wget -nc http://data.mxnet.io/models/imagenet/inception-bn.tar.gz
+    wget ${WGET_FLAGS} -nc https://data.mxnet.io/models/imagenet/inception-bn.tar.gz
+    if tar -tzf inception-bn.tar.gz | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+        echo "Unsafe path in inception-bn.tar.gz" >&2
+        exit 1
+    fi
     tar -xvzf inception-bn.tar.gz -C model
 fi
 cd model
-wget -nc https://raw.githubusercontent.com/dmlc/gluon-cv/master/gluoncv/model_zoo/quantized/resnet50_v1_int8-symbol.json
+wget ${WGET_FLAGS} -nc https://raw.githubusercontent.com/dmlc/gluon-cv/master/gluoncv/model_zoo/quantized/resnet50_v1_int8-symbol.json
 cd ../data
-wget -nc http://data.mxnet.io/data/val_256_q90.rec
+wget ${WGET_FLAGS} -nc https://data.mxnet.io/data/val_256_q90.rec
 cd ..
 
 # Running inference on imagenet.

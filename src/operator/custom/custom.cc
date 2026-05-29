@@ -26,6 +26,8 @@
 #include <mxnet/base.h>
 #include <mxnet/ndarray.h>
 
+#include <memory>
+
 #include "../elemwise_op_common.h"
 #include "../operator_common.h"
 
@@ -58,6 +60,15 @@ inline NDArray* AllocateNDArrayCopy(const NDArray& input, int dev_id) {
       break;
   }
   return new NDArray(stype, input.shape(), input.data(), aux, dev_id);
+}
+
+inline NDArray* AllocateOutputNDArrayCopy(const NDArray& output, int dev_id) {
+  if (output.storage_type() == kDefaultStorage || output.storage_type() == kUndefinedStorage) {
+    return AllocateNDArrayCopy(output, dev_id);
+  }
+  Context ctx = output.ctx();
+  ctx.dev_id  = dev_id;
+  return new NDArray(output.storage_type(), output.shape(), ctx, true, output.dtype());
 }
 
 template <CustomOpPropCallbacks Type>
@@ -268,18 +279,18 @@ OpStatePtr CreateState(const NodeAttrs& attrs,
   std::ostringstream os;
   os << ctx;
 
-  MXCallbackList* op_info = new MXCallbackList;
+  std::unique_ptr<MXCallbackList> op_info(new MXCallbackList);
   CHECK(reinterpret_cast<CustomOpCreateFunc>(params.info->callbacks[kCustomOpPropCreateOperator])(
       os.str().c_str(),
       shapes.size(),
       shapes.data(),
       ndims.data(),
       in_type.data(),
-      op_info,
+      op_info.get(),
       params.info->contexts[kCustomOpPropCreateOperator]));
 
   CustomParam state = params;
-  state.info.reset(op_info, [](MXCallbackList* ptr) {
+  state.info.reset(op_info.release(), [](MXCallbackList* ptr) {
     reinterpret_cast<CustomOpDelFunc>(ptr->callbacks[kCustomOpDelete])(
         ptr->contexts[kCustomOpDelete]);
     delete ptr;
@@ -316,7 +327,7 @@ void ForwardEx(const OpStatePtr& state,
   }
 
   for (size_t i = 0; i < params.num_outs; ++i) {
-    auto* nd = AllocateNDArrayCopy(outputs[i], dev_id);
+    auto* nd = AllocateOutputNDArrayCopy(outputs[i], dev_id);
     cpys.push_back(*nd);
     ptrs.push_back(reinterpret_cast<void*>(nd));
     tags.push_back(1);
@@ -397,7 +408,7 @@ void BackwardEx(const OpStatePtr& state,
     }
   }
   for (auto& output : outputs) {
-    auto* nd = AllocateNDArrayCopy(output, dev_id);
+    auto* nd = AllocateOutputNDArrayCopy(output, dev_id);
     cpys.push_back(*nd);
     ptrs.push_back(reinterpret_cast<void*>(nd));
     tags.push_back(2);

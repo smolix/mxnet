@@ -76,8 +76,10 @@ struct quantize_v2_unsigned {
                                   const double max_limit,
                                   const OpReqType req) {
     const float scale = (max_limit - min_limit) / (imax_range - imin_range);
+    const float rounded = (static_cast<float>(in[i]) - imin_range) * scale + 0.5f;
     const DstDType quantized =
-        static_cast<DstDType>((static_cast<float>(in[i]) - imin_range) * scale + 0.5);
+        static_cast<DstDType>(Min(Max(rounded, static_cast<float>(min_limit)),
+                                  static_cast<float>(max_limit)));
     KERNEL_ASSIGN(out[i], req, quantized);
   }
 

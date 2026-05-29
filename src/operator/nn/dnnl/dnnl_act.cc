@@ -286,20 +286,11 @@ void DNNLActivationBackward(const nnvm::NodeAttrs& attrs,
   DNNLActBackward& bwd = GetActBackward(param_, ctx, in_buffer, out_buffer, *input_mem);
   DNNLStream* stream   = DNNLStream::Get();
   dnnl_args_map_t args = {{DNNL_ARG_SRC, *input_mem}, {DNNL_ARG_DIFF_DST, *diff_dst_memory}};
-  if (req[0] != kAddTo) {
-    // req[0] is kWriteTo or kWriteInplace
-    auto bwd_pd_diff_src_desc = bwd.bwd_pd.diff_src_desc();
-    auto diff_src_memory      = const_cast<NDArray&>(in_grad).CreateDNNLData(&bwd_pd_diff_src_desc);
-    args.insert({DNNL_ARG_DIFF_SRC, *diff_src_memory});
-    stream->RegisterPrimArgs(bwd.GetBwd(), args);
-    stream->Submit();
-  } else {
-    auto diff_src_memory = CreateDNNLMem(in_grad, bwd.bwd_pd.diff_src_desc(), req[0]);
-    args.insert({DNNL_ARG_DIFF_SRC, *diff_src_memory.second});
-    stream->RegisterPrimArgs(bwd.GetBwd(), args);
-    CommitOutput(in_grad, diff_src_memory);
-    stream->Submit();
-  }
+  auto diff_src_memory = CreateDNNLMem(in_grad, bwd.bwd_pd.diff_src_desc(), req[0]);
+  args.insert({DNNL_ARG_DIFF_SRC, *diff_src_memory.second});
+  stream->RegisterPrimArgs(bwd.GetBwd(), args);
+  CommitOutput(in_grad, diff_src_memory);
+  stream->Submit();
 }
 
 void DNNLLeakyReluBackward(const nnvm::NodeAttrs& attrs,

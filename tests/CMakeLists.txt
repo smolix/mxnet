@@ -94,7 +94,8 @@ if(GTEST_FOUND AND NOT MSVC)
     cpp/executor/cpp_executor_test.cc)
 
   mxnet_add_unit_test_executable(kvstore ""
-    cpp/kvstore/gpu_topology_test.cc)
+    cpp/kvstore/gpu_topology_test.cc
+    cpp/kvstore/kvstore_dist_server_test.cc)
 
   mxnet_add_unit_test_executable(misc_storage ""
     cpp/misc/base.cc

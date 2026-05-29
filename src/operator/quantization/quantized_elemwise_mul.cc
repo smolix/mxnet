@@ -21,6 +21,8 @@
  * \file quantized_elemwise_mul.cc
  * \brief CPU Implementation of basic elementwise binary mul operators
  */
+#include <cstdint>
+#include <cmath>
 #include <mxnet/op_attr_types.h>
 #include "../tensor/elemwise_binary_op-inl.h"
 #include "./quantized_elemwise_mul-inl.h"
@@ -178,7 +180,11 @@ void QuantizedElemwiseMulOpForward(const nnvm::NodeAttrs& attrs,
         for (size_t i = 0; i < out_size; ++i) {
           const int8_t a = input_l[i];
           const int8_t b = input_r[i];
-          const auto value = static_cast<out_type>(a * b * out_scale);
+          const float scaled = std::nearbyint(static_cast<float>(a) * static_cast<float>(b) *
+                                              out_scale);
+          const auto value =
+              static_cast<out_type>(Min(Max(scaled, static_cast<float>(INT8_MIN)),
+                                        static_cast<float>(INT8_MAX)));
           if (req[quantized_elemwise_mul::kOut] == kAddTo) {
             out_data[i] += value;
           } else {

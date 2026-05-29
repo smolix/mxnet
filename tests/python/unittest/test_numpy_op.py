@@ -31,13 +31,13 @@ import mxnet.ndarray.numpy._internal as _npi
 from functools import reduce
 from packaging.version import Version, parse
 from mxnet import np, npx
-from mxnet.gluon import HybridBlock
 from mxnet.base import MXNetError
+from mxnet.gluon import HybridBlock
 from mxnet.test_utils import same, assert_almost_equal, rand_shape_nd, rand_ndarray
 from mxnet.test_utils import check_numeric_gradient, use_np, collapse_sum_like, effective_dtype
 from mxnet.test_utils import new_matrix_with_real_eigvals_nd
 from mxnet.test_utils import new_sym_matrix_with_real_eigvals_nd
-from common import assertRaises, retry, xfail_when_nonstandard_decimal_separator
+from common import assertRaises, retry, xfail_when_nonstandard_decimal_separator, requires_lapack, has_lapack
 import random
 from mxnet.test_utils import verify_generator, gen_buckets_probs_with_ppf
 from mxnet.numpy_op_signature import _get_builtin_op
@@ -5454,6 +5454,7 @@ def test_np_randn():
 
 
 @use_np
+@requires_lapack
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
 # @pytest.mark.skip(reason='Test hangs. Tracked in #18144')
 def test_np_multivariate_normal():
@@ -5498,6 +5499,19 @@ def test_np_multivariate_normal():
 
         assert list(desired_shape) == list(test_shape)
         assert list(desired_shape) == list(actual_shape)
+
+
+@use_np
+@pytest.mark.skipif(has_lapack(), reason="Requires MXNet built without LAPACK support")
+def test_np_multivariate_normal_without_lapack_reports_and_clears_error():
+    mean = np.array([0.0, 1.0], device=mx.cpu())
+    cov = np.array([[1.0, 0.0], [0.0, 1.0]], device=mx.cpu())
+    sample = np.random.multivariate_normal(mean, cov)
+
+    with pytest.raises(MXNetError, match="without lapack"):
+        sample.asnumpy()
+
+    mx.nd.waitall()
 
 
 @use_np
@@ -5911,6 +5925,7 @@ def test_np_repeat_large_shape_infer_shape_no_alloc():
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_norm():
     class TestLinalgNorm(HybridBlock):
         def __init__(self, ord=None, axis=None, keepdims=False):
@@ -6054,6 +6069,7 @@ def test_np_linalg_norm():
 @pytest.mark.parametrize('hybridize', [True, False])
 @pytest.mark.parametrize('itype', [np.float32, np.float64])
 @pytest.mark.parametrize('keepdims', [True, False])
+@requires_lapack
 def test_np_linalg_vector_norm(shape, ord, axis, hybridize, itype, keepdims):
     class TestLinalgVectNorm(HybridBlock):
         def __init__(self, ord=None, axis=None, keepdims=False):
@@ -6180,6 +6196,7 @@ def test_np_linalg_vector_norm(shape, ord, axis, hybridize, itype, keepdims):
 @pytest.mark.parametrize('hybridize', [True, False])
 @pytest.mark.parametrize('itype', [np.float32, np.float64])
 @pytest.mark.parametrize('keepdims', [True, False])
+@requires_lapack
 def test_np_linalg_matrix_norm(shape, ord, axis, hybridize, itype, keepdims):
     class TestLinalgMatNorm(HybridBlock):
         def __init__(self, ord=None, axis=None, keepdims=False):
@@ -6286,6 +6303,7 @@ def test_np_linalg_matrix_norm(shape, ord, axis, hybridize, itype, keepdims):
 ])
 @pytest.mark.parametrize('dtype', ['float32', 'float64'])
 @pytest.mark.parametrize('hybridize', [False, True])
+@requires_lapack
 def test_np_linalg_svd(shape, dtype, hybridize):
     class TestSVD(HybridBlock):
         def __init__(self):
@@ -6391,6 +6409,7 @@ def test_np_linalg_svd(shape, dtype, hybridize):
 ])
 @pytest.mark.parametrize('dtype', ['float32', 'float64'])
 @pytest.mark.parametrize('hybridize', [False, True])
+@requires_lapack
 def test_np_linalg_svdvals(shape, dtype, hybridize):
     class TestSVD(HybridBlock):
         def __init__(self):
@@ -6418,6 +6437,7 @@ def test_np_linalg_svdvals(shape, dtype, hybridize):
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_qr():
     class TestQR(HybridBlock):
         def __init__(self):
@@ -6574,6 +6594,7 @@ def test_np_linalg_qr():
 @pytest.mark.parametrize('dtype', ['float32', 'float64'])
 @pytest.mark.parametrize('upper', [True, False])
 @pytest.mark.parametrize('hybridize', [True, False])
+@requires_lapack
 def test_np_linalg_cholesky(shape, dtype, upper, hybridize):
     class TestCholesky(HybridBlock):
         def __init__(self, upper=False):
@@ -6707,6 +6728,7 @@ def test_np_linalg_cholesky(shape, dtype, upper, hybridize):
     (3, 5, 5),
 ])
 @retry(3)
+@requires_lapack
 def test_np_linalg_inv(hybridize, dtype, shape):
     class TestInverse(HybridBlock):
         def __init__(self):
@@ -6775,6 +6797,7 @@ def test_np_linalg_inv(hybridize, dtype, shape):
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_solve():
     class TestSolve(HybridBlock):
         def __init__(self):
@@ -6875,6 +6898,7 @@ def test_np_linalg_solve():
         check_solve(mx_out, a, b)
 
 
+@requires_lapack
 def test_np_linalg_tensorinv():
     class TestTensorinv(HybridBlock):
         def __init__(self, ind=2):
@@ -6971,6 +6995,7 @@ def test_np_linalg_tensorinv():
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_tensorsolve():
     class TestTensorsolve(HybridBlock):
         def __init__(self, axes):
@@ -7122,6 +7147,7 @@ def test_np_linalg_tensorsolve():
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_lstsq():
     class TestLstsq(HybridBlock):
         def __init__(self, rcond):
@@ -7197,6 +7223,7 @@ def test_np_linalg_lstsq():
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_matrix_rank():
     class TestMatrixRank(HybridBlock):
         def __init__(self, hermitian):
@@ -7311,6 +7338,7 @@ def test_np_linalg_matrix_transpose(shape):
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_pinv():
     class TestPinv(HybridBlock):
         def __init__(self, hermitian):
@@ -7389,6 +7417,7 @@ def test_np_linalg_pinv():
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_eigvals():
     class TestEigvals(HybridBlock):
         def __init__(self):
@@ -7456,6 +7485,7 @@ def test_np_linalg_eigvals():
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_eigvalsh():
     class TestEigvalsh(HybridBlock):
         def __init__(self, upper):
@@ -7532,6 +7562,7 @@ def test_np_linalg_eigvalsh():
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_eig():
     class TestEig(HybridBlock):
         def __init__(self):
@@ -7611,6 +7642,7 @@ def test_np_linalg_eig():
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_eigh():
     class TestEigh(HybridBlock):
         def __init__(self, upper):
@@ -7716,6 +7748,7 @@ def test_np_linalg_eigh():
 
 
 @use_np
+@requires_lapack
 def test_np_linalg_det():
     class TestDet(HybridBlock):
         def __init__(self):
@@ -7780,6 +7813,7 @@ def test_np_linalg_det():
 ])
 @pytest.mark.xfail(sys.platform.startswith('win'),
                    reason="Flaky test even with very high tolerance, tracked in #18184")
+@requires_lapack
 def test_np_linalg_slogdet(a_shape, grad_req, dtype, hybridize):
     class TestSlogdet(HybridBlock):
         def __init__(self):
@@ -8713,6 +8747,20 @@ def test_np_tril_indices():
                         np_data[np_out] = -10
                         mx_data[mx_out] = -10
                         assert same(np_data, mx_data.asnumpy())
+
+
+@use_np
+def test_np_tril_indices_partial_outputs():
+    row, col = mx.sym.np.tril_indices(4, k=0, m=4)
+    expected = onp.tril_indices(4, k=0, m=4)
+
+    row_exe = row._simple_bind(ctx=mx.cpu())
+    row_exe.forward(is_train=False)
+    assert same(row_exe.outputs[0], expected[0])
+
+    col_exe = col._simple_bind(ctx=mx.cpu())
+    col_exe.forward(is_train=False)
+    assert same(col_exe.outputs[0], expected[1])
 
 
 @use_np

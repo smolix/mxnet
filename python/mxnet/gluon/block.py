@@ -1596,8 +1596,9 @@ class HybridBlock(Block):
         """
         def c_callback(name, op_name, array):
             """wrapper for user callback"""
-            array = ctypes.cast(array, NDArrayHandle)
-            array = NDArray(array, writable=False)
+            if not isinstance(array, NDArray):
+                array = ctypes.cast(array, NDArrayHandle)
+                array = NDArray(array, writable=False)
             name = py_str(name)
             op_name = py_str(op_name)
             callback(name, op_name, array)

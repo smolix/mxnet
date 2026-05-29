@@ -196,7 +196,7 @@ class Inception3(HybridBlock):
 # Constructor
 @wrap_ctx_to_device_func
 def inception_v3(pretrained=False, device=cpu(),
-                 root=os.path.join(base.data_dir(), 'models'), **kwargs):
+                 root=None, **kwargs):
     r"""Inception v3 model from
     `"Rethinking the Inception Architecture for Computer Vision"
     <http://arxiv.org/abs/1512.00567>`_ paper.
@@ -210,6 +210,8 @@ def inception_v3(pretrained=False, device=cpu(),
     root : str, default $MXNET_HOME/models
         Location for keeping the model parameters.
     """
+    if root is None:
+        root = os.path.join(base.data_dir(), 'models')
     net = Inception3(**kwargs)
     if pretrained:
         from ..model_store import get_model_file

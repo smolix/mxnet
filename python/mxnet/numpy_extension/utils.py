@@ -21,8 +21,9 @@
 
 import ctypes
 from ..util import is_np_array, is_np_shape
-from ..base import _LIB, check_call, string_types, c_str_array
+from ..base import _LIB, check_call, string_types, c_str_array, MXNetError
 from ..base import c_handle_array, c_str, mx_uint, NDArrayHandle, py_str
+from .._ctypes.ndarray import _make_ndarray_outputs
 from ..dlpack import ndarray_to_dlpack_for_read, ndarray_to_dlpack_for_write
 from ..dlpack import ndarray_from_dlpack, ndarray_from_numpy
 from ..numpy import ndarray, array
@@ -157,14 +158,15 @@ def load(file):
                                   ctypes.byref(out_name_size),
                                   ctypes.byref(names)))
     if out_name_size.value == 0:
-        if out_size.value != 1:
-            return [ndarray(NDArrayHandle(handles[i])) for i in range(out_size.value)]
-        return ndarray(NDArrayHandle(handles[0]))
-    else:
-        assert out_name_size.value == out_size.value
-        return dict(
-            (py_str(names[i]), ndarray(NDArrayHandle(handles[i])))
-            for i in range(out_size.value))
+        return _make_ndarray_outputs(
+            handles, None, out_size.value, ndarray, out_size.value != 1)
+    if out_name_size.value != out_size.value:
+        for i in range(out_size.value):
+            check_call(_LIB.MXNDArrayFree(handles[i]))
+        raise MXNetError('Loaded NDArray names and handles have inconsistent sizes')
+    py_names = [py_str(names[i]) for i in range(out_size.value)]
+    out = _make_ndarray_outputs(handles, None, out_size.value, ndarray, True)
+    return dict(zip(py_names, out))
 
 from_dlpack = ndarray_from_dlpack(ndarray)
 from_dlpack_doc = """Returns a np.ndarray backed by a dlpack tensor.

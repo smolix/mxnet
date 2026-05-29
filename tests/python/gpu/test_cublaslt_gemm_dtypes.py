@@ -86,21 +86,26 @@ def _runner(use_lt: int, shape, dtype: str):
     )
     env = os.environ.copy()
     env.setdefault('CUDA_VISIBLE_DEVICES', '0')
-    r = subprocess.run(
-        [sys.executable, '-c', code],
-        env=env,
-        capture_output=True,
-        check=False,
-        timeout=600,
-    )
-    if r.returncode != 0:
-        raise AssertionError(
-            f"child failed (use_lt={use_lt}, shape={shape}, dtype={dtype})\n"
-            f"STDOUT: {r.stdout.decode(errors='replace')}\n"
-            f"STDERR: {r.stderr.decode(errors='replace')}")
-    with open(outpath, 'rb') as fh:
-        data = fh.read()
-    os.unlink(outpath)
+    try:
+        r = subprocess.run(
+            [sys.executable, '-c', code],
+            env=env,
+            capture_output=True,
+            check=False,
+            timeout=600,
+        )
+        if r.returncode != 0:
+            raise AssertionError(
+                f"child failed (use_lt={use_lt}, shape={shape}, dtype={dtype})\n"
+                f"STDOUT: {r.stdout.decode(errors='replace')}\n"
+                f"STDERR: {r.stderr.decode(errors='replace')}")
+        with open(outpath, 'rb') as fh:
+            data = fh.read()
+    finally:
+        try:
+            os.unlink(outpath)
+        except FileNotFoundError:
+            pass
     return struct.unpack('<dddd', data)
 
 

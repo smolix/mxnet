@@ -16,10 +16,15 @@
 # under the License.
 
 from __future__ import print_function
+import inspect
 import mxnet as mx
 from mxnet.gluon.model_zoo.vision import get_model
+from mxnet.gluon.model_zoo import vision
+from mxnet.gluon.model_zoo import model_store
 import sys
 import multiprocessing
+import zipfile
+import hashlib
 import pytest
 
 
@@ -27,9 +32,10 @@ import pytest
 def _legacy_nd_semantics():
     prev_arr = mx.util.is_np_array()
     prev_shp = mx.util.is_np_shape()
+    prev_dtype = mx.npx.is_np_default_dtype()
     mx.npx.reset_np()
     yield
-    mx.npx.set_np(shape=prev_shp, array=prev_arr)
+    mx.npx.set_np(shape=prev_shp, array=prev_arr, dtype=prev_dtype)
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -59,6 +65,110 @@ def test_models(model_name, request):
     if not test_pretrain:
         model.initialize()
     model(mx.np.random.uniform(size=data_shape)).wait_to_read()
+
+
+def test_model_store_removes_temp_zip_after_bad_download(monkeypatch, tmp_path):
+    model_name = 'unit_test_model'
+    monkeypatch.setitem(model_store._model_sha1, model_name,
+                        '0123456789abcdef0123456789abcdef01234567')
+
+    def fake_download(url, path=None, overwrite=False):
+        with open(path, 'wb') as temp_zip:
+            temp_zip.write(b'not a zip archive')
+
+    monkeypatch.setattr(model_store, 'download', fake_download)
+
+    with pytest.raises(zipfile.BadZipFile):
+        model_store.get_model_file(model_name, root=str(tmp_path))
+
+    assert list(tmp_path.glob('*.zip*')) == []
+
+
+def test_model_store_extracts_only_expected_params_member(monkeypatch, tmp_path):
+    model_name = 'unit_test_model'
+    params = b'valid model params'
+    monkeypatch.setitem(model_store._model_sha1, model_name,
+                        hashlib.sha1(params).hexdigest())
+    file_name = '{}-{}'.format(model_name, model_store.short_hash(model_name))
+
+    def fake_download(url, path=None, overwrite=False):
+        with zipfile.ZipFile(path, 'w') as zf:
+            zf.writestr(file_name + '.params', params)
+            zf.writestr('../escaped', b'pwned')
+
+    monkeypatch.setattr(model_store, 'download', fake_download)
+
+    model_path = model_store.get_model_file(model_name, root=str(tmp_path))
+
+    assert open(model_path, 'rb').read() == params
+    assert not (tmp_path.parent / 'escaped').exists()
+
+
+def test_model_store_does_not_replace_existing_file_on_hash_mismatch(monkeypatch, tmp_path):
+    model_name = 'unit_test_model'
+    expected = b'expected model params'
+    existing = b'previous partial contents'
+    downloaded = b'wrong model params'
+    monkeypatch.setitem(model_store._model_sha1, model_name,
+                        hashlib.sha1(expected).hexdigest())
+    file_name = '{}-{}'.format(model_name, model_store.short_hash(model_name))
+    model_path = tmp_path / (file_name + '.params')
+    model_path.write_bytes(existing)
+
+    def fake_download(url, path=None, overwrite=False):
+        with zipfile.ZipFile(path, 'w') as zf:
+            zf.writestr(file_name + '.params', downloaded)
+
+    monkeypatch.setattr(model_store, 'download', fake_download)
+
+    with pytest.raises(ValueError, match='different hash'):
+        model_store.get_model_file(model_name, root=str(tmp_path))
+
+    assert model_path.read_bytes() == existing
+
+
+def test_vision_model_roots_resolve_at_call_time():
+    constructors = [
+        vision.alexnet,
+        vision.densenet121,
+        vision.densenet161,
+        vision.densenet169,
+        vision.densenet201,
+        vision.inception_v3,
+        vision.mobilenet0_25,
+        vision.mobilenet0_5,
+        vision.mobilenet0_75,
+        vision.mobilenet1_0,
+        vision.mobilenet_v2_0_25,
+        vision.mobilenet_v2_0_5,
+        vision.mobilenet_v2_0_75,
+        vision.mobilenet_v2_1_0,
+        vision.resnet18_v1,
+        vision.resnet34_v1,
+        vision.resnet50_v1,
+        vision.resnet101_v1,
+        vision.resnet152_v1,
+        vision.resnet18_v2,
+        vision.resnet34_v2,
+        vision.resnet50_v2,
+        vision.resnet101_v2,
+        vision.resnet152_v2,
+        vision.squeezenet1_0,
+        vision.squeezenet1_1,
+        vision.vgg11,
+        vision.vgg11_bn,
+        vision.vgg13,
+        vision.vgg13_bn,
+        vision.vgg16,
+        vision.vgg16_bn,
+        vision.vgg19,
+        vision.vgg19_bn,
+    ]
+    for constructor in constructors:
+        params = inspect.signature(constructor).parameters
+        if "root" in params:
+            assert params["root"].default is None
+
 
 def parallel_download(model_name):
     model = get_model(model_name, pretrained=True, root='./parallel_download')

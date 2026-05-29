@@ -25,6 +25,7 @@
 #include "./ndarray_op-inl.h"
 #include <mxnet/base.h>
 #include <mxnet/ndarray.h>
+#include <memory>
 
 namespace mxnet {
 namespace op {
@@ -61,19 +62,21 @@ void NDArrayOp<xpu>::Forward(const OpContext& ctx,
   using namespace mshadow;
   Context ndctx = get_ctx();
   std::vector<void*> ptrs;
+  std::vector<std::unique_ptr<NDArray>> nd_wrappers;
   std::vector<Engine::VarHandle> ndvar;
   std::vector<int> tags;
   for (auto& i : req)
     CHECK_NE(i, kAddTo);
 
   for (auto& blob : in_data) {
-    ptrs.push_back(reinterpret_cast<void*>(new NDArray(blob, ndctx.dev_id)));
+    nd_wrappers.emplace_back(new NDArray(blob, ndctx.dev_id));
+    ptrs.push_back(reinterpret_cast<void*>(nd_wrappers.back().get()));
     tags.push_back(0);
   }
   for (auto& blob : out_data) {
-    NDArray* nd = new NDArray(blob, ndctx.dev_id);
-    ptrs.push_back(reinterpret_cast<void*>(nd));
-    ndvar.push_back(nd->var());
+    nd_wrappers.emplace_back(new NDArray(blob, ndctx.dev_id));
+    ptrs.push_back(reinterpret_cast<void*>(nd_wrappers.back().get()));
+    ndvar.push_back(nd_wrappers.back()->var());
     tags.push_back(1);
   }
   std::sort(ndvar.begin(), ndvar.end());
@@ -113,29 +116,33 @@ void NDArrayOp<xpu>::Backward(const OpContext& ctx,
   using namespace mshadow;
   Context ndctx = get_ctx();
   std::vector<void*> ptrs;
+  std::vector<std::unique_ptr<NDArray>> nd_wrappers;
   std::vector<Engine::VarHandle> ndvar;
   std::vector<int> tags;
   for (auto& i : req)
     CHECK_NE(i, kAddTo);
 
   for (auto& blob : in_data) {
-    ptrs.push_back(reinterpret_cast<void*>(new NDArray(blob, ndctx.dev_id)));
+    nd_wrappers.emplace_back(new NDArray(blob, ndctx.dev_id));
+    ptrs.push_back(reinterpret_cast<void*>(nd_wrappers.back().get()));
     tags.push_back(0);
   }
   for (auto& blob : out_data) {
-    ptrs.push_back(reinterpret_cast<void*>(new NDArray(blob, ndctx.dev_id)));
+    nd_wrappers.emplace_back(new NDArray(blob, ndctx.dev_id));
+    ptrs.push_back(reinterpret_cast<void*>(nd_wrappers.back().get()));
     tags.push_back(1);
   }
   for (auto& blob : in_grad) {
-    NDArray* nd = new NDArray(blob, ndctx.dev_id);
-    ptrs.push_back(reinterpret_cast<void*>(nd));
-    ndvar.push_back(nd->var());
+    nd_wrappers.emplace_back(new NDArray(blob, ndctx.dev_id));
+    ptrs.push_back(reinterpret_cast<void*>(nd_wrappers.back().get()));
+    ndvar.push_back(nd_wrappers.back()->var());
     tags.push_back(2);
   }
   std::sort(ndvar.begin(), ndvar.end());
   ndvar.resize(std::unique(ndvar.begin(), ndvar.end()) - ndvar.begin());
   for (auto& blob : out_grad) {
-    ptrs.push_back(reinterpret_cast<void*>(new NDArray(blob, ndctx.dev_id)));
+    nd_wrappers.emplace_back(new NDArray(blob, ndctx.dev_id));
+    ptrs.push_back(reinterpret_cast<void*>(nd_wrappers.back().get()));
     tags.push_back(3);
   }
 

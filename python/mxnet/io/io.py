@@ -31,6 +31,7 @@ from ..base import c_str_array, mx_uint, py_str
 from ..base import DataIterHandle, NDArrayHandle
 from ..base import mx_real_t
 from ..base import check_call, build_param_doc as _build_param_doc
+from .._ctypes.ndarray import _make_ndarray_outputs
 from ..ndarray import NDArray
 from ..ndarray.sparse import CSRNDArray
 from ..util import is_np_array
@@ -387,6 +388,7 @@ class PrefetchingIter(DataIter):
         self.started = True
         self.current_batch = [None for i in range(self.n_iter)]
         self.next_batch = [None for i in range(self.n_iter)]
+        self._prefetch_exceptions = [None for i in range(self.n_iter)]
         def prefetch_func(self, i):
             """Thread entry"""
             while True:
@@ -396,6 +398,9 @@ class PrefetchingIter(DataIter):
                 try:
                     self.next_batch[i] = self.iters[i].next()
                 except StopIteration:
+                    self.next_batch[i] = None
+                except Exception as err:  # pylint: disable=broad-except
+                    self._prefetch_exceptions[i] = err
                     self.next_batch[i] = None
                 self.data_taken[i].clear()
                 self.data_ready[i].set()
@@ -410,7 +415,12 @@ class PrefetchingIter(DataIter):
         for i in self.data_taken:
             i.set()
         for thread in self.prefetch_threads:
-            thread.join()
+            thread.join(timeout=5)
+
+    def _check_prefetch_errors(self):
+        for err in self._prefetch_exceptions:
+            if err is not None:
+                raise err
 
     @property
     def provide_data(self):
@@ -437,8 +447,10 @@ class PrefetchingIter(DataIter):
     def reset(self):
         for i in self.data_ready:
             i.wait()
+        self._check_prefetch_errors()
         for i in self.iters:
             i.reset()
+        self._prefetch_exceptions = [None for i in range(self.n_iter)]
         for i in self.data_ready:
             i.clear()
         for i in self.data_taken:
@@ -447,6 +459,7 @@ class PrefetchingIter(DataIter):
     def iter_next(self):
         for i in self.data_ready:
             i.wait()
+        self._check_prefetch_errors()
         if self.next_batch[0] is None:
             for i in self.next_batch:
                 assert i is None, "Number of entry mismatches between iterators"
@@ -919,8 +932,8 @@ class MXDataIter(DataIter):
         check_call(_LIB.MXDataIterGetItems(self.handle,
                                            ctypes.byref(num_output),
                                            ctypes.byref(output_vars)))
-        out = [self._create_ndarray_fn(ctypes.cast(output_vars[i], NDArrayHandle),
-                                       False) for i in range(num_output.value)]
+        out = _make_ndarray_outputs(
+            output_vars, None, num_output.value, self._create_ndarray_fn, True, writable=False)
         return tuple(out)
 
     def __len__(self):

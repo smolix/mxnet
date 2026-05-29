@@ -25,8 +25,9 @@ import pytest
 
 def _run_optimized_python(source):
     env = os.environ.copy()
-    repo_python = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'python'))
-    env['PYTHONPATH'] = repo_python + os.pathsep + env.get('PYTHONPATH', '')
+    if env.get('MXNET_TEST_USE_INSTALLED_MXNET') != '1':
+        repo_python = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'python'))
+        env['PYTHONPATH'] = repo_python + os.pathsep + env.get('PYTHONPATH', '')
     result = subprocess.run(
         [sys.executable, '-O', '-c', textwrap.dedent(source)],
         cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')),

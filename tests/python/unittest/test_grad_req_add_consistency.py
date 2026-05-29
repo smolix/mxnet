@@ -41,15 +41,7 @@ from mxnet import np as mnp, npx
 from mxnet.gluon import nn
 
 # Use the numpy interface (Gluon 2.0) for all tests in this file.
-pytestmark = pytest.mark.usefixtures("set_np_interface")
-
-
-@pytest.fixture(autouse=True)
-def set_np_interface():
-    """Enable numpy interface for entire module."""
-    npx.set_np()
-    yield
-    npx.reset_np()
+pytestmark = pytest.mark.usefixtures("set_np_semantics")
 
 
 # ---------------------------------------------------------------------------

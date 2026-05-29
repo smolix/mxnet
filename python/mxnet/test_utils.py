@@ -30,6 +30,7 @@ import logging
 import bz2
 import zipfile
 import json
+import uuid
 from contextlib import contextmanager
 from collections import OrderedDict
 import numpy as np
@@ -732,8 +733,8 @@ def assert_almost_equal(a, b, rtol=None, atol=None, names=('a', 'b'), equal_nan=
     else:
         errMsg = f"Error {rel} exceeds tolerance rtol={rtol:e}, atol={atol:e}.\n"
 
-    np.set_printoptions(threshold=4, suppress=True)
-    msg = npt.build_err_msg([a, b], err_msg=errMsg)
+    with np.printoptions(threshold=4, suppress=True):
+        msg = npt.build_err_msg([a, b], err_msg=errMsg)
 
     raise AssertionError(msg)
 
@@ -800,8 +801,8 @@ def assert_almost_equal_with_err(a, b, rtol=None, atol=None, etol=None,
             errMsg = f"Error {relErr} exceeds tolerance rtol={rtol:e}, atol={atol:e} " \
                      f"(mismatch {mismatchDegree}{100*i/a.size}%).\n" \
                      f"{locationError(a, b, indexErr, names, maxError=True)}"
-            np.set_printoptions(threshold=4, suppress=True)
-            msg = npt.build_err_msg([a, b], err_msg=errMsg)
+            with np.printoptions(threshold=4, suppress=True):
+                msg = npt.build_err_msg([a, b], err_msg=errMsg)
             raise AssertionError(msg)
     else:
         assert_almost_equal(a, b, rtol=rtol, atol=atol, equal_nan=equal_nan)
@@ -1688,7 +1689,7 @@ def list_gpus():
     """
     return range(mx.util.get_gpu_count())
 
-def download(url, fname=None, dirname=None, overwrite=False, retries=5):
+def download(url, fname=None, dirname=None, overwrite=False, retries=5, timeout=30):
     """Download an given URL
 
     Parameters
@@ -1708,6 +1709,8 @@ def download(url, fname=None, dirname=None, overwrite=False, retries=5):
         exists.
     retries : integer, default 5
         The number of times to attempt the download in case of failure or non 200 return codes
+    timeout : float or tuple, default 30
+        Timeout in seconds passed to requests for each download attempt.
 
     Returns
     -------
@@ -1740,21 +1743,36 @@ def download(url, fname=None, dirname=None, overwrite=False, retries=5):
     while retries+1 > 0:
         # Disable pyling too broad Exception
         # pylint: disable=W0703
+        r = None
+        temp_fname = None
         try:
-            r = requests.get(url, stream=True)
-            assert r.status_code == 200, f"failed to open {url}"
-            with open(fname, 'wb') as f:
+            r = requests.get(url, stream=True, timeout=timeout)
+            if r.status_code != 200:
+                raise RuntimeError(f"failed to open {url}: HTTP {r.status_code}")
+            temp_fname = '{}.{}'.format(fname, uuid.uuid4())
+            with open(temp_fname, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=1024):
                     if chunk: # filter out keep-alive new chunks
                         f.write(chunk)
-                break
+            os.replace(temp_fname, fname)
+            temp_fname = None
+            break
         except Exception as e:
+            if temp_fname is not None:
+                try:
+                    os.remove(temp_fname)
+                except OSError:
+                    pass
             retries -= 1
             if retries <= 0:
                 raise e
 
             print("download failed, retrying, {} attempt{} left"
                   .format(retries, 's' if retries > 1 else ''))
+        finally:
+            close = getattr(r, 'close', None)
+            if close is not None:
+                close()
     logging.info("downloaded %s into %s successfully", url, fname)
     return fname
 
@@ -1814,6 +1832,14 @@ def get_cifar10(path='data'):
     """Downloads CIFAR10 dataset into a directory in the current directory with the name `data`,
     and then extracts all files into the directory `data/cifar`.
     """
+    def _safe_extract_zip(zip_file, target_dir):
+        target_dir = os.path.abspath(target_dir)
+        for member in zip_file.infolist():
+            member_path = os.path.abspath(os.path.join(target_dir, member.filename))
+            if os.path.commonpath([target_dir, member_path]) != target_dir:
+                raise RuntimeError(f"Unsafe zip member path: {member.filename}")
+        zip_file.extractall(target_dir)
+
     if not os.path.isdir(path):
         os.makedirs(path)
     if (not os.path.exists(os.path.join(path, 'cifar', 'train.rec'))) or \
@@ -1825,7 +1851,7 @@ def get_cifar10(path='data'):
         zip_file_path = mx.gluon.utils.download(url, path=path, sha1_hash=sha1,
                                                 verify_ssl=False)
         with zipfile.ZipFile(zip_file_path) as zf:
-            zf.extractall(path)
+            _safe_extract_zip(zf, path)
 
 def get_mnist_iterator(batch_size, input_shape, num_parts=1, part_index=0, path='data'):
     """Returns training and validation iterators for MNIST dataset
@@ -2424,7 +2450,15 @@ def environment(*args):
         yield
     finally:
         # the backend engines may still be referencing the changed env var state
-        mx.nd.waitall()
+        active_exc = sys.exc_info()[1]
+        try:
+            mx.nd.waitall()
+        except Exception as wait_err:
+            if active_exc is not None:
+                logging.error("mx.nd.waitall() failed while unwinding an earlier exception: %s",
+                              wait_err)
+            else:
+                raise
         # reinstate original env_var state per the snapshot taken earlier
         set_environ(snapshot)
 

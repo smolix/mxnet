@@ -966,16 +966,19 @@ void NDArray::UpdateDNNLMemDesc(const void* mem_desc) {
 void NDArray::SetTBlob() const {
   CHECK(ptr_ != nullptr);
   mxnet::TShape shape = shape_;
-  char* dptr          = static_cast<char*>(ptr_->shandle.dptr);
+  char* dptr          = nullptr;
   auto stype          = storage_type();
   if (stype == kDefaultStorage) {
 #if MXNET_USE_ONEDNN == 1
-    CHECK(!IsDNNLData()) << "We can't generate TBlob for oneDNN data. "
-                         << "Please use Reorder2Default() to generate a new NDArray first";
+    if (IsDNNLData()) {
+      const_cast<NDArray*>(this)->SelfReorder2Default();
+    }
 #endif
+    dptr = static_cast<char*>(ptr_->shandle.dptr);
     dptr += byte_offset_;
   } else if (stype == kCSRStorage || stype == kRowSparseStorage) {
     CHECK_EQ(byte_offset_, 0);
+    dptr  = static_cast<char*>(ptr_->shandle.dptr);
     shape = storage_shape();
   } else {
     LOG(FATAL) << "unknown storage type " << stype;
@@ -2221,12 +2224,20 @@ void NDArray::SyncCopyFromCPU(const void* data, size_t size) const {
   }
   TBlob src((void*)data, dshape, cpu::kDevMask, this->dtype_, 0);  // NOLINT(*)
 
-  if (this->ctx().dev_mask() == cpu::kDevMask) {
-    this->WaitToWrite();
-    RunContext rctx{this->ctx(), nullptr, nullptr};
-    TBlob dst = this->data();
-    ndarray::Copy<cpu, cpu>(src, &dst, Context::CPU(), Context::CPU(), rctx);
-  } else {
+	  if (this->ctx().dev_mask() == cpu::kDevMask) {
+	    Engine::Get()->PushSync(
+	        [this, src](RunContext rctx) {
+	          TBlob dst = this->data();
+	          ndarray::Copy<cpu, cpu>(src, &dst, Context::CPU(), Context::CPU(), rctx);
+	        },
+	        this->ctx(),
+	        {},
+	        {this->var()},
+	        FnProperty::kNormal,
+	        0,
+	        "SyncCopyCPU2CPU");
+	    this->WaitToRead();
+	  } else {
 #if MXNET_USE_CUDA
     Engine::Get()->PushAsync(
         [&](RunContext rctx,
@@ -2397,8 +2408,9 @@ void NDArray::SyncCopyToCPU(void* data, size_t size) const {
     RunContext rctx{this->ctx(), nullptr, nullptr};
     NDArray src = *this;
 #if MXNET_USE_ONEDNN == 1
-    if (src.IsDNNLData())
-      src = this->Reorder2Default();
+    this->Reorder2DefaultAsync();
+    this->WaitToRead();
+    src = *this;
 #endif
     ndarray::Copy<cpu, cpu>(src.data(), &dst, Context::CPU(), Context::CPU(), rctx);
   } else {

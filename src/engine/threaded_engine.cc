@@ -27,13 +27,46 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
+#include <sstream>
 #include <utility>
 #include "./threaded_engine.h"
 #include "../common/cuda/utils.h"
 
 namespace mxnet {
 namespace engine {
+
+namespace {
+
+std::string ExceptionMessage(const std::exception_ptr& exception) {
+  try {
+    std::rethrow_exception(exception);
+  } catch (const dmlc::Error& err) {
+    return err.what();
+  } catch (const std::exception& err) {
+    return err.what();
+  } catch (...) {
+    return "unknown non-standard exception";
+  }
+}
+
+void ThrowCollectedEngineExceptions(const std::vector<std::exception_ptr>& exceptions) {
+  if (exceptions.empty()) {
+    return;
+  }
+  if (exceptions.size() == 1) {
+    std::rethrow_exception(exceptions.front());
+  }
+  std::ostringstream os;
+  os << "Multiple asynchronous engine errors (" << exceptions.size() << "):";
+  for (size_t i = 0; i < exceptions.size(); ++i) {
+    os << "\n[" << i << "] " << ExceptionMessage(exceptions[i]);
+  }
+  throw dmlc::Error(os.str());
+}
+
+}  // namespace
 
 #if ENGINE_DEBUG
 std::atomic<std::size_t> OprBlock::counter{0};
@@ -417,16 +450,16 @@ void ThreadedEngine::WaitForVar(VarHandle var) {
     LOG(INFO) << "Wait for " << threaded_var;
     debug_wait_var_ = threaded_var;
   }
-  std::atomic<bool> done{false};
+  auto done = std::make_shared<std::atomic<bool>>(false);
   this->PushAsync(
-      [this, &done](RunContext, CallbackOnStart on_start, CallbackOnComplete on_complete) {
+      [this, done](RunContext, CallbackOnStart on_start, CallbackOnComplete on_complete) {
         on_start();
         if (engine_info_) {
           LOG(INFO) << "Sync is executed";
         }
         {
           std::unique_lock<std::mutex> lock{finished_m_};
-          done.store(true);
+          done->store(true);
         }
         finished_cv_.notify_all();
         if (engine_info_) {
@@ -447,7 +480,7 @@ void ThreadedEngine::WaitForVar(VarHandle var) {
       // Watchdog loop: wake every diag_timeout_s seconds and log if still stuck.
       while (!finished_cv_.wait_for(lock,
                                     std::chrono::seconds(diag_timeout_s),
-                                    [this, &done]() { return done.load() || kill_.load(); })) {
+                                    [this, done]() { return done->load() || kill_.load(); })) {
         LOG(WARNING) << "[MXNET_ENGINE_DIAG] WaitForVar timeout after " << diag_timeout_s
                      << "s: var=" << threaded_var
                      << " pending_ops=" << pending_.load()
@@ -457,7 +490,7 @@ void ThreadedEngine::WaitForVar(VarHandle var) {
                         "to debug synchronously.";
       }
     } else {
-      finished_cv_.wait(lock, [this, &done]() { return done.load() || kill_.load(); });
+      finished_cv_.wait(lock, [this, done]() { return done->load() || kill_.load(); });
     }
   }
 
@@ -487,15 +520,14 @@ void ThreadedEngine::WaitForAll() {
     }
   }
 
-  std::exception_ptr exception_to_rethrow = nullptr;
+  std::vector<std::exception_ptr> exceptions_to_rethrow;
   {
     std::lock_guard<std::mutex> exception_lock(exception_m_);
     if (!global_exception_refs_.empty()) {
       // iterate through all exception refs
       for (const auto& global_exception_ref : global_exception_refs_) {
-        // the first exception will be saved to be rethrown later
-        if (*global_exception_ref != nullptr && exception_to_rethrow == nullptr) {
-          exception_to_rethrow = *global_exception_ref;
+        if (*global_exception_ref != nullptr) {
+          exceptions_to_rethrow.push_back(*global_exception_ref);
         }
         // clear exceptions, WaitToRead following WaitForAll shouldn't throw
         *global_exception_ref = nullptr;
@@ -504,9 +536,7 @@ void ThreadedEngine::WaitForAll() {
       global_exception_refs_.clear();
     }
   }
-  if (exception_to_rethrow != nullptr) {
-    std::rethrow_exception(exception_to_rethrow);
-  }
+  ThrowCollectedEngineExceptions(exceptions_to_rethrow);
 }
 
 inline void ThreadedEngine::OnComplete(ThreadedOpr* threaded_opr) {

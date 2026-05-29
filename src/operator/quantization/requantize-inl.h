@@ -95,11 +95,40 @@ struct RequantizeKernel {
                                   const T1* input,
                                   const float* imin_range,
                                   const float* imax_range,
-                                  const float real_range) {
+                                  const float real_range,
+                                  const OpReqType out_req,
+                                  const OpReqType min_req,
+                                  const OpReqType max_req) {
     const float input_float = QuantizedToFloat<T1>(input[i], *imin_range, *imax_range);
-    *omin_range             = -real_range;
-    *omax_range             = real_range;
-    output[i]               = FloatToQuantized<T2>(input_float, -real_range, real_range);
+    if (i == 0) {
+      KERNEL_ASSIGN(omin_range[0], min_req, -real_range);
+      KERNEL_ASSIGN(omax_range[0], max_req, real_range);
+    }
+    KERNEL_ASSIGN(output[i], out_req, FloatToQuantized<T2>(input_float, -real_range, real_range));
+  }
+
+  template <typename T1>
+  MSHADOW_XINLINE static void Map(int i,
+                                  uint8_t* output,
+                                  float* omin_range,
+                                  float* omax_range,
+                                  const T1* input,
+                                  const float* imin_range,
+                                  const float* imax_range,
+                                  const float min_calib_range,
+                                  const float max_calib_range,
+                                  const OpReqType out_req,
+                                  const OpReqType min_req,
+                                  const OpReqType max_req) {
+    const float input_float = QuantizedToFloat<T1>(input[i], *imin_range, *imax_range);
+    const float scale       = 255.0f / (max_calib_range - min_calib_range);
+    const float quantized   = Min(Max((input_float - min_calib_range) * scale + 0.5f, 0.0f),
+                                  255.0f);
+    if (i == 0) {
+      KERNEL_ASSIGN(omin_range[0], min_req, min_calib_range);
+      KERNEL_ASSIGN(omax_range[0], max_req, max_calib_range);
+    }
+    KERNEL_ASSIGN(output[i], out_req, static_cast<uint8_t>(quantized));
   }
 
   template <typename T1, typename T2>
@@ -111,15 +140,29 @@ struct RequantizeKernel {
                                   const float* imin_range,
                                   const float* imax_range,
                                   const float* actual_min,
-                                  const float* actual_max) {
-    Map(i,
-        output,
-        omin_range,
-        omax_range,
-        input,
-        imin_range,
-        imax_range,
-        MaxAbs(*actual_min, *actual_max));
+                                  const float* actual_max,
+                                  const OpReqType out_req,
+                                  const OpReqType min_req,
+                                  const OpReqType max_req) {
+    Map(i, output, omin_range, omax_range, input, imin_range, imax_range,
+        MaxAbs(*actual_min, *actual_max), out_req, min_req, max_req);
+  }
+
+  template <typename T1>
+  MSHADOW_XINLINE static void Map(int i,
+                                  uint8_t* output,
+                                  float* omin_range,
+                                  float* omax_range,
+                                  const T1* input,
+                                  const float* imin_range,
+                                  const float* imax_range,
+                                  const float* actual_min,
+                                  const float* actual_max,
+                                  const OpReqType out_req,
+                                  const OpReqType min_req,
+                                  const OpReqType max_req) {
+    Map(i, output, omin_range, omax_range, input, imin_range, imax_range,
+        *actual_min, *actual_max, out_req, min_req, max_req);
   }
 };
 
@@ -132,7 +175,6 @@ void RequantizeForward(const nnvm::NodeAttrs& attrs,
   using namespace mshadow;
   using namespace mxnet_op;
   typedef int32_t SrcDType;
-  typedef int8_t DstDType;
   Stream<xpu>* s               = ctx.get_stream<xpu>();
   const RequantizeParam& param = nnvm::get<RequantizeParam>(attrs.parsed);
   auto out_type                = GetQuantizeOutputType(param);
@@ -142,16 +184,35 @@ void RequantizeForward(const nnvm::NodeAttrs& attrs,
   }
 
   if (param.min_calib_range.has_value() && param.max_calib_range.has_value()) {
-    Kernel<RequantizeKernel, xpu>::Launch(
-        s,
-        inputs[0].Size(),
-        outputs[0].dptr<DstDType>(),
-        outputs[1].dptr<float>(),
-        outputs[2].dptr<float>(),
-        inputs[0].dptr<SrcDType>(),
-        inputs[1].dptr<float>(),
-        inputs[2].dptr<float>(),
-        MaxAbs(param.min_calib_range.value(), param.max_calib_range.value()));
+    if (out_type == mshadow::kUint8) {
+      Kernel<RequantizeKernel, xpu>::Launch(s,
+                                            inputs[0].Size(),
+                                            outputs[0].dptr<uint8_t>(),
+                                            outputs[1].dptr<float>(),
+                                            outputs[2].dptr<float>(),
+                                            inputs[0].dptr<SrcDType>(),
+                                            inputs[1].dptr<float>(),
+                                            inputs[2].dptr<float>(),
+                                            param.min_calib_range.value(),
+                                            param.max_calib_range.value(),
+                                            req[0],
+                                            req[1],
+                                            req[2]);
+    } else {
+      Kernel<RequantizeKernel, xpu>::Launch(
+          s,
+          inputs[0].Size(),
+          outputs[0].dptr<int8_t>(),
+          outputs[1].dptr<float>(),
+          outputs[2].dptr<float>(),
+          inputs[0].dptr<SrcDType>(),
+          inputs[1].dptr<float>(),
+          inputs[2].dptr<float>(),
+          MaxAbs(param.min_calib_range.value(), param.max_calib_range.value()),
+          req[0],
+          req[1],
+          req[2]);
+    }
   } else {  // model is not calibrated
     mxnet::TShape src_shape, dst_shape;
     const size_t actual_float_size     = sizeof(float);
@@ -226,16 +287,35 @@ void RequantizeForward(const nnvm::NodeAttrs& attrs,
                                                 inputs[1].dptr<float>(),
                                                 inputs[2].dptr<float>());
 
-    Kernel<RequantizeKernel, xpu>::Launch(s,
-                                          inputs[0].Size(),
-                                          outputs[0].dptr<DstDType>(),
-                                          outputs[1].dptr<float>(),
-                                          outputs[2].dptr<float>(),
-                                          inputs[0].dptr<SrcDType>(),
-                                          inputs[1].dptr<float>(),
-                                          inputs[2].dptr<float>(),
-                                          actual_min_float.dptr_,
-                                          actual_max_float.dptr_);
+    if (out_type == mshadow::kUint8) {
+      Kernel<RequantizeKernel, xpu>::Launch(s,
+                                            inputs[0].Size(),
+                                            outputs[0].dptr<uint8_t>(),
+                                            outputs[1].dptr<float>(),
+                                            outputs[2].dptr<float>(),
+                                            inputs[0].dptr<SrcDType>(),
+                                            inputs[1].dptr<float>(),
+                                            inputs[2].dptr<float>(),
+                                            actual_min_float.dptr_,
+                                            actual_max_float.dptr_,
+                                            req[0],
+                                            req[1],
+                                            req[2]);
+    } else {
+      Kernel<RequantizeKernel, xpu>::Launch(s,
+                                            inputs[0].Size(),
+                                            outputs[0].dptr<int8_t>(),
+                                            outputs[1].dptr<float>(),
+                                            outputs[2].dptr<float>(),
+                                            inputs[0].dptr<SrcDType>(),
+                                            inputs[1].dptr<float>(),
+                                            inputs[2].dptr<float>(),
+                                            actual_min_float.dptr_,
+                                            actual_max_float.dptr_,
+                                            req[0],
+                                            req[1],
+                                            req[2]);
+    }
   }
 }
 

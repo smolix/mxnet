@@ -569,22 +569,9 @@ void SgDNNLSelfAttQKOp::Initialize(const OpContext& ctx,
   cached_scale_mem_ = std::make_shared<memory>(scale_md, engine);
   *reinterpret_cast<float*>(cached_scale_mem_->get_data_handle()) = oscale;
 
-  MSHADOW_TYPE_SWITCH(inputs[0].dtype(), DType, {
-    DType* query_mem_ptr = inputs[0].data().dptr<DType>();
-    DType* key_mem_ptr;
-    if constexpr (with_split) {
-      key_mem_ptr = query_mem_ptr + embed_dim;
-    } else {
-      key_mem_ptr = inputs[1].data().dptr<DType>();
-    }
-    cached_query_mem_ = std::make_shared<memory>(query_md, engine, query_mem_ptr);
-    cached_key_mem_   = std::make_shared<memory>(key_md, engine, key_mem_ptr);
-  });
-
-  MSHADOW_TYPE_SWITCH(out_tensor.dtype(), DType, {
-    cached_out_mem_ =
-        std::make_shared<memory>(matmul_pd.dst_desc(), engine, out_tensor.data().dptr<DType>());
-  });
+  cached_query_mem_ = std::make_shared<memory>(query_md, engine);
+  cached_key_mem_   = std::make_shared<memory>(key_md, engine);
+  cached_out_mem_   = std::make_shared<memory>(matmul_pd.dst_desc(), engine);
 
   args_[DNNL_ARG_SRC]                        = *cached_query_mem_;
   args_[DNNL_ARG_WEIGHTS]                    = *cached_key_mem_;
@@ -599,26 +586,27 @@ void SgDNNLSelfAttQKOp::Forward(const OpContext& ctx,
                                 const std::vector<OpReqType>& req,
                                 const std::vector<NDArray>& outputs,
                                 bool already_prepared) {
-  if (!already_prepared) {
-    const size_t output_lin_dim = inputs[0].shape()[2];
-    const size_t embed_dim      = output_lin_dim / QKV_NUM;
+  (void)already_prepared;
+  const size_t output_lin_dim = inputs[0].shape()[2];
+  const size_t embed_dim      = output_lin_dim / QKV_NUM;
+  const NDArray query_buffer  = SelfAttToDefault(inputs[0]);
+  const NDArray key_buffer    = with_split ? query_buffer : SelfAttToDefault(inputs[1]);
 
-    MSHADOW_TYPE_SWITCH(inputs[0].dtype(), DType, {
-      DType* query_mem_ptr = inputs[0].data().dptr<DType>();
-      DType* key_mem_ptr;
-      if constexpr (with_split) {
-        key_mem_ptr = query_mem_ptr + embed_dim;
-      } else {
-        key_mem_ptr = inputs[1].data().dptr<DType>();
-      }
-      cached_query_mem_->set_data_handle(query_mem_ptr);
-      cached_key_mem_->set_data_handle(key_mem_ptr);
-    });
+  MSHADOW_TYPE_SWITCH(query_buffer.dtype(), DType, {
+    DType* query_mem_ptr = query_buffer.data().dptr<DType>();
+    DType* key_mem_ptr;
+    if constexpr (with_split) {
+      key_mem_ptr = query_mem_ptr + embed_dim;
+    } else {
+      key_mem_ptr = key_buffer.data().dptr<DType>();
+    }
+    cached_query_mem_->set_data_handle(query_mem_ptr);
+    cached_key_mem_->set_data_handle(key_mem_ptr);
+  });
 
-    MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
-      cached_out_mem_->set_data_handle(outputs[0].data().dptr<DType>());
-    });
-  }
+  MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
+    cached_out_mem_->set_data_handle(outputs[0].data().dptr<DType>());
+  });
   DNNLStream::Get()->RegisterPrimArgs(*fwd_, args_);
   DNNLStream::Get()->Submit();
 
@@ -985,7 +973,7 @@ MXNET_OPERATOR_REGISTER_SELFATT_QK(_sg_onednn_selfatt_qk)
                                        auto const& param =
                                            nnvm::get<DNNLSelfAttParam>(attrs.parsed);
                                        std::vector<std::string> input_names{"queries"};
-                                       input_names.emplace_back("key_data");
+                                       input_names.emplace_back("keys");
                                        if (param.quantized) {
                                          input_names.emplace_back("min_q");
                                          input_names.emplace_back("max_q");
@@ -1000,7 +988,7 @@ MXNET_OPERATOR_REGISTER_SELFATT_QK(_sg_onednn_selfatt_qk)
     .set_attr<nnvm::FGradient>("FGradient", SgDNNLSelfAttQKGrad<false>{})
     .set_attr<FQuantizedOp>("FQuantizedOp", SgDNNLSelfAttQKQuantizedOp<false>)
     .add_argument("queries", "NDArray-or-Symbol", "Interleaved queries, keys and values")
-    .add_argument("key_data", "NDArray-or-Symbol", "Interleaved queries, keys and values")
+    .add_argument("keys", "NDArray-or-Symbol", "Interleaved queries, keys and values")
     .add_argument("min_q", "NDArray-or-Symbol", "Minimum value of queries.")
     .add_argument("max_q", "NDArray-or-Symbol", "Maximum value of queries.")
     .add_argument("min_k", "NDArray-or-Symbol", "Minimum value of keys.")
@@ -1033,7 +1021,7 @@ MXNET_OPERATOR_REGISTER_SELFATT_QK(_sg_onednn_selfatt_qk_split)
     .set_attr<FStatefulComputeEx>("FStatefulComputeEx<cpu>", SgDNNLSelfAttQKForward<true>)
     .set_attr<nnvm::FGradient>("FGradient", SgDNNLSelfAttQKGrad<true>{})
     .set_attr<FQuantizedOp>("FQuantizedOp", SgDNNLSelfAttQKQuantizedOp<true>)
-    .add_argument("query_keys_values", "NDArray-or-Symbol", "Interleaved queries, keys and values")
+    .add_argument("queries_keys_values", "NDArray-or-Symbol", "Interleaved queries, keys and values")
     .add_argument("min_qkv", "NDArray-or-Symbol", "Minimum value of queries, keys and values.")
     .add_argument("max_qkv", "NDArray-or-Symbol", "Maximum value of queries, keys and values.");
 
@@ -1405,28 +1393,14 @@ void DNNLSelfAttValAttOp::Initialize(const OpContext& ctx,
   tmp_md       = memory::desc(transpose_dims, result_dnnl_dtype, memory::format_tag::abcde);
   transpose_md = memory::desc(transpose_dims, result_dnnl_dtype, memory::format_tag::acbde);
 
-  // multiply by 2 as we need to skip query and key
-  const size_t value_offset = inputs[1].shape()[2] / QKV_NUM * 2;
-  auto att_buffer           = inputs[0];
-  if (att_buffer.IsDNNLData())
-    att_buffer = att_buffer.Reorder2Default();
-
-  MSHADOW_TYPE_SWITCH(att_buffer.dtype(), DType, {
-    DType* attention_ptr = att_buffer.data().dptr<DType>();
-    cached_att_mem_      = std::make_shared<memory>(attn_md, engine, attention_ptr);
-  });
-
-  MSHADOW_TYPE_SWITCH(inputs[1].dtype(), DType, {
-    DType* value_mem_ptr = inputs[1].data().dptr<DType>() + value_offset;
-    cached_value_mem_    = std::make_shared<memory>(value_md, engine, value_mem_ptr);
-  });
+  cached_att_mem_   = std::make_shared<memory>(attn_md, engine);
+  cached_value_mem_ = std::make_shared<memory>(value_md, engine);
 
   MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
     cached_result_mem_ = std::make_shared<memory>(result_md, engine);
     DType* orig_buf    = reinterpret_cast<DType*>(cached_result_mem_->get_data_handle());
     cached_tmp_mem_    = std::make_shared<dnnl::memory>(tmp_md, engine, orig_buf);
-    cached_transposed_mem_ =
-        std::make_shared<dnnl::memory>(transpose_md, engine, outputs[0].data().dptr<DType>());
+    cached_transposed_mem_ = std::make_shared<dnnl::memory>(transpose_md, engine);
   });
 
   // v3: set_output_scales / matmul::desc removed.
@@ -1456,29 +1430,26 @@ void DNNLSelfAttValAttOp::Forward(const OpContext& ctx,
                                   const std::vector<OpReqType>& req,
                                   const std::vector<NDArray>& outputs,
                                   bool already_prepared) {
-  if (!already_prepared) {
-    // multiply by 2 as we need to skip queries and keys
-    const size_t value_offset = inputs[1].shape()[2] / QKV_NUM * 2;
+  (void)already_prepared;
+  // multiply by 2 as we need to skip queries and keys
+  const size_t value_offset = inputs[1].shape()[2] / QKV_NUM * 2;
+  const NDArray att_buffer  = SelfAttToDefault(inputs[0]);
+  const NDArray qkv_buffer  = SelfAttToDefault(inputs[1]);
 
-    auto att_buffer = inputs[0];
-    if (att_buffer.IsDNNLData())
-      att_buffer = att_buffer.Reorder2Default();
+  MSHADOW_TYPE_SWITCH(att_buffer.dtype(), DType, {
+    DType* attention_ptr = att_buffer.data().dptr<DType>();
+    cached_att_mem_->set_data_handle(attention_ptr);
+  });
 
-    MSHADOW_TYPE_SWITCH(att_buffer.dtype(), DType, {
-      DType* attention_ptr = att_buffer.data().dptr<DType>();
-      cached_att_mem_->set_data_handle(attention_ptr);
-    });
+  MSHADOW_TYPE_SWITCH(qkv_buffer.dtype(), DType, {
+    DType* qkv_ptr       = qkv_buffer.data().dptr<DType>();
+    DType* value_mem_ptr = qkv_ptr + value_offset;
+    cached_value_mem_->set_data_handle(value_mem_ptr);
+  });
 
-    MSHADOW_TYPE_SWITCH(inputs[1].dtype(), DType, {
-      DType* qkv_ptr       = inputs[1].data().dptr<DType>();
-      DType* value_mem_ptr = qkv_ptr + value_offset;
-      cached_value_mem_->set_data_handle(value_mem_ptr);
-    });
-
-    MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
-      cached_transposed_mem_->set_data_handle(outputs[0].data().dptr<DType>());
-    });
-  }
+  MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
+    cached_transposed_mem_->set_data_handle(outputs[0].data().dptr<DType>());
+  });
   DNNLStream::Get()->RegisterPrimArgs(*fwd_, args_);
   DNNLStream::Get()->RegisterPrimArgs(*reorder_, reorder_args);
   DNNLStream::Get()->Submit();

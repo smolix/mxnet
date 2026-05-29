@@ -61,7 +61,10 @@ struct quantize_unsigned {
     using mshadow::red::limits::MaxValue;
     using mshadow::red::limits::MinValue;
     const float scale = (max_limit - min_limit) / (*imax_range - *imin_range);
-    const DstDType quantized = static_cast<DstDType>((in[i] - *imin_range) * scale + 0.5);
+    const float rounded = (in[i] - *imin_range) * scale + 0.5f;
+    const DstDType quantized =
+        static_cast<DstDType>(Min(Max(rounded, static_cast<float>(min_limit)),
+                                  static_cast<float>(max_limit)));
     KERNEL_ASSIGN(out[i], req, quantized);
   }
 };

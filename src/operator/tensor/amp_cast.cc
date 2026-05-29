@@ -101,6 +101,12 @@ static void AMPMultiCastExCPU(const nnvm::NodeAttrs& attrs,
   const AMPMultiCastParam& param = nnvm::get<AMPMultiCastParam>(attrs.parsed);
   CHECK_EQ(inputs.size(), param.num_outputs);
   CHECK_EQ(outputs.size(), param.num_outputs);
+  for (int i = 0; i < param.num_outputs; ++i) {
+    if (inputs[i].dtype() == mshadow::kFloat16 || outputs[i].dtype() == mshadow::kFloat16) {
+      FallBackCompute(AMPMultiCastCompute<cpu>, attrs, ctx, inputs, req, outputs);
+      return;
+    }
+  }
   dnnl::engine cpu_engine = mxnet::CpuEngine::Get()->get_engine();
   for (int i = 0; i < param.num_outputs; ++i) {
     if (req[i] == kWriteInplace) {

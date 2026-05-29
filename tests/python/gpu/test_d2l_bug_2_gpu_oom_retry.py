@@ -223,8 +223,14 @@ def test_concurrent_alloc_under_high_water():
     p2 = subprocess.Popen(
         [sys.executable, "-c", script],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out1, err1 = p1.communicate(timeout=60)
-    out2, err2 = p2.communicate(timeout=60)
+    try:
+        out1, err1 = p1.communicate(timeout=60)
+        out2, err2 = p2.communicate(timeout=60)
+    finally:
+        for proc in (p1, p2):
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
     # Both should succeed under the retry policy on a 24 GB GPU.
     # If both went OOM (and the GPU genuinely couldn't fit both), the
     # retry won't fix that — so we only assert at least one succeeds,

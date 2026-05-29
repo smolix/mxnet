@@ -1986,13 +1986,14 @@ void CreateNDArray(const DataType* shape,
         << "[CreateNDArray] Size of tensor you are trying to allocate is larger than "
            "2^31 elements. Please build with flag USE_INT64_TENSOR_SIZE=1";
   }
-  NDArray* nd = new NDArray(requested_shape,
-                            Context::Create(static_cast<Context::DeviceType>(dev_type), dev_id),
-                            delay_alloc != 0,
-                            dtype);
+  std::unique_ptr<NDArray> nd(new NDArray(
+      requested_shape,
+      Context::Create(static_cast<Context::DeviceType>(dev_type), dev_id),
+      delay_alloc != 0,
+      dtype));
   nd->AssignStorageInfo(profiler::ProfilerScope::Get()->GetCurrentProfilerScope(),
                         MXNET_STORAGE_DEFAULT_NAME_CSTR);
-  *out = nd;
+  *out = nd.release();
 }
 
 int MXNDArrayCreate64(const int64_t* shape,
@@ -2042,16 +2043,17 @@ void CreateSparseNDArray(int storage_type,
     aux_shapes.emplace_back(shape_start, shape_start + aux_ndims[i]);
     shape_start += aux_ndims[i];
   }
-  NDArray* nd = new NDArray(NDArrayStorageType(storage_type),
-                            mxnet::TShape(shape, shape + ndim),
-                            Context::Create(static_cast<Context::DeviceType>(dev_type), dev_id),
-                            delay_alloc != 0,
-                            dtype,
-                            aux_types,
-                            aux_shapes);
+  std::unique_ptr<NDArray> nd(new NDArray(
+      NDArrayStorageType(storage_type),
+      mxnet::TShape(shape, shape + ndim),
+      Context::Create(static_cast<Context::DeviceType>(dev_type), dev_id),
+      delay_alloc != 0,
+      dtype,
+      aux_types,
+      aux_shapes));
   nd->AssignStorageInfo(profiler::ProfilerScope::Get()->GetCurrentProfilerScope(),
                         MXNET_STORAGE_DEFAULT_NAME_CSTR);
-  *out = nd;
+  *out = nd.release();
 }
 
 int MXNDArrayCreateSparseEx(int storage_type,
@@ -2210,6 +2212,40 @@ int MXNDArrayLegacySave(const char* fname,
   API_END();
 }
 
+class MZZipWriterGuard {
+ public:
+  explicit MZZipWriterGuard(const char* fname) : fname_(fname) {
+    CHECK(mz_zip_writer_init_file(&archive_, fname_, 0))
+        << "Failed to open archive " << fname_ << ": "
+        << mz_zip_get_error_string(mz_zip_get_last_error(&archive_));
+    initialized_ = true;
+  }
+
+  ~MZZipWriterGuard() {
+    if (initialized_) {
+      mz_zip_writer_end(&archive_);
+    }
+  }
+
+  mz_zip_archive* get() {
+    return &archive_;
+  }
+
+  void Finalize() {
+    CHECK(mz_zip_writer_finalize_archive(&archive_))
+        << "Failed to finalize archive " << fname_
+        << mz_zip_get_error_string(mz_zip_get_last_error(&archive_));
+    CHECK(mz_zip_writer_end(&archive_)) << "Failed to end archive " << fname_
+                                        << mz_zip_get_error_string(mz_zip_get_last_error(&archive_));
+    initialized_ = false;
+  }
+
+ private:
+  const char* fname_;
+  mz_zip_archive archive_{};
+  bool initialized_{false};
+};
+
 int MXNDArraySave(const char* fname, uint32_t num_args, NDArrayHandle* args, const char** keys) {
   API_BEGIN();
 
@@ -2223,33 +2259,18 @@ int MXNDArraySave(const char* fname, uint32_t num_args, NDArrayHandle* args, con
     if (array->storage_type() == kDefaultStorage) {
       npy::save_array(fname, *array);
     } else {
-      mz_zip_archive archive{};
-      CHECK(mz_zip_writer_init_file(&archive, fname, 0))
-          << "Failed to open archive " << fname << ": "
-          << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
-      npz::save_array(&archive, "", *array);
-      CHECK(mz_zip_writer_finalize_archive(&archive))
-          << "Failed to finalize archive " << fname
-          << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
-      CHECK(mz_zip_writer_end(&archive))
-          << "Failed to end archive " << fname
-          << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
+      MZZipWriterGuard archive(fname);
+      npz::save_array(archive.get(), "", *array);
+      archive.Finalize();
     }
   } else {
-    mz_zip_archive archive{};
-    CHECK(mz_zip_writer_init_file(&archive, fname, 0))
-        << "Failed to open archive " << fname << ": "
-        << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
+    MZZipWriterGuard archive(fname);
     for (uint32_t i = 0; i < num_args; ++i) {
       NDArray* array              = static_cast<NDArray*>(args[i]);
       const std::string array_key = keys == nullptr ? "arr_" + std::to_string(i) : keys[i];
-      npz::save_array(&archive, array_key, *array);
+      npz::save_array(archive.get(), array_key, *array);
     }
-    CHECK(mz_zip_writer_finalize_archive(&archive))
-        << "Failed to finalize archive " << fname
-        << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
-    CHECK(mz_zip_writer_end(&archive)) << "Failed to end archive " << fname
-                                       << mz_zip_get_error_string(mz_zip_get_last_error(&archive));
+    archive.Finalize();
   }
   API_END();
 }
@@ -2273,11 +2294,11 @@ int MXNDArrayLoad(const char* fname,
   if (magic == 0x04034b50 || magic == 0x504b0304 || magic == 0x06054b50 ||
       magic == 0x504b0506) {                       // zip file format; assumed to be npz
     auto [data, names] = npz::load_arrays(fname);  // NOLINT
-    ret->ret_handles.resize(data.size());
+    std::vector<std::unique_ptr<NDArray>> owned_outputs;
+    owned_outputs.reserve(data.size());
     for (size_t i = 0; i < data.size(); ++i) {
-      NDArray* ptr        = new NDArray();
-      *ptr                = data[i];
-      ret->ret_handles[i] = ptr;
+      owned_outputs.emplace_back(new NDArray());
+      *owned_outputs.back() = data[i];
     }
     ret->ret_vec_str.resize(names.size());
     for (size_t i = 0; i < names.size(); ++i) {
@@ -2287,19 +2308,27 @@ int MXNDArrayLoad(const char* fname,
     for (size_t i = 0; i < names.size(); ++i) {
       ret->ret_vec_charp[i] = ret->ret_vec_str[i].c_str();
     }
+    ret->ret_handles.resize(data.size());
+    for (size_t i = 0; i < data.size(); ++i) {
+      ret->ret_handles[i] = owned_outputs[i].get();
+    }
     *out_size      = static_cast<uint32_t>(data.size());
     *out_arr       = dmlc::BeginPtr(ret->ret_handles);
     *out_name_size = static_cast<uint32_t>(names.size());
     *out_names     = dmlc::BeginPtr(ret->ret_vec_charp);
+    for (auto& output : owned_outputs) {
+      output.release();
+    }
   } else if (magic == 0x4d554e93 || magic == 0x934e554d) {  // first bytes of npy format
+    std::unique_ptr<NDArray> ptr(new NDArray());
+    *ptr = npy::load_array(fname);  // Only supports local filesystem at this point in time
     *out_size = 1;
     ret->ret_handles.resize(1);
-    NDArray* ptr = new NDArray();
-    *ptr         = npy::load_array(fname);  // Only supports local filesystem at this point in time
-    ret->ret_handles[0] = ptr;
+    ret->ret_handles[0] = ptr.get();
     *out_arr            = dmlc::BeginPtr(ret->ret_handles);
     *out_name_size      = 0;
     *out_names          = nullptr;
+    ptr.release();
   } else {
     std::vector<NDArray> data;
     std::vector<std::string>& names = ret->ret_vec_str;
@@ -2307,20 +2336,27 @@ int MXNDArrayLoad(const char* fname,
       std::unique_ptr<dmlc::Stream> fi(dmlc::Stream::Create(fname, "r"));
       mxnet::NDArray::Load(fi.get(), &data, &names);
     }
-    ret->ret_handles.resize(data.size());
+    std::vector<std::unique_ptr<NDArray>> owned_outputs;
+    owned_outputs.reserve(data.size());
     for (size_t i = 0; i < data.size(); ++i) {
-      NDArray* ptr        = new NDArray();
-      *ptr                = data[i];
-      ret->ret_handles[i] = ptr;
+      owned_outputs.emplace_back(new NDArray());
+      *owned_outputs.back() = data[i];
     }
     ret->ret_vec_charp.resize(names.size());
     for (size_t i = 0; i < names.size(); ++i) {
       ret->ret_vec_charp[i] = names[i].c_str();
     }
+    ret->ret_handles.resize(data.size());
+    for (size_t i = 0; i < data.size(); ++i) {
+      ret->ret_handles[i] = owned_outputs[i].get();
+    }
     *out_size      = static_cast<uint32_t>(data.size());
     *out_arr       = dmlc::BeginPtr(ret->ret_handles);
     *out_name_size = static_cast<uint32_t>(names.size());
     *out_names     = dmlc::BeginPtr(ret->ret_vec_charp);
+    for (auto& output : owned_outputs) {
+      output.release();
+    }
   }
   API_END();
 }
@@ -2342,20 +2378,27 @@ int MXNDArrayLoadFromBuffer(const void* ndarray_buffer,
         new dmlc::MemoryFixedSizeStream(const_cast<void*>(ndarray_buffer), size));
     mxnet::NDArray::Load(fi.get(), &data, &names);
   }
-  ret->ret_handles.resize(data.size());
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
+  owned_outputs.reserve(data.size());
   for (size_t i = 0; i < data.size(); ++i) {
-    NDArray* ptr        = new NDArray();
-    *ptr                = data[i];
-    ret->ret_handles[i] = ptr;
+    owned_outputs.emplace_back(new NDArray());
+    *owned_outputs.back() = data[i];
   }
   ret->ret_vec_charp.resize(names.size());
   for (size_t i = 0; i < names.size(); ++i) {
     ret->ret_vec_charp[i] = names[i].c_str();
   }
+  ret->ret_handles.resize(data.size());
+  for (size_t i = 0; i < data.size(); ++i) {
+    ret->ret_handles[i] = owned_outputs[i].get();
+  }
   *out_size      = static_cast<uint32_t>(data.size());
   *out_arr       = dmlc::BeginPtr(ret->ret_handles);
   *out_name_size = static_cast<uint32_t>(names.size());
   *out_names     = dmlc::BeginPtr(ret->ret_vec_charp);
+  for (auto& output : owned_outputs) {
+    output.release();
+  }
   API_END();
 }
 
@@ -2786,7 +2829,7 @@ int MXDataIterGetLabel(DataIterHandle handle, NDArrayHandle* out) {
   API_BEGIN();
   const DataBatch& db = static_cast<IIterator<DataBatch>*>(handle)->Value();
   bool no_label       = db.data.size() < 2U;
-  NDArray* pndarray   = new NDArray();
+  std::unique_ptr<NDArray> pndarray(new NDArray());
   // temp hack to make label 1D
   // TODO(tianjun) make label 1D when label_width=0
   mxnet::TShape shape = no_label ? TShape({
@@ -2802,7 +2845,7 @@ int MXDataIterGetLabel(DataIterHandle handle, NDArrayHandle* out) {
   } else {
     *pndarray = db.data[1];
   }
-  *out = pndarray;
+  *out = pndarray.release();
   API_END();
 }
 
@@ -2811,11 +2854,15 @@ int MXDataIterGetItems(DataIterHandle handle, int* num_outputs, NDArrayHandle** 
   API_BEGIN();
   const DataBatch& db = static_cast<IIterator<DataBatch>*>(handle)->Value();
   std::vector<NDArray*> ndoutputs;
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
   ndoutputs.reserve(db.data.size());
   if (*outputs == nullptr) {
     *num_outputs = db.data.size();
-    for (int i = 0; i < *num_outputs; ++i)
-      ndoutputs.push_back(new NDArray());
+    owned_outputs.reserve(*num_outputs);
+    for (int i = 0; i < *num_outputs; ++i) {
+      owned_outputs.emplace_back(new NDArray());
+      ndoutputs.push_back(owned_outputs.back().get());
+    }
   } else {
     CHECK_EQ(*num_outputs, db.data.size()) << "MXDataIterGetItems expects " << db.data.size()
                                            << " outputs, but " << *num_outputs << " was given.";
@@ -2835,6 +2882,9 @@ int MXDataIterGetItems(DataIterHandle handle, int* num_outputs, NDArrayHandle** 
       ret->ret_handles.push_back(ndoutputs[i]);
     }
     *outputs = dmlc::BeginPtr(ret->ret_handles);
+    for (auto& output : owned_outputs) {
+      output.release();
+    }
   }
   API_END();
 }
@@ -2850,9 +2900,9 @@ int MXDataIterGetIndex(DataIterHandle handle, uint64_t** out_index, uint64_t* ou
 int MXDataIterGetData(DataIterHandle handle, NDArrayHandle* out) {
   API_BEGIN();
   const DataBatch& db = static_cast<IIterator<DataBatch>*>(handle)->Value();
-  NDArray* pndarray   = new NDArray();
+  std::unique_ptr<NDArray> pndarray(new NDArray());
   *pndarray           = db.data[0];
-  *out                = pndarray;
+  *out                = pndarray.release();
   API_END();
 }
 
@@ -2923,11 +2973,15 @@ int MXDatasetGetItems(DatasetHandle handle,
   CHECK((*static_cast<std::shared_ptr<Dataset>*>(handle))->GetItem(index, &res))
       << "Error getting item at index: " << index;
   std::vector<NDArray*> ndoutputs;
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
   ndoutputs.reserve(res.size());
   if (*outputs == nullptr) {
     *num_outputs = res.size();
-    for (int i = 0; i < *num_outputs; ++i)
-      ndoutputs.push_back(new NDArray());
+    owned_outputs.reserve(*num_outputs);
+    for (int i = 0; i < *num_outputs; ++i) {
+      owned_outputs.emplace_back(new NDArray());
+      ndoutputs.push_back(owned_outputs.back().get());
+    }
   } else {
     CHECK_EQ(*num_outputs, res.size()) << "MXDatasetGetItems expects " << res.size()
                                        << " outputs, but " << *num_outputs << " was given.";
@@ -2946,6 +3000,9 @@ int MXDatasetGetItems(DatasetHandle handle,
       ret->ret_handles.push_back(ndoutputs[i]);
     }
     *outputs = dmlc::BeginPtr(ret->ret_handles);
+    for (auto& output : owned_outputs) {
+      output.release();
+    }
   }
   API_END();
 }
@@ -3010,14 +3067,18 @@ int MXBatchifyFunctionInvoke(BatchifyFunctionHandle handle,
   std::vector<NDArray> res;
   CHECK((*static_cast<BatchifyFunctionPtr*>(handle))->Batchify(ndinputs, &res))
       << "Error call batchify with " << ndinputs.size() << " inputs";
+  CHECK_EQ(num_output, res.size()) << "MXBatchifyFunctionInvoke expects " << num_output
+                                   << " outputs from batchify, but got " << res.size() << ".";
   std::vector<NDArray*> ndoutputs;
+  std::vector<std::unique_ptr<NDArray>> owned_outputs;
   ndoutputs.reserve(res.size());
   if (*outputs == nullptr) {
-    for (int i = 0; i < num_output; ++i)
-      ndoutputs.push_back(new NDArray());
+    owned_outputs.reserve(num_output);
+    for (int i = 0; i < num_output; ++i) {
+      owned_outputs.emplace_back(new NDArray());
+      ndoutputs.push_back(owned_outputs.back().get());
+    }
   } else {
-    CHECK_EQ(num_output, res.size()) << "MXBatchifyFunctionInvoke expects " << res.size()
-                                     << " outputs, but " << num_output << " was given.";
     for (int i = 0; i < num_output; ++i) {
       ndoutputs.push_back(reinterpret_cast<NDArray*>((*outputs)[i]));
     }
@@ -3034,6 +3095,9 @@ int MXBatchifyFunctionInvoke(BatchifyFunctionHandle handle,
       ret->ret_handles.push_back(ndoutputs[i]);
     }
     *outputs = dmlc::BeginPtr(ret->ret_handles);
+    for (auto& output : owned_outputs) {
+      output.release();
+    }
   }
   API_END();
 }
@@ -3471,13 +3535,14 @@ struct MXRecordIOContext {
 
 int MXRecordIOWriterCreate(const char* uri, RecordIOHandle* out) {
   API_BEGIN();
-  dmlc::Stream* stream       = dmlc::Stream::Create(uri, "w");
-  MXRecordIOContext* context = new MXRecordIOContext;
-  context->writer            = new dmlc::RecordIOWriter(stream);
+  std::unique_ptr<dmlc::Stream> stream(dmlc::Stream::Create(uri, "w"));
+  std::unique_ptr<MXRecordIOContext> context(new MXRecordIOContext);
+  std::unique_ptr<dmlc::RecordIOWriter> writer(new dmlc::RecordIOWriter(stream.get()));
+  context->writer            = writer.release();
   context->reader            = nullptr;
-  context->stream            = stream;
+  context->stream            = stream.release();
   context->read_buff         = nullptr;
-  *out                       = reinterpret_cast<RecordIOHandle>(context);
+  *out                       = reinterpret_cast<RecordIOHandle>(context.release());
   API_END();
 }
 
@@ -3506,13 +3571,15 @@ int MXRecordIOWriterTell(RecordIOHandle handle, size_t* pos) {
 
 int MXRecordIOReaderCreate(const char* uri, RecordIOHandle* out) {
   API_BEGIN();
-  dmlc::Stream* stream       = dmlc::Stream::Create(uri, "r");
-  MXRecordIOContext* context = new MXRecordIOContext;
-  context->reader            = new dmlc::RecordIOReader(stream);
+  std::unique_ptr<dmlc::Stream> stream(dmlc::Stream::Create(uri, "r"));
+  std::unique_ptr<MXRecordIOContext> context(new MXRecordIOContext);
+  std::unique_ptr<dmlc::RecordIOReader> reader(new dmlc::RecordIOReader(stream.get()));
+  std::unique_ptr<std::string> read_buff(new std::string());
+  context->reader            = reader.release();
   context->writer            = nullptr;
-  context->stream            = stream;
-  context->read_buff         = new std::string();
-  *out                       = reinterpret_cast<RecordIOHandle>(context);
+  context->stream            = stream.release();
+  context->read_buff         = read_buff.release();
+  *out                       = reinterpret_cast<RecordIOHandle>(context.release());
   API_END();
 }
 
@@ -3741,6 +3808,11 @@ void AssertValidNumberVars(int num_const_vars, int num_mutable_vars) {
   CHECK_GE(num_mutable_vars, 0) << "Non-negative number of mutable vars expected.";
 }
 
+void AssertValidVarArray(EngineVarHandle vars_handle, int num_vars, const char* name) {
+  CHECK(vars_handle != nullptr || num_vars == 0)
+      << name << " must be non-null when the corresponding count is positive.";
+}
+
 int MXEnginePushAsync(EngineAsyncFunc async_func,
                       void* func_param,
                       EngineFuncParamDeleter deleter,
@@ -3780,8 +3852,11 @@ int MXEnginePushAsync(EngineAsyncFunc async_func,
   }
 
   AssertValidNumberVars(num_const_vars, num_mutable_vars);
+  AssertValidVarArray(const_vars_handle, num_const_vars, "const_vars_handle");
+  AssertValidVarArray(mutable_vars_handle, num_mutable_vars, "mutable_vars_handle");
   std::vector<VarHandle> const_var_vec(const_vars, const_vars + num_const_vars);
   std::vector<VarHandle> mutable_var_vec(mutable_vars, mutable_vars + num_mutable_vars);
+  Engine::Get()->DeduplicateVarHandle(&const_var_vec, &mutable_var_vec);
   Engine::Get()->PushAsync(
       exec_fn, exec_ctx, const_var_vec, mutable_var_vec, prop, priority, opr_name, wait);
 
@@ -3822,8 +3897,11 @@ int MXEnginePushSync(EngineSyncFunc sync_func,
   }
 
   AssertValidNumberVars(num_const_vars, num_mutable_vars);
+  AssertValidVarArray(const_vars_handle, num_const_vars, "const_vars_handle");
+  AssertValidVarArray(mutable_vars_handle, num_mutable_vars, "mutable_vars_handle");
   std::vector<VarHandle> const_var_vec(const_vars, const_vars + num_const_vars);
   std::vector<VarHandle> mutable_var_vec(mutable_vars, mutable_vars + num_mutable_vars);
+  Engine::Get()->DeduplicateVarHandle(&const_var_vec, &mutable_var_vec);
   Engine::Get()->PushSync(
       exec_fn, exec_ctx, const_var_vec, mutable_var_vec, prop, priority, opr_name);
 

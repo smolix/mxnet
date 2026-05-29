@@ -107,6 +107,24 @@ void AsyncCompleteWithError(mxnet::RunContext,
   on_complete(&error);
 }
 
+mxnet::Engine::AsyncFn AsyncCompleteWithNamedError(const std::string& message) {
+  return [message](mxnet::RunContext,
+                   mxnet::Engine::CallbackOnStart on_start,
+                   mxnet::Engine::CallbackOnComplete on_complete) {
+    on_start();
+    dmlc::Error error(message);
+    on_complete(&error);
+  };
+}
+
+void AsyncCompleteThenThrow(mxnet::RunContext,
+                            mxnet::Engine::CallbackOnStart on_start,
+                            mxnet::Engine::CallbackOnComplete on_complete) {
+  on_start();
+  on_complete();
+  throw dmlc::Error("late async failure after completion");
+}
+
 void NoOpSync(mxnet::RunContext) {}
 
 /**
@@ -280,6 +298,74 @@ TEST(Engine, ThreadedNoVarAsyncExceptionReachesWaitForAll) {
 
     EXPECT_THROW(engine->WaitForAll(), dmlc::Error)
         << "Callback errors from ops without dependency vars must be visible to WaitForAll.";
+    EXPECT_NO_THROW(engine->WaitForAll());
+  }
+}
+
+TEST(Engine, ThreadedIgnoresAsyncThrowAfterCompletion) {
+  const int num_engine = 2;
+  std::vector<mxnet::Engine*> engines(num_engine);
+  engines[0]                = mxnet::engine::CreateThreadedEnginePooled();
+  engines[1]                = mxnet::engine::CreateThreadedEnginePerDevice();
+  std::string type_names[2] = {"ThreadedEnginePooled", "ThreadedEnginePerDevice"};
+
+  for (int e = 0; e < num_engine; ++e) {
+    auto engine = engines[e];
+    LOG(INFO) << "Testing late async throw after completion in " << type_names[e];
+
+    auto var = engine->NewVariable();
+    engine->PushAsync(AsyncCompleteThenThrow,
+                      mxnet::Context::CPU(),
+                      {},
+                      {var},
+                      mxnet::FnProperty::kAsync,
+                      0,
+                      "AsyncCompleteThenThrowRegression");
+
+    EXPECT_NO_THROW(engine->WaitForAll())
+        << "An async function that already completed must not complete the same op twice.";
+    engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, var);
+    EXPECT_NO_THROW(engine->WaitForAll());
+  }
+}
+
+TEST(Engine, WaitForAllAggregatesMultipleAsyncExceptions) {
+  const int num_engine = 3;
+  std::vector<mxnet::Engine*> engines(num_engine);
+  engines[0]                = mxnet::engine::CreateNaiveEngine();
+  engines[1]                = mxnet::engine::CreateThreadedEnginePooled();
+  engines[2]                = mxnet::engine::CreateThreadedEnginePerDevice();
+  std::string type_names[3] = {"NaiveEngine", "ThreadedEnginePooled", "ThreadedEnginePerDevice"};
+
+  for (int e = 0; e < num_engine; ++e) {
+    auto engine = engines[e];
+    LOG(INFO) << "Testing WaitForAll exception aggregation in " << type_names[e];
+
+    engine->PushAsync(AsyncCompleteWithNamedError("first aggregated engine failure"),
+                      mxnet::Context::CPU(),
+                      {},
+                      {},
+                      mxnet::FnProperty::kAsync,
+                      0,
+                      "FirstAggregatedFailure");
+    engine->PushAsync(AsyncCompleteWithNamedError("second aggregated engine failure"),
+                      mxnet::Context::CPU(),
+                      {},
+                      {},
+                      mxnet::FnProperty::kAsync,
+                      0,
+                      "SecondAggregatedFailure");
+
+    try {
+      engine->WaitForAll();
+      FAIL() << "WaitForAll should report the aggregated async errors";
+    } catch (const dmlc::Error& err) {
+      const std::string message = err.what();
+      EXPECT_NE(message.find("Multiple asynchronous engine errors"), std::string::npos)
+          << message;
+      EXPECT_NE(message.find("first aggregated engine failure"), std::string::npos) << message;
+      EXPECT_NE(message.find("second aggregated engine failure"), std::string::npos) << message;
+    }
     EXPECT_NO_THROW(engine->WaitForAll());
   }
 }
@@ -503,6 +589,46 @@ TEST(Engine, PushFunc) {
   LOG(INFO) << "===== Test #8: PushSync invalid number of mutable vars =====";
   res = MXEnginePushSync(FooSyncFunc, nullptr, nullptr, &ctx, nullptr, 0, &var, -1);
   EXPECT_EQ(res, -1);
+
+  // Test #9
+  LOG(INFO) << "===== Test #9: PushAsync positive const count with null array =====";
+  res = MXEnginePushAsync(FooAsyncFunc, nullptr, nullptr, &ctx, nullptr, 1, &var, 1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("const_vars_handle"), std::string::npos);
+
+  // Test #10
+  LOG(INFO) << "===== Test #10: PushAsync positive mutable count with null array =====";
+  res = MXEnginePushAsync(FooAsyncFunc, nullptr, nullptr, &ctx, &var, 1, nullptr, 1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("mutable_vars_handle"), std::string::npos);
+
+  // Test #11
+  LOG(INFO) << "===== Test #11: PushSync positive const count with null array =====";
+  res = MXEnginePushSync(FooSyncFunc, nullptr, nullptr, &ctx, nullptr, 1, &var, 1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("const_vars_handle"), std::string::npos);
+
+  // Test #12
+  LOG(INFO) << "===== Test #12: PushSync positive mutable count with null array =====";
+  res = MXEnginePushSync(FooSyncFunc, nullptr, nullptr, &ctx, &var, 1, nullptr, 1);
+  EXPECT_EQ(res, -1);
+  EXPECT_NE(std::string(MXGetLastError()).find("mutable_vars_handle"), std::string::npos);
+}
+
+TEST(Engine, PushFuncDeduplicatesReadWriteVars) {
+  auto engine = mxnet::Engine::Get();
+  auto var    = engine->NewVariable();
+  auto ctx    = mxnet::Context{};
+
+  int res = MXEnginePushAsync(FooAsyncFunc, nullptr, nullptr, &ctx, &var, 1, &var, 1);
+  EXPECT_EQ(res, 0);
+  engine->WaitForAll();
+
+  res = MXEnginePushSync(FooSyncFunc, nullptr, nullptr, &ctx, &var, 1, &var, 1);
+  EXPECT_EQ(res, 0);
+  engine->WaitForAll();
+
+  engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, var);
 }
 
 TEST(Engine, PushFuncND) {

@@ -39,6 +39,17 @@ _MX_HANDLE_PATH_SEPARATORS = ('|',) + tuple(
     chr(i) for i in range(1, 32) if chr(i) not in '\t\n\r\v\f')
 
 
+def _safe_extract_tar(tar, target_dir):
+    target_dir = os.path.abspath(target_dir)
+    for member in tar.getmembers():
+        member_path = os.path.abspath(os.path.join(target_dir, member.name))
+        if os.path.commonpath([target_dir, member_path]) != target_dir:
+            raise RuntimeError('Unsafe tar member path: {}'.format(member.name))
+        if member.issym() or member.islnk():
+            raise RuntimeError('Refusing tar link member: {}'.format(member.name))
+    tar.extractall(target_dir)
+
+
 def _encode_paths_for_mx_handle(paths):
     """Join image paths with a separator absent from every path."""
     paths = list(paths)
@@ -66,8 +77,9 @@ class MNIST(dataset._DownloadedDataset):
             transform=lambda data, label: (data.astype(np.float32)/255, label)
 
     """
-    def __init__(self, root=os.path.join(base.data_dir(), 'datasets', 'mnist'),
-                 train=True, transform=None):
+    def __init__(self, root=None, train=True, transform=None):
+        if root is None:
+            root = os.path.join(base.data_dir(), 'datasets', 'mnist')
         self._train = train
         self._train_data = ('train-images-idx3-ubyte.gz',
                             '6c95f4b05d2bf285e1bfb0e7960c31bd3b3f8a7d')
@@ -135,8 +147,9 @@ class FashionMNIST(MNIST):
             transform=lambda data, label: (data.astype(np.float32)/255, label)
 
     """
-    def __init__(self, root=os.path.join(base.data_dir(), 'datasets', 'fashion-mnist'),
-                 train=True, transform=None):
+    def __init__(self, root=None, train=True, transform=None):
+        if root is None:
+            root = os.path.join(base.data_dir(), 'datasets', 'fashion-mnist')
         self._train = train
         self._train_data = ('train-images-idx3-ubyte.gz',
                             '0cf37b0d40ed5169c6b3aba31069a9770ac9043d')
@@ -168,8 +181,9 @@ class CIFAR10(dataset._DownloadedDataset):
             transform=lambda data, label: (data.astype(np.float32)/255, label)
 
     """
-    def __init__(self, root=os.path.join(base.data_dir(), 'datasets', 'cifar10'),
-                 train=True, transform=None):
+    def __init__(self, root=None, train=True, transform=None):
+        if root is None:
+            root = os.path.join(base.data_dir(), 'datasets', 'cifar10')
         self._train = train
         self._archive_file = ('cifar-10-binary.tar.gz', 'fab780a1e191a7eda0f345501ccd62d20f7ed891')
         self._train_data = [('data_batch_1.bin', 'aadd24acce27caa71bf4b10992e9e7b2d74c2540'),
@@ -198,7 +212,7 @@ class CIFAR10(dataset._DownloadedDataset):
                                 sha1_hash=self._archive_file[1])
 
             with tarfile.open(filename) as tar:
-                tar.extractall(self._root)
+                _safe_extract_tar(tar, self._root)
 
         if self._train:
             data_files = self._train_data
@@ -234,8 +248,9 @@ class CIFAR100(CIFAR10):
             transform=lambda data, label: (data.astype(np.float32)/255, label)
 
     """
-    def __init__(self, root=os.path.join(base.data_dir(), 'datasets', 'cifar100'),
-                 fine_label=False, train=True, transform=None):
+    def __init__(self, root=None, fine_label=False, train=True, transform=None):
+        if root is None:
+            root = os.path.join(base.data_dir(), 'datasets', 'cifar100')
         self._train = train
         self._archive_file = ('cifar-100-binary.tar.gz', 'a0bb982c76b83111308126cc779a992fa506b90b')
         self._train_data = [('train.bin', 'e207cd2e05b73b1393c74c7f5e7bea451d63e08e')]

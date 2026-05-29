@@ -560,9 +560,12 @@ class MXNetRetValue : public MXNetPODValue_ {
    * \brief move constructor from anoter return value.
    * \param other The other return value.
    */
-  MXNetRetValue(MXNetRetValue&& other) : MXNetPODValue_(other.value_, other.type_code_) {
-    other.value_.v_handle = nullptr;
-    other.type_code_      = kNull;
+  MXNetRetValue(MXNetRetValue&& other)
+      : MXNetPODValue_(other.value_, other.type_code_),
+        ndarray_handle_is_owned_(other.ndarray_handle_is_owned_) {
+    other.value_.v_handle          = nullptr;
+    other.type_code_               = kNull;
+    other.ndarray_handle_is_owned_ = false;
   }
   /*! \brief destructor */
   ~MXNetRetValue() {
@@ -607,9 +610,12 @@ class MXNetRetValue : public MXNetPODValue_ {
   // Assign operators
   MXNetRetValue& operator=(MXNetRetValue&& other) {
     this->Clear();
-    value_           = other.value_;
-    type_code_       = other.type_code_;
-    other.type_code_ = kNull;
+    value_                         = other.value_;
+    type_code_                     = other.type_code_;
+    ndarray_handle_is_owned_       = other.ndarray_handle_is_owned_;
+    other.value_.v_handle          = nullptr;
+    other.type_code_               = kNull;
+    other.ndarray_handle_is_owned_ = false;
     return *this;
   }
   MXNetRetValue& operator=(double value) {
@@ -682,14 +688,18 @@ class MXNetRetValue : public MXNetPODValue_ {
     return *this;
   }
   MXNetRetValue& operator=(NDArray* value) {
-    this->SwitchToPOD(kNDArrayHandle);
-    value_.v_handle = reinterpret_cast<void*>(value);
+    this->Clear();
+    type_code_                 = kNDArrayHandle;
+    value_.v_handle            = reinterpret_cast<void*>(value);
+    ndarray_handle_is_owned_   = false;
     return *this;
   }
   MXNetRetValue& operator=(NDArrayHandle value) {
-    this->SwitchToPOD(kNDArrayHandle);
-    NDArray* arr    = new NDArray(value->value);
-    value_.v_handle = reinterpret_cast<void*>(arr);
+    this->Clear();
+    type_code_                 = kNDArrayHandle;
+    NDArray* arr               = new NDArray(value->value);
+    value_.v_handle            = reinterpret_cast<void*>(arr);
+    ndarray_handle_is_owned_   = true;
     return *this;
   }
   MXNetRetValue& operator=(const PythonArg& value) {
@@ -716,7 +726,8 @@ class MXNetRetValue : public MXNetPODValue_ {
     CHECK(type_code_ != kStr && type_code_ != kBytes);
     *ret_value     = value_;
     *ret_type_code = type_code_;
-    type_code_     = kNull;
+    type_code_                 = kNull;
+    ndarray_handle_is_owned_   = false;
   }
   /*! \return The value field, if the data is POD */
   const MXNetValue& value() const {
@@ -742,6 +753,10 @@ class MXNetRetValue : public MXNetPODValue_ {
       }
       case kObjectHandle: {
         *this = other.operator ObjectRef();
+        break;
+      }
+      case kNDArrayHandle: {
+        AssignNDArrayHandle(other);
         break;
       }
       default: {
@@ -788,18 +803,47 @@ class MXNetRetValue : public MXNetPODValue_ {
       return;
     switch (type_code_) {
       case kStr:
+      case kBytes:
         delete ptr<std::string>();
         break;
       case kObjectHandle: {
         static_cast<Object*>(value_.v_handle)->DecRef();
         break;
       }
+      case kNDArrayHandle: {
+        if (ndarray_handle_is_owned_) {
+          delete ptr<NDArray>();
+        }
+        break;
+      }
     }
     if (type_code_ > kExtBegin) {
       LOG(FATAL) << "Does not support ext type";
     }
-    type_code_ = kNull;
+    type_code_                 = kNull;
+    ndarray_handle_is_owned_   = false;
   }
+
+  void AssignNDArrayHandle(const MXNetRetValue& other) {
+    this->Clear();
+    type_code_ = kNDArrayHandle;
+    if (other.ndarray_handle_is_owned_) {
+      value_.v_handle          = new NDArray(*other.ptr<NDArray>());
+      ndarray_handle_is_owned_ = true;
+    } else {
+      value_                   = other.value_;
+      ndarray_handle_is_owned_ = false;
+    }
+  }
+
+  void AssignNDArrayHandle(const MXNetArgValue& other) {
+    this->Clear();
+    type_code_                 = kNDArrayHandle;
+    value_                     = other.value_;
+    ndarray_handle_is_owned_   = false;
+  }
+
+  bool ndarray_handle_is_owned_{false};
 };
 
 inline DLDataType String2DLDataType(std::string s) {

@@ -161,7 +161,7 @@ if __name__ == '__main__':
     if calib_mode != 'none':
         idx_file_name = os.path.splitext(args.calib_dataset)[0] + '.idx'
         if not os.path.isfile(idx_file_name):
-            download_calib_dataset('http://data.mxnet.io/data/val_256_q90.rec', args.calib_dataset)
+            download_calib_dataset('https://data.mxnet.io/data/val_256_q90.rec', args.calib_dataset)
             creator = IndexCreator(args.calib_dataset, idx_file_name)
             creator.create_index()
             creator.close()

@@ -67,10 +67,29 @@ dataset_url = "https://github.com/BIDS/BSDS500/archive/master.zip"
 data_dir = path.expanduser(path.join(datasets_dir, "BSDS500"))
 tmp_dir = path.join(data_dir, "tmp")
 
+
+def _dataset_ready():
+    return all(path.isdir(p) for p in (
+        path.join(data_dir, "images", "train"),
+        path.join(data_dir, "images", "test"),
+        path.join(data_dir, "groundTruth", "train"),
+        path.join(data_dir, "groundTruth", "test"),
+    ))
+
+
+def _safe_extract_zip(zip_file, target_dir):
+    target_dir = path.abspath(target_dir)
+    for member in zip_file.infolist():
+        member_path = path.abspath(path.join(target_dir, member.filename))
+        if path.commonpath([target_dir, member_path]) != target_dir:
+            raise RuntimeError("Unsafe zip member path: {}".format(member.filename))
+    zip_file.extractall(target_dir)
+
+
 def get_dataset(prefetch=False):
     """Download the BSDS500 dataset and return train and test iters."""
 
-    if path.exists(data_dir):
+    if _dataset_ready():
         print(
             "Directory {} already exists, skipping.\n"
             "To force download and extraction, delete the directory and re-run."
@@ -78,26 +97,36 @@ def get_dataset(prefetch=False):
             file=sys.stderr,
         )
     else:
+        if path.exists(data_dir):
+            shutil.rmtree(data_dir)
         print("Downloading dataset...", file=sys.stderr)
         downloaded_file = download(dataset_url, dirname=datasets_tmpdir)
         print("done", file=sys.stderr)
 
         print("Extracting files...", end="", file=sys.stderr)
-        os.makedirs(data_dir)
-        os.makedirs(tmp_dir)
-        with zipfile.ZipFile(downloaded_file) as archive:
-            archive.extractall(tmp_dir)
-        shutil.rmtree(datasets_tmpdir)
+        try:
+            os.makedirs(data_dir)
+            os.makedirs(tmp_dir)
+            with zipfile.ZipFile(downloaded_file) as archive:
+                _safe_extract_zip(archive, tmp_dir)
 
-        shutil.copytree(
-            path.join(tmp_dir, "BSDS500-master", "BSDS500", "data", "images"),
-            path.join(data_dir, "images"),
-        )
-        shutil.copytree(
-            path.join(tmp_dir, "BSDS500-master", "BSDS500", "data", "groundTruth"),
-            path.join(data_dir, "groundTruth"),
-        )
-        shutil.rmtree(tmp_dir)
+            shutil.copytree(
+                path.join(tmp_dir, "BSDS500-master", "BSDS500", "data", "images"),
+                path.join(data_dir, "images"),
+            )
+            shutil.copytree(
+                path.join(tmp_dir, "BSDS500-master", "BSDS500", "data", "groundTruth"),
+                path.join(data_dir, "groundTruth"),
+            )
+        except Exception:
+            if path.exists(data_dir):
+                shutil.rmtree(data_dir)
+            raise
+        finally:
+            if path.exists(tmp_dir):
+                shutil.rmtree(tmp_dir)
+            if path.exists(datasets_tmpdir):
+                shutil.rmtree(datasets_tmpdir)
         print("done", file=sys.stderr)
 
     crop_size = 256
@@ -215,8 +244,8 @@ def resolve(device):
     img_dirname = path.dirname(opt.resolve_img)
 
     net.load_parameters(path.join(this_dir, 'superres.params'), device=device)
-    img = Image.open(opt.resolve_img).convert('YCbCr')
-    y, cb, cr = img.split()
+    with Image.open(opt.resolve_img) as img:
+        y, cb, cr = img.convert('YCbCr').split()
     data = mx.np.expand_dims(mx.np.expand_dims(mx.np.array(y), axis=0), axis=0)
     out_img_y = mx.np.reshape(net(data), shape=(-3, -2)).asnumpy()
     out_img_y = out_img_y.clip(0, 255)

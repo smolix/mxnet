@@ -112,7 +112,7 @@ class SqueezeNet(HybridBlock):
 # Constructor
 @wrap_ctx_to_device_func
 def get_squeezenet(version, pretrained=False, device=cpu(),
-                   root=os.path.join(base.data_dir(), 'models'), **kwargs):
+                   root=None, **kwargs):
     r"""SqueezeNet model from the `"SqueezeNet: AlexNet-level accuracy with 50x fewer parameters
     and <0.5MB model size" <https://arxiv.org/abs/1602.07360>`_ paper.
     SqueezeNet 1.1 model from the `official SqueezeNet repo
@@ -131,6 +131,8 @@ def get_squeezenet(version, pretrained=False, device=cpu(),
     root : str, default $MXNET_HOME/models
         Location for keeping the model parameters.
     """
+    if root is None:
+        root = os.path.join(base.data_dir(), 'models')
     net = SqueezeNet(version, **kwargs)
     if pretrained:
         from ..model_store import get_model_file

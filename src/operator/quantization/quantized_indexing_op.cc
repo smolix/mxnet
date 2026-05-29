@@ -111,7 +111,6 @@ void QuantizedEmbeddingOpForward(const nnvm::NodeAttrs& attrs,
                                  const std::vector<TBlob>& inputs,
                                  const std::vector<OpReqType>& req,
                                  const std::vector<TBlob>& outputs) {
-  CHECK_EQ(req[quantized_embedding::kOut], kWriteTo);
   CHECK_EQ(inputs.size(), 4U);
   CHECK_EQ(outputs.size(), 3U);
   CHECK_EQ(inputs[quantized_embedding::kWeight].ndim(), 2U)

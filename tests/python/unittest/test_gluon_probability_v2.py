@@ -32,6 +32,7 @@ import scipy.stats as ss
 import scipy.special as scipy_special
 import itertools
 from numbers import Number
+from common import requires_lapack
 
 
 def prob_to_logit(prob):
@@ -1617,6 +1618,7 @@ def test_relaxed_one_hot_categorical():
 
 
 @use_np
+@requires_lapack
 def test_gluon_mvn():
     class TestMVN(HybridBlock):
         def __init__(self, func, param_type):
@@ -1966,6 +1968,7 @@ def test_independent():
 
 
 @use_np
+@requires_lapack
 def test_gluon_kl():
     def _test_zero_kl(p, shape):
         """Check if KL(p || p) = 0

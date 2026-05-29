@@ -19,6 +19,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cmath>
 #include <string>
 #include <utility>
 #include <vector>
@@ -698,14 +699,6 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
     // Quantize weight and bias.
     if (dnnl_param.quantized) {
       CHECK(data.dtype() == mshadow::kInt8 || data.dtype() == mshadow::kUint8);
-      if (cached_data_min_ < 0.0f) {
-        CHECK_EQ(data.dtype(), mshadow::kInt8)
-            << "Expect int8 when data_min < 0.0, consider quantize model with int8.";
-      }
-      CHECK(data.dtype() != mshadow::kUint8 || cached_data_min_ == 0.0f)
-          << "oneDNN quantized convolution requires uint8 data_min == 0.0 because "
-             "the primitive path does not apply source zero points; use int8 for "
-             "ranges with a nonzero offset.";
       auto weight_channelwise_scale = false;
       if (dnnl_param.min_calib_range.has_value() && dnnl_param.max_calib_range.has_value()) {
         cached_output_min_       = dnnl_param.min_calib_range.value();
@@ -717,6 +710,10 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
         weight_channelwise_scale = true;
       }
       data_scale_ = GetQuantizeScale(data.dtype(), cached_data_min_, cached_data_max_);
+      full_conv_param.src_zero_point =
+          (data.dtype() == mshadow::kUint8) ?
+              static_cast<int32_t>(std::nearbyint(-cached_data_min_ * data_scale_)) :
+              0;
       DNNL_REAL_TYPE_SWITCH(cached_weight_.dtype(), DType, {
         weight_scales_ = GetWeightScales<DType>(cached_weight_,
                                                 has_bias ? &cached_bias_ : nullptr,
@@ -843,6 +840,9 @@ void SgDNNLConvOperator::Forward(const OpContext& ctx,
     }
     if (auto* ssm = fwd_->GetSrcScaleMem()) {
       args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = *ssm;
+    }
+    if (auto* zpm = fwd_->GetSrcZeroPointMem()) {
+      args_[DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_SRC] = *zpm;
     }
     initialized_        = true;
   }

@@ -5504,8 +5504,8 @@ def test_np_multivariate_normal():
 @use_np
 @pytest.mark.skipif(has_lapack(), reason="Requires MXNet built without LAPACK support")
 def test_np_multivariate_normal_without_lapack_reports_and_clears_error():
-    mean = np.array([0.0, 1.0])
-    cov = np.array([[1.0, 0.0], [0.0, 1.0]])
+    mean = np.array([0.0, 1.0], device=mx.cpu())
+    cov = np.array([[1.0, 0.0], [0.0, 1.0]], device=mx.cpu())
     sample = np.random.multivariate_normal(mean, cov)
 
     with pytest.raises(MXNetError, match="without lapack"):

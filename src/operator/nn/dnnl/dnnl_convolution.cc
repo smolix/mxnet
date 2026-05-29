@@ -144,6 +144,9 @@ std::shared_ptr<dnnl::convolution_forward::primitive_desc> GetConvFwdImpl(
   attr.set_post_ops(ops);
 
   if (param.dnnl_param.quantized && param.requantize_scales.size()) {
+    if (param.src_zero_point != 0) {
+      attr.set_zero_points_mask(DNNL_ARG_SRC, 0);
+    }
     if (float_output) {
       // v3 dequant: bind dequant scales to SRC + WEIGHTS (no DST scale). v3
       // conv rejects s32 bias + f32 dst + DST scale; splitting the scale and
@@ -468,6 +471,12 @@ DNNLConvForward::DNNLConvForward(const DNNLConvFullParam& param,
       *reinterpret_cast<float*>(src_scale_mem_->get_data_handle()) = param.src_scale;
     } else {
       out_scale_arg_ = (param.requantize_scales.size() > 1) ? DNNL_ARG_WEIGHTS : DNNL_ARG_DST;
+    }
+    if (param.src_zero_point != 0) {
+      dnnl::memory::desc zp_md(
+          dnnl::memory::dims{1}, dnnl::memory::data_type::s32, dnnl::memory::format_tag::x);
+      src_zero_point_mem_ = std::make_shared<dnnl::memory>(zp_md, engine);
+      *reinterpret_cast<int32_t*>(src_zero_point_mem_->get_data_handle()) = param.src_zero_point;
     }
   }
 }

@@ -25,6 +25,7 @@
 
 #if MXNET_USE_ONEDNN == 1
 
+#include <cmath>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -487,6 +488,9 @@ void SgDNNLFCOp::Forward(const OpContext& ctx,
     if (auto* ssm = fwd_->GetSrcScaleMem()) {
       args_[DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC] = *ssm;
     }
+    if (auto* zpm = fwd_->GetSrcZeroPointMem()) {
+      args_[DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_SRC] = *zpm;
+    }
     initialized_        = true;
   }
 
@@ -647,11 +651,11 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
       dnnl_param.channel_wise_quantize.has_value() && dnnl_param.channel_wise_quantize.value();
 
   CHECK(data.dtype() == mshadow::kInt8 || data.dtype() == mshadow::kUint8);
-  CHECK(data.dtype() != mshadow::kUint8 || cached_data_min_ == 0.0f)
-      << "oneDNN quantized fully connected requires uint8 data_min == 0.0 because "
-         "the primitive path does not apply source zero points; use int8 for ranges "
-         "with a nonzero offset.";
   data_scale_ = GetQuantizeScale(data.dtype(), cached_data_min_, cached_data_max_);
+  full_param_.src_zero_point =
+      (data.dtype() == mshadow::kUint8) ?
+          static_cast<int32_t>(std::nearbyint(-cached_data_min_ * data_scale_)) :
+          0;
 
   bool fuse_requantize = false;
   // Channelwise scaling is only supported when fusion is enabled (requantize or dequantize).

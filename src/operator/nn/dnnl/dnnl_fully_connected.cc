@@ -61,6 +61,9 @@ dnnl::inner_product_forward::primitive_desc GetFCFwdImpl(const DNNLFCFullParam& 
   const bool float_output = full_param.dnnl_param.quantized &&
                             full_param.dnnl_param.enabled_float_output.has_value();
   if (full_param.dnnl_param.quantized && full_param.output_scales.size()) {
+    if (full_param.src_zero_point != 0) {
+      attr.set_zero_points_mask(DNNL_ARG_SRC, 0);
+    }
     if (float_output) {
       // v3 dequant: bind dequant scales to SRC + WEIGHTS (no DST scale). v3
       // matmul rejects s32 bias + f32 dst + DST scale; splitting the scale

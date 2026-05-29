@@ -99,12 +99,14 @@ struct DNNLFCFullParam : public dmlc::Parameter<DNNLFCFullParam> {
   // sentinel here is "scale list owned by upstream config" rather than "empty".
   std::vector<float> output_scales = {0.0f};
   float src_scale                  = {0.0f};
+  int32_t src_zero_point           = {0};
   DMLC_DECLARE_PARAMETER(DNNLFCFullParam) {}
 
   bool operator==(const DNNLFCFullParam& other) const {
     return this->default_param == other.default_param && this->dnnl_param == other.dnnl_param &&
            this->eltwise_param == other.eltwise_param && this->sum_scale == other.sum_scale &&
-           this->output_scales == other.output_scales && this->src_scale == other.src_scale;
+           this->output_scales == other.output_scales && this->src_scale == other.src_scale &&
+           this->src_zero_point == other.src_zero_point;
   }
 };
 
@@ -229,6 +231,13 @@ class DNNLFullyConnectedForward {
       } else {
         out_scale_arg_ = (full_param.output_scales.size() > 1) ? DNNL_ARG_WEIGHTS : DNNL_ARG_DST;
       }
+      if (full_param.src_zero_point != 0) {
+        dnnl::memory::desc zp_md(
+            dnnl::memory::dims{1}, dnnl::memory::data_type::s32, dnnl::memory::format_tag::x);
+        src_zero_point_mem_ = std::make_shared<dnnl::memory>(zp_md, engine);
+        *reinterpret_cast<int32_t*>(src_zero_point_mem_->get_data_handle()) =
+            full_param.src_zero_point;
+      }
     }
   }
 
@@ -242,11 +251,13 @@ class DNNLFullyConnectedForward {
   int GetOutputScaleArg() const { return out_scale_arg_; }
   // f32-output mode only: SRC dequant scale (1/data_scale), nullptr otherwise.
   const dnnl::memory* GetSrcScaleMem() const { return src_scale_mem_.get(); }
+  const dnnl::memory* GetSrcZeroPointMem() const { return src_zero_point_mem_.get(); }
 
  private:
   std::shared_ptr<dnnl::inner_product_forward> fwd_;
   std::shared_ptr<dnnl::memory> out_scale_mem_;
   std::shared_ptr<dnnl::memory> src_scale_mem_;
+  std::shared_ptr<dnnl::memory> src_zero_point_mem_;
   int out_scale_arg_{DNNL_ARG_DST};
 };
 
@@ -321,6 +332,7 @@ struct hash<mxnet::op::DNNLFCFullParam> {
     ret        = dmlc::HashCombine(ret, val.eltwise_param);
     ret        = dmlc::HashCombine(ret, val.sum_scale);
     ret        = dmlc::HashCombine(ret, val.src_scale);
+    ret        = dmlc::HashCombine(ret, val.src_zero_point);
     for (const auto& v : val.output_scales)
       ret = dmlc::HashCombine(ret, v);
     return ret;

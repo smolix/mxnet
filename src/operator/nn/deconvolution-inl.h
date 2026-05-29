@@ -379,6 +379,58 @@ class DeconvolutionOp {
   ConvolutionOp<xpu, DType> conv_op;
 };  // class DeconvolutionOp
 
+template <>
+inline void DeconvolutionOp<cpu, mshadow::half::half_t>::Backward(
+    const OpContext& ctx,
+    const std::vector<TBlob>& out_grad,
+    const std::vector<TBlob>& in_data,
+    const std::vector<OpReqType>& req,
+    const std::vector<TBlob>& in_grad) {
+  using Half = mshadow::half::half_t;
+
+  const size_t expected = param_.no_bias == 0 ? 3 : 2;
+  CHECK_EQ(out_grad.size(), 1U);
+  CHECK_EQ(in_data.size(), expected);
+  CHECK_EQ(in_grad.size(), expected);
+  CHECK_EQ(req.size(), expected);
+
+  if (need_init_conv)
+    InitConv(in_data[deconv::kData]);
+
+  auto workspace = conv_op._Forward(ctx,
+                                    out_grad[deconv::kOut],
+                                    in_data[deconv::kWeight],
+                                    nullptr,
+                                    req[deconv::kData],
+                                    in_grad[deconv::kData]);
+  conv_op._BackwardWeightsBias(workspace,
+                               ctx,
+                               in_data[deconv::kData],
+                               out_grad[deconv::kOut],
+                               req[deconv::kWeight],
+                               in_grad[deconv::kWeight],
+                               OpReqType(),
+                               nullptr);
+  if (!param_.no_bias && req[deconv::kBias] != kNullOp) {
+    const TShape& out_shape = out_grad[deconv::kOut].shape_;
+    const index_t channels  = out_shape[1];
+    const index_t spatial   = out_shape.ProdShape(2, out_shape.ndim());
+    Half* dbias             = in_grad[deconv::kBias].dptr<Half>();
+    const Half* dout        = out_grad[deconv::kOut].dptr<Half>();
+#pragma omp parallel for
+    for (index_t c = 0; c < channels; ++c) {
+      float acc = req[deconv::kBias] == kAddTo ? static_cast<float>(dbias[c]) : 0.0f;
+      for (index_t n = 0; n < out_shape[0]; ++n) {
+        const Half* dout_n = dout + (n * channels + c) * spatial;
+        for (index_t i = 0; i < spatial; ++i) {
+          acc += static_cast<float>(dout_n[i]);
+        }
+      }
+      dbias[c] = static_cast<Half>(acc);
+    }
+  }
+}
+
 template <typename xpu>
 void _DeconvolutionCompute(const DeconvolutionParam& param,
                            const OpContext& ctx,

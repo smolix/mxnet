@@ -303,14 +303,41 @@ def test_cpu_fp16_gemm_uses_float_accumulation():
     assert "FP16 gemm on cpu not implemented" not in body
 
 
-def test_onednn_quantized_subgraphs_reject_uint8_nonzero_offsets():
+def test_cpu_fp16_convolution_uses_float_workspace_and_accumulation():
+    contents = _read("src/operator/nn/convolution-inl.h")
+    deconv = _read("src/operator/nn/deconvolution-inl.h")
+    body = contents.split("ConvolutionOp<cpu, mshadow::half::half_t>::_Forward", 1)[1]
+
+    assert "im2col_cpu_half_to_float" in body
+    assert "ConvCPUFloatGemm" in body
+    assert "get_space_typed<cpu, 1, float>" in body
+    assert "col_buffer.dptr<float>()" in body
+    assert "InitCPUHalfFloatAccum" in body
+    assert "AssignCPUHalfFromFloat" in body
+    assert "sumall_except_dim<1>(dout)" not in body
+    assert "true, false, s, data_grad_req" in contents
+    assert "DeconvolutionOp<cpu, mshadow::half::half_t>::Backward" in deconv
+    assert "static_cast<float>(dout_n[i])" in deconv
+
+
+def test_onednn_quantized_subgraphs_support_uint8_source_zero_points():
     conv = _read("src/operator/subgraph/dnnl/dnnl_conv.cc")
     fc = _read("src/operator/subgraph/dnnl/dnnl_fc.cc")
+    conv_runtime = _read("src/operator/nn/dnnl/dnnl_convolution.cc")
+    fc_runtime = _read("src/operator/nn/dnnl/dnnl_fully_connected.cc")
 
-    assert "data.dtype() != mshadow::kUint8 || cached_data_min_ == 0.0f" in conv
-    assert "the primitive path does not apply source zero points" in conv
-    assert "data.dtype() != mshadow::kUint8 || cached_data_min_ == 0.0f" in fc
-    assert "the primitive path does not apply source zero points" in fc
+    assert "data.dtype() != mshadow::kUint8 || cached_data_min_ == 0.0f" not in conv
+    assert "data.dtype() != mshadow::kUint8 || cached_data_min_ == 0.0f" not in fc
+    assert "the primitive path does not apply source zero points" not in conv
+    assert "the primitive path does not apply source zero points" not in fc
+    assert "full_conv_param.src_zero_point" in conv
+    assert "std::nearbyint(-cached_data_min_ * data_scale_)" in conv
+    assert "full_param_.src_zero_point" in fc
+    assert "std::nearbyint(-cached_data_min_ * data_scale_)" in fc
+    assert "attr.set_zero_points_mask(DNNL_ARG_SRC, 0)" in conv_runtime
+    assert "DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_SRC" in conv
+    assert "attr.set_zero_points_mask(DNNL_ARG_SRC, 0)" in fc_runtime
+    assert "DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_SRC" in fc
 
 
 def test_onednn_quantized_batch_dot_rejects_unsupported_uint8_cases():

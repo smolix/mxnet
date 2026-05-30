@@ -67,40 +67,21 @@ struct EDiff1DParam : public dmlc::Parameter<EDiff1DParam> {
   }
 };
 
-template <typename DType>
-struct set_to_val {
-  MSHADOW_XINLINE static void Map(index_t i, DType* out, double val) {
-    out[i] = DType(val);
+template <int req>
+struct assign_from_arr_req {
+  template <typename DType>
+  MSHADOW_XINLINE static void Map(index_t i, DType* out, const DType* in) {
+    KERNEL_ASSIGN(out[i], req, in[i]);
   }
 };
 
-template <typename DType>
-void copyArr(DType* dest, DType* src, size_t count, mshadow::Stream<cpu>* s) {
-#pragma GCC diagnostic push
-#if __GNUC__ >= 8
-#pragma GCC diagnostic ignored "-Wclass-memaccess"
-#endif
-  memcpy(static_cast<void*>(dest), src, count);
-#pragma GCC diagnostic pop
-}
-
-template <typename DType>
-void AssignScalar(DType* dest, index_t idx, double val, mshadow::Stream<cpu>* s) {
-  dest[idx] = DType(val);
-}
-
-#ifdef __CUDACC__
-template <typename DType>
-void copyArr(DType* dest, DType* src, size_t count, mshadow::Stream<gpu>* s) {
-  CUDA_CALL(cudaMemcpyAsync(
-      dest, src, count, cudaMemcpyDeviceToHost, mshadow::Stream<gpu>::GetStream(s)));
-}
-
-template <typename DType>
-void AssignScalar(DType* dest, index_t idx, double val, mshadow::Stream<gpu>* s) {
-  mxnet_op::Kernel<set_to_val<DType>, gpu>::Launch(s, 1, dest + idx, val);
-}
-#endif
+template <int req>
+struct set_to_val_req {
+  template <typename DType>
+  MSHADOW_XINLINE static void Map(index_t i, DType* out, double val) {
+    KERNEL_ASSIGN(out[i], req, DType(val));
+  }
+};
 
 template <int req>
 struct ediff1d_forward {
@@ -134,30 +115,32 @@ void EDiff1DForward(const nnvm::NodeAttrs& attrs,
     size_t in_size            = (in_data.Size() > 0) ? in_data.Size() - 1 : 0;
     index_t idx               = 1;  // used to index the rest of input arrays
 
-    if (param.to_begin_arr_given) {
-      // if the `to_begin` parameter is an array, copy its values to the beginning of the out array
-      copyArr<DType>(
-          out_data.dptr<DType>(), inputs[idx].dptr<DType>(), inputs[idx].Size() * sizeof(DType), s);
-      padding += inputs[idx].Size();
-      idx += 1;
-    } else if (param.to_begin_scalar.has_value()) {
-      // if the `to_begin` parameter is a scalar, directly assign its value
-      AssignScalar(out_data.dptr<DType>(), 0, param.to_begin_scalar.value(), s);
-      padding += 1;
-    }
-
-    if (param.to_end_arr_given) {
-      // if the `to_end` parameter is an array, copy its values to the end of the out array
-      copyArr<DType>(out_data.dptr<DType>() + padding + in_size,
-                     inputs[idx].dptr<DType>(),
-                     inputs[idx].Size() * sizeof(DType),
-                     s);
-    } else if (param.to_end_scalar.has_value()) {
-      // if the `to_end` parameter is a scalar, directly assign its value
-      AssignScalar(out_data.dptr<DType>(), padding + in_size, param.to_end_scalar.value(), s);
-    }
-
     MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+      if (param.to_begin_arr_given) {
+        // if the `to_begin` parameter is an array, copy its values to the beginning of the out array
+        Kernel<assign_from_arr_req<req_type>, xpu>::Launch(
+            s, inputs[idx].Size(), out_data.dptr<DType>(), inputs[idx].dptr<DType>());
+        padding += inputs[idx].Size();
+        idx += 1;
+      } else if (param.to_begin_scalar.has_value()) {
+        // if the `to_begin` parameter is a scalar, directly assign its value
+        Kernel<set_to_val_req<req_type>, xpu>::Launch(
+            s, 1, out_data.dptr<DType>(), param.to_begin_scalar.value());
+        padding += 1;
+      }
+
+      if (param.to_end_arr_given) {
+        // if the `to_end` parameter is an array, copy its values to the end of the out array
+        Kernel<assign_from_arr_req<req_type>, xpu>::Launch(s,
+                                                           inputs[idx].Size(),
+                                                           out_data.dptr<DType>() + padding + in_size,
+                                                           inputs[idx].dptr<DType>());
+      } else if (param.to_end_scalar.has_value()) {
+        // if the `to_end` parameter is a scalar, directly assign its value
+        Kernel<set_to_val_req<req_type>, xpu>::Launch(
+            s, 1, out_data.dptr<DType>() + padding + in_size, param.to_end_scalar.value());
+      }
+
       Kernel<ediff1d_forward<req_type>, xpu>::Launch(
           s, in_size, out_data.dptr<DType>(), in_data.dptr<DType>(), padding);
     });
@@ -206,31 +189,33 @@ void EDiff1DBackward(const nnvm::NodeAttrs& attrs,
   size_t in_size     = (input.Size() > 0) ? input.Size() - 1 : 0;
 
   MSHADOW_REAL_TYPE_SWITCH(ograd.type_flag_, DType, {
+    size_t padding = 0;
+    index_t idx    = 1;  // start from the second argument of `outputs`
+    if (param.to_begin_arr_given) {
+      MXNET_ASSIGN_REQ_SWITCH(req[idx], req_type, {
+        Kernel<assign_from_arr_req<req_type>, xpu>::Launch(
+            s, outputs[idx].Size(), outputs[idx].dptr<DType>(), ograd.dptr<DType>());
+      });
+      padding += outputs[idx].Size();
+      idx += 1;
+    } else if (param.to_begin_scalar.has_value()) {
+      padding += 1;
+    }
+
+    if (param.to_end_arr_given) {
+      MXNET_ASSIGN_REQ_SWITCH(req[idx], req_type, {
+        Kernel<assign_from_arr_req<req_type>, xpu>::Launch(s,
+                                                           outputs[idx].Size(),
+                                                           outputs[idx].dptr<DType>(),
+                                                           ograd.dptr<DType>() + in_size + padding);
+      });
+    }
+
+    if (input.Size() == 0)
+      return;
     MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
-      size_t padding = 0;
-      index_t idx    = 1;  // start from the second argument of `outputs`
-      if (param.to_begin_arr_given) {
-        copyArr<DType>(outputs[idx].dptr<DType>(),
-                       ograd.dptr<DType>(),
-                       outputs[idx].Size() * sizeof(DType),
-                       s);
-        padding += outputs[idx].Size();
-        idx += 1;
-      } else if (param.to_begin_scalar.has_value()) {
-        padding += 1;
-      }
-
-      if (param.to_end_arr_given) {
-        copyArr<DType>(outputs[idx].dptr<DType>(),
-                       ograd.dptr<DType>() + in_size + padding,
-                       outputs[idx].Size() * sizeof(DType),
-                       s);
-      }
-
-      if (input.Size() == 0)
-        return;
       if (input.Size() == 1) {
-        Kernel<set_to_val<DType>, xpu>::Launch(s, 1, igrad.dptr<DType>(), 0);
+        Kernel<set_to_val_req<req_type>, xpu>::Launch(s, 1, igrad.dptr<DType>(), 0);
       } else {
         Kernel<ediff1d_backward_arr<req_type>, xpu>::Launch(s,
                                                             igrad.Size(),

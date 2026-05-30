@@ -9962,6 +9962,21 @@ def test_np_ediff1d():
                 else:
                     assert_almost_equal(arg.grad.asnumpy(), np.ones_like(arg), atol=atol, rtol=rtol)
 
+    ary = np.array([1.0, 3.0, 6.0], dtype=np.float32)
+    to_begin = np.array([10.0, 11.0], dtype=np.float32)
+    to_end = np.array([20.0, 21.0], dtype=np.float32)
+    for arg in [ary, to_begin, to_end]:
+        arg.attach_grad('add')
+        arg.grad[:] = 5
+
+    with mx.autograd.record():
+        out = np.ediff1d(ary, to_begin=to_begin, to_end=to_end)
+    out.backward()
+
+    assert_almost_equal(ary.grad.asnumpy(), onp.array([4.0, 5.0, 6.0], dtype=onp.float32))
+    assert_almost_equal(to_begin.grad.asnumpy(), onp.array([6.0, 6.0], dtype=onp.float32))
+    assert_almost_equal(to_end.grad.asnumpy(), onp.array([6.0, 6.0], dtype=onp.float32))
+
 
 @use_np
 def test_np_column_stack():

@@ -9750,6 +9750,39 @@ def test_np_percentile():
 
 
 @use_np
+def test_np_percentile_backward():
+    data = np.array([1.0, 3.0, 5.0], dtype='float64')
+    q = np.array(50.0, dtype='float64')
+    data.attach_grad()
+    q.attach_grad()
+    with mx.autograd.record():
+        out = np.percentile(data, q)
+        loss = out * 2.0
+    loss.backward()
+    assert_almost_equal(data.grad.asnumpy(), onp.array([0.0, 2.0, 0.0]))
+    assert_almost_equal(q.grad.asnumpy(), onp.array(0.08))
+
+    data = np.array([[1.0, 4.0, 7.0], [2.0, 6.0, 10.0]], dtype='float64')
+    q = np.array([25.0, 50.0], dtype='float64')
+    data.attach_grad()
+    q.attach_grad()
+    with mx.autograd.record():
+        out = np.percentile(data, q, axis=1)
+        loss = out.sum()
+    loss.backward()
+    assert_almost_equal(data.grad.asnumpy(), onp.array([[0.5, 1.5, 0.0], [0.5, 1.5, 0.0]]))
+    assert_almost_equal(q.grad.asnumpy(), onp.array([0.14, 0.14]))
+
+    data = np.array([3.0, 1.0, 5.0], dtype='float64')
+    data.attach_grad()
+    with mx.autograd.record():
+        out = np.percentile(data, 25.0, interpolation='lower')
+        loss = out * 3.0
+    loss.backward()
+    assert_almost_equal(data.grad.asnumpy(), onp.array([0.0, 3.0, 0.0]))
+
+
+@use_np
 def test_np_diff():
     def np_diff_backward(ograd, n, axis):
         res = ograd

@@ -25,6 +25,9 @@
 
 #include <vector>
 #include <string>
+#include <algorithm>
+#include <utility>
+#include <cmath>
 #include "../tensor/ordering_op-inl.h"
 #include "../tensor/matrix_op-inl.h"
 #include "../../common/utils.h"
@@ -135,6 +138,212 @@ struct percentile_take {
     }
   }
 };
+
+inline bool NumpyPercentileBackwardShape(const nnvm::NodeAttrs& attrs,
+                                         std::vector<TShape>* in_attrs,
+                                         std::vector<TShape>* out_attrs) {
+  const NumpyPercentileParam& param = nnvm::get<NumpyPercentileParam>(attrs.parsed);
+  CHECK_EQ(in_attrs->size(), param.q_scalar.has_value() ? 2U : 3U);
+  CHECK_EQ(out_attrs->size(), param.q_scalar.has_value() ? 1U : 2U);
+  SHAPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(1));
+  if (!param.q_scalar.has_value()) {
+    SHAPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(2));
+  }
+  return shape_is_known(out_attrs->at(0)) &&
+         (param.q_scalar.has_value() || shape_is_known(out_attrs->at(1)));
+}
+
+inline bool NumpyPercentileBackwardType(const nnvm::NodeAttrs& attrs,
+                                        std::vector<int>* in_attrs,
+                                        std::vector<int>* out_attrs) {
+  const NumpyPercentileParam& param = nnvm::get<NumpyPercentileParam>(attrs.parsed);
+  CHECK_EQ(in_attrs->size(), param.q_scalar.has_value() ? 2U : 3U);
+  CHECK_EQ(out_attrs->size(), param.q_scalar.has_value() ? 1U : 2U);
+  TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(1));
+  if (!param.q_scalar.has_value()) {
+    TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(2));
+  }
+  return out_attrs->at(0) != -1 && (param.q_scalar.has_value() || out_attrs->at(1) != -1);
+}
+
+inline void PercentileNormalizeAxes(const TShape& shape,
+                                    const dmlc::optional<mxnet::Tuple<int>>& axis,
+                                    std::vector<int>* axes,
+                                    std::vector<int>* nonred_axes) {
+  axes->clear();
+  nonred_axes->clear();
+  if (!axis.has_value()) {
+    for (int i = 0; i < shape.ndim(); ++i) {
+      axes->push_back(i);
+    }
+  } else {
+    auto axis_tuple = axis.value();
+    for (int i = 0; i < axis_tuple.ndim(); ++i) {
+      int ax = axis_tuple[i] < 0 ? axis_tuple[i] + shape.ndim() : axis_tuple[i];
+      axes->push_back(ax);
+    }
+  }
+  for (int i = 0; i < shape.ndim(); ++i) {
+    bool reduced = false;
+    for (int ax : *axes) {
+      if (ax == i) {
+        reduced = true;
+        break;
+      }
+    }
+    if (!reduced) {
+      nonred_axes->push_back(i);
+    }
+  }
+}
+
+inline size_t PercentileShapeSizeForAxes(const TShape& shape, const std::vector<int>& axes) {
+  size_t size = 1;
+  for (int ax : axes) {
+    size *= shape[ax];
+  }
+  return size;
+}
+
+inline void PercentileUnravel(size_t idx,
+                              const TShape& shape,
+                              const std::vector<int>& axes,
+                              std::vector<size_t>* coord) {
+  coord->resize(axes.size());
+  for (int i = static_cast<int>(axes.size()) - 1; i >= 0; --i) {
+    const size_t dim = shape[axes[i]];
+    (*coord)[i]      = idx % dim;
+    idx /= dim;
+  }
+}
+
+inline size_t PercentileRavelOriginal(const TShape& shape, const std::vector<size_t>& coord) {
+  size_t idx = 0;
+  for (int i = 0; i < shape.ndim(); ++i) {
+    idx = idx * shape[i] + coord[i];
+  }
+  return idx;
+}
+
+template <typename DType, typename GType, typename QType>
+void PercentileBackwardImpl(const NumpyPercentileParam& param,
+                            const TBlob& ograd,
+                            const TBlob& data,
+                            const TBlob* q,
+                            const std::vector<OpReqType>& req,
+                            const std::vector<TBlob>& outputs) {
+  const bool has_q_scalar = param.q_scalar.has_value();
+  const int interpolation = param.interpolation;
+  std::vector<int> red_axes, nonred_axes;
+  PercentileNormalizeAxes(data.shape_, param.axis, &red_axes, &nonred_axes);
+  const size_t group_count = PercentileShapeSizeForAxes(data.shape_, nonred_axes);
+  const size_t red_size    = PercentileShapeSizeForAxes(data.shape_, red_axes);
+  const size_t q_size      = has_q_scalar ? 1 : q->Size();
+  CHECK_EQ(ograd.Size(), q_size * group_count);
+
+  DType* data_grad = outputs[0].dptr<DType>();
+  if (req[0] == kWriteTo || req[0] == kWriteInplace) {
+    for (size_t i = 0; i < outputs[0].Size(); ++i) {
+      data_grad[i] = DType(0);
+    }
+  }
+  QType* q_grad = nullptr;
+  if (!has_q_scalar && req[1] != kNullOp) {
+    q_grad = outputs[1].dptr<QType>();
+    if (req[1] == kWriteTo || req[1] == kWriteInplace) {
+      for (size_t i = 0; i < outputs[1].Size(); ++i) {
+        q_grad[i] = QType(0);
+      }
+    }
+  }
+
+  const DType* data_ptr = data.dptr<DType>();
+  const GType* og_ptr   = ograd.dptr<GType>();
+  const QType* q_ptr    = has_q_scalar ? nullptr : q->dptr<QType>();
+  std::vector<size_t> group_coord, red_coord, orig_coord(data.shape_.ndim());
+  std::vector<std::pair<double, size_t>> sorted(red_size);
+
+  for (size_t group = 0; group < group_count; ++group) {
+    PercentileUnravel(group, data.shape_, nonred_axes, &group_coord);
+    for (size_t i = 0; i < nonred_axes.size(); ++i) {
+      orig_coord[nonred_axes[i]] = group_coord[i];
+    }
+    for (size_t r = 0; r < red_size; ++r) {
+      PercentileUnravel(r, data.shape_, red_axes, &red_coord);
+      for (size_t i = 0; i < red_axes.size(); ++i) {
+        orig_coord[red_axes[i]] = red_coord[i];
+      }
+      const size_t data_idx = PercentileRavelOriginal(data.shape_, orig_coord);
+      sorted[r]             = std::make_pair(static_cast<double>(data_ptr[data_idx]), data_idx);
+    }
+    std::sort(sorted.begin(), sorted.end(), [](const auto& lhs, const auto& rhs) {
+      return lhs.first < rhs.first;
+    });
+
+    for (size_t qi = 0; qi < q_size; ++qi) {
+      const double q_value = has_q_scalar ? param.q_scalar.value() : static_cast<double>(q_ptr[qi]);
+      double idx          = q_value * (red_size - 1) / 100.0;
+      int integral_idx    = -1;
+      if (interpolation == percentile_enum::kLower) {
+        integral_idx = std::floor(idx);
+      } else if (interpolation == percentile_enum::kHigher) {
+        integral_idx = std::ceil(idx);
+      } else if (interpolation == percentile_enum::kMidpoint) {
+        idx = (std::floor(idx) + std::ceil(idx)) / 2.0;
+      } else if (interpolation == percentile_enum::kNearest) {
+        integral_idx = std::round(idx);
+      }
+
+      const double grad = static_cast<double>(og_ptr[qi * group_count + group]);
+      if (integral_idx >= 0) {
+        data_grad[sorted[integral_idx].second] += static_cast<DType>(grad);
+      } else {
+        const int idx_below = std::floor(idx);
+        int idx_above       = idx_below + 1;
+        idx_above           = idx_above > static_cast<int>(red_size) - 1 ?
+                                  static_cast<int>(red_size) - 1 :
+                                  idx_above;
+        const double weight_above = idx - idx_below;
+        const double weight_below = 1.0 - weight_above;
+        data_grad[sorted[idx_below].second] += static_cast<DType>(grad * weight_below);
+        data_grad[sorted[idx_above].second] += static_cast<DType>(grad * weight_above);
+        if (q_grad && interpolation == percentile_enum::kLinear) {
+          const double q_scale =
+              (sorted[idx_above].first - sorted[idx_below].first) * (red_size - 1) / 100.0;
+          q_grad[qi] += static_cast<QType>(grad * q_scale);
+        }
+      }
+    }
+  }
+}
+
+template <typename xpu>
+void NumpyPercentileBackward(const nnvm::NodeAttrs& attrs,
+                             const OpContext& ctx,
+                             const std::vector<TBlob>& inputs,
+                             const std::vector<OpReqType>& req,
+                             const std::vector<TBlob>& outputs) {
+  const NumpyPercentileParam& param = nnvm::get<NumpyPercentileParam>(attrs.parsed);
+  const bool has_q_scalar          = param.q_scalar.has_value();
+  CHECK_EQ(inputs.size(), has_q_scalar ? 2U : 3U);
+  CHECK_EQ(outputs.size(), has_q_scalar ? 1U : 2U);
+  if (req[0] == kNullOp && (has_q_scalar || req[1] == kNullOp))
+    return;
+  const TBlob& ograd = inputs[0];
+  const TBlob& data  = inputs[1];
+  const TBlob* q     = has_q_scalar ? nullptr : &inputs[2];
+  MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+    MSHADOW_SGL_DBL_TYPE_SWITCH(ograd.type_flag_, GType, {
+      if (has_q_scalar) {
+        PercentileBackwardImpl<DType, GType, double>(param, ograd, data, nullptr, req, outputs);
+      } else {
+        MSHADOW_SGL_DBL_TYPE_SWITCH(q->type_flag_, QType, {
+          PercentileBackwardImpl<DType, GType, QType>(param, ograd, data, q, req, outputs);
+        });
+      }
+    });
+  });
+}
 
 template <typename QType, typename xpu>
 bool CheckInvalidInput(mshadow::Stream<xpu>* s,

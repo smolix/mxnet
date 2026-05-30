@@ -9899,6 +9899,16 @@ def test_np_diff():
                         np_out = onp.diff(x.asnumpy(), n=n, axis=axis)
                         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
 
+    x = np.arange(12, dtype='float32').reshape(3, 4)
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        mx_out = np.diff(x, n=1, axis=1).sum()
+    mx_out.backward()
+    np_backward = onp.full(x.shape, 5.0, dtype=onp.float32)
+    np_backward += onp.tile(onp.array([[-1.0, 0.0, 0.0, 1.0]], dtype=onp.float32), (3, 1))
+    assert_almost_equal(x.grad.asnumpy(), np_backward)
+
 
 @use_np
 def test_np_ediff1d():

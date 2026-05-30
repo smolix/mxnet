@@ -1146,19 +1146,22 @@ NNVM_REGISTER_OP(_npi_rollaxis_backward)
 template <>
 void NumpyFlipForwardImpl<cpu>(const OpContext& ctx,
                                const std::vector<TBlob>& inputs,
+                               const std::vector<OpReqType>& req,
                                const std::vector<TBlob>& outputs,
                                const std::vector<index_t>& stride_,
                                const std::vector<index_t>& trailing_,
                                const index_t& flip_index) {
   mshadow::Stream<cpu>* s = ctx.get_stream<cpu>();
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    mxnet_op::Kernel<reverse, cpu>::Launch(s,
-                                           inputs[0].Size(),
-                                           flip_index,
-                                           inputs[0].dptr<DType>(),
-                                           outputs[0].dptr<DType>(),
-                                           stride_.data(),
-                                           trailing_.data());
+    MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+      mxnet_op::Kernel<numpy_reverse_req<req_type>, cpu>::Launch(s,
+                                                                 inputs[0].Size(),
+                                                                 flip_index,
+                                                                 inputs[0].dptr<DType>(),
+                                                                 outputs[0].dptr<DType>(),
+                                                                 stride_.data(),
+                                                                 trailing_.data());
+    });
   });
 }
 

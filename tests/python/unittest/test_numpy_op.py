@@ -8292,6 +8292,14 @@ def test_np_flip():
                 np_out = onp.flip(x.asnumpy(), axis)
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
 
+    x = np.arange(6, dtype='float32').reshape(2, 3)
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        out = np.flip(x)
+    out.backward()
+    assert same(x.grad.asnumpy(), onp.full(x.shape, 6.0, dtype=onp.float32))
+
 
 @use_np
 def test_np_flipud_fliplr():
@@ -8997,6 +9005,14 @@ def test_np_rot90():
                 np_out = onp.rot90(x.asnumpy(), k=k, axes=axes)
                 mx_out = np.rot90(x, k=k, axes=axes)
                 assert same(mx_out.asnumpy(), np_out)
+
+    x = np.arange(6, dtype='float32').reshape(2, 3)
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        out = np.rot90(x)
+    out.backward()
+    assert same(x.grad.asnumpy(), onp.full(x.shape, 6.0, dtype=onp.float32))
 
 
 @use_np

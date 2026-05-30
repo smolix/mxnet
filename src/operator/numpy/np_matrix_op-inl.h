@@ -678,10 +678,67 @@ struct FlipParam : public dmlc::Parameter<FlipParam> {
 template <typename xpu>
 void NumpyFlipForwardImpl(const OpContext& ctx,
                           const std::vector<TBlob>& inputs,
+                          const std::vector<OpReqType>& req,
                           const std::vector<TBlob>& outputs,
                           const std::vector<index_t>& stride_,
                           const std::vector<index_t>& trailing_,
                           const index_t& flip_index);
+
+template <int req>
+struct numpy_copy_req {
+  template <typename DType>
+  MSHADOW_XINLINE static void Map(index_t i, const DType* src, DType* dst) {
+    KERNEL_ASSIGN(dst[i], req, src[i]);
+  }
+};
+
+template <int req>
+struct numpy_reverse_req {
+  MSHADOW_XINLINE static index_t ReverseIndex(index_t idx,
+                                              index_t nreversedim,
+                                              const index_t* stride_,
+                                              const index_t* trailing_) {
+    index_t outputIndex = idx;
+    for (index_t i = 0; i < nreversedim; ++i) {
+      const index_t low = outputIndex % trailing_[i];
+      index_t high      = outputIndex / trailing_[i];
+      const index_t x   = high % stride_[i];
+      high /= stride_[i];
+      outputIndex = (high * stride_[i] + stride_[i] - 1 - x) * trailing_[i] + low;
+    }
+    return outputIndex;
+  }
+#ifdef __CUDACC__
+  template <typename DType>
+  __device__ static void Map(index_t index,
+                             index_t nreversedim,
+                             const DType* src,
+                             DType* dst,
+                             const index_t* stride_,
+                             const index_t* trailing_) {
+    __shared__ index_t stride_share[FLIP_MAX_DIM];
+    __shared__ index_t trailing_share[FLIP_MAX_DIM];
+    if (threadIdx.x < FLIP_MAX_DIM) {
+      stride_share[threadIdx.x]   = stride_[threadIdx.x];
+      trailing_share[threadIdx.x] = trailing_[threadIdx.x];
+    }
+    __syncthreads();
+    index_t new_idx = ReverseIndex(index, nreversedim, stride_share, trailing_share);
+    KERNEL_ASSIGN(dst[new_idx], req, src[index]);
+  }
+#else
+  template <typename DType>
+  MSHADOW_XINLINE static void Map(index_t index,
+                                  index_t nreversedim,
+                                  const DType* src,
+                                  DType* dst,
+                                  const index_t* stride_,
+                                  const index_t* trailing_) {
+    index_t new_idx = ReverseIndex(index, nreversedim, stride_, trailing_);
+    KERNEL_ASSIGN(dst[new_idx], req, src[index]);
+  }
+#endif
+};
 
 template <typename xpu>
 void NumpyFlipForward(const nnvm::NodeAttrs& attrs,
@@ -698,7 +755,10 @@ void NumpyFlipForward(const nnvm::NodeAttrs& attrs,
     if (inputs[0].shape_.ndim() == 0) {
       mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
       MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, DType, {
-        mshadow::Copy(outputs[0].FlatTo1D<xpu, DType>(s), inputs[0].FlatTo1D<xpu, DType>(s), s);
+        MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+          mxnet_op::Kernel<numpy_copy_req<req_type>, xpu>::Launch(
+              s, inputs[0].Size(), inputs[0].dptr<DType>(), outputs[0].dptr<DType>());
+        });
       });
       return;
     }
@@ -731,7 +791,7 @@ void NumpyFlipForward(const nnvm::NodeAttrs& attrs,
     }
     flip_index++;
   }
-  NumpyFlipForwardImpl<xpu>(ctx, inputs, outputs, stride_, trailing_, flip_index);
+  NumpyFlipForwardImpl<xpu>(ctx, inputs, req, outputs, stride_, trailing_, flip_index);
 }
 
 struct NumpyRollaxisParam : public dmlc::Parameter<NumpyRollaxisParam> {
@@ -960,6 +1020,7 @@ struct NumpyRot90Param : public dmlc::Parameter<NumpyRot90Param> {
   }
 };
 
+template <int req>
 struct rot90reverse {
   MSHADOW_XINLINE static index_t ReverseIndex(index_t idx,
                                               index_t nreversedim,
@@ -983,7 +1044,7 @@ struct rot90reverse {
                                   const index_t* stride_,
                                   const index_t* trailing_) {
     index_t new_idx = ReverseIndex(index, nreversedim, stride_, trailing_);
-    dst[new_idx]    = src[index];
+    KERNEL_ASSIGN(dst[new_idx], req, src[index]);
   }
 };
 
@@ -1026,16 +1087,19 @@ void NumpyRot90ComputeFlipIml(const OpContext& ctx,
   mshadow::Copy(stride_xpu_tensor, stride_cpu_tensor, s);
   mshadow::Copy(trailing_xpu_tensor, trailing_cpu_tensor, s);
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    Kernel<rot90reverse, xpu>::Launch(s,
-                                      inputs[0].Size(),
-                                      reverse_index,
-                                      inputs[0].dptr<DType>(),
-                                      outputs[0].dptr<DType>(),
-                                      stride_xpu_tensor.dptr_,
-                                      trailing_xpu_tensor.dptr_);
+    MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+      Kernel<rot90reverse<req_type>, xpu>::Launch(s,
+                                                  inputs[0].Size(),
+                                                  reverse_index,
+                                                  inputs[0].dptr<DType>(),
+                                                  outputs[0].dptr<DType>(),
+                                                  stride_xpu_tensor.dptr_,
+                                                  trailing_xpu_tensor.dptr_);
+    });
   });
 }
 
+template <int req>
 struct rot90Transreverse {
   MSHADOW_XINLINE static index_t ReverseIndex(index_t idx,
                                               const index_t stride_,
@@ -1056,7 +1120,7 @@ struct rot90Transreverse {
                                   const index_t stride_,
                                   const index_t trailing_) {
     index_t new_idx = ReverseIndex(index, stride_, trailing_);
-    dst[new_idx]    = src[index];
+    KERNEL_ASSIGN(dst[new_idx], req, src[index]);
   }
 };
 
@@ -1088,9 +1152,17 @@ void NumpyRot90ComputeFlipTransposeIml(const OpContext& ctx,
         ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(workspace_size), s);
     DType* data_ptr = reinterpret_cast<DType*>(workspace.dptr_);
     TBlob mid_data  = TBlob(data_ptr, inputs[0].shape_, xpu::kDevMask);
-    Kernel<rot90Transreverse, xpu>::Launch(
+    Kernel<rot90Transreverse<kWriteTo>, xpu>::Launch(
         s, inputs[0].Size(), inputs[0].dptr<DType>(), mid_data.dptr<DType>(), stride_, trailing_);
-    mxnet::op::TransposeImpl<xpu>(ctx.run_ctx, mid_data, outputs[0], axes_list);
+    mshadow::Tensor<xpu, 1, dim_t> transpose_workspace =
+        GetTransposeExWorkspace<xpu>(ctx, axes_list);
+    if (req[0] == kAddTo) {
+      mxnet::op::TransposeExImpl<xpu, true>(
+          ctx.run_ctx, mid_data, outputs[0], axes_list, transpose_workspace);
+    } else {
+      mxnet::op::TransposeExImpl<xpu, false>(
+          ctx.run_ctx, mid_data, outputs[0], axes_list, transpose_workspace);
+    }
   });
 }
 
@@ -1113,7 +1185,10 @@ void NumpyRot90ComputeTransposeFlipIml(const OpContext& ctx,
     DType* data_ptr = reinterpret_cast<DType*>(workspace.dptr_);
     mxnet::TShape mid_shape(outputs[0].shape_);
     TBlob mid_data = TBlob(data_ptr, mid_shape, xpu::kDevMask);
-    mxnet::op::TransposeImpl<xpu>(ctx.run_ctx, inputs[0], mid_data, axes_list);
+    mshadow::Tensor<xpu, 1, dim_t> transpose_workspace =
+        GetTransposeExWorkspace<xpu>(ctx, axes_list);
+    mxnet::op::TransposeExImpl<xpu, false>(
+        ctx.run_ctx, inputs[0], mid_data, axes_list, transpose_workspace);
 
     index_t stride_;
     index_t trailing_;
@@ -1122,8 +1197,14 @@ void NumpyRot90ComputeTransposeFlipIml(const OpContext& ctx,
     for (int i2 = axis + 1; i2 < mid_shape.ndim(); ++i2) {
       trailing_ *= mid_shape[i2];
     }
-    Kernel<rot90Transreverse, xpu>::Launch(
-        s, mid_data.Size(), mid_data.dptr<DType>(), outputs[0].dptr<DType>(), stride_, trailing_);
+    MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+      Kernel<rot90Transreverse<req_type>, xpu>::Launch(s,
+                                                       mid_data.Size(),
+                                                       mid_data.dptr<DType>(),
+                                                       outputs[0].dptr<DType>(),
+                                                       stride_,
+                                                       trailing_);
+    });
   });
 }
 

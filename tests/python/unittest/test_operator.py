@@ -6702,6 +6702,31 @@ def test_gemm():
             _gemm_test_helper(np.float32, True)
 
 
+def test_gemm_grad_req_add():
+    def check_add_matches_write(op, inputs):
+        write_inputs = [x.copy() for x in inputs]
+        add_inputs = [x.copy() for x in inputs]
+        for x in write_inputs:
+            x.attach_grad(grad_req='write')
+        for x in add_inputs:
+            x.attach_grad(grad_req='add')
+            x.grad[:] = 10
+        with mx.autograd.record():
+            write_loss = op(*write_inputs).sum()
+        write_loss.backward()
+        with mx.autograd.record():
+            add_loss = op(*add_inputs).sum()
+        add_loss.backward()
+        for write_arg, add_arg in zip(write_inputs, add_inputs):
+            assert_almost_equal(add_arg.grad.asnumpy(), write_arg.grad.asnumpy() + 10)
+
+    a = mx.nd.array([[1., 2., 3.], [4., 5., 6.]])
+    b = mx.nd.array([[1., 2.], [3., 4.], [5., 6.]])
+    c = mx.nd.array([[0.5, 1.0], [1.5, 2.0]])
+    check_add_matches_write(lambda a, b, c: mx.nd.linalg.gemm(a, b, c), [a, b, c])
+    check_add_matches_write(lambda a, b: mx.nd.linalg.gemm2(a, b), [a, b])
+
+
 # Helper functions for test_laop
 
 def _make_symm_symbol(a, ndims):

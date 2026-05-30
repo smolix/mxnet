@@ -4796,6 +4796,14 @@ def test_np_clip():
                     mx_ret = net(a)
                     assert_almost_equal(mx_ret.asnumpy(), np_ret, atol=1e-4, rtol=1e-3, use_broadcast=False)
 
+    x = np.array([1.0, 2.0, 3.0], dtype='float32')
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        out = np.clip(x, 1.5, 2.5).sum()
+    out.backward()
+    assert_almost_equal(x.grad.asnumpy(), onp.array([5.0, 6.0, 5.0], dtype=onp.float32))
+
 
 @use_np
 def test_npx_random_bernoulli():

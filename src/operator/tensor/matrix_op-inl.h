@@ -1784,6 +1784,7 @@ struct ClipParam : public dmlc::Parameter<ClipParam> {
   }
 };
 
+template <int req>
 struct clip {
   template <typename DType>
   MSHADOW_XINLINE static void Map(index_t i,
@@ -1793,15 +1794,16 @@ struct clip {
                                   const float a_max) {
     DType data = datas[i];
     if (data > a_max) {
-      out[i] = a_max;
+      KERNEL_ASSIGN(out[i], req, DType(a_max));
     } else if (data < a_min) {
-      out[i] = a_min;
+      KERNEL_ASSIGN(out[i], req, DType(a_min));
     } else {
-      out[i] = data;
+      KERNEL_ASSIGN(out[i], req, data);
     }
   }
 };
 
+template <int req>
 struct clip_grad {
   template <typename DType>
   MSHADOW_XINLINE static void Map(index_t i,
@@ -1812,11 +1814,11 @@ struct clip_grad {
                                   const float a_max) {
     DType data = datas[i];
     if (data > a_max) {
-      out[i] = 0;
+      KERNEL_ASSIGN(out[i], req, DType(0));
     } else if (data < a_min) {
-      out[i] = 0;
+      KERNEL_ASSIGN(out[i], req, DType(0));
     } else {
-      out[i] = grad[i];
+      KERNEL_ASSIGN(out[i], req, grad[i]);
     }
   }
 };
@@ -1833,12 +1835,14 @@ void Clip(const nnvm::NodeAttrs& attrs,
   Stream<xpu>* s = ctx.get_stream<xpu>();
 
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    mxnet_op::Kernel<mxnet::op::clip, xpu>::Launch(s,
-                                                   outputs[0].Size(),
-                                                   outputs[0].dptr<DType>(),
-                                                   inputs[0].dptr<DType>(),
-                                                   param.a_min,
-                                                   param.a_max);
+    MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+      mxnet_op::Kernel<mxnet::op::clip<req_type>, xpu>::Launch(s,
+                                                               outputs[0].Size(),
+                                                               outputs[0].dptr<DType>(),
+                                                               inputs[0].dptr<DType>(),
+                                                               param.a_min,
+                                                               param.a_max);
+    });
   });
 }
 
@@ -1866,13 +1870,15 @@ void ClipGrad_(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(inputs[0].type_flag_, outputs[0].type_flag_);
   Stream<xpu>* s = ctx.get_stream<xpu>();
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    Kernel<clip_grad, xpu>::Launch(s,
-                                   outputs[0].Size(),
-                                   outputs[0].dptr<DType>(),
-                                   inputs[0].dptr<DType>(),
-                                   inputs[1].dptr<DType>(),
-                                   param.a_min,
-                                   param.a_max);
+    MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+      Kernel<clip_grad<req_type>, xpu>::Launch(s,
+                                               outputs[0].Size(),
+                                               outputs[0].dptr<DType>(),
+                                               inputs[0].dptr<DType>(),
+                                               inputs[1].dptr<DType>(),
+                                               param.a_min,
+                                               param.a_max);
+    });
   });
 }
 

@@ -92,7 +92,7 @@ NNVM_REGISTER_OP(_npi_std)
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
                                 })
     .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes);
+    .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseInOut{"_backward_npi_std"});
 
 NNVM_REGISTER_OP(_npi_var)
     .set_num_inputs(1)
@@ -118,7 +118,21 @@ NNVM_REGISTER_OP(_npi_var)
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
                                 })
     .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes);
+    .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseInOut{"_backward_npi_var"});
+
+NNVM_REGISTER_OP(_backward_npi_std)
+    .set_attr_parser(ParamParser<NumpyMomentsParam>)
+    .set_num_inputs(5)
+    .set_num_outputs(1)
+    .set_attr<nnvm::TIsBackward>("TIsBackward", true)
+    .set_attr<FCompute>("FCompute<cpu>", NumpyMomentsBackward<cpu, true>);
+
+NNVM_REGISTER_OP(_backward_npi_var)
+    .set_attr_parser(ParamParser<NumpyMomentsParam>)
+    .set_num_inputs(5)
+    .set_num_outputs(1)
+    .set_attr<nnvm::TIsBackward>("TIsBackward", true)
+    .set_attr<FCompute>("FCompute<cpu>", NumpyMomentsBackward<cpu, false>);
 
 inline bool NumpyWeightedAverageType(const nnvm::NodeAttrs& attrs,
                                      std::vector<int>* in_attrs,

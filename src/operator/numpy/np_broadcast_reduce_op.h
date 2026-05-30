@@ -1263,6 +1263,86 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
 #endif
 }
 
+template <int req, bool sqrt, int ndim>
+struct NumpyMomentsBackwardKernel {
+  template <typename DType, typename OType>
+  MSHADOW_XINLINE static void Map(index_t i,
+                                  DType* grad,
+                                  const DType* data,
+                                  const DType* mean,
+                                  const OType* moment,
+                                  const OType* ograd,
+                                  const mshadow::Shape<ndim> data_shape,
+                                  const mshadow::Shape<ndim> small_shape,
+                                  const double denom) {
+    using namespace mxnet_op;
+    mshadow::Shape<ndim> coord = unravel(i, data_shape);
+    for (int axis = 0; axis < ndim; ++axis) {
+      if (small_shape[axis] == 1) {
+        coord[axis] = 0;
+      }
+    }
+    const index_t j = ravel(coord, small_shape);
+    const DType centered = data[i] - mean[j];
+    OType value = static_cast<OType>(centered) * ograd[j] / static_cast<OType>(denom);
+    if (sqrt) {
+      value = moment[j] == OType(0) ? OType(0) : value / moment[j];
+    } else {
+      value *= OType(2);
+    }
+    KERNEL_ASSIGN(grad[i], req, static_cast<DType>(value));
+  }
+};
+
+template <typename xpu, bool sqrt>
+void NumpyMomentsBackward(const nnvm::NodeAttrs& attrs,
+                          const OpContext& ctx,
+                          const std::vector<TBlob>& inputs,
+                          const std::vector<OpReqType>& req,
+                          const std::vector<TBlob>& outputs) {
+  if (req[0] == kNullOp || outputs[0].Size() == 0U) {
+    return;
+  }
+  CHECK_EQ(inputs.size(), 5U);
+  CHECK_EQ(outputs.size(), 1U);
+
+  const NumpyMomentsParam& param = nnvm::get<NumpyMomentsParam>(attrs.parsed);
+  const TBlob& ograd            = inputs[0];
+  const TBlob& data             = inputs[2];
+  const TBlob& moment           = inputs[3];
+  const TBlob& mean             = inputs[4];
+  const TBlob& grad             = outputs[0];
+  mxnet::TShape small           = param.keepdims ?
+                                      moment.shape_ :
+                                      NumpyReduceAxesShapeImpl(data.shape_, param.axis, true);
+  const double denom            = static_cast<double>(data.Size() / small.Size()) - param.ddof;
+  CHECK_GT(denom, 0.0) << "ddof must be smaller than the reduction size";
+  TBlob ograd_small             = ograd.reshape(small);
+  TBlob moment_small            = moment.reshape(small);
+  TBlob mean_small              = mean.reshape(small);
+
+  mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
+  MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+    MSHADOW_REAL_TYPE_SWITCH(moment.type_flag_, OType, {
+      MXNET_NDIM_SWITCH(data.ndim(), NDim, {
+        MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+          mxnet_op::Kernel<NumpyMomentsBackwardKernel<req_type, sqrt, NDim>, xpu>::Launch(
+              s,
+              grad.Size(),
+              grad.dptr<DType>(),
+              data.dptr<DType>(),
+              mean_small.dptr<DType>(),
+              moment_small.dptr<OType>(),
+              ograd_small.dptr<OType>(),
+              data.shape_.get<NDim>(),
+              small.get<NDim>(),
+              denom);
+        });
+      });
+    });
+  });
+}
+
 template <typename xpu>
 void NumpyBroadcastToForward(const nnvm::NodeAttrs& attrs,
                              const OpContext& ctx,

@@ -1012,6 +1012,41 @@ def test_np_average_returned_sum_only_symbol():
 
 
 @use_np
+def test_np_var_std_backward():
+    data_np = onp.array([1., 2., 3.], dtype='float32')
+
+    data = np.array(data_np, dtype='float32')
+    data.attach_grad()
+    with mx.autograd.record():
+        out = np.var(data)
+    out.backward()
+    assert_almost_equal(data.grad.asnumpy(), 2 * (data_np - data_np.mean()) / data_np.size)
+
+    data = np.array(data_np, dtype='float32')
+    data.attach_grad()
+    with mx.autograd.record():
+        out = np.std(data)
+    out.backward()
+    assert_almost_equal(
+        data.grad.asnumpy(),
+        (data_np - data_np.mean()) / (data_np.std() * data_np.size))
+
+
+@use_np
+def test_np_var_backward_axis():
+    data_np = onp.array([[1., 2., 3.], [2., 4., 8.]], dtype='float32')
+    data = np.array(data_np, dtype='float32')
+    data.attach_grad()
+
+    with mx.autograd.record():
+        out = np.var(data, axis=1).sum()
+    out.backward()
+
+    expected = 2 * (data_np - data_np.mean(axis=1, keepdims=True)) / data_np.shape[1]
+    assert_almost_equal(data.grad.asnumpy(), expected)
+
+
+@use_np
 def test_np_mean():
     class TestMean(HybridBlock):
         def __init__(self, axis=None, dtype=None, keepdims=False):

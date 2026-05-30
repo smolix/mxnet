@@ -198,7 +198,7 @@ void NumpyTraceOpProcess(const TBlob& in_data,
 
   MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
     MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
-      if (back) {
+      if (back && req_type != kAddTo && req_type != kNullOp) {
         out_data.FlatTo1D<xpu, DType>(s) = 0;
       }
       Kernel<numpy_trace<3, req_type, back>, xpu>::Launch(s,

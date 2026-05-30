@@ -8219,6 +8219,16 @@ def test_np_trace():
             continue
         assert False
 
+    data = np.arange(9, dtype='float32').reshape(3, 3)
+    data.attach_grad('add')
+    data.grad[:] = 5
+    with mx.autograd.record():
+        out = np.trace(data)
+    out.backward()
+    expected_grad = onp.full(data.shape, 5.0, dtype=onp.float32)
+    onp.fill_diagonal(expected_grad, 6.0)
+    assert same(data.grad.asnumpy(), expected_grad)
+
 
 @use_np
 def test_np_windows():

@@ -648,6 +648,14 @@ inline void NumpyReduceAxesBackwardUseNone(const nnvm::NodeAttrs& attrs,
     small = NumpyReduceAxesShapeImpl(outputs[0].shape_, param.axis, true);
   }
 
+  if (normalize && req[0] == kAddTo) {
+    Stream<xpu>* s = ctx.get_stream<xpu>();
+    MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, IType, {
+      Tensor<xpu, 1, IType> igrad = outputs[0].FlatTo1D<xpu, IType>(s);
+      igrad *= scalar<IType>(outputs[0].Size() / inputs[0].Size());
+    });
+  }
+
   BroadcastComputeImpl<xpu>(attrs, ctx, inputs, req, outputs, small);
 
   if (normalize) {

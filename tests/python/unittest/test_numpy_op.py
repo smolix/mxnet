@@ -1139,6 +1139,14 @@ def test_np_mean():
                     np_out = onp.mean(x.asnumpy(), axis=axis, dtype=dtype, keepdims=keepdims).astype(dtype)
                     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
 
+    x = np.arange(6, dtype='float32').reshape(2, 3)
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        out = np.mean(x, axis=1).sum()
+    out.backward()
+    assert_almost_equal(x.grad.asnumpy(), onp.full(x.shape, 5.0 + 1.0 / 3.0, dtype=onp.float32))
+
 
 @use_np
 def test_np_moment():

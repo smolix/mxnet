@@ -45,6 +45,15 @@ NNVM_REGISTER_OP(_npi_atleast_2d).set_attr<FCompute>("FCompute<gpu>", AtleastNDC
 
 NNVM_REGISTER_OP(_npi_atleast_3d).set_attr<FCompute>("FCompute<gpu>", AtleastNDCompute<gpu>);
 
+NNVM_REGISTER_OP(_backward_npi_atleast_1d)
+    .set_attr<FCompute>("FCompute<gpu>", AtleastNDBackwardCompute<gpu>);
+
+NNVM_REGISTER_OP(_backward_npi_atleast_2d)
+    .set_attr<FCompute>("FCompute<gpu>", AtleastNDBackwardCompute<gpu>);
+
+NNVM_REGISTER_OP(_backward_npi_atleast_3d)
+    .set_attr<FCompute>("FCompute<gpu>", AtleastNDBackwardCompute<gpu>);
+
 NNVM_REGISTER_OP(_npi_arange).set_attr<FCompute>("FCompute<gpu>", RangeCompute<gpu, RangeParam>);
 
 NNVM_REGISTER_OP(_npi_eye).set_attr<FCompute>("FCompute<gpu>", NumpyEyeFill<gpu>);

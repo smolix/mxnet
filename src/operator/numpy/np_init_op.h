@@ -544,6 +544,49 @@ void AtleastNDCompute(const nnvm::NodeAttrs& attrs,
   }
 }
 
+inline bool AtleastNDBackwardShape(const nnvm::NodeAttrs& attrs,
+                                   mxnet::ShapeVector* in_attrs,
+                                   mxnet::ShapeVector* out_attrs) {
+  auto& param = nnvm::get<AtleastNDParam>(attrs.parsed);
+  CHECK_EQ(in_attrs->size(), static_cast<size_t>(param.num_args * 2));
+  CHECK_EQ(out_attrs->size(), static_cast<size_t>(param.num_args));
+  for (int i = 0; i < param.num_args; ++i) {
+    SHAPE_ASSIGN_CHECK(*out_attrs, i, in_attrs->at(param.num_args + i));
+  }
+  return shape_is_known(*out_attrs);
+}
+
+inline bool AtleastNDBackwardType(const nnvm::NodeAttrs& attrs,
+                                  std::vector<int>* in_attrs,
+                                  std::vector<int>* out_attrs) {
+  auto& param = nnvm::get<AtleastNDParam>(attrs.parsed);
+  CHECK_EQ(in_attrs->size(), static_cast<size_t>(param.num_args * 2));
+  CHECK_EQ(out_attrs->size(), static_cast<size_t>(param.num_args));
+  for (int i = 0; i < param.num_args; ++i) {
+    TYPE_ASSIGN_CHECK(*out_attrs, i, in_attrs->at(param.num_args + i));
+  }
+  for (const int& type : *out_attrs) {
+    if (type_is_none(type)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+template <typename xpu>
+void AtleastNDBackwardCompute(const nnvm::NodeAttrs& attrs,
+                              const OpContext& ctx,
+                              const std::vector<TBlob>& inputs,
+                              const std::vector<OpReqType>& req,
+                              const std::vector<TBlob>& outputs) {
+  auto& param = nnvm::get<AtleastNDParam>(attrs.parsed);
+  CHECK_EQ(inputs.size(), static_cast<size_t>(param.num_args * 2));
+  CHECK_EQ(outputs.size(), static_cast<size_t>(param.num_args));
+  for (int i = 0; i < param.num_args; ++i) {
+    UnaryOp::IdentityCompute<xpu>(attrs, ctx, {inputs[i]}, {req[i]}, {outputs[i]});
+  }
+}
+
 }  // namespace op
 }  // namespace mxnet
 

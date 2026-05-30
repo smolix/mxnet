@@ -3798,6 +3798,23 @@ def test_np_atleast_nd():
 
 
 @use_np
+def test_np_atleast_nd_backward():
+    funcs = [np.atleast_1d, np.atleast_2d, np.atleast_3d]
+    for func in funcs:
+        scalar = np.array(2.0, dtype='float32')
+        vector = np.array([1.0, 2.0], dtype='float32')
+        scalar.attach_grad()
+        vector.attach_grad()
+        with mx.autograd.record():
+            scalar_out, vector_out = func(scalar, vector)
+            loss = scalar_out.sum() + vector_out.sum()
+        loss.backward()
+
+        assert_almost_equal(scalar.grad.asnumpy(), onp.array(1.0, dtype='float32'))
+        assert_almost_equal(vector.grad.asnumpy(), onp.ones((2,), dtype='float32'))
+
+
+@use_np
 def test_np_arange():
     configs = [
         (1, 10, 2),

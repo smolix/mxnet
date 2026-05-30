@@ -170,7 +170,8 @@ inline bool AtleastNDShape(const nnvm::NodeAttrs& attrs,
                                        })                                                         \
       .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<-1, -1>)                             \
       .set_attr<mxnet::FInferShape>("FInferShape", AtleastNDShape<N>)                             \
-      .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)                                  \
+      .set_attr<nnvm::FGradient>("FGradient",                                                   \
+                                  ElemwiseGradUseIn{"_backward_npi_atleast_" #N "d"})             \
       .set_attr<FCompute>("FCompute<cpu>", AtleastNDCompute<cpu>)                                 \
       .add_argument("arys", "NDArray-or-Symbol[]", "List of input arrays")                        \
       .add_arguments(AtleastNDParam::__FIELDS__())
@@ -180,6 +181,29 @@ NNVM_REGISTER_ATLEAST_ND(1);
 NNVM_REGISTER_ATLEAST_ND(2);
 
 NNVM_REGISTER_ATLEAST_ND(3);
+
+#define NNVM_REGISTER_ATLEAST_ND_BACKWARD(N)                                                      \
+  NNVM_REGISTER_OP(_backward_npi_atleast_##N##d)                                                   \
+      .set_attr_parser(ParamParser<AtleastNDParam>)                                               \
+      .set_num_inputs([](const NodeAttrs& attrs) {                                                \
+        auto& param = nnvm::get<AtleastNDParam>(attrs.parsed);                                    \
+        return param.num_args * 2;                                                                \
+      })                                                                                          \
+      .set_num_outputs([](const NodeAttrs& attrs) {                                               \
+        auto& param = nnvm::get<AtleastNDParam>(attrs.parsed);                                    \
+        return param.num_args;                                                                    \
+      })                                                                                          \
+      .set_attr<nnvm::TIsBackward>("TIsBackward", true)                                           \
+      .set_attr<nnvm::FInferType>("FInferType", AtleastNDBackwardType)                            \
+      .set_attr<mxnet::FInferShape>("FInferShape", AtleastNDBackwardShape)                        \
+      .set_attr<FCompute>("FCompute<cpu>", AtleastNDBackwardCompute<cpu>)                         \
+      .add_arguments(AtleastNDParam::__FIELDS__())
+
+NNVM_REGISTER_ATLEAST_ND_BACKWARD(1);
+
+NNVM_REGISTER_ATLEAST_ND_BACKWARD(2);
+
+NNVM_REGISTER_ATLEAST_ND_BACKWARD(3);
 
 NNVM_REGISTER_OP(_npi_full_like)
     .set_num_inputs(1)

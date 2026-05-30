@@ -10706,6 +10706,47 @@ def test_np_interp():
 
 
 @use_np
+def test_np_interp_backward():
+    xp = np.array([0.0, 1.0, 3.0], dtype='float64')
+    fp = np.array([0.0, 2.0, 6.0], dtype='float64')
+    x = np.array([-1.0, 0.5, 2.0, 4.0], dtype='float64')
+    upstream = np.array([5.0, 7.0, 11.0, 13.0], dtype='float64')
+
+    xp.attach_grad()
+    fp.attach_grad()
+    x.attach_grad()
+    with mx.autograd.record():
+        out = np.interp(x, xp, fp)
+        loss = (out * upstream).sum()
+    loss.backward()
+
+    assert_almost_equal(x.grad.asnumpy(), onp.array([0.0, 14.0, 22.0, 0.0]))
+    assert_almost_equal(fp.grad.asnumpy(), onp.array([8.5, 9.0, 18.5]))
+    assert_almost_equal(xp.grad.asnumpy(), onp.array([-7.0, -18.0, -11.0]))
+
+    xp = np.array([0.0, 1.0], dtype='float64')
+    fp = np.array([2.0, 4.0], dtype='float64')
+    x = np.array([-1.0, 0.25, 2.0], dtype='float64')
+    fp.attach_grad()
+    with mx.autograd.record():
+        out = np.interp(x, xp, fp, left=-3.0, right=9.0)
+        loss = out.sum()
+    loss.backward()
+    assert_almost_equal(fp.grad.asnumpy(), onp.array([0.75, 0.25]))
+
+    xp = np.array([0.0, 1.0], dtype='float64')
+    fp = np.array([2.0, 4.0], dtype='float64')
+    xp.attach_grad()
+    fp.attach_grad()
+    with mx.autograd.record():
+        out = np.interp(0.25, xp, fp)
+        loss = out * 3.0
+    loss.backward()
+    assert_almost_equal(fp.grad.asnumpy(), onp.array([2.25, 0.75]))
+    assert_almost_equal(xp.grad.asnumpy(), onp.array([-4.5, -1.5]))
+
+
+@use_np
 def test_np_bincount():
     class TestBincount(HybridBlock):
         def __init__(self, minlength=0):

@@ -8938,6 +8938,14 @@ def test_np_moveaxis():
                     assert np_out.dtype == mx_out.dtype
                     assert same(mx_out.asnumpy(), np_out)
 
+    x = np.arange(24, dtype='float32').reshape(2, 3, 4)
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        out = np.moveaxis(x, source=0, destination=2)
+    out.backward()
+    assert same(x.grad.asnumpy(), onp.full(x.shape, 6.0, dtype=onp.float32))
+
 
 @use_np
 def test_np_rot90():

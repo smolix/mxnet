@@ -858,13 +858,18 @@ void NumpyMoveaxisCompute(const nnvm::NodeAttrs& attrs,
   const NumpyMoveaxisParam& param = nnvm::get<NumpyMoveaxisParam>(attrs.parsed);
   CHECK_EQ(inputs.size(), 1U);
   CHECK_EQ(outputs.size(), 1U);
-  CHECK_EQ(req[0], kWriteTo) << "Moveaxis does not support inplace";
+  if (req[0] == kNullOp)
+    return;
+  CHECK(req[0] == kWriteTo || req[0] == kAddTo) << "Moveaxis does not support inplace";
   CHECK_EQ(param.source.ndim(), param.destination.ndim()) << "source and destination not equal.";
   mxnet::TShape axes;
   axes = NumpyMoveaxisShapeImpl(attrs, inputs[0].ndim());
-  MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, Dtype, {
-    TransposeImpl<xpu>(ctx.run_ctx, inputs[0], outputs[0], axes);
-  })
+  mshadow::Tensor<xpu, 1, dim_t> workspace = GetTransposeExWorkspace<xpu>(ctx, axes);
+  if (req[0] == kAddTo) {
+    TransposeExImpl<xpu, true>(ctx.run_ctx, inputs[0], outputs[0], axes, workspace);
+  } else {
+    TransposeExImpl<xpu, false>(ctx.run_ctx, inputs[0], outputs[0], axes, workspace);
+  }
 }
 
 template <typename xpu>

@@ -10755,6 +10755,21 @@ def test_np_bincount():
 
 
 @use_np
+def test_np_bincount_weight_backward():
+    data = np.array([0, 2, 1, 2], dtype='int32')
+    weights = np.array([1.0, 2.0, 3.0, 4.0], dtype='float32')
+    out_grad = np.array([10.0, 20.0, 30.0, 40.0], dtype='float32')
+    weights.attach_grad()
+
+    with mx.autograd.record():
+        out = np.bincount(data, weights, minlength=4)
+        loss = (out * out_grad).sum()
+    loss.backward()
+
+    assert_almost_equal(weights.grad.asnumpy(), onp.array([10.0, 30.0, 20.0, 30.0]))
+
+
+@use_np
 @pytest.mark.skip(reason='mx.np.empty_like operator does not support int8/uint8/bool dtypes (raises NotImplementedError); separate from the test-source signature fix in this commit')
 def test_np_empty_like():
     class TestEmptyLike(HybridBlock):

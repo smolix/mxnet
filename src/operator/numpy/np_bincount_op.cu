@@ -182,5 +182,8 @@ void NumpyBincountForwardImpl<gpu>(const OpContext& ctx,
 
 NNVM_REGISTER_OP(_npi_bincount).set_attr<FComputeEx>("FComputeEx<gpu>", NumpyBincountForward<gpu>);
 
+NNVM_REGISTER_OP(_backward_npi_bincount)
+    .set_attr<FComputeEx>("FComputeEx<gpu>", NumpyBincountBackward<gpu>);
+
 }  // namespace op
 }  // namespace mxnet

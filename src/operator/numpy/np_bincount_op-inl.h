@@ -95,6 +95,51 @@ inline bool NumpyBincountStorageType(const nnvm::NodeAttrs& attrs,
   return true;
 }
 
+inline bool NumpyBincountBackwardShape(const nnvm::NodeAttrs& attrs,
+                                       std::vector<mxnet::TShape>* in_attrs,
+                                       std::vector<mxnet::TShape>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 3U);
+  CHECK_EQ(out_attrs->size(), 2U);
+  SHAPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(1));
+  SHAPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(2));
+  return shape_is_known(out_attrs->at(0)) && shape_is_known(out_attrs->at(1));
+}
+
+inline bool NumpyBincountBackwardType(const nnvm::NodeAttrs& attrs,
+                                      std::vector<int>* in_attrs,
+                                      std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 3U);
+  CHECK_EQ(out_attrs->size(), 2U);
+  TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(1));
+  TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(2));
+  return out_attrs->at(0) != -1 && out_attrs->at(1) != -1;
+}
+
+inline bool NumpyBincountBackwardStorageType(const nnvm::NodeAttrs& attrs,
+                                             const int dev_mask,
+                                             DispatchMode* dispatch_mode,
+                                             std::vector<int>* in_attrs,
+                                             std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 3U);
+  CHECK_EQ(out_attrs->size(), 2U);
+  for (int& attr : *in_attrs) {
+    CHECK_EQ(attr, kDefaultStorage) << "Only default storage is supported";
+  }
+  for (int& attr : *out_attrs) {
+    attr = kDefaultStorage;
+  }
+  *dispatch_mode = DispatchMode::kFComputeEx;
+  return true;
+}
+
+template <int req>
+struct bincount_weight_bwd {
+  template <typename DType, typename OType>
+  MSHADOW_XINLINE static void Map(index_t i, const DType* data, const OType* ograd, OType* wgrad) {
+    KERNEL_ASSIGN(wgrad[i], req, ograd[static_cast<int>(data[i])]);
+  }
+};
+
 template <typename xpu>
 void NumpyBincountForwardImpl(const OpContext& ctx,
                               const NDArray& data,
@@ -145,6 +190,42 @@ void NumpyBincountForward(const nnvm::NodeAttrs& attrs,
       NumpyBincountForwardImpl<xpu>(ctx, data, out, N, minlength);
     }
   }
+}
+
+template <typename xpu>
+void NumpyBincountBackward(const nnvm::NodeAttrs& attrs,
+                           const OpContext& ctx,
+                           const std::vector<NDArray>& inputs,
+                           const std::vector<OpReqType>& req,
+                           const std::vector<NDArray>& outputs) {
+  CHECK_EQ(inputs.size(), 3U);
+  CHECK_EQ(outputs.size(), 2U);
+  mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
+
+  if (req[0] == kWriteTo) {
+    MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
+      mxnet_op::Kernel<mxnet_op::set_zero, xpu>::Launch(
+          s, outputs[0].shape().Size(), outputs[0].data().dptr<DType>());
+    });
+  }
+
+  if (req[1] == kNullOp)
+    return;
+
+  const NDArray& ograd  = inputs[0];
+  const NDArray& data   = inputs[1];
+  const NDArray& w_grad = outputs[1];
+  MSHADOW_TYPE_SWITCH(data.dtype(), DType, {
+    MSHADOW_TYPE_SWITCH(w_grad.dtype(), OType, {
+      MXNET_ASSIGN_REQ_SWITCH(req[1], Req, {
+        mxnet_op::Kernel<bincount_weight_bwd<Req>, xpu>::Launch(s,
+                                                                data.shape().Size(),
+                                                                data.data().dptr<DType>(),
+                                                                ograd.data().dptr<OType>(),
+                                                                w_grad.data().dptr<OType>());
+      });
+    });
+  });
 }
 
 }  // namespace op

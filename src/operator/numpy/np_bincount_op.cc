@@ -103,6 +103,16 @@ void NumpyBincountForwardImpl<cpu>(const OpContext& ctx,
 
 DMLC_REGISTER_PARAMETER(NumpyBincountParam);
 
+std::vector<nnvm::NodeEntry> NumpyBincountGradient(
+    const nnvm::ObjectPtr& n,
+    const std::vector<nnvm::NodeEntry>& ograds) {
+  const NumpyBincountParam& param = nnvm::get<NumpyBincountParam>(n->attrs.parsed);
+  if (!param.has_weights) {
+    return MakeZeroGradNodes(n, ograds);
+  }
+  return MakeNonlossGradNode("_backward_npi_bincount", n, ograds, n->inputs, n->attrs.dict);
+}
+
 NNVM_REGISTER_OP(_npi_bincount)
     .set_attr_parser(ParamParser<NumpyBincountParam>)
     .set_num_inputs([](const NodeAttrs& attrs) {
@@ -125,10 +135,20 @@ NNVM_REGISTER_OP(_npi_bincount)
     .set_attr<nnvm::FInferType>("FInferType", NumpyBincountType)
     .set_attr<FInferStorageType>("FInferStorageType", NumpyBincountStorageType)
     .set_attr<FComputeEx>("FComputeEx<cpu>", NumpyBincountForward<cpu>)
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)
+    .set_attr<nnvm::FGradient>("FGradient", NumpyBincountGradient)
     .add_argument("data", "NDArray-or-Symbol", "Data")
     .add_argument("weights", "NDArray-or-Symbol", "Weights")
     .add_arguments(NumpyBincountParam::__FIELDS__());
+
+NNVM_REGISTER_OP(_backward_npi_bincount)
+    .set_attr_parser(ParamParser<NumpyBincountParam>)
+    .set_num_inputs(3)
+    .set_num_outputs(2)
+    .set_attr<nnvm::TIsBackward>("TIsBackward", true)
+    .set_attr<mxnet::FInferShape>("FInferShape", NumpyBincountBackwardShape)
+    .set_attr<nnvm::FInferType>("FInferType", NumpyBincountBackwardType)
+    .set_attr<FInferStorageType>("FInferStorageType", NumpyBincountBackwardStorageType)
+    .set_attr<FComputeEx>("FComputeEx<cpu>", NumpyBincountBackward<cpu>);
 
 }  // namespace op
 }  // namespace mxnet

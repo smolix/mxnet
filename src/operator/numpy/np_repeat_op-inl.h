@@ -166,6 +166,43 @@ struct repeat_axis_fwd {
   }
 };
 
+template <int req>
+struct repeat_noaxis_bwd {
+  template <typename DType>
+  MSHADOW_XINLINE static void Map(index_t i, const DType* ograd, DType* igrad, const int* indx) {
+    int begin = i == 0 ? 0 : indx[i - 1];
+    int end   = indx[i];
+    DType sum = 0;
+    for (int j = begin; j < end; ++j) {
+      sum += ograd[j];
+    }
+    KERNEL_ASSIGN(igrad[i], req, sum);
+  }
+};
+
+template <int req>
+struct repeat_axis_bwd {
+  template <typename DType>
+  MSHADOW_XINLINE static void Map(index_t i,
+                                  const DType* ograd,
+                                  DType* igrad,
+                                  const int* indx,
+                                  const int axis_len,
+                                  const int out_axis_len,
+                                  const int inner_stride) {
+    const int axis_idx = (i / inner_stride) % axis_len;
+    const int outer    = i / (axis_len * inner_stride);
+    const int inner    = i % inner_stride;
+    const int begin    = axis_idx == 0 ? 0 : indx[axis_idx - 1];
+    const int end      = indx[axis_idx];
+    DType sum          = 0;
+    for (int j = begin; j < end; ++j) {
+      sum += ograd[(outer * out_axis_len + j) * inner_stride + inner];
+    }
+    KERNEL_ASSIGN(igrad[i], req, sum);
+  }
+};
+
 /*!
  * \brief Function that performs elements repetition along 0th axis.
  * \param ind pointer to the allocated memory which is needed for calculations.
@@ -317,6 +354,94 @@ void NumpyRepeatsOpForward(const nnvm::NodeAttrs& attrs,
     int* repeat_tmp_dptr = reinterpret_cast<int*>(temp_space.dptr_);
     NumpyRepeatsAxisZeroOpForward<xpu>(attrs, ctx, inputs, req, outputs, repeat_tmp_dptr);
   }
+}
+
+template <typename xpu>
+void NumpyRepeatsOpBackward(const nnvm::NodeAttrs& attrs,
+                            const OpContext& ctx,
+                            const std::vector<TBlob>& inputs,
+                            const std::vector<OpReqType>& req,
+                            const std::vector<TBlob>& outputs) {
+  using namespace mshadow;
+  CHECK_EQ(inputs.size(), 1U);
+  CHECK_EQ(outputs.size(), 1U);
+  if (req[0] == kNullOp)
+    return;
+
+  const mxnet::TShape& ishape = outputs[0].shape_;
+  if (!shape_is_known(ishape))
+    return;
+
+  nnvm::dim_t repeats = 0;
+  int axis            = -1;
+  dmlc::optional<int> axisOpt;
+  const RepeatsParam& param = nnvm::get<RepeatsParam>(attrs.parsed);
+  GetRepeatsParams(param, ishape, &repeats, &axisOpt, &axis);
+  Stream<xpu>* s = ctx.get_stream<xpu>();
+
+  if (repeats == 0) {
+    if (req[0] == kWriteTo) {
+      MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
+        mxnet_op::Kernel<mxnet_op::set_zero, xpu>::Launch(
+            s, outputs[0].Size(), outputs[0].dptr<DType>());
+      });
+    }
+    return;
+  }
+
+  mxnet::Tuple<int> tuple_with_repetitions = param.repeats.value();
+  if (tuple_with_repetitions.ndim() == 1) {
+    const int len = axisOpt.has_value() ? ishape[axis] : ishape.Size();
+    std::vector<int> temp(len, repeats);
+    tuple_with_repetitions = mxnet::Tuple<int>(temp);
+  }
+  for (int i = 1; i < tuple_with_repetitions.ndim(); i++) {
+    tuple_with_repetitions[i] += tuple_with_repetitions[i - 1];
+  }
+
+  Tensor<xpu, 1, char> temp_space = ctx.requested[0].get_space_typed<xpu, 1, char>(
+      Shape1(tuple_with_repetitions.ndim() * sizeof(int)), s);
+  int* repeat_tmp_dptr = reinterpret_cast<int*>(temp_space.dptr_);
+  if (ctx.run_ctx.ctx.dev_mask() == gpu::kDevMask) {
+#if MXNET_USE_CUDA
+    cudaMemcpyAsync(repeat_tmp_dptr,
+                    tuple_with_repetitions.begin(),
+                    tuple_with_repetitions.ndim() * sizeof(int),
+                    cudaMemcpyHostToDevice,
+                    Stream<gpu>::GetStream(ctx.get_stream<gpu>()));
+#else
+    LOG(FATAL) << "Illegal attempt to use GPU in a CPU-only build";
+#endif
+  } else {
+    std::memcpy(repeat_tmp_dptr,
+                tuple_with_repetitions.begin(),
+                tuple_with_repetitions.ndim() * sizeof(int));
+  }
+
+  MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
+    MXNET_ASSIGN_REQ_SWITCH(req[0], Req, {
+      if (!axisOpt.has_value()) {
+        mxnet_op::Kernel<repeat_noaxis_bwd<Req>, xpu>::Launch(s,
+                                                              outputs[0].Size(),
+                                                              inputs[0].dptr<DType>(),
+                                                              outputs[0].dptr<DType>(),
+                                                              repeat_tmp_dptr);
+      } else {
+        int inner_stride = 1;
+        for (int i = axis + 1; i < ishape.ndim(); ++i) {
+          inner_stride *= ishape[i];
+        }
+        mxnet_op::Kernel<repeat_axis_bwd<Req>, xpu>::Launch(s,
+                                                            outputs[0].Size(),
+                                                            inputs[0].dptr<DType>(),
+                                                            outputs[0].dptr<DType>(),
+                                                            repeat_tmp_dptr,
+                                                            ishape[axis],
+                                                            inputs[0].shape_[axis],
+                                                            inner_stride);
+      }
+    });
+  });
 }
 
 }  // namespace op

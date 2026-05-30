@@ -29,5 +29,8 @@ namespace op {
 
 NNVM_REGISTER_OP(_npi_repeats).set_attr<FCompute>("FCompute<gpu>", NumpyRepeatsOpForward<gpu>);
 
+NNVM_REGISTER_OP(_backward_npi_repeats)
+    .set_attr<FCompute>("FCompute<gpu>", NumpyRepeatsOpBackward<gpu>);
+
 }  // namespace op
 }  // namespace mxnet

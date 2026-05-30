@@ -41,9 +41,20 @@ NNVM_REGISTER_OP(_npi_repeats)
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
                                 })
     .set_attr<FCompute>("FCompute<cpu>", NumpyRepeatsOpForward<cpu>)
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)
+    .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseNone{"_backward_npi_repeats"})
     .add_argument("data", "NDArray-or-Symbol", "Input data array")
     .add_arguments(RepeatsParam::__FIELDS__());
+
+NNVM_REGISTER_OP(_backward_npi_repeats)
+    .set_num_inputs(1)
+    .set_num_outputs(1)
+    .set_attr_parser(ParamParser<RepeatsParam>)
+    .set_attr<nnvm::TIsBackward>("TIsBackward", true)
+    .set_attr<FCompute>("FCompute<cpu>", NumpyRepeatsOpBackward<cpu>)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& n) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                });
 
 }  // namespace op
 }  // namespace mxnet

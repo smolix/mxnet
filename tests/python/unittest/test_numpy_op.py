@@ -5948,6 +5948,38 @@ def test_np_repeat():
 
 
 @use_np
+def test_np_repeat_backward():
+    configs = [
+        ((3,), 2, None),
+        ((3,), 0, None),
+        ((2, 2), 3, 1),
+        ((2, 2), [1, 2], 0),
+        ((2, 2), [1, 2], 1),
+        ((2, 2), [1, 0], 1),
+    ]
+
+    for shape, repeats, axis in configs:
+        data = np.arange(onp.prod(shape), dtype='float32').reshape(shape)
+        data.attach_grad()
+        with mx.autograd.record():
+            out = data.repeat(repeats, axis)
+            loss = out.sum()
+        loss.backward()
+
+        expected = onp.ones(shape, dtype='float32')
+        if isinstance(repeats, list):
+            repeat_array = onp.array(repeats, dtype='float32')
+            expected = onp.broadcast_to(repeat_array, shape).copy()
+            if axis == 0:
+                expected = onp.broadcast_to(repeat_array.reshape((-1, 1)), shape).copy()
+            elif axis == 1:
+                expected = onp.broadcast_to(repeat_array.reshape((1, -1)), shape).copy()
+        else:
+            expected *= repeats
+        assert_almost_equal(data.grad.asnumpy(), expected)
+
+
+@use_np
 def test_np_repeat_large_shape_infer_shape_no_alloc():
     large_dim = 1 << 31
     data = mx.sym.var('data').as_np_ndarray()

@@ -474,8 +474,8 @@ void TrilindicesOpForward(const nnvm::NodeAttrs& attrs,
 
   CHECK_EQ(req.size(), 2U);
   MSHADOW_IDX_TYPE_SWITCH(out_data0.type_flag_, DType, {
-    MXNET_ASSIGN_REQ_SWITCH(req[0], req0_type, {
-      MXNET_ASSIGN_REQ_SWITCH(req[1], req1_type, {
+    MXNET_REQ_TYPE_SWITCH(req[0], req0_type, {
+      MXNET_REQ_TYPE_SWITCH(req[1], req1_type, {
         Kernel<TrilindicesOpForwardImpl<req0_type, req1_type>, xpu>::Launch(
             s, length, out_data0.dptr<DType>(), out_data1.dptr<DType>(), indices, length);
       });

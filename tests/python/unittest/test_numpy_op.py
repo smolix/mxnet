@@ -8754,6 +8754,11 @@ def test_np_tril_indices_partial_outputs():
     row, col = mx.sym.np.tril_indices(4, k=0, m=4)
     expected = onp.tril_indices(4, k=0, m=4)
 
+    group_exe = mx.sym.Group([row, col])._simple_bind(ctx=mx.cpu())
+    group_exe.forward(is_train=False)
+    assert same(group_exe.outputs[0], expected[0])
+    assert same(group_exe.outputs[1], expected[1])
+
     row_exe = row._simple_bind(ctx=mx.cpu())
     row_exe.forward(is_train=False)
     assert same(row_exe.outputs[0], expected[0])
@@ -10878,12 +10883,23 @@ def test_np_cross(a_shape, b_shape, axes, dtype, hybridize):
 
     # get reduced axis index
     def get_reduce_axis(shape, broad_shape):
-        axis = list()
-        length = len(broad_shape) if len(shape) == len(broad_shape) + 1 else len(broad_shape) - 1
-        for i in range(length):
-            if shape[i] != broad_shape[i]:
-                axis.append(i)
-        return tuple(axis) if len(axis) > 0 else None
+        shape_core = shape[:-1]
+        broad_core = broad_shape if len(shape) == len(broad_shape) + 1 else broad_shape[:-1]
+        axis = []
+        if len(shape_core) <= len(broad_core):
+            offset = len(broad_core) - len(shape_core)
+            axis.extend(range(offset))
+            for i, dim in enumerate(shape_core):
+                broad_axis = offset + i
+                if dim == 1 and broad_core[broad_axis] != 1:
+                    axis.append(broad_axis)
+        else:
+            offset = len(shape_core) - len(broad_core)
+            for i in range(offset, len(shape_core)):
+                broad_axis = i - offset
+                if shape_core[i] != broad_core[broad_axis]:
+                    axis.append(i)
+        return tuple(axis) if axis else None
 
     # get grad_a and grad_b
     def get_cross_backward(a, b, axises):
@@ -10994,6 +11010,37 @@ def test_np_cross(a_shape, b_shape, axes, dtype, hybridize):
     # check imperative once again
     mx_out = test_numpy_cross(a, b)
     check_np_cross(mx_out, a.asnumpy(), b.asnumpy(), axes)
+
+
+@use_np
+def test_np_cross_backward_second_input_only_req():
+    a = np.array([1., 2., 3.], dtype='float32')
+    b = np.array([4., 5.], dtype='float32')
+    a.attach_grad('null')
+    b.attach_grad('write')
+
+    with mx.autograd.record():
+        loss = np.cross(a, b).sum()
+    loss.backward()
+
+    assert_almost_equal(b.grad.asnumpy(), onp.array([1., -2.], dtype='float32'))
+
+
+@use_np
+def test_np_cross_backward_lower_rank_broadcast_grad():
+    a = np.array([[1., 2., 3.], [2., 3., 4.]], dtype='float32')
+    b = np.array([4., 5.], dtype='float32')
+    a.attach_grad('write')
+    b.attach_grad('write')
+
+    with mx.autograd.record():
+        loss = np.cross(a, b).sum()
+    loss.backward()
+
+    assert_almost_equal(
+        a.grad.asnumpy(),
+        onp.array([[5., -4., -1.], [5., -4., -1.]], dtype='float32'))
+    assert_almost_equal(b.grad.asnumpy(), onp.array([2., -4.], dtype='float32'))
 
 
 @use_np

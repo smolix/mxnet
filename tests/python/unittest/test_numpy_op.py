@@ -214,6 +214,21 @@ def test_np_tensordot(a_shape, b_shape, axes, hybridize, dtype):
 
 
 @use_np
+@pytest.mark.parametrize('axes', [1, ([1], [0])])
+@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
+def test_np_tensordot_unsupported_dtypes_rejected(axes, dtype):
+    a = np.array([[1, 2], [3, 4]], dtype=dtype)
+    b = np.array([[1, 2], [3, 4]], dtype=dtype)
+    with pytest.raises((ValueError, mx.MXNetError), match="floating point"):
+        np.tensordot(a, b, axes=axes).asnumpy()
+
+    a_sym = mx.sym.var('a').as_np_ndarray()
+    b_sym = mx.sym.var('b').as_np_ndarray()
+    with pytest.raises(mx.MXNetError, match="floating point"):
+        mx.sym.np.tensordot(a_sym, b_sym, axes=axes).as_nd_ndarray().infer_type(a=dtype, b=dtype)
+
+
+@use_np
 @pytest.mark.parametrize('shape_a,shape_b', [
     ((3, 0), (0, 4)),
     ((3,), (3,)),
@@ -667,6 +682,17 @@ def test_np_kron(a_shape, b_shape, dtype, hybridize):
     np_backward = np_kron_backward(onp.ones(np_out.shape, dtype = dtype), a.asnumpy(), b.asnumpy())
     assert_almost_equal(a.grad.asnumpy(), np_backward[0], rtol=1e-2, atol=1e-2)
     assert_almost_equal(b.grad.asnumpy(), np_backward[1], rtol=1e-2, atol=1e-2)
+
+
+@use_np
+@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
+def test_np_kron_extended_dtypes(dtype):
+    a_np = onp.array([[1, 0], [0, 1]], dtype=dtype)
+    b_np = onp.array([[1, 1], [0, 1]], dtype=dtype)
+    mx_out = np.kron(np.array(a_np, dtype=dtype), np.array(b_np, dtype=dtype))
+    np_out = onp.kron(a_np, b_np)
+    assert mx_out.dtype == np_out.dtype
+    onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
 
 
 @use_np

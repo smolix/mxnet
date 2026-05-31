@@ -1036,6 +1036,37 @@ def test_np_average_returned_type():
 
 
 @use_np
+def test_np_average_integral_returned_type():
+    data = np.array([1, 2], dtype='int32')
+    avg, sum_of_weights = np.average(data, returned=True)
+    assert avg.dtype == onp.float32
+    assert sum_of_weights.dtype == onp.float32
+    assert_almost_equal(avg.asnumpy(), onp.array(1.5, dtype=onp.float32))
+    assert_almost_equal(sum_of_weights.asnumpy(), onp.array(2.0, dtype=onp.float32))
+
+    weights = np.array([1, 1], dtype='int32')
+    avg, sum_of_weights = np.average(data, weights=weights, returned=True)
+    assert avg.dtype == onp.float32
+    assert sum_of_weights.dtype == onp.float32
+    assert_almost_equal(avg.asnumpy(), onp.array(1.5, dtype=onp.float32))
+    assert_almost_equal(sum_of_weights.asnumpy(), onp.array(2.0, dtype=onp.float32))
+
+    matrix = np.array([[1, 2, 4], [2, 3, 5]], dtype='int32')
+    avg, sum_of_weights = np.average(matrix, axis=1, returned=True)
+    assert avg.dtype == onp.float32
+    assert sum_of_weights.dtype == onp.float32
+    assert_almost_equal(avg.asnumpy(), onp.array([7.0 / 3.0, 10.0 / 3.0], dtype=onp.float32))
+    assert_almost_equal(sum_of_weights.asnumpy(), onp.array([3.0, 3.0], dtype=onp.float32))
+
+    bool_data = np.array([True, False, True], dtype='bool')
+    avg, sum_of_weights = np.average(bool_data, returned=True)
+    assert avg.dtype == onp.float32
+    assert sum_of_weights.dtype == onp.float32
+    assert_almost_equal(avg.asnumpy(), onp.array(2.0 / 3.0, dtype=onp.float32))
+    assert_almost_equal(sum_of_weights.asnumpy(), onp.array(3.0, dtype=onp.float32))
+
+
+@use_np
 def test_np_var_std_backward():
     data_np = onp.array([1., 2., 3.], dtype='float32')
 

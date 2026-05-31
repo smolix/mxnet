@@ -197,6 +197,10 @@ def _normalize_repeat_repeats(repeats):
                     .format(type(repeats).__name__))
 
 
+def _default_float_dtype():
+    return _np.float64 if is_np_default_dtype() else _np.float32
+
+
 @set_module('mxnet.ndarray.numpy')
 def shape(a):
     """
@@ -5981,6 +5985,11 @@ def average(a, axis=None, weights=None, returned=False, out=None):
     >>> np.average(data, axis=1, weights=weights)
     array([0.75, 2.75, 4.75])
     """
+    if not _np.issubdtype(a.dtype, _np.floating):
+        dtype = _default_float_dtype()
+        a = a.astype(dtype)
+        if weights is not None:
+            weights = weights.astype(dtype)
     out = _api_internal.average(a, weights, axis, returned, weights is not None, out)
     if isinstance(out, NDArray):
         return out

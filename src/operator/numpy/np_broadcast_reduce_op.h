@@ -408,6 +408,81 @@ void NumpyReduceAxesCompute(const nnvm::NodeAttrs& attrs,
   }
 }
 
+template <typename xpu,
+          typename reducer,
+          bool safe_acc_hint = false,
+          bool normalize     = false,
+          typename OP        = op::mshadow_op::identity>
+void NumpyReduceAxesComputeExt(const nnvm::NodeAttrs& attrs,
+                               const OpContext& ctx,
+                               const std::vector<TBlob>& inputs,
+                               const std::vector<OpReqType>& req,
+                               const std::vector<TBlob>& outputs) {
+  using namespace mshadow;
+  if (req[0] == kNullOp)
+    return;
+  const auto& param = nnvm::get<NumpyReduceAxesParam>(attrs.parsed);
+  if (param.initial.has_value()) {
+    LOG(FATAL) << "initial is not supported yet";
+  }
+  Stream<xpu>* s = ctx.get_stream<xpu>();
+  CHECK_NE(req[0], kWriteInplace) << "Reduce does not support write in-place";
+  if (outputs[0].shape_.Size() == 0)
+    return;
+  if (inputs[0].shape_.Size() == 0 && outputs[0].shape_.Size() != 0) {
+    using namespace mxnet_op;
+    MXNET_ASSIGN_REQ_SWITCH(req[0], Req, {
+    if (normalize) {
+      LOG(WARNING) << "WARNING: Mean of empty slice.";
+      if (mxnet::common::is_float(outputs[0].type_flag_)) {
+        MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
+          Kernel<op_with_req<set_to_nan, Req>, xpu>::Launch(
+              s, outputs[0].shape_.Size(), outputs[0].dptr<DType>());
+        });
+      } else {
+        LOG(WARNING) << "WARNING: nan is outside the range of"
+                     << "representable values of type 'int'";
+        MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(outputs[0].type_flag_, DType, {
+          Kernel<op_with_req<set_zero, Req>, xpu>::Launch(
+              s, outputs[0].shape_.Size(), outputs[0].dptr<DType>());
+        });
+      }
+    } else if (std::is_same<reducer, mshadow_op::sum>::value) {
+      MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(outputs[0].type_flag_, DType, {
+        Kernel<op_with_req<set_zero, Req>, xpu>::Launch(
+            s, outputs[0].shape_.Size(), outputs[0].dptr<DType>());
+      });
+    } else {
+      MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(outputs[0].type_flag_, DType, {
+        Kernel<op_with_req<set_one, Req>, xpu>::Launch(
+            s, outputs[0].shape_.Size(), outputs[0].dptr<DType>());
+      });
+    }
+    });
+    return;
+  }
+  if (param.axis.has_value() && param.axis.value().ndim() == 0) {
+    if (inputs[0].type_flag_ == outputs[0].type_flag_) {
+      UnaryOp::IdentityCompute<xpu>(attrs, ctx, inputs, req, outputs);
+    } else {
+      CastCompute<xpu>(attrs, ctx, inputs, req, outputs);
+    }
+    return;
+  }
+  TShape small;
+  if (param.keepdims) {
+    small = outputs[0].shape_;
+  } else {
+    small = NumpyReduceAxesShapeImpl(inputs[0].shape_, param.axis, true);
+  }
+
+  if (NeedSafeAcc<safe_acc_hint>(inputs[0].type_flag_, outputs[0].type_flag_)) {
+    ReduceAxesComputeImplExt<xpu, reducer, true, normalize, OP>(ctx, inputs, req, outputs, small);
+  } else {
+    ReduceAxesComputeImplExt<xpu, reducer, false, normalize, OP>(ctx, inputs, req, outputs, small);
+  }
+}
+
 template <typename xpu, typename reducer, typename OP = op::mshadow_op::identity>
 void NumpyReduceAxesNoDTypeCompute(const nnvm::NodeAttrs& attrs,
                                    const OpContext& ctx,

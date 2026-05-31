@@ -2727,6 +2727,20 @@ def test_np_prod_default_integer_dtype():
 
 
 @use_np
+@pytest.mark.parametrize('op_name', ['sum', 'prod'])
+@pytest.mark.parametrize('dtype', ['int16', 'uint16', 'uint32'])
+def test_np_sum_prod_additional_integer_output_dtypes(op_name, dtype):
+    data_np = onp.array([1, 0, 2], dtype='int32')
+    data = np.array(data_np)
+    mx_op = getattr(np, op_name)
+    np_op = getattr(onp, op_name)
+    mx_out = mx_op(data, dtype=dtype)
+    np_out = np_op(data_np, dtype=dtype)
+    assert mx_out.dtype == np_out.dtype
+    onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
 def test_np_flatten():
     class TestFlatten(HybridBlock):
         def forward(self, x):

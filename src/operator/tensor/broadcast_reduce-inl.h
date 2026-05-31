@@ -512,18 +512,36 @@ void Reduce(Stream<cpu>* s,
   } else {
     MXNET_ACC_TYPE_SWITCH(mshadow::DataType<DType>::kFlag, DataType, AType, {
       typedef typename std::conditional<safe_acc, AType, DataType>::type AccType;
-      MSHADOW_TYPE_SWITCH_WITH_BOOL(small.type_flag_, OType, {
-        typedef typename std::conditional<safe_acc, OType, DataType>::type OutType;
-        seq_reduce_compute<Reducer, ndim, AccType, DataType, OutType, OP>(N,
-                                                                          M,
-                                                                          req == kAddTo,
-                                                                          big.dptr<DataType>(),
-                                                                          small.dptr<OutType>(),
-                                                                          big.shape_.get<ndim>(),
-                                                                          small.shape_.get<ndim>(),
-                                                                          rshape,
-                                                                          rstride);
-      });
+      if constexpr (std::is_same<Reducer, mshadow_op::sum>::value ||
+                    std::is_same<Reducer, mshadow_op::product>::value) {
+        MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(small.type_flag_, OType, {
+          typedef typename std::conditional<safe_acc, OType, DataType>::type OutType;
+          seq_reduce_compute<Reducer, ndim, AccType, DataType, OutType, OP>(
+              N,
+              M,
+              req == kAddTo,
+              big.dptr<DataType>(),
+              small.dptr<OutType>(),
+              big.shape_.get<ndim>(),
+              small.shape_.get<ndim>(),
+              rshape,
+              rstride);
+        });
+      } else {
+        MSHADOW_TYPE_SWITCH_WITH_BOOL(small.type_flag_, OType, {
+          typedef typename std::conditional<safe_acc, OType, DataType>::type OutType;
+          seq_reduce_compute<Reducer, ndim, AccType, DataType, OutType, OP>(
+              N,
+              M,
+              req == kAddTo,
+              big.dptr<DataType>(),
+              small.dptr<OutType>(),
+              big.shape_.get<ndim>(),
+              small.shape_.get<ndim>(),
+              rshape,
+              rstride);
+        });
+      }
     });
   }
 }

@@ -7498,19 +7498,52 @@ def test_gather_nd_check_bound():
         output = mx.nd.gather_nd(data, indices).asnumpy()
     # check if indices is out of bound
     data = mx.nd.array([[0, 1, 2], [3, 4, 5]])
-    indices1 = mx.nd.array([[0, 1, 0], [0, 1, 3]])
-    indices2 = mx.nd.array([[0, 1, 0], [0, 1, -5]])
+    indices1 = mx.nd.array([[0, 1, 0], [0, 1, 3]], dtype='int32')
+    indices2 = mx.nd.array([[0, 1, 0], [0, 1, -5]], dtype='int32')
     assertRaises(IndexError, _test_gather_nd_exception, data, indices1)
     # IndexError: index 3 is out of bounds for axis 1 with size 3
     assertRaises(IndexError, _test_gather_nd_exception, data, indices2)
     # IndexError: index -5 is out of bounds for axis 1 with size 3
 
     # check if the negative indices are wrapped correctly
-    indices1 = mx.nd.array([[0, 1, -1], [0, 1, -2]])
-    indices2 = mx.nd.array([[0, 1, 1], [0, 1, 1]])
+    indices1 = mx.nd.array([[0, 1, -1], [0, 1, -2]], dtype='int32')
+    indices2 = mx.nd.array([[0, 1, 1], [0, 1, 1]], dtype='int32')
     data1 = mx.nd.gather_nd(data, indices1)
     data2 = mx.nd.gather_nd(data, indices2)
     assert_almost_equal(data1, data2, rtol=1e-5, atol=1e-5)
+
+
+def test_gather_scatter_nd_index_validation():
+    data = mx.nd.arange(6).reshape((2, 3))
+    zero_index_dim = mx.nd.empty((0, 4), dtype='int32')
+    with pytest.raises(MXNetError, match="at least one index dimension"):
+        mx.nd.gather_nd(data, zero_index_dim).asnumpy()
+
+    scatter_data = mx.nd.ones((4,))
+    with pytest.raises(MXNetError, match="at least one index dimension"):
+        mx.nd.scatter_nd(scatter_data, zero_index_dim, shape=(2, 3)).asnumpy()
+
+    float_indices = mx.nd.array([[0.0, 1.0]], dtype='float32')
+    with pytest.raises(MXNetError, match="indices must be int32 or int64"):
+        mx.nd.gather_nd(data, float_indices).asnumpy()
+    float_indices = mx.nd.array([[0.0, 1.0], [0.0, 1.0]], dtype='float32')
+    with pytest.raises(MXNetError, match="indices must be int32 or int64"):
+        mx.nd.scatter_nd(mx.nd.ones((2,)), float_indices, shape=(2, 3)).asnumpy()
+
+
+def test_gather_nd_negative_index_backward():
+    data = mx.nd.arange(3, dtype='float32')
+    indices = mx.nd.array([[-1]], dtype='int32')
+    data.attach_grad()
+    with mx.autograd.record():
+        out = mx.nd.gather_nd(data, indices)
+    out.backward()
+    assert_almost_equal(out.asnumpy(), np.array([2], dtype='float32'))
+    assert_almost_equal(data.grad.asnumpy(), np.array([0, 0, 1], dtype='float32'))
+
+    grad = mx.nd._internal._backward_gather_nd(
+        mx.nd.array([1], dtype='float32'), indices, shape=data.shape)
+    assert_almost_equal(grad.asnumpy(), np.array([0, 0, 1], dtype='float32'))
 
 
 def compare_forw_backw_unary_op(

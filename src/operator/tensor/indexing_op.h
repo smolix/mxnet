@@ -1440,6 +1440,8 @@ inline bool GatherNDShape(const nnvm::NodeAttrs& attrs,
 
   CHECK_GT(ishape.ndim(), 1) << "gather_nd requires index tensor to have at least 2 dimensions";
 
+  CHECK_GT(ishape[0], 0) << "gather_nd requires at least one index dimension";
+
   CHECK_LE(ishape[0], dshape.ndim()) << "Number of indices exceeds data dimension";
 
   CHECK_LE(ishape[0], 10) << "gather_nd supports indexing along at most 10 dimensions.";
@@ -1462,6 +1464,11 @@ inline bool GatherNDType(const nnvm::NodeAttrs& attrs,
                          std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 2U);
   CHECK_EQ(out_attrs->size(), 1U);
+  if (in_attrs->at(1) == -1) {
+    return false;
+  }
+  CHECK(in_attrs->at(1) == mshadow::kInt32 || in_attrs->at(1) == mshadow::kInt64)
+      << "gather_nd indices must be int32 or int64";
   TYPE_ASSIGN_CHECK(*out_attrs, 0, (*in_attrs)[0]);
   TYPE_ASSIGN_CHECK(*in_attrs, 0, (*out_attrs)[0]);
   return true;
@@ -1492,6 +1499,8 @@ inline bool ScatterNDShape(const nnvm::NodeAttrs& attrs,
 
   CHECK_GT(ishape.ndim(), 1) << "scatter_nd requires index tensor to have at least 2 dimensions";
 
+  CHECK_GT(ishape[0], 0) << "scatter_nd requires at least one index dimension";
+
   CHECK_LE(ishape[0], oshape.ndim())
       << "Number of indices exceeds output dimension in operator scatter_nd";
 
@@ -1517,9 +1526,14 @@ inline bool ScatterNDType(const nnvm::NodeAttrs& attrs,
                           std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 2U);
   CHECK_EQ(out_attrs->size(), 1U);
+  if (in_attrs->at(0) == -1 || in_attrs->at(1) == -1) {
+    return false;
+  }
+  CHECK(in_attrs->at(1) == mshadow::kInt32 || in_attrs->at(1) == mshadow::kInt64)
+      << "scatter_nd indices must be int32 or int64";
   TYPE_ASSIGN_CHECK(*out_attrs, 0, (*in_attrs)[0]);
   TYPE_ASSIGN_CHECK(*in_attrs, 0, (*out_attrs)[0]);
-  return in_attrs->at(0) != -1 && in_attrs->at(1) != -1;
+  return true;
 }
 
 struct scatter_nd {
@@ -1589,6 +1603,7 @@ GatherNDBackwardImpl(index_t N,
                      index_t M,
                      index_t K,
                      const mshadow::Shape<10> strides,
+                     const mshadow::Shape<10> mshape,
                      DType* out,
                      const DType* data,
                      const IType* indices,
@@ -1600,6 +1615,7 @@ GatherNDBackwardImpl(index_t N,
                      index_t M,
                      index_t K,
                      const mshadow::Shape<10> strides,
+                     const mshadow::Shape<10> mshape,
                      DType* out,
                      const DType* data,
                      const IType* indices,
@@ -1610,6 +1626,7 @@ inline void GatherNDBackwardImpl(index_t N,
                                  index_t M,
                                  index_t K,
                                  const mshadow::Shape<10> strides,
+                                 const mshadow::Shape<10> mshape,
                                  DType* out,
                                  const DType* data,
                                  const IType* indices,
@@ -1634,8 +1651,11 @@ void GatherNDBackward(const nnvm::NodeAttrs& attrs,
   dim_t N                     = ishape.Size() / M;
   dim_t K                     = oshape.ProdShape(M, oshape.ndim());
   mshadow::Shape<10> strides;
-  for (dim_t i = M - 1, stride = K; i >= 0; stride *= oshape[i], --i)
+  mshadow::Shape<10> mshape;
+  for (dim_t i = M - 1, stride = K; i >= 0; stride *= oshape[i], --i) {
     strides[i] = stride;
+    mshape[i]  = oshape[i];
+  }
   if (kWriteTo == req[0]) {
     Fill<true>(s, outputs[0], req[0], 0);
   }
@@ -1645,6 +1665,7 @@ void GatherNDBackward(const nnvm::NodeAttrs& attrs,
                            M,
                            K,
                            strides,
+                           mshape,
                            outputs[0].dptr<DType>(),
                            inputs[0].dptr<DType>(),
                            inputs[1].dptr<IType>(),

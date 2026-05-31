@@ -621,6 +621,7 @@ GatherNDBackwardImpl(index_t N,
                      index_t M,
                      index_t K,
                      const mshadow::Shape<10> strides,
+                     const mshadow::Shape<10> mshape,
                      DType* out,
                      const DType* data,
                      const IType* indices,
@@ -629,7 +630,8 @@ GatherNDBackwardImpl(index_t N,
   for (index_t i = 0; i < N; i++) {
     index_t offset = 0;
     for (index_t j = 0; j < M; ++j) {
-      offset += strides[j] * static_cast<index_t>(indices[j * N + i]);
+      offset +=
+          strides[j] * (static_cast<index_t>(indices[j * N + i] + mshape[j]) % mshape[j]);
     }
     for (index_t j = 0; j < K; ++j) {
 #pragma omp atomic
@@ -644,6 +646,7 @@ GatherNDBackwardImpl(index_t N,
                      index_t M,
                      index_t K,
                      const mshadow::Shape<10> strides,
+                     const mshadow::Shape<10> mshape,
                      DType* out,
                      const DType* data,
                      const IType* indices,
@@ -651,7 +654,8 @@ GatherNDBackwardImpl(index_t N,
   for (index_t i = 0; i < N; i++) {
     index_t offset = 0;
     for (index_t j = 0; j < M; ++j) {
-      offset += strides[j] * static_cast<index_t>(indices[j * N + i]);
+      offset +=
+          strides[j] * (static_cast<index_t>(indices[j * N + i] + mshape[j]) % mshape[j]);
     }
     for (index_t j = 0; j < K; ++j) {
       out[offset + j] += data[i * K + j];

@@ -2185,6 +2185,44 @@ def _normalize_np_pad_width(pad_width):
                  for axis_width in pad_width_array.tolist())
 
 
+def _normalize_np_pad_pairs(value, ndim, name, integral=False):
+    value_array = _np.asarray(value)
+    if integral and value_array.dtype.kind != 'i':
+        raise TypeError('{} must be of integral type.'.format(name))
+    if integral and _np.any(value_array < 0):
+        raise ValueError("index can't contain negative values")
+    try:
+        value_array = _np.broadcast_to(value_array, (ndim, 2))
+    except ValueError as err:
+        raise ValueError("{} could not be broadcast to shape ({}, 2)"
+                         .format(name, ndim)) from err
+    if integral:
+        return tuple(tuple(int(width) for width in axis_width)
+                     for axis_width in value_array.tolist())
+    return tuple(tuple(axis_width) for axis_width in value_array.tolist())
+
+
+def _constant_pad_with_values(x, pad_width, constant_values):
+    pad_pairs = _normalize_np_pad_pairs(pad_width, x.ndim, '`pad_width`', integral=True)
+    value_pairs = _normalize_np_pad_pairs(constant_values, x.ndim, '`constant_values`')
+    ret = x
+    for axis, ((pad_before, pad_after), (value_before, value_after)) in enumerate(
+            zip(pad_pairs, value_pairs)):
+        parts = []
+        if pad_before:
+            before_shape = list(ret.shape)
+            before_shape[axis] = pad_before
+            parts.append(full(tuple(before_shape), value_before, dtype=ret.dtype, device=ret.device))
+        parts.append(ret)
+        if pad_after:
+            after_shape = list(ret.shape)
+            after_shape[axis] = pad_after
+            parts.append(full(tuple(after_shape), value_after, dtype=ret.dtype, device=ret.device))
+        if len(parts) > 1:
+            ret = concatenate(parts, axis=axis)
+    return ret
+
+
 @set_module('mxnet.ndarray.numpy')
 @wrap_np_binary_func
 def gcd(x1, x2, out=None, **kwargs):
@@ -9540,8 +9578,8 @@ def pad(x, pad_width, mode='constant', **kwargs): # pylint: disable=too-many-arg
                          .format(mode, unsupported_kwargs))
     if mode == "constant":
         values = kwargs.get("constant_values", 0)
-        if isinstance(values, tuple):
-            raise TypeError("unsupported constant_values type: {'tuple'}.")
+        if isinstance(values, (tuple, list, _np.ndarray)):
+            return _constant_pad_with_values(x, pad_width, values)
         return _api_internal.pad(x, pad_width, 'constant', values, "even")
     elif mode == "symmetric":
         values = kwargs.get("reflect_type", "even")

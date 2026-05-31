@@ -7885,8 +7885,8 @@ def pad(x, pad_width, mode='constant', **kwargs): # pylint: disable=too-many-arg
                          .format(mode, unsupported_kwargs))
     if mode == "constant":
         values = kwargs.get("constant_values", 0)
-        if isinstance(values, tuple):
-            raise TypeError("unsupported constant_values type: {'tuple'}.")
+        if isinstance(values, (tuple, list, _np.ndarray)):
+            raise NotImplementedError("non-scalar constant_values is not supported for Symbol pad")
         return _npi.pad(x, pad_width, mode='constant', constant_values=values)
     elif mode == "symmetric":
         values = kwargs.get("reflect_type", "even")

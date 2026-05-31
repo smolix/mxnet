@@ -9890,6 +9890,26 @@ def test_np_pad():
     with pytest.raises(ValueError):
         np.pad(x, (1,), mode='bad')
 
+    constant_value_configs = [
+        ((1,), (5, 6)),
+        ([1, 2], [5, 6]),
+        (((1, 2), (3, 4)), ((5, 6), (7, 8))),
+    ]
+    for pad_width, constant_values in constant_value_configs:
+        expected = onp.pad(x_np, pad_width, mode='constant', constant_values=constant_values)
+        mx_out = np.pad(x, pad_width, mode='constant', constant_values=constant_values)
+        assert_almost_equal(mx_out.asnumpy(), expected)
+
+    grad_x = np.array(x_np)
+    grad_x.attach_grad()
+    with mx.autograd.record():
+        grad_out = np.pad(grad_x, (1,), mode='constant', constant_values=(5, 6)).sum()
+    grad_out.backward()
+    assert_almost_equal(grad_x.grad.asnumpy(), onp.ones_like(x_np))
+
+    with pytest.raises(NotImplementedError):
+        mx.sym.np.pad(mx.sym.var('pad_x').as_np_ndarray(), (1,), constant_values=(5, 6))
+
 
 @use_np
 def test_np_rand():

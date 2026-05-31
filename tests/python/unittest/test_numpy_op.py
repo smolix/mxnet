@@ -2355,6 +2355,7 @@ def test_np_sort(shape, dtype, hybridize, descending):
 @use_np
 def test_np_squeeze():
     config = [((), None),
+              ((), ()),
               ((), -1),
               ((), 0),
               ((4, 1, 2), None),
@@ -2388,6 +2389,9 @@ def test_np_squeeze():
             ret_mx.backward()
             assert_almost_equal(data_mx.grad.asnumpy(), onp.ones_like(data_np),
                                 rtol=1e-5, atol=1e-6, use_broadcast=False)
+
+    with pytest.raises(MXNetError, match="duplicate"):
+        np.squeeze(np.zeros((1, 2, 1, 1)), axis=(0, 0)).asnumpy()
 
 
 @xfail_when_nonstandard_decimal_separator

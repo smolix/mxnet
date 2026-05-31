@@ -400,6 +400,10 @@ bool NumpySqueezeShape(const nnvm::NodeAttrs& attrs,
   if (dshape.ndim() == 0) {
     if (param.axis.has_value()) {
       mxnet::Tuple<int> axes = param.axis.value();
+      if (axes.ndim() == 0) {
+        SHAPE_ASSIGN_CHECK(*out_attrs, 0, mxnet::TShape(0, -1));
+        return true;
+      }
       CHECK_EQ(axes.ndim(), 1) << "cannot specify more than one axis for a scalar tensor";
       CHECK(axes[0] == 0 || axes[0] == -1)
           << "axis " << axes[0] << " is out of bounds of array of dimension 0";
@@ -421,7 +425,7 @@ bool NumpySqueezeShape(const nnvm::NodeAttrs& attrs,
       CHECK_EQ(dshape[axes[i]], 1)
           << "cannot select an axis to squeeze out which has size=" << dshape[axes[i]]
           << " not equal to one";
-      CHECK_NE(oshape[axes[i]], 0) << "duplicate value in axis";
+      CHECK_NE(oshape[axes[i]], -1) << "duplicate value in axis";
       oshape[axes[i]] = -1;
     }
   } else {

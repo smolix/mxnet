@@ -6403,6 +6403,13 @@ def test_np_histogram_cpu_edge_and_invalid_bins():
         np.histogram(
             mx_a,
             bins=np.array([0.0, 2.0, 1.0, 3.0], device=mx.cpu(), dtype=onp.float64))[0].asnumpy()
+    if mx.device.num_gpus() > 0:
+        gpu_a = mx_a.to_device(mx.gpu(0))
+        with pytest.raises(MXNetError, match="must increase monotonically"):
+            np.histogram(
+                gpu_a,
+                bins=np.array([0.0, 2.0, 1.0, 3.0], device=mx.gpu(0),
+                              dtype=onp.float64))[0].asnumpy()
 
 
 @use_np

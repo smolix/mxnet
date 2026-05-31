@@ -4473,7 +4473,7 @@ def concatenate(seq, axis=0, out=None):
     """
     if len(seq) == 0:
         raise ValueError("need at least one array to concatenate")
-    return _npi.concatenate(*seq, axis=axis, out=out)
+    return _npi.concatenate(*seq, dim=axis, out=out)
 
 
 @set_module('mxnet.symbol.numpy')
@@ -4513,7 +4513,7 @@ def append(arr, values, axis=None):  # pylint: disable=redefined-outer-name
            [4., 5., 6.],
            [7., 8., 9.]])
     """
-    return _npi.concatenate(arr, values, axis=axis, out=None)
+    return _npi.concatenate(arr, values, dim=axis, out=None)
 
 
 @set_module('mxnet.symbol.numpy')

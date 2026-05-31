@@ -4898,6 +4898,21 @@ def test_np_concat():
 
 
 @use_np
+def test_sym_np_concatenate_append_direct_use():
+    a = mx.sym.var('a').as_np_ndarray()
+    b = mx.sym.var('b').as_np_ndarray()
+
+    concatenated = mx.sym.np.concatenate((a, b), axis=0)
+    assert concatenated.infer_shape(a=(2, 3), b=(1, 3))[1] == [(3, 3)]
+
+    flattened = mx.sym.np.concatenate((a, b), axis=None)
+    assert flattened.infer_shape(a=(2, 3), b=(1, 3))[1] == [(9,)]
+
+    appended = mx.sym.np.append(a, b, axis=0)
+    assert appended.infer_shape(a=(2, 3), b=(1, 3))[1] == [(3, 3)]
+
+
+@use_np
 def test_np_concatenate_array_like_inputs():
     configs = [
         (([1, 2], [3, 4]), 0),

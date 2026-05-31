@@ -1544,17 +1544,32 @@ struct scatter_nd {
                                   index_t M,
                                   index_t K,
                                   const mshadow::Shape<10> strides,
+                                  const mshadow::Shape<10> mshape,
                                   DType* out,
                                   const DType* data,
                                   const IType* indices) {
     index_t offset = 0;
     for (index_t j = 0; j < M; ++j) {
-      offset += strides[j] * static_cast<index_t>(indices[j * N + i]);
+      const index_t idx = static_cast<index_t>(indices[j * N + i]);
+      if (idx < -mshape[j] || idx >= mshape[j]) {
+        return;
+      }
+      offset += strides[j] * ((idx + mshape[j]) % mshape[j]);
     }
     for (index_t j = 0; j < K; ++j) {
       KERNEL_ASSIGN(out[offset + j], req, data[i * K + j]);
     }
   }
+};
+
+template <typename xpu, typename IType>
+struct ScatterNDIndexChecker {
+  static void Check(mshadow::Stream<xpu>* s,
+                    const OpContext& ctx,
+                    const IType* idx_ptr,
+                    index_t N,
+                    index_t M,
+                    const mshadow::Shape<10> mshape) {}
 };
 
 template <typename xpu>
@@ -1576,13 +1591,17 @@ void ScatterNDForward(const nnvm::NodeAttrs& attrs,
   dim_t N                     = ishape.Size() / M;
   dim_t K                     = oshape.ProdShape(M, oshape.ndim());
   mshadow::Shape<10> strides;
-  for (dim_t i = M - 1, stride = K; i >= 0; stride *= oshape[i], --i)
+  mshadow::Shape<10> mshape;
+  for (dim_t i = M - 1, stride = K; i >= 0; stride *= oshape[i], --i) {
     strides[i] = stride;
+    mshape[i]  = oshape[i];
+  }
   if (kWriteTo == req[0]) {
     Fill<true>(s, outputs[0], req[0], 0);
   }
   MSHADOW_TYPE_SWITCH_WITH_BOOL(inputs[0].type_flag_, DType, {    // output data type switch
-    MSHADOW_TYPE_SWITCH_WITH_BOOL(inputs[1].type_flag_, IType, {  // indices data type switch
+    MSHADOW_TYPE_SWITCH(inputs[1].type_flag_, IType, {  // indices data type switch
+      ScatterNDIndexChecker<xpu, IType>::Check(s, ctx, inputs[1].dptr<IType>(), N, M, mshape);
       mxnet_op::Kernel<scatter_nd, xpu>::Launch(s,
                                                 N,
                                                 req[0],
@@ -1590,6 +1609,7 @@ void ScatterNDForward(const nnvm::NodeAttrs& attrs,
                                                 M,
                                                 K,
                                                 strides,
+                                                mshape,
                                                 outputs[0].dptr<DType>(),
                                                 inputs[0].dptr<DType>(),
                                                 inputs[1].dptr<IType>());

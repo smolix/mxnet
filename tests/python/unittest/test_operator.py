@@ -7530,6 +7530,16 @@ def test_gather_scatter_nd_index_validation():
     with pytest.raises(MXNetError, match="indices must be int32 or int64"):
         mx.nd.scatter_nd(mx.nd.ones((2,)), float_indices, shape=(2, 3)).asnumpy()
 
+    with pytest.raises(IndexError, match="out of bounds"):
+        mx.nd.scatter_nd(mx.nd.ones((1,)), mx.nd.array([[3]], dtype='int32'), shape=(3,)).asnumpy()
+
+
+def test_scatter_nd_negative_indices():
+    data = mx.nd.array([2, 3, 4], dtype='float32')
+    indices = mx.nd.array([[-1, -2, 0]], dtype='int32')
+    assert_almost_equal(mx.nd.scatter_nd(data, indices, shape=(3,)).asnumpy(),
+                        np.array([4, 3, 2], dtype='float32'))
+
 
 def test_gather_nd_negative_index_backward():
     data = mx.nd.arange(3, dtype='float32')

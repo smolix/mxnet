@@ -641,6 +641,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
             idcs = _mx_nd_np.stack([i if isinstance(i, self.__class__) else i.as_np_ndarray() for i in idcs])
         vshape = get_oshape_of_gather_nd_op(self.shape, idcs.shape)
         value_nd = self._prepare_value_nd(value, bcast_shape=vshape, squeeze_axes=new_axes)
+        _npi.gather_nd(self, idcs).wait_to_read()
         self._scatter_set_nd(value_nd, idcs)
 
     # pylint: disable=redefined-outer-name

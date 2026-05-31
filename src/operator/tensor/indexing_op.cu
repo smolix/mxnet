@@ -508,6 +508,21 @@ void GatherNDCheckBoundGPU(mshadow::Stream<gpu>* s,
   }
 }
 
+template <typename IType>
+struct ScatterNDIndexChecker<gpu, IType> {
+  static void Check(mshadow::Stream<gpu>* s,
+                    const OpContext& ctx,
+                    const IType* idx_ptr,
+                    index_t N,
+                    index_t M,
+                    const mshadow::Shape<10> mshape) {
+    mshadow::Tensor<gpu, 1, IType> workspace =
+        ctx.requested[0].get_space_typed<gpu, 1, IType>(mshadow::Shape1(M), s);
+    IType* is_valid_dim_ptr = reinterpret_cast<IType*>(workspace.dptr_);
+    GatherNDCheckBoundGPU(s, idx_ptr, N, M, mshape, is_valid_dim_ptr);
+  }
+};
+
 void GatherNDForwardGPU(const nnvm::NodeAttrs& attrs,
                         const OpContext& ctx,
                         const std::vector<TBlob>& inputs,

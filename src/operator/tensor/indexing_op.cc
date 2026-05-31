@@ -569,6 +569,21 @@ void GatherNDCheckBoundCPU(mshadow::Stream<cpu>* s,
   }
 }
 
+template <typename IType>
+struct ScatterNDIndexChecker<cpu, IType> {
+  static void Check(mshadow::Stream<cpu>* s,
+                    const OpContext& ctx,
+                    const IType* idx_ptr,
+                    index_t N,
+                    index_t M,
+                    const mshadow::Shape<10> mshape) {
+    mshadow::Tensor<cpu, 1, IType> workspace =
+        ctx.requested[0].get_space_typed<cpu, 1, IType>(mshadow::Shape1(M), s);
+    IType* is_valid_dim_ptr = reinterpret_cast<IType*>(workspace.dptr_);
+    GatherNDCheckBoundCPU(s, idx_ptr, N, M, mshape, is_valid_dim_ptr);
+  }
+};
+
 void GatherNDForwardCPU(const nnvm::NodeAttrs& attrs,
                         const OpContext& ctx,
                         const std::vector<TBlob>& inputs,
@@ -1049,6 +1064,10 @@ Examples::
                                      })
     .set_attr<mxnet::FInferShape>("FInferShape", ScatterNDShape)
     .set_attr<nnvm::FInferType>("FInferType", ScatterNDType)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& attrs) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
     .set_attr<FCompute>("FCompute<cpu>", ScatterNDForward<cpu>)
     .set_attr<nnvm::FGradient>(
         "FGradient",
@@ -1195,6 +1214,10 @@ Examples::
           return true;
         })
     .set_attr<FCompute>("FCompute<cpu>", ScatterSetNDForward<cpu>)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& attrs) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
     .set_attr<nnvm::FInplaceOption>("FInplaceOption",
                                     [](const NodeAttrs& attrs) {
                                       return std::vector<std::pair<int, int> >{{0, 0}};

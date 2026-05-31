@@ -4487,6 +4487,22 @@ def test_np_insert_tensor_index_validation():
 
 
 @use_np
+def test_np_advanced_assignment_index_validation():
+    data = np.zeros((3,), dtype='float32')
+    data[np.array([-1], dtype='int32')] = 7
+    assert_almost_equal(data.asnumpy(), onp.array([0, 0, 7], dtype='float32'))
+
+    data = np.zeros((3,), dtype='float32')
+    with pytest.raises(IndexError, match="out of bounds"):
+        data[np.array([3], dtype='int32')] = 7
+    assert_almost_equal(data.asnumpy(), onp.zeros((3,), dtype='float32'))
+
+    data = np.zeros((3,), dtype='float32')
+    with pytest.raises(IndexError, match="integer type"):
+        data[np.array([1.9], dtype='float32')] = 7
+
+
+@use_np
 @pytest.mark.parametrize('obj', [1, slice(1, 2), np.array([1], dtype='int64')])
 @pytest.mark.parametrize('axis', [1, -1])
 def test_np_insert_python_scalar_value(obj, axis):

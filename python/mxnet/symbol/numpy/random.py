@@ -18,6 +18,7 @@
 """Namespace for operators used in Gluon dispatched by F=symbol."""
 
 import numpy as np
+from ...base import integer_types
 from ...context import current_context
 from ...util import is_np_default_dtype
 from . import _internal as _npi
@@ -27,6 +28,38 @@ __all__ = ['randint', 'uniform', 'normal', 'multivariate_normal',
            'logistic', 'gumbel', 'rayleigh', 'f',
            'rand', 'shuffle', 'gamma', 'beta', 'chisquare', 'exponential', 'lognormal',
            'weibull', 'pareto', 'power', 'laplace']
+
+
+def _normalize_size(size):
+    if size is None:
+        return None
+    if isinstance(size, (integer_types, np.integer)):
+        if size < 0:
+            raise ValueError("negative dimensions are not allowed")
+        return int(size)
+    if isinstance(size, (tuple, list)):
+        dims = []
+        for dim in size:
+            if not isinstance(dim, (integer_types, np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(dim).__name__))
+            if dim < 0:
+                raise ValueError("negative dimensions are not allowed")
+            dims.append(int(dim))
+        return tuple(dims)
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(size).__name__))
+
+
+def _size_product(size):
+    if size is None or size == ():
+        return 1
+    if isinstance(size, int):
+        return size
+    sample_count = 1
+    for dim in size:
+        sample_count *= dim
+    return sample_count
 
 
 def randint(low, high=None, size=None, dtype=None, ctx=None, out=None):
@@ -82,11 +115,14 @@ def randint(low, high=None, size=None, dtype=None, ctx=None, out=None):
         dtype = 'int'
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size is None:
         size = ()
     if high is None:
         high = low
         low = 0
+    if high <= low and _size_product(size) != 0:
+        raise ValueError("low >= high")
     return _npi.random_randint(low, high, shape=size, dtype=dtype, ctx=ctx, out=out)
 
 
@@ -156,6 +192,7 @@ def uniform(low=0.0, high=1.0, size=None, dtype=None, ctx=None, out=None):
         ctx = current_context()
     if out is not None:
         size = out.shape
+    size = _normalize_size(size)
     if size == ():
         size = None
     if input_type == (True, True):
@@ -205,6 +242,7 @@ def normal(loc=0.0, scale=1.0, size=None, dtype=None, ctx=None, out=None):
     input_type = (isinstance(loc, np_symbol), isinstance(scale, np_symbol))
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     if input_type == (True, True):
@@ -285,6 +323,7 @@ def logistic(loc=0.0, scale=1.0, size=None, ctx=None, out=None):
     input_type = (isinstance(loc, np_symbol), isinstance(scale, np_symbol))
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     if input_type == (True, True):
@@ -328,6 +367,7 @@ def gumbel(loc=0.0, scale=1.0, size=None, ctx=None, out=None):
     input_type = (isinstance(loc, np_symbol), isinstance(scale, np_symbol))
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     if input_type == (True, True):
@@ -399,6 +439,7 @@ def choice(a, size=None, replace=True, p=None, ctx=None, out=None):
     from ._symbol import _Symbol as np_symbol
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     if isinstance(a, np_symbol):
@@ -452,6 +493,7 @@ def laplace(loc=0.0, scale=1.0, size=None, dtype=None, ctx=None, out=None):
         dtype = 'float32'
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     if input_type == (True, True):
@@ -509,6 +551,7 @@ def gamma(shape, scale=1.0, size=None, dtype=None, ctx=None, out=None):
         ctx = current_context()
     if out is not None:
         size = out.shape
+    size = _normalize_size(size)
     if size == ():
         size = None
     if input_type == (True, True):
@@ -551,6 +594,7 @@ def rayleigh(scale=0.0, size=None, ctx=None, out=None):
     tensor_type_name = np_symbol
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     is_tensor = isinstance(scale, tensor_type_name)
@@ -610,6 +654,7 @@ def beta(a, b, size=None, dtype=None, ctx=None):
         dtype = np.float64 if is_np_default_dtype() else np.float32
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     # use fp64 to prevent precision loss
@@ -724,6 +769,7 @@ def chisquare(df, size=None, dtype=None, ctx=None):
         dtype = np.float64 if is_np_default_dtype() else np.float32
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     return gamma(df/2, 2, size=size, dtype=dtype, ctx=ctx)
@@ -754,6 +800,7 @@ def exponential(scale=1.0, size=None, ctx=None, out=None):
     tensor_type_name = np_symbol
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     is_tensor = isinstance(scale, tensor_type_name)
@@ -812,6 +859,7 @@ def weibull(a, size=None, ctx=None, out=None):
     tensor_type_name = np_symbol
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     is_tensor = isinstance(a, tensor_type_name)
@@ -857,6 +905,7 @@ def pareto(a, size=None, ctx=None, out=None):
     tensor_type_name = np_symbol
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     is_tensor = isinstance(a, tensor_type_name)
@@ -902,6 +951,7 @@ def power(a, size=None, ctx=None, out=None):
     tensor_type_name = np_symbol
     if ctx is None:
         ctx = current_context()
+    size = _normalize_size(size)
     if size == ():
         size = None
     is_tensor = isinstance(a, tensor_type_name)
@@ -989,6 +1039,7 @@ def multivariate_normal(mean, cov, size=None, check_valid=None, tol=None):
         raise NotImplementedError('Parameter `check_valid` is not supported')
     if tol is not None:
         raise NotImplementedError('Parameter `tol` is not supported')
+    size = _normalize_size(size)
     return _npi.mvn_fallback(mean, cov, size=size)
 
 

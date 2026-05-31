@@ -5280,6 +5280,42 @@ def test_np_random():
                     expected_shape = () if shape is None else (shape,)
                 assert out.shape == expected_shape
 
+    for op_name in op_names:
+        op = getattr(np.random, op_name)
+        if op_name == 'gamma':
+            with pytest.raises(TypeError):
+                op(1, size=(2.0, 3))
+            with pytest.raises(ValueError):
+                op(1, size=(-1, 3))
+        else:
+            with pytest.raises(TypeError):
+                op(size=(2.0, 3))
+            with pytest.raises(ValueError):
+                op(size=(-1, 3))
+
+    assert np.random.randint(0, size=0).shape == (0,)
+    assert np.random.randint(1, 1, size=0).shape == (0,)
+    with pytest.raises(ValueError):
+        np.random.randint(0, size=3)
+    with pytest.raises(ValueError):
+        np.random.randint(1, 1, size=3)
+
+    assert np.random.choice(0, size=0).shape == (0,)
+    with pytest.raises(ValueError):
+        np.random.choice(0, size=1)
+    with pytest.raises(ValueError):
+        np.random.choice(2, size=3, replace=False)
+    for prob in ([0.2, 0.2], [0.8, 0.8], [-0.5, 1.5], [1.0]):
+        with pytest.raises(ValueError):
+            np.random.choice(2, size=4, p=prob)
+    with pytest.raises(ValueError):
+        np.random.multinomial(-1, [0.5, 0.5])
+
+    with pytest.raises(TypeError):
+        mx.sym.np.random.uniform(size=(2.0, 3))
+    with pytest.raises(ValueError):
+        mx.sym.np.random.randint(0, size=3)
+
 
 @use_np
 def test_gamma_exception():

@@ -17,6 +17,7 @@
 
 """Namespace for operators used in Gluon dispatched by F=ndarray."""
 import numpy as np
+from ...base import integer_types
 from ...util import is_np_default_dtype
 from ...device import current_device
 from . import _internal as _npi
@@ -29,6 +30,38 @@ __all__ = ['randint', 'uniform', 'normal', "choice", "rand", "multinomial", "mul
            'logistic', 'gumbel', "rayleigh", 'f',
            'laplace',
            "shuffle", 'gamma', 'beta', 'chisquare', 'exponential', 'lognormal', 'weibull', 'pareto', 'power']
+
+
+def _normalize_size(size):
+    if size is None:
+        return None
+    if isinstance(size, (integer_types, np.integer)):
+        if size < 0:
+            raise ValueError("negative dimensions are not allowed")
+        return int(size)
+    if isinstance(size, (tuple, list)):
+        dims = []
+        for dim in size:
+            if not isinstance(dim, (integer_types, np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(dim).__name__))
+            if dim < 0:
+                raise ValueError("negative dimensions are not allowed")
+            dims.append(int(dim))
+        return tuple(dims)
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(size).__name__))
+
+
+def _size_product(size):
+    if size is None or size == ():
+        return 1
+    if isinstance(size, int):
+        return size
+    sample_count = 1
+    for dim in size:
+        sample_count *= dim
+    return sample_count
 
 
 @wrap_ctx_to_device_func
@@ -89,11 +122,14 @@ def randint(low, high=None, size=None, dtype=None, device=None, out=None):
         device = str(current_device())
     else:
         device = str(device)
+    size = _normalize_size(size)
     if size is None:
         size = ()
     if high is None:
         high = low
         low = 0
+    if high <= low and _size_product(size) != 0:
+        raise ValueError("low >= high")
     return _api_internal.randint(low, high, size, dtype, device, out)
 
 
@@ -139,6 +175,7 @@ def uniform(low=0.0, high=1.0, size=None, dtype=None, device=None, out=None):
         device = str(device)
     if dtype is not None and not isinstance(dtype, str):
         dtype = get_dtype_name(dtype)
+    size = _normalize_size(size)
     if size == ():
         size = None
     return _api_internal.uniform(low, high, size, device, dtype, out)
@@ -182,6 +219,7 @@ def normal(loc=0.0, scale=1.0, size=None, dtype=None, device=None, out=None):
         device = str(device)
     if dtype is not None and not isinstance(dtype, str):
         dtype = get_dtype_name(dtype)
+    size = _normalize_size(size)
     if size == ():
         size = None
     return _api_internal.normal(loc, scale, size, device, dtype, out)
@@ -257,6 +295,7 @@ def logistic(loc=0.0, scale=1.0, size=None, device=None, out=None):
         device = str(current_device())
     else:
         device = str(device)
+    size = _normalize_size(size)
     if size == ():
         size = None
     return _api_internal.logistic(loc, scale, size, device, out)
@@ -295,6 +334,7 @@ def gumbel(loc=0.0, scale=1.0, size=None, device=None, out=None):
         device = str(current_device())
     else:
         device = str(device)
+    size = _normalize_size(size)
     if size == ():
         size = None
     return _api_internal.gumbel(loc, scale, size, device, out)
@@ -342,10 +382,13 @@ def multinomial(n, pvals, size=None):
     >>> np.random.multinomial(100, [1.0 / 3, 2.0 / 3])
     array([32, 68])
     """
+    if n < 0:
+        raise ValueError("n < 0")
     if isinstance(pvals, np.ndarray):
         raise ValueError('numpy ndarray is not supported!')
     if any(isinstance(i, list) for i in pvals):
         raise ValueError('object too deep for desired array')
+    size = _normalize_size(size)
     return _api_internal.multinomial(n, pvals, size)
 
 
@@ -379,6 +422,7 @@ def rayleigh(scale=1.0, size=None, device=None, out=None):
         device = str(current_device())
     else:
         device = str(device)
+    size = _normalize_size(size)
     if size == ():
         size = None
     return _api_internal.rayleigh(scale, size, device, out)
@@ -462,6 +506,7 @@ def multivariate_normal(mean, cov, size=None, check_valid=None, tol=None):
         raise NotImplementedError('Parameter `check_valid` is not supported')
     if tol is not None:
         raise NotImplementedError('Parameter `tol` is not supported')
+    size = _normalize_size(size)
     return _npi.mvn_fallback(mean, cov, size=size)
 
 
@@ -523,12 +568,32 @@ def choice(a, size=None, replace=True, p=None, device=None, out=None):
         device = str(current_device())
     else:
         device = str(device)
+    size = _normalize_size(size)
     if size == ():
         size = None
+    sample_count = _size_product(size)
     if isinstance(a, np_ndarray):
+        if a.shape[0] == 0 and sample_count != 0:
+            raise ValueError("a must be greater than 0 unless no samples are taken")
+        if not replace and sample_count > a.shape[0]:
+            raise ValueError("Cannot take a larger sample than population when 'replace=False'")
         indices = _api_internal.choice(a, size, replace, p, device, out)
         return _api_internal.take(a, indices, 0, 'raise', out)
     else:
+        if a <= 0 and sample_count != 0:
+            raise ValueError("a must be greater than 0 unless no samples are taken")
+        if not replace and sample_count > a:
+            raise ValueError("Cannot take a larger sample than population when 'replace=False'")
+        if p is not None:
+            prob = np.asarray(p)
+            if prob.ndim != 1:
+                raise ValueError("'p' must be 1-dimensional")
+            if len(prob) != a:
+                raise ValueError("'a' and 'p' must have same size")
+            if np.any(prob < 0):
+                raise ValueError("probabilities are not non-negative")
+            if not np.isclose(prob.sum(), 1):
+                raise ValueError("probabilities do not sum to 1")
         return _api_internal.choice(a, size, replace, p, device, out)
 
 
@@ -560,6 +625,7 @@ def exponential(scale=1.0, size=None, device=None, out=None):
         device = str(current_device())
     else:
         device = str(device)
+    size = _normalize_size(size)
     if size == ():
         size = None
     return _api_internal.exponential(scale, size, device, out)
@@ -612,6 +678,7 @@ def weibull(a, size=None, device=None, out=None):
         device = str(current_device())
     else:
         device = str(device)
+    size = _normalize_size(size)
     if size == ():
         size = None
     return _api_internal.weibull(a, size, device, out)
@@ -654,6 +721,7 @@ def pareto(a, size=None, device=None, out=None):
         device = str(current_device())
     else:
         device = str(device)
+    size = _normalize_size(size)
     if size == ():
         size = None
     return _api_internal.pareto(a, size, device, out)
@@ -696,6 +764,7 @@ def power(a, size=None, device=None, out=None):
         device = str(current_device())
     else:
         device = str(device)
+    size = _normalize_size(size)
     if size == ():
         size = None
     return _api_internal.powerd(a, size, device, out)
@@ -739,6 +808,7 @@ def gamma(shape, scale=1.0, size=None, dtype=None, device=None, out=None):
     """
     if out is not None:
         size = out.shape
+    size = _normalize_size(size)
     if size == ():
         size = None
     if device is None:
@@ -799,6 +869,7 @@ def beta(a, b, size=None, dtype=None, device=None):
         dtype = np.float64 if is_np_default_dtype() else np.float32
     if device is None:
         device = current_device()
+    size = _normalize_size(size)
     if size == ():
         size = None
     # use fp64 to prevent precision loss
@@ -948,6 +1019,7 @@ def chisquare(df, size=None, dtype=None, device=None):
         dtype = np.float64 if is_np_default_dtype() else np.float32
     if device is None:
         device = current_device()
+    size = _normalize_size(size)
     if size == ():
         size = None
     return gamma(df/2, 2, size=size, dtype=dtype, device=device)
@@ -1053,6 +1125,7 @@ def laplace(loc=0.0, scale=1.0, size=None, dtype=None, device=None, out=None):
         device = str(device)
     if dtype is not None and not isinstance(dtype, str):
         dtype = get_dtype_name(dtype)
+    size = _normalize_size(size)
     if size == ():
         size = None
     return _api_internal.laplace(loc, scale, size, dtype, device, out)

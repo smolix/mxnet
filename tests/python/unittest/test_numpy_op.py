@@ -1069,7 +1069,9 @@ def test_np_average_integral_returned_type():
 @use_np
 def test_np_symbol_average_integral_returned_type():
     data = mx.sym.var('data').as_np_ndarray()
+    weights = mx.sym.var('weights').as_np_ndarray()
     outputs = mx.sym.Group(mx.sym.np.average(data, returned=True))
+    weighted_outputs = mx.sym.Group(mx.sym.np.average(data, axis=1, weights=weights, returned=True))
 
     _, out_types, _ = outputs.infer_type(data='int32')
     assert out_types == [onp.float32, onp.float32]
@@ -1078,6 +1080,30 @@ def test_np_symbol_average_integral_returned_type():
     assert [out.dtype for out in exe.outputs] == [onp.float32, onp.float32]
     assert_almost_equal(exe.outputs[0].asnumpy(), onp.array(1.5, dtype=onp.float32))
     assert_almost_equal(exe.outputs[1].asnumpy(), onp.array(2.0, dtype=onp.float32))
+
+    _, weighted_out_types, _ = weighted_outputs.infer_type(data='int32', weights='int32')
+    assert weighted_out_types == [onp.float32, onp.float32]
+    weighted_exe = weighted_outputs._simple_bind(mx.cpu(), data=(2, 2), weights=(2,),
+                                                 type_dict={'data': 'int32', 'weights': 'int32'})
+    weighted_exe.forward(data=mx.nd.array([[1, 3], [5, 7]], dtype='int32'),
+                         weights=mx.nd.array([1, 3], dtype='int32'))
+    assert [out.dtype for out in weighted_exe.outputs] == [onp.float32, onp.float32]
+    assert_almost_equal(weighted_exe.outputs[0].asnumpy(),
+                        onp.array([2.5, 6.5], dtype=onp.float32))
+    assert_almost_equal(weighted_exe.outputs[1].asnumpy(),
+                        onp.array([4.0, 4.0], dtype=onp.float32))
+
+    full_weighted_outputs = mx.sym.Group(mx.sym.np.average(data, axis=1, weights=weights,
+                                                           returned=True))
+    full_weighted_exe = full_weighted_outputs._simple_bind(
+        mx.cpu(), data=(2, 2), weights=(2, 2), type_dict={'data': 'int32', 'weights': 'int32'})
+    full_weighted_exe.forward(data=mx.nd.array([[1, 3], [5, 7]], dtype='int32'),
+                              weights=mx.nd.array([[1, 3], [2, 2]], dtype='int32'))
+    assert [out.dtype for out in full_weighted_exe.outputs] == [onp.float32, onp.float32]
+    assert_almost_equal(full_weighted_exe.outputs[0].asnumpy(),
+                        onp.array([2.5, 6.0], dtype=onp.float32))
+    assert_almost_equal(full_weighted_exe.outputs[1].asnumpy(),
+                        onp.array([4.0, 4.0], dtype=onp.float32))
 
 
 @use_np

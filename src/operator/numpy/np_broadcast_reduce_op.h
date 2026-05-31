@@ -969,21 +969,41 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
   TBlob wa;
   TBlob sum_of_wa;
   Tensor<xpu, 1, char> workspace;
-  MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+  TBlob compute_data    = data;
+  TBlob compute_weights = weights;
+  const int compute_type = (!back && outputs[0].type_flag_ != -1) ? outputs[0].type_flag_ :
+                                                                    data.type_flag_;
+  MSHADOW_TYPE_SWITCH(compute_type, DType, {
     // Get temp space
-    size_t temp_data_size = data.shape_.Size() * sizeof(DType);
-    size_t temp_sum_size  = small1.Size() * sizeof(DType);
-    size_t temp_scl_size  = small2.Size() * sizeof(DType);
+    const size_t cast_data_size =
+        (!back && data.type_flag_ != compute_type) ? data.shape_.Size() * sizeof(DType) : 0;
+    const size_t cast_weight_size =
+        (!back && weights.type_flag_ != compute_type) ? weights.shape_.Size() * sizeof(DType) : 0;
+    const size_t temp_data_size = data.shape_.Size() * sizeof(DType);
+    const size_t temp_sum_size  = small1.Size() * sizeof(DType);
+    const size_t temp_scl_size  = small2.Size() * sizeof(DType);
     TShape src_shape, dst_shape;
     BroadcastReduceShapeCompact(data.shape_, small1, &src_shape, &dst_shape);
     size_t workspace_size = 0;
     workspace_size        = broadcast::ReduceWorkspaceSize(s, dst_shape, {kWriteTo}, src_shape);
-    size_t temp_mem_size  = temp_data_size + temp_sum_size + temp_scl_size + workspace_size;
+    const size_t temp_mem_size = cast_data_size + cast_weight_size + temp_data_size +
+                                 temp_sum_size + temp_scl_size + workspace_size;
     Tensor<xpu, 1, char> temp_mem =
         ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(temp_mem_size), s);
-    auto* temp_data_ptr = reinterpret_cast<DType*>(temp_mem.dptr_);
-    auto* temp_sum_ptr  = reinterpret_cast<DType*>(temp_mem.dptr_ + temp_data_size);
-    char* workspace_ptr = temp_mem.dptr_ + temp_data_size + temp_sum_size + temp_scl_size;
+    char* offset = temp_mem.dptr_;
+    if (cast_data_size != 0) {
+      compute_data = TBlob(reinterpret_cast<DType*>(offset), data.shape_, xpu::kDevMask);
+      CastCompute<xpu>(attrs, ctx, {data}, {kWriteTo}, {compute_data});
+      offset += cast_data_size;
+    }
+    if (cast_weight_size != 0) {
+      compute_weights = TBlob(reinterpret_cast<DType*>(offset), weights.shape_, xpu::kDevMask);
+      CastCompute<xpu>(attrs, ctx, {weights}, {kWriteTo}, {compute_weights});
+      offset += cast_weight_size;
+    }
+    auto* temp_data_ptr = reinterpret_cast<DType*>(offset);
+    auto* temp_sum_ptr  = reinterpret_cast<DType*>(offset + temp_data_size);
+    char* workspace_ptr = offset + temp_data_size + temp_sum_size + temp_scl_size;
     workspace           = Tensor<xpu, 1, char>(workspace_ptr, Shape1(workspace_size), s);
 
     // Compute weighted data
@@ -991,13 +1011,15 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
     sum_of_wa = TBlob(temp_sum_ptr, small1, xpu::kDevMask);
   });
 #if !defined(__CUDACC__)
-  BinaryBroadcastCompute<xpu, mshadow_op::mul>(attrs, ctx, {data, weights}, {kWriteTo}, {wa});
+  BinaryBroadcastCompute<xpu, mshadow_op::mul>(
+      attrs, ctx, {compute_data, compute_weights}, {kWriteTo}, {wa});
 
   // Compute sum of weighted data
   ReduceAxesComputeImpl<xpu, mshadow_op::sum, true>(
       ctx, {wa}, {kWriteTo}, {sum_of_wa}, small1, &workspace);
 #else
-  BinaryBroadcastRTCCompute{"mul"}(attrs, ctx, {data, weights}, {kWriteTo}, {wa});  // NOLINT
+  BinaryBroadcastRTCCompute{"mul"}(  // NOLINT
+      attrs, ctx, {compute_data, compute_weights}, {kWriteTo}, {wa});
 
   // Compute sum of weighted data
   ReduceAxesRTCComputeImpl(
@@ -1008,7 +1030,7 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
     const TBlob& sum_of_weights = outputs[1];
     // Compute sum of weight
     TBlob scl;
-    MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH(compute_type, DType, {
       if (!one_dim && req[1] == kWriteTo) {
         scl = sum_of_weights.reshape(small2);
       } else {
@@ -1019,12 +1041,12 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
     });
 #if !defined(__CUDACC__)
     ReduceAxesComputeImpl<xpu, mshadow_op::sum, true>(
-        ctx, {weights}, {kWriteTo}, {scl}, small2, &workspace);
+        ctx, {compute_weights}, {kWriteTo}, {scl}, small2, &workspace);
     if (one_dim && req[1] != kNullOp) {
       BroadcastComputeImpl<xpu>(attrs, ctx, {scl}, {req[1]}, {sum_of_weights.reshape(small1)}, small2);
     }
     if (!one_dim && req[1] != kNullOp && req[1] != kWriteTo) {
-      MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+      MSHADOW_TYPE_SWITCH(compute_type, DType, {
         MXNET_ASSIGN_REQ_SWITCH(req[1], req_1, {
           mxnet_op::Kernel<weighted_average_assign<req_1>, xpu>::Launch(
               s, sum_of_weights.Size(), scl.dptr<DType>(), sum_of_weights.dptr<DType>());
@@ -1036,12 +1058,12 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
         attrs, ctx, {sum_of_wa, scl}, req, {avg.reshape(small1)});
 #else
     ReduceAxesRTCComputeImpl(
-        ctx, {weights}, {kWriteTo}, {scl}, small2, "red::sum{}", &workspace, false, "identity");
+        ctx, {compute_weights}, {kWriteTo}, {scl}, small2, "red::sum{}", &workspace, false, "identity");
     if (one_dim && req[1] != kNullOp) {
       BroadcastComputeImpl<xpu>(attrs, ctx, {scl}, {req[1]}, {sum_of_weights.reshape(small1)}, small2);
     }
     if (!one_dim && req[1] != kNullOp && req[1] != kWriteTo) {
-      MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+      MSHADOW_TYPE_SWITCH(compute_type, DType, {
         MXNET_ASSIGN_REQ_SWITCH(req[1], req_1, {
           mxnet_op::Kernel<weighted_average_assign<req_1>, xpu>::Launch(
               s, sum_of_weights.Size(), scl.dptr<DType>(), sum_of_weights.dptr<DType>());

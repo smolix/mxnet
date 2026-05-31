@@ -142,10 +142,17 @@ inline bool NumpyWeightedAverageType(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(out_attrs->size(), 2U);
 
   if (param.weighted) {
-    TYPE_ASSIGN_CHECK(*in_attrs, 0, out_attrs->at(0));
-    TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
-    TYPE_ASSIGN_CHECK(*in_attrs, 1, in_attrs->at(0));
-    TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(0));
+    if (in_attrs->at(0) != -1) {
+      TYPE_ASSIGN_CHECK(*in_attrs, 1, in_attrs->at(0));
+    } else if (in_attrs->at(1) != -1) {
+      TYPE_ASSIGN_CHECK(*in_attrs, 0, in_attrs->at(1));
+    }
+    if (in_attrs->at(0) != -1) {
+      const int output_type =
+          common::is_float(in_attrs->at(0)) ? in_attrs->at(0) : mxnet::common::GetDefaultDtype();
+      TYPE_ASSIGN_CHECK(*out_attrs, 0, output_type);
+      TYPE_ASSIGN_CHECK(*out_attrs, 1, output_type);
+    }
   } else if (in_attrs->at(0) != -1) {
     const int output_type =
         common::is_float(in_attrs->at(0)) ? in_attrs->at(0) : mxnet::common::GetDefaultDtype();

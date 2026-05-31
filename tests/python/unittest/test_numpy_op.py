@@ -10919,6 +10919,12 @@ def test_np_bincount():
         np_out = onp.bincount(data.asnumpy(), weights_np, minlength)
         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
 
+    data = np.zeros((130,), dtype=np.int8)
+    mx_out = np.bincount(data)
+    np_out = onp.bincount(data.asnumpy())
+    assert mx_out.dtype == np.int64
+    assert_almost_equal(mx_out.asnumpy(), np_out)
+
 
 @use_np
 def test_np_bincount_weight_backward():

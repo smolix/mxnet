@@ -63,7 +63,10 @@ inline bool NumpyBincountType(const nnvm::NodeAttrs& attrs,
                               std::vector<int>* out_attrs) {
   const NumpyBincountParam& param = nnvm::get<NumpyBincountParam>(attrs.parsed);
   if (!param.has_weights) {
-    return ElemwiseType<1, 1>(attrs, in_attrs, out_attrs) && in_attrs->at(0) != -1;
+    CHECK_EQ(out_attrs->size(), 1U);
+    CHECK_EQ(in_attrs->size(), 1U);
+    TYPE_ASSIGN_CHECK(*out_attrs, 0, mshadow::kInt64);
+    return out_attrs->at(0) != -1 && in_attrs->at(0) != -1;
   } else {
     CHECK_EQ(out_attrs->size(), 1U);
     CHECK_EQ(in_attrs->size(), 2U);

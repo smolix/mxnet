@@ -630,8 +630,9 @@ def identity(n, dtype=None, device=None):
            [0., 1., 0.],
            [0., 0., 1.]])
     """
-    if not isinstance(n, int):
+    if not isinstance(n, (integer_types, _np.integer)):
         raise TypeError("Input 'n' should be an integer")
+    n = int(n)
     if n < 0:
         raise ValueError("Input 'n' cannot be negative")
     if device is None:
@@ -1934,6 +1935,9 @@ def eye(N, M=None, k=0, dtype=float, **kwargs):
     if dtype is not None and not isinstance(dtype, str):
         dtype = get_dtype_name(dtype)
 
+    if not isinstance(k, (integer_types, _np.integer)):
+        raise TypeError("'{}' object cannot be interpreted as an integer"
+                        .format(type(k).__name__))
     # To avoid overflow errors, map large positive k values to the just-out-of-range "num_columns" value
     k = minimum(k, M if M is not None else N)
     # Similarly, map large negative k values to the just-out-of-range "-num_rows" value
@@ -2038,7 +2042,8 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None, axis
     if dtype is None:
         dtype = _np.float64 if is_np_default_dtype() else _np.float32
     if retstep:
-        step = (stop - start) / (num - int(endpoint))
+        divisor = num - int(endpoint)
+        step = _np.nan if divisor <= 0 else (stop - start) / divisor
         return _api_internal.linspace(start, stop, num, endpoint, device, dtype), step
     else:
         return _api_internal.linspace(start, stop, num, endpoint, device, dtype)

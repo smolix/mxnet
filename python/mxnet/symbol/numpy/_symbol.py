@@ -2063,6 +2063,9 @@ def eye(N, M=None, k=0, dtype=float, **kwargs):
         ctx = current_context()
     if dtype is None or dtype is float:
         dtype = _np.float64 if is_np_default_dtype() else _np.float32
+    if not isinstance(k, (integer_types, _np.integer)):
+        raise TypeError("'{}' object cannot be interpreted as an integer"
+                        .format(type(k).__name__))
     return _npi.eye(N, M, k, ctx, dtype)
 
 
@@ -2194,7 +2197,8 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None, axis
     if ctx is None:
         ctx = current_context()
     if retstep:
-        step = (stop - start) / (num - 1)
+        divisor = num - int(endpoint)
+        step = _np.nan if divisor <= 0 else (stop - start) / divisor
         return _npi.linspace(start=start, stop=stop, num=num, endpoint=endpoint, ctx=ctx, dtype=dtype), step
     else:
         return _npi.linspace(start=start, stop=stop, num=num, endpoint=endpoint, ctx=ctx, dtype=dtype)

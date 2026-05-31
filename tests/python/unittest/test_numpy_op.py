@@ -1329,6 +1329,18 @@ def test_np_linspace_error(config):
 
 
 @use_np
+def test_np_linspace_retstep_edge_counts():
+    for num, endpoint in itertools.product([0, 1, 2], [True, False]):
+        mx_ret = np.linspace(0, 1, num=num, endpoint=endpoint, retstep=True)
+        np_ret = onp.linspace(0, 1, num=num, endpoint=endpoint, retstep=True)
+        assert_almost_equal(mx_ret[0].asnumpy(), np_ret[0], atol=1e-3, rtol=1e-5)
+        if onp.isnan(np_ret[1]):
+            assert onp.isnan(mx_ret[1])
+        else:
+            assert same(mx_ret[1], np_ret[1])
+
+
+@use_np
 def test_np_linspace_arange():
     # check linspace equivalent to arange
     for test_index in range(1000):
@@ -6102,6 +6114,14 @@ def test_np_eye():
             assertRaises(MXNetError, np.eye, *config)
         else:
             assertRaises(MXNetError, np.eye, config)
+
+    assert same(np.identity(onp.int64(2)).asnumpy(), onp.identity(onp.int64(2)))
+    with pytest.raises(TypeError):
+        np.eye(3, k=1.5)
+    with pytest.raises(TypeError):
+        np.eye(3, k=onp.float64(1))
+    with pytest.raises(TypeError):
+        mx.sym.np.eye(3, k=1.5)
 
     class TestEye(HybridBlock):
         def __init__(self, N, M=None, k=0, dtype=None):

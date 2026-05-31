@@ -2466,6 +2466,23 @@ def test_np_sort(shape, dtype, hybridize, descending):
 
 
 @use_np
+def test_np_sort_and_topk_bool():
+    data = np.array([True, False, True], dtype='bool')
+
+    sorted_data = np.sort(data)
+    assert same(sorted_data.asnumpy(), onp.array([False, True, True]))
+
+    topk_ascending = npx.topk(data, ret_typ='value', k=2, is_ascend=True)
+    assert same(topk_ascending.asnumpy(), onp.array([False, True]))
+
+    topk_descending = npx.topk(data, ret_typ='value', k=2, is_ascend=False)
+    assert same(topk_descending.asnumpy(), onp.array([True, True]))
+
+    topk_indices = npx.topk(data, ret_typ='indices', k=2, is_ascend=True)
+    assert same(topk_indices.asnumpy(), onp.array([1, 0], dtype=onp.float32))
+
+
+@use_np
 def test_np_squeeze():
     config = [((), None),
               ((), ()),

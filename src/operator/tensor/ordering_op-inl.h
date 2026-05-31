@@ -48,6 +48,82 @@ inline Tensor<xpu, dst_dim, DType> inplace_reshape(Tensor<xpu, src_dim, DType> s
 
 namespace mxnet {
 namespace op {
+
+#define MXNET_ORDERING_TYPE_SWITCH_WITH_BOOL(type, DType, ...) \
+  switch (type) {                                              \
+    case mshadow::kFloat32: {                                  \
+      typedef float DType;                                     \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kFloat64: {                                  \
+      typedef double DType;                                    \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kFloat16: {                                  \
+      typedef mshadow::half::half_t DType;                     \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kUint8: {                                    \
+      typedef uint8_t DType;                                   \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kInt8: {                                     \
+      typedef int8_t DType;                                    \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kInt32: {                                    \
+      typedef int32_t DType;                                   \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kInt64: {                                    \
+      typedef int64_t DType;                                   \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kBool: {                                     \
+      typedef bool DType;                                      \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    default:                                                   \
+      LOG(FATAL) << "Unknown type enum " << type;              \
+  }
+
+#define MXNET_ORDERING_NO_FLOAT16_TYPE_SWITCH_WITH_BOOL(type, DType, ...) \
+  switch (type) {                                                         \
+    case mshadow::kFloat32: {                                             \
+      typedef float DType;                                                \
+      { __VA_ARGS__ }                                                     \
+    } break;                                                              \
+    case mshadow::kFloat64: {                                             \
+      typedef double DType;                                               \
+      { __VA_ARGS__ }                                                     \
+    } break;                                                              \
+    case mshadow::kFloat16:                                               \
+      LOG(FATAL) << "This operation does not support float16";            \
+      break;                                                              \
+    case mshadow::kUint8: {                                               \
+      typedef uint8_t DType;                                              \
+      { __VA_ARGS__ }                                                     \
+    } break;                                                              \
+    case mshadow::kInt8: {                                                \
+      typedef int8_t DType;                                               \
+      { __VA_ARGS__ }                                                     \
+    } break;                                                              \
+    case mshadow::kInt32: {                                               \
+      typedef int32_t DType;                                              \
+      { __VA_ARGS__ }                                                     \
+    } break;                                                              \
+    case mshadow::kInt64: {                                               \
+      typedef int64_t DType;                                              \
+      { __VA_ARGS__ }                                                     \
+    } break;                                                              \
+    case mshadow::kBool: {                                                \
+      typedef bool DType;                                                 \
+      { __VA_ARGS__ }                                                     \
+    } break;                                                              \
+    default:                                                              \
+      LOG(FATAL) << "Unknown type enum " << type;                         \
+  }
+
 // These enums are only visible within this header
 namespace topk_enum {
 enum TopKReturnType { kReturnValue, kReturnIndices, kReturnMask, kReturnBoth };
@@ -912,7 +988,7 @@ void TopK(const nnvm::NodeAttrs& attrs,
   using namespace mshadow;
   const TopKParam& param = nnvm::get<TopKParam>(attrs.parsed);
   if (param.ret_typ == topk_enum::kReturnIndices || param.ret_typ == topk_enum::kReturnBoth) {
-    MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+    MXNET_ORDERING_TYPE_SWITCH_WITH_BOOL(inputs[0].type_flag_, DType, {
       MXNET_NO_BFLOAT16_TYPE_SWITCH(param.dtype, IDType, {
         if (inputs[0].Size() >= INT_MAX) {
           TopKImpl<xpu, DType, IDType, index_t>(
@@ -924,7 +1000,7 @@ void TopK(const nnvm::NodeAttrs& attrs,
       });
     });
   } else {
-    MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+    MXNET_ORDERING_TYPE_SWITCH_WITH_BOOL(inputs[0].type_flag_, DType, {
       if (inputs[0].Size() >= INT_MAX) {
         TopKImpl<xpu, DType, index_t, index_t>(
             ctx.run_ctx, ctx.requested[0], req, inputs[0], outputs, param);
@@ -948,7 +1024,7 @@ void Sort(const nnvm::NodeAttrs& attrs,
   topk_param.is_ascend = param.is_ascend;
   topk_param.k         = 0;
   topk_param.ret_typ   = topk_enum::kReturnValue;
-  MXNET_NO_FLOAT16_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+  MXNET_ORDERING_NO_FLOAT16_TYPE_SWITCH_WITH_BOOL(inputs[0].type_flag_, DType, {
     if (inputs[0].Size() >= INT_MAX) {
       TopKImpl<xpu, DType, index_t, index_t>(
           ctx.run_ctx, ctx.requested[0], req, inputs[0], outputs, topk_param);
@@ -972,7 +1048,7 @@ void ArgSort(const nnvm::NodeAttrs& attrs,
   topk_param.k         = 0;
   topk_param.dtype     = param.dtype;
   topk_param.ret_typ   = topk_enum::kReturnIndices;
-  MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+  MXNET_ORDERING_TYPE_SWITCH_WITH_BOOL(inputs[0].type_flag_, DType, {
     MSHADOW_TYPE_SWITCH(param.dtype, IDType, {
       if (inputs[0].Size() >= INT_MAX) {
         TopKImpl<xpu, DType, IDType, index_t>(

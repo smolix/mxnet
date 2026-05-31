@@ -85,6 +85,18 @@ inline bool NumpyCrossShape(const nnvm::NodeAttrs& attrs,
   return shape_is_known(*in_attrs) && shape_is_known(*out_attrs);
 }
 
+inline bool NumpyCrossType(const nnvm::NodeAttrs& attrs,
+                           std::vector<int>* in_attrs,
+                           std::vector<int>* out_attrs) {
+  if (!ElemwiseType<2, 1>(attrs, in_attrs, out_attrs)) {
+    return false;
+  }
+  const int dtype = out_attrs->at(0);
+  CHECK(dtype == mshadow::kFloat32 || dtype == mshadow::kFloat64)
+      << "cross only supports float32 and float64 input types";
+  return true;
+}
+
 DMLC_REGISTER_PARAMETER(NumpyCrossParam);
 
 NNVM_REGISTER_OP(_npi_cross)
@@ -94,9 +106,9 @@ NNVM_REGISTER_OP(_npi_cross)
     .set_attr<nnvm::FListInputNames>("FListInputNames",
                                      [](const NodeAttrs& attrs) {
                                        return std::vector<std::string>{"a", "b"};
-                                     })
+    })
     .set_attr<mxnet::FInferShape>("FInferShape", NumpyCrossShape)
-    .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<2, 1>)
+    .set_attr<nnvm::FInferType>("FInferType", NumpyCrossType)
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& attrs) {
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};

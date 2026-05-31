@@ -261,6 +261,21 @@ def test_np_dot_error(shape_a, shape_b):
 
 
 @use_np
+@pytest.mark.parametrize('op_name', ['dot', 'matmul'])
+@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
+def test_np_matrix_product_unsupported_dtypes_rejected(op_name, dtype):
+    a = np.array([[1, 2], [3, 4]], dtype=dtype)
+    b = np.array([[1, 2], [3, 4]], dtype=dtype)
+    with pytest.raises((ValueError, mx.MXNetError), match="floating point"):
+        getattr(np, op_name)(a, b).asnumpy()
+
+    a_sym = mx.sym.var('a').as_np_ndarray()
+    b_sym = mx.sym.var('b').as_np_ndarray()
+    with pytest.raises(mx.MXNetError, match="floating point"):
+        getattr(mx.sym.np, op_name)(a_sym, b_sym).as_nd_ndarray().infer_type(a=dtype, b=dtype)
+
+
+@use_np
 @pytest.mark.parametrize('shape', [(), (5,), (3, 3)])
 @pytest.mark.parametrize('hybridize', [True, False])
 @pytest.mark.parametrize('dtype', [onp.float32, onp.float64])
@@ -12996,6 +13011,20 @@ def test_np_cross_backward_lower_rank_broadcast_grad():
         a.grad.asnumpy(),
         onp.array([[5., -4., -1.], [5., -4., -1.]], dtype='float32'))
     assert_almost_equal(b.grad.asnumpy(), onp.array([2., -4.], dtype='float32'))
+
+
+@use_np
+@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
+def test_np_cross_unsupported_dtypes_rejected(dtype):
+    a = np.array([1, 2, 3], dtype=dtype)
+    b = np.array([1, 2, 3], dtype=dtype)
+    with pytest.raises((ValueError, mx.MXNetError), match="float32 and float64"):
+        np.cross(a, b).asnumpy()
+
+    a_sym = mx.sym.var('a').as_np_ndarray()
+    b_sym = mx.sym.var('b').as_np_ndarray()
+    with pytest.raises(mx.MXNetError, match="float32 and float64"):
+        mx.sym.np.cross(a_sym, b_sym).as_nd_ndarray().infer_type(a=dtype, b=dtype)
 
 
 @use_np

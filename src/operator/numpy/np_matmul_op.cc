@@ -132,6 +132,18 @@ inline bool NumpyMatmulShape(const nnvm::NodeAttrs& attrs,
   return shape_is_known(*in_attrs) && shape_is_known(*out_attrs);
 }
 
+inline bool NumpyMatmulType(const nnvm::NodeAttrs& attrs,
+                            std::vector<int>* in_attrs,
+                            std::vector<int>* out_attrs) {
+  if (!ElemwiseType<2, 1>(attrs, in_attrs, out_attrs)) {
+    return false;
+  }
+  const int dtype = out_attrs->at(0);
+  CHECK(dtype == mshadow::kFloat16 || dtype == mshadow::kFloat32 || dtype == mshadow::kFloat64)
+      << "matmul only supports floating point input types";
+  return true;
+}
+
 NNVM_REGISTER_OP(_npi_matmul)
     .describe(R"doc()doc" ADD_FILELINE)
     .set_num_inputs(2U)
@@ -143,9 +155,9 @@ NNVM_REGISTER_OP(_npi_matmul)
     .set_attr<nnvm::FListOutputNames>("FListOutputNames",
                                       [](const NodeAttrs& attrs) {
                                         return std::vector<std::string>{"out"};
-                                      })
+    })
     .set_attr<mxnet::FInferShape>("FInferShape", NumpyMatmulShape)
-    .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<2, 1>)
+    .set_attr<nnvm::FInferType>("FInferType", NumpyMatmulType)
     .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
     .set_attr<FCompute>("FCompute<cpu>", NumpyMatmulForward<cpu>)
     .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseIn{"_backward_np_matmul"})

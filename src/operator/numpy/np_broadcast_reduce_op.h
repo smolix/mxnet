@@ -1351,7 +1351,7 @@ struct NumpyMomentsBackwardKernel {
   MSHADOW_XINLINE static void Map(index_t i,
                                   DType* grad,
                                   const DType* data,
-                                  const DType* mean,
+                                  const OType* mean,
                                   const OType* moment,
                                   const OType* ograd,
                                   const mshadow::Shape<ndim> data_shape,
@@ -1365,8 +1365,8 @@ struct NumpyMomentsBackwardKernel {
       }
     }
     const index_t j = ravel(coord, small_shape);
-    const DType centered = data[i] - mean[j];
-    OType value = static_cast<OType>(centered) * ograd[j] / static_cast<OType>(denom);
+    const OType centered = static_cast<OType>(data[i]) - mean[j];
+    OType value          = centered * ograd[j] / static_cast<OType>(denom);
     if (sqrt) {
       value = moment[j] == OType(0) ? OType(0) : value / moment[j];
     } else {
@@ -1413,7 +1413,7 @@ void NumpyMomentsBackward(const nnvm::NodeAttrs& attrs,
               grad.Size(),
               grad.dptr<DType>(),
               data.dptr<DType>(),
-              mean_small.dptr<DType>(),
+              mean_small.dptr<OType>(),
               moment_small.dptr<OType>(),
               ograd_small.dptr<OType>(),
               data.shape_.get<NDim>(),

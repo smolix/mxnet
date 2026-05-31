@@ -1116,6 +1116,11 @@ def test_np_var_std_integral_dtype():
         assert_almost_equal(mx_out.asnumpy(), np_out)
         assert_almost_equal(mx_out.asnumpy(), onp.array(expected, dtype=onp.float32))
 
+        mx_out = mx_op(data, dtype='float64')
+        np_out = np_op(data.asnumpy(), dtype=onp.float64)
+        assert mx_out.dtype == onp.float64
+        assert_almost_equal(mx_out.asnumpy(), np_out)
+
     matrix = np.array([[1, 2, 4], [2, 3, 5]], dtype='int32')
     for mx_op, np_op in [(np.var, onp.var), (np.std, onp.std)]:
         mx_out = mx_op(matrix, axis=1)
@@ -1133,6 +1138,15 @@ def test_np_var_std_integral_dtype():
         assert exe.outputs[0].dtype == onp.float32
         assert_almost_equal(exe.outputs[0].asnumpy(),
                             np_op(onp.array([1, 2], dtype='int32')).astype('float32'))
+
+        sym_out = sym_op(sym_data, dtype='float64')
+        _, out_types, _ = sym_out.infer_type(data='int32')
+        assert out_types == [onp.float64]
+        exe = sym_out._simple_bind(mx.cpu(), data=(2,), type_dict={'data': 'int32'})
+        exe.forward(data=mx.nd.array([1, 2], dtype='int32'))
+        assert exe.outputs[0].dtype == onp.float64
+        assert_almost_equal(exe.outputs[0].asnumpy(),
+                            np_op(onp.array([1, 2], dtype='int32'), dtype=onp.float64))
 
 
 @use_np

@@ -67,12 +67,8 @@ inline bool NumpyMomentsType(const nnvm::NodeAttrs& attrs,
       TYPE_ASSIGN_CHECK(*out_attrs, 0, mxnet::common::GetDefaultDtype());
     }
   }
-  if (in_attrs->at(0) != -1) {
-    if (param.dtype.has_value() || common::is_float(in_attrs->at(0))) {
-      TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(0));
-    } else {
-      TYPE_ASSIGN_CHECK(*out_attrs, 1, mxnet::common::GetDefaultDtype());
-    }
+  if (out_attrs->at(0) != -1) {
+    TYPE_ASSIGN_CHECK(*out_attrs, 1, out_attrs->at(0));
   }
 
   return out_attrs->at(0) != -1 && in_attrs->at(0) != -1;

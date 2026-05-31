@@ -3957,6 +3957,7 @@ def tile(A, reps):
     c : _Symbol
         The tiled output array.
     """
+    reps = _normalize_shape(reps)
     return _unary_func_helper(A, _npi.tile, _np.tile, reps=reps)
 
 

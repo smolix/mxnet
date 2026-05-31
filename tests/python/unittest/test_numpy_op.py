@@ -2987,6 +2987,17 @@ def test_np_tile():
 
 
 @use_np
+def test_np_tile_reps_validation():
+    data = np.ones((2,))
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    for reps, error_type in [((2.5,), TypeError), ((-1,), ValueError)]:
+        with pytest.raises(error_type):
+            np.tile(data, reps)
+        with pytest.raises(error_type):
+            mx.sym.np.tile(sym_data, reps)
+
+
+@use_np
 def test_np_tril():
     # numpy tril does not support scalar array (zero-dim)
     config = [

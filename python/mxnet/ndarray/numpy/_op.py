@@ -4391,6 +4391,7 @@ def tile(A, reps):
     array([2, 2, 2]) # repeating integer `2`
 
     """
+    reps = _normalize_shape(reps)
     if isinstance(A, numeric_types):
         return _np.tile(A, reps)
     elif isinstance(A, NDArray):

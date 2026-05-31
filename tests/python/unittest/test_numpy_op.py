@@ -4572,6 +4572,20 @@ def test_np_concat():
 
 
 @use_np
+def test_np_concatenate_array_like_inputs():
+    configs = [
+        (([1, 2], [3, 4]), 0),
+        (([[1, 2]], np.array([[3, 4]], dtype='int64')), 0),
+        (([[1, 2]], [[3, 4]]), None),
+    ]
+    for seq, axis in configs:
+        np_seq = [arr.asnumpy() if isinstance(arr, np.ndarray) else arr for arr in seq]
+        mx_out = np.concatenate(seq, axis=axis)
+        np_out = onp.concatenate(np_seq, axis=axis)
+        assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
 def test_np_append():
     class TestAppend(HybridBlock):
         def __init__(self, axis=None):

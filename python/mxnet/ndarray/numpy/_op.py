@@ -4836,6 +4836,7 @@ def concatenate(seq, axis=0, out=None):
     """
     if len(seq) == 0:
         raise ValueError("need at least one array to concatenate")
+    seq = [arr if isinstance(arr, NDArray) else _as_np_ndarray(arr) for arr in seq]
     return _api_internal.concatenate(*seq, axis, out)
 
 

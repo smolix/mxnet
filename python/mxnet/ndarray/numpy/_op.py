@@ -57,6 +57,9 @@ __all__ = ['shape', 'zeros', 'zeros_like', 'ones', 'ones_like', 'full', 'full_li
 def _as_np_ndarray(obj):
     if isinstance(obj, NDArray):
         return obj
+    from ... import _deferred_compute as dc  # pylint: disable=import-outside-toplevel
+    if dc.is_deferred_compute():
+        raise TypeError("array-like constants are not supported in deferred compute graphs")
     dtype = None
     if isinstance(obj, numeric_types):
         dtype = dtype_from_number(obj)

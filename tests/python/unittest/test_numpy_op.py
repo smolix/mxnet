@@ -5007,6 +5007,15 @@ def test_np_append():
         np_out = onp.append(np_arr, np_values, axis=axis)
         assert same(mx_out.asnumpy(), np_out)
 
+    class TestAppendArrayLikeConstant(HybridBlock):
+        def forward(self, a):
+            return np.append(a, [9, 10])
+
+    test_append_constant = TestAppendArrayLikeConstant()
+    test_append_constant.hybridize()
+    with pytest.raises(TypeError, match='array-like constants are not supported'):
+        test_append_constant(np.array([1, 2]))
+
 
 @use_np
 def test_np_stack():

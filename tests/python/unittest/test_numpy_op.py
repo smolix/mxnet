@@ -6186,6 +6186,51 @@ def test_np_linalg_norm():
 
 
 @use_np
+@pytest.mark.parametrize('ord', [1, -1, 'inf', '-inf'])
+@pytest.mark.parametrize('hybridize', [True, False])
+def test_np_linalg_norm_negative_matrix_axes(ord, hybridize):
+    class TestNorm(HybridBlock):
+        def __init__(self, ord):
+            super(TestNorm, self).__init__()
+            self._ord = ord
+
+        def forward(self, x):
+            return np.linalg.norm(x, ord=self._ord, axis=(-2, -1))
+
+    data = np.arange(24, dtype='float32').reshape((2, 3, 4)) + 1
+    np_ord = onp.inf if ord == 'inf' else -onp.inf if ord == '-inf' else ord
+
+    test_norm = TestNorm(ord)
+    if hybridize:
+        test_norm.hybridize()
+    mx_ret = test_norm(data)
+    np_ret = onp.linalg.norm(data.asnumpy(), ord=np_ord, axis=(-2, -1))
+    assert mx_ret.shape == np_ret.shape
+    assert_almost_equal(mx_ret.asnumpy(), np_ret)
+
+    mx_ret = np.linalg.matrix_norm(data, ord=ord)
+    assert mx_ret.shape == np_ret.shape
+    assert_almost_equal(mx_ret.asnumpy(), np_ret)
+
+
+@use_np
+@pytest.mark.parametrize('hybridize', [True, False])
+def test_np_linalg_vector_norm_negative_tuple_axes(hybridize):
+    class TestVectorNorm(HybridBlock):
+        def forward(self, x):
+            return np.linalg.vector_norm(x, axis=(-2, -1))
+
+    data = np.arange(24, dtype='float32').reshape((2, 3, 4)) + 1
+    test_norm = TestVectorNorm()
+    if hybridize:
+        test_norm.hybridize()
+    mx_ret = test_norm(data)
+    np_ret = onp.linalg.norm(data.asnumpy().reshape((2, 12)), axis=1)
+    assert mx_ret.shape == np_ret.shape
+    assert_almost_equal(mx_ret.asnumpy(), np_ret)
+
+
+@use_np
 @pytest.mark.parametrize('shape,ord,axis', [
     ((2, 3, 4), 2, (1, 2)),
     ((2, 3, 4), None, None),

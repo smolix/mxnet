@@ -26,6 +26,15 @@ __all__ = ['norm', 'svd', 'cholesky', 'qr', 'inv', 'det', 'slogdet', 'solve', 't
            'pinv', 'eigvals', 'eig', 'eigvalsh', 'eigh', 'lstsq', 'matrix_rank']
 
 
+def _normalize_axis_tuple(axis, ndim):
+    axis = tuple(i + ndim if i < 0 else i for i in axis)
+    if any(i < 0 or i >= ndim for i in axis):
+        raise ValueError("axis out of range")
+    if len(set(axis)) != len(axis):
+        raise ValueError("duplicate value in axis")
+    return axis
+
+
 def matrix_rank(M, tol=None, hermitian=False):
     """
     Return matrix rank of array using SVD method
@@ -318,6 +327,7 @@ def norm(x, ord=None, axis=None, keepdims=False):
             if isinstance(axis, int):
                 axis = (axis, )
             if len(axis) == 2:
+                axis = _normalize_axis_tuple(axis, x.ndim)
                 if ord in ['inf', '-inf']:
                     row_axis, col_axis = axis
                     if not keepdims:

@@ -31,6 +31,15 @@ __all__ = ['norm', 'svd', 'cholesky', 'qr', 'inv', 'det', 'slogdet', 'solve', 't
 __all__ += fallback_linalg.__all__
 
 
+def _normalize_axis_tuple(axis, ndim):
+    axis = tuple(i + ndim if i < 0 else i for i in axis)
+    if any(i < 0 or i >= ndim for i in axis):
+        raise ValueError("axis out of range")
+    if len(set(axis)) != len(axis):
+        raise ValueError("duplicate value in axis")
+    return axis
+
+
 @wrap_data_api_linalg_func
 def matrix_rank(M, rtol=None, hermitian=False):
     r"""
@@ -682,6 +691,7 @@ def vector_norm(x, ord=None, axis=None, keepdims=False):
         x = x.flatten()
         axis = 0
     elif isinstance(axis, tuple):
+        axis = _normalize_axis_tuple(axis, x.ndim)
         rest = tuple(i for i in range(x.ndim) if i not in axis)
         newshape = axis + rest
         x = _mx_nd_np.transpose(x, newshape).\

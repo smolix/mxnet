@@ -79,6 +79,11 @@ inline void GetRepeatsParams(const RepeatsParam& param,
   if (static_cast<bool>(*axisOpt)) {
     int ndims = ishape.ndim();
     *axis     = axisOpt->value();
+    if (ndims == 0 && (*axis == 0 || *axis == -1)) {
+      *axisOpt = dmlc::optional<int>();
+      *axis    = -1;
+      return;
+    }
     if (*axis < 0) {
       *axis += ndims;
     }
@@ -239,6 +244,10 @@ void NumpyRepeatsAxisZeroOpForward(const nnvm::NodeAttrs& attrs,
     repeats += increasing_repetitions[i];
   }
   axisOpt = param.axis;
+  if (static_cast<bool>(axisOpt) && ishape.ndim() == 0 &&
+      (axisOpt.value() == 0 || axisOpt.value() == -1)) {
+    axisOpt = dmlc::optional<int>();
+  }
   if (increasing_repetitions.ndim() == 1) {
     int len = static_cast<bool>(axisOpt) ? ishape[axis] : ishape.Size();
     std::vector<int> temp(len, repeats);
@@ -262,7 +271,7 @@ void NumpyRepeatsAxisZeroOpForward(const nnvm::NodeAttrs& attrs,
     std::memcpy(ind, increasing_repetitions.begin(), increasing_repetitions.ndim() * sizeof(int));
   }
 
-  if (!param.axis.has_value()) {
+  if (!axisOpt.has_value()) {
     mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
     const TBlob& in_data    = inputs[0];
     const TBlob& out_data   = outputs[0];

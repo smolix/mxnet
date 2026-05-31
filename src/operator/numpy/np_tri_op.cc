@@ -37,7 +37,9 @@ inline bool TriOpShape(const nnvm::NodeAttrs& attrs,
 
   const TriParam& param = nnvm::get<TriParam>(attrs.parsed);
   nnvm::dim_t M         = param.M.has_value() ? param.M.value() : param.N;
-  SHAPE_ASSIGN_CHECK(*out_attrs, 0, mshadow::Shape2(param.N, M));
+  nnvm::dim_t N         = param.N < 0 ? 0 : param.N;
+  M                     = M < 0 ? 0 : M;
+  SHAPE_ASSIGN_CHECK(*out_attrs, 0, mshadow::Shape2(N, M));
 
   return shape_is_known(out_attrs->at(0));
 }

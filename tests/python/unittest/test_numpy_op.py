@@ -2425,6 +2425,31 @@ def test_np_tri():
 
 
 @use_np
+def test_np_tri_negative_dimensions():
+    class TestTri(HybridBlock):
+        def __init__(self, N, M=None, k=0, dtype=None):
+            super(TestTri, self).__init__()
+            self._N = N
+            self._M = M
+            self._k = k
+            self._dtype = dtype
+
+        def forward(self, x):
+            return x + np.tri(self._N, self._M, self._k, self._dtype)
+
+    for N, M in [(-2, None), (2, -2), (0, -2), (-2, 3), (-2, -3)]:
+        for dtype in ['float32', 'int64']:
+            expected = onp.tri(N, M, dtype=dtype)
+            assert_almost_equal(np.tri(N, M, dtype=dtype).asnumpy(), expected)
+            for hybridize in [False, True]:
+                test_tri = TestTri(N, M, dtype=dtype)
+                if hybridize:
+                    test_tri.hybridize()
+                out = test_tri(np.zeros(shape=(), dtype=dtype))
+                assert_almost_equal(out.asnumpy(), expected)
+
+
+@use_np
 def test_np_prod():
     class TestProd(HybridBlock):
         def __init__(self, axis=None, dtype=None, keepdims=False):

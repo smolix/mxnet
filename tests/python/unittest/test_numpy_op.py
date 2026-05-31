@@ -11890,6 +11890,25 @@ def test_np_unravel_index_bounds():
 
 
 @use_np
+def test_np_unravel_index_shape_validation():
+    indices = np.array([1], dtype='int64')
+    sym_indices = mx.sym.var('indices').as_np_ndarray()
+    invalid_shapes = [
+        ((2.0, 3), TypeError),
+        ((2, '3'), TypeError),
+        ((-2, 3), ValueError),
+        ((2, 0), ValueError),
+        (0, ValueError),
+        ((), ValueError),
+    ]
+    for shape, error_type in invalid_shapes:
+        with pytest.raises(error_type):
+            np.unravel_index(indices, shape)
+        with pytest.raises(error_type):
+            mx.sym.np.unravel_index(sym_indices, shape)
+
+
+@use_np
 def test_np_diag_indices_from():
     class TestDiag_indices_from(HybridBlock):
         def __init__(self) :

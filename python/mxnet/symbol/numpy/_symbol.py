@@ -4026,6 +4026,27 @@ def _normalize_symbol_split_indices(indices_or_sections):
     return indices, sections
 
 
+def _normalize_unravel_shape(shape):
+    if isinstance(shape, (integer_types, _np.integer)):
+        if shape <= 0:
+            raise ValueError("shape dimensions must be positive")
+        return int(shape)
+    if isinstance(shape, (tuple, list)):
+        if len(shape) == 0:
+            raise ValueError("shape must be non-empty")
+        dims = []
+        for dim in shape:
+            if not isinstance(dim, (integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(dim).__name__))
+            if dim <= 0:
+                raise ValueError("shape dimensions must be positive")
+            dims.append(int(dim))
+        return tuple(dims)
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(shape).__name__))
+
+
 @set_module('mxnet.symbol.numpy')
 def split(ary, indices_or_sections, axis=0):
     """Split an array into multiple sub-arrays.
@@ -5416,6 +5437,7 @@ def unravel_index(indices, shape, order='C'): # pylint: disable=redefined-outer-
     (3, 1, 4, 1)
     """
     if order == 'C':
+        shape = _normalize_unravel_shape(shape)
         return _npi.unravel_index_fallback(indices, shape=shape)
     else:
         raise NotImplementedError('Don not support column-major (Fortran-style) order at this moment')

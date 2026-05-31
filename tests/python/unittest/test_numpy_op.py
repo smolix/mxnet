@@ -9861,6 +9861,23 @@ def test_np_pad():
                     else:
                         assert_almost_equal(mx.np.pad(mx_grad, pad_width=pw, mode="constant"), gt_in_grad.asnumpy(), rtol=rtol, atol=atol)
 
+    pad_width_configs = [1, [1, 2], [[1, 2], [3, 4]], ((1, 2), (3, 4))]
+    x_np = onp.arange(4, dtype='float32').reshape(2, 2)
+    x = np.array(x_np)
+    for pad_width in pad_width_configs:
+        expected = onp.pad(x_np, pad_width, mode='constant')
+        assert_almost_equal(np.pad(x, pad_width, mode='constant').asnumpy(), expected)
+        for hybridize in [False, True]:
+            test_pad = TestPad(pad_width, 'constant')
+            if hybridize:
+                test_pad.hybridize()
+            assert_almost_equal(test_pad(x).asnumpy(), expected)
+
+    with pytest.raises(ValueError):
+        np.pad(x, -1)
+    with pytest.raises(ValueError):
+        np.pad(x, (1,), mode='bad')
+
 
 @use_np
 def test_np_rand():

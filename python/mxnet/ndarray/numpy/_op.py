@@ -2171,6 +2171,20 @@ def expand_dims(a, axis):
     return _api_internal.expand_dims(a, axis)
 
 
+def _normalize_np_pad_width(pad_width):
+    pad_width_array = _np.asarray(pad_width)
+    if pad_width_array.dtype.kind != 'i':
+        raise TypeError('`pad_width` must be of integral type.')
+    if _np.any(pad_width_array < 0):
+        raise ValueError("index can't contain negative values")
+    if pad_width_array.ndim == 0:
+        return (int(pad_width_array),)
+    if pad_width_array.ndim == 1:
+        return tuple(int(width) for width in pad_width_array.tolist())
+    return tuple(tuple(int(width) for width in axis_width)
+                 for axis_width in pad_width_array.tolist())
+
+
 @set_module('mxnet.ndarray.numpy')
 @wrap_np_binary_func
 def gcd(x1, x2, out=None, **kwargs):
@@ -9481,10 +9495,7 @@ def pad(x, pad_width, mode='constant', **kwargs): # pylint: disable=too-many-arg
         according to `pad_width`.
     """
     # pylint: disable = too-many-return-statements, inconsistent-return-statements
-    if not _np.asarray(pad_width).dtype.kind == 'i':
-        raise TypeError('`pad_width` must be of integral type.')
-    if not isinstance(pad_width, tuple):
-        raise TypeError("`pad_width` must be tuple.")
+    pad_width = _normalize_np_pad_width(pad_width)
     if mode == "linear_ramp":
         raise ValueError("mode {'linear_ramp'} is not supported.")
     if mode == "wrap":
@@ -9511,6 +9522,8 @@ def pad(x, pad_width, mode='constant', **kwargs): # pylint: disable=too-many-arg
         'wrap': [],
         }
 
+    if mode not in allowedkwargs:
+        raise ValueError("mode {'" + str(mode) + "'} is not supported.")
     if isinstance(mode, _np.compat.basestring):
         # Make sure have allowed kwargs appropriate for mode
         for key in kwargs:

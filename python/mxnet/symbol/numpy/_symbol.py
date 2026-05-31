@@ -3762,6 +3762,8 @@ def insert(arr, obj, values, axis=None):
             start = obj.start
             stop = obj.stop
             step = 1 if obj.step is None else obj.step
+            if step == 0:
+                raise ValueError('slice step cannot be zero')
             return _npi.insert_slice(arr, val=values, start=start, stop=stop, step=step, axis=axis)
         elif isinstance(obj, integer_types):
             return _npi.insert_scalar(arr, val=values, int_ind=obj, axis=axis)
@@ -3775,6 +3777,8 @@ def insert(arr, obj, values, axis=None):
         start = obj.start
         stop = obj.stop
         step = 1 if obj.step is None else obj.step
+        if step == 0:
+            raise ValueError('slice step cannot be zero')
         return _npi.insert_slice(arr, values, start=start, stop=stop, step=step, axis=axis)
     elif isinstance(obj, integer_types):
         return _npi.insert_scalar(arr, values, int_ind=obj, axis=axis)
@@ -4114,6 +4118,8 @@ def delete(arr, obj, axis=None):
         start = obj.start
         stop = obj.stop
         step = 1 if obj.step is None else obj.step
+        if step == 0:
+            raise ValueError('slice step cannot be zero')
         return _npi.delete(arr, start=start, stop=stop, step=step, axis=axis)
     elif isinstance(obj, integer_types):
         return _npi.delete(arr, int_ind=obj, axis=axis)

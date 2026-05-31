@@ -979,6 +979,8 @@ def insert(arr, obj, values, axis=None):
             start = obj.start
             stop = obj.stop
             step = 1 if obj.step is None else obj.step
+            if step == 0:
+                raise ValueError('slice step cannot be zero')
             return _api_internal.insert_slice(arr, values, start, stop, step, axis)
         elif isinstance(obj, integer_types):
             return _api_internal.insert_scalar(arr, values, obj, axis)
@@ -994,6 +996,8 @@ def insert(arr, obj, values, axis=None):
         start = obj.start
         stop = obj.stop
         step = 1 if obj.step is None else obj.step
+        if step == 0:
+            raise ValueError('slice step cannot be zero')
         return _api_internal.insert_slice(arr, values, start, stop, step, axis)
     elif isinstance(obj, integer_types):
         return _api_internal.insert_scalar(arr, values, obj, axis)
@@ -1494,6 +1498,8 @@ def delete(arr, obj, axis=None):
         start = obj.start
         stop = obj.stop
         step = 1 if obj.step is None else obj.step
+        if step == 0:
+            raise ValueError('slice step cannot be zero')
         return _api_internal.delete(arr, start, stop, step, axis)
     elif isinstance(obj, integer_types):
         return _api_internal.delete(arr, obj, axis)

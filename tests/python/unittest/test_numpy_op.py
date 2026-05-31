@@ -4391,6 +4391,16 @@ def test_np_insert_tensor_index_validation():
                         onp.insert(matrix.asnumpy(), onp.array([-1]), 9, axis=1))
     with pytest.raises(IndexError, match="out of bounds"):
         np.insert(matrix, np.array([4], dtype='int64'), 9, axis=1).asnumpy()
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        np.insert(data, slice(0, 2, 0), 9)
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        np.insert(data, slice(0, 2, 0), np.array([9]))
+    sym_data = mx.sym.var('insert_data').as_np_ndarray()
+    sym_values = mx.sym.var('insert_values').as_np_ndarray()
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        mx.sym.np.insert(sym_data, slice(0, 2, 0), 9)
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        mx.sym.np.insert(sym_data, slice(0, 2, 0), sym_values)
 
 
 @use_np
@@ -5278,6 +5288,11 @@ def test_np_delete_tensor_index_validation():
         np.delete(data, np.array([5], dtype='int64')).asnumpy()
     with pytest.raises(IndexError, match="integer type"):
         np.delete(data, np.array([1.5], dtype='float32')).asnumpy()
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        np.delete(data, slice(0, 2, 0))
+    sym_data = mx.sym.var('delete_data').as_np_ndarray()
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        mx.sym.np.delete(sym_data, slice(0, 2, 0))
 
 
 @use_np

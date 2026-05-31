@@ -83,6 +83,21 @@ struct NumpyInsertParam : public dmlc::Parameter<NumpyInsertParam> {
   }
 };
 
+inline void CheckInsertSingleValueBroadcast(const mxnet::TShape& arrshape,
+                                            const mxnet::TShape& valshape,
+                                            const int axis,
+                                            const index_t numnew,
+                                            const bool moveaxis) {
+  for (int i = arrshape.ndim() - 1; i >= 0; --i) {
+    const int val_axis = moveaxis ? (i < axis ? i + 1 : (i == axis ? 0 : i)) : i;
+    const index_t val_dim = valshape[val_axis];
+    const index_t target_dim = (i == axis) ? numnew : arrshape[i];
+    CHECK(val_dim == 1 || val_dim == target_dim)
+        << "ValueError: could not broadcast input array from shape " << valshape
+        << " into inserted shape";
+  }
+}
+
 /*!
  * \brief insert when obj is 'scaler' or a 'slice' with only one element.
  * \tparam ndim - both 'in_arr', 'in_val' and 'out_data' have same ndim before call this.

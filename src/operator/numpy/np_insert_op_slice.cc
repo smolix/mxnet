@@ -117,6 +117,7 @@ bool NumpyInsertSliceShape(const nnvm::NodeAttrs& attrs,
 
   if (seq_cnt == 1) {
     numnew = valshape[axis];
+    CheckInsertSingleValueBroadcast(arrshape, valshape, axis, numnew, false);
   } else {
     numnew = seq_cnt;
   }

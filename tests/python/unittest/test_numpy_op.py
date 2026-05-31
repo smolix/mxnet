@@ -4416,6 +4416,19 @@ def test_np_insert_tensor_index_validation():
     with pytest.raises(ValueError, match="slice step cannot be zero"):
         mx.sym.np.insert(sym_data, slice(0, 2, 0), sym_values)
 
+    invalid_values = [
+        (1, np.arange(3), 1),
+        (1, np.arange(2), 0),
+        (np.array([1], dtype='int64'), np.arange(3).reshape((3, 1)), 1),
+        (slice(1, 2), np.arange(3).reshape((3, 1)), 1),
+    ]
+    for obj, values, axis in invalid_values:
+        with pytest.raises((ValueError, mx.MXNetError), match="could not broadcast input array"):
+            np.insert(matrix, obj, values, axis=axis).asnumpy()
+
+    assert_almost_equal(np.insert(matrix, 1, np.arange(2), axis=1).asnumpy(),
+                        onp.insert(matrix.asnumpy(), 1, onp.arange(2), axis=1))
+
 
 @use_np
 @pytest.mark.parametrize('obj', [1, slice(1, 2), np.array([1], dtype='int64')])

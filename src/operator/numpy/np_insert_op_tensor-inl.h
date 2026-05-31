@@ -38,6 +38,42 @@
 namespace mxnet {
 namespace op {
 
+template <typename xpu>
+void CheckInsertTensorIndexBounds(mshadow::Stream<xpu>* s,
+                                  const OpContext& ctx,
+                                  const TBlob& indices,
+                                  index_t N,
+                                  int axis) {
+  using namespace mshadow;
+  using namespace mxnet_op;
+
+  const size_t indices_len = indices.shape_.Size();
+  if (indices_len == 0) {
+    return;
+  }
+
+  Tensor<xpu, 1, char> invalid =
+      ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(1), s);
+  Kernel<set_zero, xpu>::Launch(s, 1, invalid.dptr_);
+  Kernel<CheckInsertIndexBounds, xpu>::Launch(
+      s, indices_len, N, indices.dptr<int64_t>(), invalid.dptr_);
+
+  char invalid_host = 0;
+#ifdef __CUDACC__
+  CUDA_CALL(cudaMemcpyAsync(&invalid_host,
+                            invalid.dptr_,
+                            sizeof(char),
+                            cudaMemcpyDeviceToHost,
+                            mshadow::Stream<gpu>::GetStream(s)));
+  CUDA_CALL(cudaStreamSynchronize(mshadow::Stream<gpu>::GetStream(s)));
+#else
+  invalid_host = *invalid.dptr_;
+#endif
+  if (invalid_host) {
+    LOG(FATAL) << "IndexError: index is out of bounds for axis " << axis << " with size " << N;
+  }
+}
+
 /*
  * Only support tensor indices (the type of param 'obj' is tensor).
  */
@@ -92,6 +128,7 @@ void NumpyInsertTensorCompute(const nnvm::NodeAttrs& attrs,
 
   size_t N           = arr.shape_[axis];
   size_t indices_len = inputs[obj_pos].shape_.Size();  // indices amount
+  CheckInsertTensorIndexBounds(s, ctx, inputs[obj_pos], N, axis);
 
   // get and check indices from tensor
   size_t numnew = 0;  // numnew = output.shape[axis] - arr.shape[axis]
@@ -204,7 +241,7 @@ void NumpyInsertTensorCompute(const nnvm::NodeAttrs& attrs,
     size_t temp_storage_bytes, temp_mem_size;
     temp_storage_bytes = SortByKeyWorkspaceSize<int64_t, index_t, xpu>(indices_len, false, true);
     temp_mem_size      = indices_len * sizeof(int64_t) * 2 + indices_len * sizeof(index_t) +
-                    outshape[axis] * sizeof(index_t) * 2 + temp_storage_bytes;
+                    outshape[axis] * sizeof(index_t) * 2 + temp_storage_bytes + sizeof(char);
     Tensor<xpu, 1, char> temp_mem =
         ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(temp_mem_size), s);
     int64_t* indices_ptr        = reinterpret_cast<int64_t*>(temp_mem.dptr_);
@@ -214,12 +251,14 @@ void NumpyInsertTensorCompute(const nnvm::NodeAttrs& attrs,
     index_t* origin_idx         = reinterpret_cast<index_t*>(is_insert + outshape[axis]);
     Tensor<xpu, 1, char> temp_storage(
         reinterpret_cast<char*>(origin_idx + outshape[axis]), Shape1(temp_storage_bytes), s);
+    char* invalid_ptr = temp_storage.dptr_ + temp_storage_bytes;
     Tensor<xpu, 1, int64_t> indices(indices_ptr, Shape1(indices_len), s);
     Tensor<xpu, 1, int64_t> sorted_indices(sorted_indices_ptr, Shape1(indices_len), s);
     Tensor<xpu, 1, index_t> order(order_ptr, Shape1(indices_len), s);
     int num_bits = 8 * sizeof(int64_t);
+    mxnet_op::Kernel<mxnet_op::set_zero, xpu>::Launch(s, 1, invalid_ptr);
     Kernel<ObjToIndices, xpu>::Launch(
-        s, indices_len, indices_ptr, N, inputs[obj_pos].dptr<int64_t>());
+        s, indices_len, indices_ptr, N, inputs[obj_pos].dptr<int64_t>(), invalid_ptr);
     Kernel<range_fwd, xpu>::Launch(
         s, indices_len, index_t{1}, index_t{0}, index_t{1}, kWriteTo, order_ptr);
     mxnet::op::SortByKey(indices, order, true, &temp_storage, 0, num_bits, &sorted_indices);

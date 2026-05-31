@@ -277,11 +277,23 @@ struct InsertSeqIndicesKernel {
   }
 };
 
+struct CheckInsertIndexBounds {
+  MSHADOW_XINLINE static void Map(index_t i, index_t N, const int64_t* obj, char* invalid) {
+    const int64_t index = obj[i];
+    if (index < -static_cast<int64_t>(N) || index > static_cast<int64_t>(N)) {
+      *invalid = 1;
+    }
+  }
+};
+
 struct ObjToIndices {
-  MSHADOW_XINLINE static void Map(index_t i, int64_t* indices, int N, const int64_t* obj) {
+  MSHADOW_XINLINE static void Map(
+      index_t i, int64_t* indices, index_t N, const int64_t* obj, char* invalid) {
     indices[i] = obj[i];
-    if (indices[i] < 0) {
-      indices[i] += static_cast<index_t>(N);
+    if (indices[i] < -static_cast<int64_t>(N) || indices[i] > static_cast<int64_t>(N)) {
+      *invalid = 1;
+    } else if (indices[i] < 0) {
+      indices[i] += static_cast<int64_t>(N);
     }
   }
 };

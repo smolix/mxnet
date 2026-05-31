@@ -4030,6 +4030,25 @@ def test_np_insert():
 
 
 @use_np
+def test_np_insert_tensor_index_validation():
+    data = np.arange(3)
+    assert_almost_equal(np.insert(data, np.array([3], dtype='int64'), 9).asnumpy(),
+                        onp.array([0, 1, 2, 9]))
+    assert_almost_equal(np.insert(data, np.array([-3], dtype='int64'), 9).asnumpy(),
+                        onp.array([9, 0, 1, 2]))
+    with pytest.raises(IndexError, match="out of bounds"):
+        np.insert(data, np.array([4], dtype='int64'), 9).asnumpy()
+    with pytest.raises(IndexError, match="out of bounds"):
+        np.insert(data, np.array([-4], dtype='int64'), 9).asnumpy()
+
+    matrix = np.arange(6).reshape((2, 3))
+    assert_almost_equal(np.insert(matrix, np.array([-1], dtype='int64'), 9, axis=1).asnumpy(),
+                        onp.insert(matrix.asnumpy(), onp.array([-1]), 9, axis=1))
+    with pytest.raises(IndexError, match="out of bounds"):
+        np.insert(matrix, np.array([4], dtype='int64'), 9, axis=1).asnumpy()
+
+
+@use_np
 @pytest.mark.parametrize('obj', [1, slice(1, 2), np.array([1], dtype='int64')])
 @pytest.mark.parametrize('axis', [1, -1])
 def test_np_insert_python_scalar_value(obj, axis):

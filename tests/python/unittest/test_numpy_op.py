@@ -12614,6 +12614,17 @@ def test_np_unravel_index_extended_index_dtypes(dtype):
 
 
 @use_np
+def test_np_unravel_index_array_like_indices():
+    for indices in ([0, 5], (0, 5), onp.array([0, 5], dtype='int64')):
+        mx_out = np.unravel_index(indices, (2, 3))
+        np_out = onp.unravel_index(indices, (2, 3))
+        assert len(mx_out) == len(np_out)
+        for elem_mx, elem_np in zip(mx_out, np_out):
+            assert elem_mx.dtype == elem_np.dtype
+            onp.testing.assert_array_equal(elem_mx.asnumpy(), elem_np)
+
+
+@use_np
 def test_np_unravel_index_symbol_rejects_float_indices():
     sym_indices = mx.sym.var('indices').as_np_ndarray()
     with pytest.raises(mx.MXNetError):

@@ -6420,6 +6420,8 @@ def unravel_index(indices, shape, order='C'): # pylint: disable=redefined-outer-
             return _np.unravel_index(indices, shape)
         if isinstance(indices, NDArray):
             return tuple(_api_internal.unravel_index(indices, shape))
+        if isinstance(indices, (list, tuple, _np.ndarray)):
+            return tuple(_api_internal.unravel_index(_as_np_ndarray(indices), shape))
         raise TypeError('Do not support type {} as indices.'.format(str(type(indices))))
     raise NotImplementedError('Do not support column-major (Fortran-style) order at this moment')
 

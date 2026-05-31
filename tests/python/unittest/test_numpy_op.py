@@ -6612,6 +6612,10 @@ def test_np_linalg_norm_invalid_orders():
         with pytest.raises(ValueError):
             np.linalg.norm(data, ord=ord, axis=axis)
 
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="out of bounds"):
+        mx.sym.np.linalg.norm(a, axis=-3).infer_shape(a=(2, 3))
+
 
 @use_np
 @pytest.mark.parametrize('hybridize', [True, False])
@@ -7294,6 +7298,13 @@ def test_np_linalg_cholesky(shape, dtype, upper, hybridize):
     # check imperative once again
     L = np.linalg.cholesky(data, upper=upper)
     check_cholesky(L, data_np, upper)
+
+
+@use_np
+def test_np_linalg_cholesky_symbol_shape_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="must be square"):
+        mx.sym.np.linalg.cholesky(a).infer_shape(a=(2, 3))
 
 
 @use_np

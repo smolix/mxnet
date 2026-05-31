@@ -167,6 +167,12 @@ bool NumpyNormShape(const nnvm::NodeAttrs& attrs,
     for (int i = 0; i < param.axis.value().ndim(); ++i) {
       axis[i] = param.axis.value()[i] < 0 ? (*in_attrs)[0].ndim() + param.axis.value()[i] :
                                             param.axis.value()[i];
+      CHECK_GE(axis[i], 0) << "axis " << param.axis.value()[i]
+                           << " is out of bounds for array of dimension "
+                           << (*in_attrs)[0].ndim();
+      CHECK_LT(axis[i], (*in_attrs)[0].ndim())
+          << "axis " << param.axis.value()[i] << " is out of bounds for array of dimension "
+          << (*in_attrs)[0].ndim();
     }
     const_cast<NumpyNormParam&>(param).axis = axis;
     if (param.axis.value().ndim() == 2) {

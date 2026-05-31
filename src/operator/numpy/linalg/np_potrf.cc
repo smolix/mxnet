@@ -37,6 +37,8 @@ inline bool NumpyLaCholeskyShape(const nnvm::NodeAttrs& attrs,
                                  mxnet::ShapeVector* out_attrs) {
   const mxnet::TShape& in_shape = (*in_attrs)[0];
   CHECK_GE(in_shape.ndim(), 2) << "Array must be at least two-dimensional";
+  CHECK_EQ(in_shape[in_shape.ndim() - 2], in_shape[in_shape.ndim() - 1])
+      << "Last 2 dimensions of the array must be square";
   return ElemwiseShape<1, 1>(attrs, in_attrs, out_attrs);
 }
 

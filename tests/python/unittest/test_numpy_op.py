@@ -7811,6 +7811,17 @@ def test_np_linalg_qr_symbol_rank_validation():
 
 
 @use_np
+def test_np_linalg_qr_bool_type_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        mx.sym.Group(mx.sym.np.linalg.qr(a)).infer_type(a='bool')
+
+    data = np.eye(2, dtype='bool')
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        np.linalg.qr(data)
+
+
+@use_np
 @pytest.mark.parametrize('shape', [
     (0, 0),
     (1, 1),
@@ -8924,6 +8935,21 @@ def test_np_linalg_eig_imperative_float16_validation():
     data = np.eye(2, dtype='float16')
     with pytest.raises(MXNetError, match="float16 is unsupported"):
         np.linalg.eig(data)
+
+
+@use_np
+def test_np_linalg_eig_eigh_bool_type_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        mx.sym.Group(mx.sym.np.linalg.eig(a)).infer_type(a='bool')
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        mx.sym.Group(mx.sym.np.linalg.eigh(a)).infer_type(a='bool')
+
+    data = np.eye(2, dtype='bool')
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        np.linalg.eig(data)
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        np.linalg.eigh(data)
 
 
 @use_np

@@ -9691,25 +9691,29 @@ def test_np_unique_empty_axis_outputs():
         ((0, 3, 2), 1),
         ((2, 0, 3), 2),
     ]
-    for shape, axis in configs:
-        data_np = onp.empty(shape, dtype='float32')
-        data_mx = np.array(data_np, dtype='float32')
-        expected = onp.unique(data_np, return_index=True, return_inverse=True,
-                              return_counts=True, axis=axis)
-        for hybridize in [False, True]:
-            test_unique = TestUnique(axis)
-            if hybridize:
-                test_unique.hybridize()
-            mx_out = test_unique(data_mx)
+    devices = [mx.cpu()]
+    if mx.device.num_gpus() > 0:
+        devices.append(mx.gpu(0))
+    for device in devices:
+        for shape, axis in configs:
+            data_np = onp.empty(shape, dtype='float32')
+            data_mx = np.array(data_np, dtype='float32', device=device)
+            expected = onp.unique(data_np, return_index=True, return_inverse=True,
+                                  return_counts=True, axis=axis)
+            for hybridize in [False, True]:
+                test_unique = TestUnique(axis)
+                if hybridize:
+                    test_unique.hybridize()
+                mx_out = test_unique(data_mx)
+                for mx_arr, np_arr in zip(mx_out, expected):
+                    assert mx_arr.shape == np_arr.shape
+                    assert_almost_equal(mx_arr.asnumpy(), np_arr, rtol=1e-3, atol=1e-5)
+
+            mx_out = np.unique(data_mx, return_index=True, return_inverse=True,
+                               return_counts=True, axis=axis)
             for mx_arr, np_arr in zip(mx_out, expected):
                 assert mx_arr.shape == np_arr.shape
                 assert_almost_equal(mx_arr.asnumpy(), np_arr, rtol=1e-3, atol=1e-5)
-
-        mx_out = np.unique(data_mx, return_index=True, return_inverse=True,
-                           return_counts=True, axis=axis)
-        for mx_arr, np_arr in zip(mx_out, expected):
-            assert mx_arr.shape == np_arr.shape
-            assert_almost_equal(mx_arr.asnumpy(), np_arr, rtol=1e-3, atol=1e-5)
 
 
 @use_np

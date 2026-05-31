@@ -426,6 +426,51 @@ void NumpyUniqueGPUForward(const nnvm::NodeAttrs& attrs,
         axis += inputs[0].shape().ndim();
       CHECK(axis >= 0 && axis < inputs[0].shape().ndim())
           << "Axis must be within the range of input tensor's dimension";
+      const dim_t axis_size = inputs[0].shape()[axis];
+      const dim_t valid_num = axis_size == 0 ? 0 : 1;
+      mxnet::TShape unique_shape(inputs[0].shape());
+      unique_shape[axis] = valid_num;
+      mxnet::TShape unique_aux_shape(1, valid_num);
+      mxnet::TShape inverse_shape(1, axis_size);
+      Stream<gpu>* s = ctx.get_stream<gpu>();
+      if (NumpyUniqueShouldWrite(req, 0)) {
+        const_cast<NDArray&>(outputs[0]).Init(unique_shape);
+      }
+      int output_flag = 0;
+      if (param.return_index) {
+        output_flag += 1;
+        if (NumpyUniqueShouldWrite(req, output_flag)) {
+          const_cast<NDArray&>(outputs[output_flag]).Init(unique_aux_shape);
+          if (valid_num == 1) {
+            Tensor<gpu, 1, dim_t> outdata =
+                outputs[output_flag].data().get_with_shape<gpu, 1, dim_t>(Shape1(1), s);
+            ASSIGN_DISPATCH(outdata, req[output_flag], 0);
+          }
+        }
+      }
+      if (param.return_inverse) {
+        output_flag += 1;
+        if (NumpyUniqueShouldWrite(req, output_flag)) {
+          const_cast<NDArray&>(outputs[output_flag]).Init(inverse_shape);
+          if (axis_size > 0) {
+            Tensor<gpu, 1, dim_t> outdata =
+                outputs[output_flag].data().get_with_shape<gpu, 1, dim_t>(Shape1(axis_size), s);
+            ASSIGN_DISPATCH(outdata, req[output_flag], 0);
+          }
+        }
+      }
+      if (param.return_counts) {
+        output_flag += 1;
+        if (NumpyUniqueShouldWrite(req, output_flag)) {
+          const_cast<NDArray&>(outputs[output_flag]).Init(unique_aux_shape);
+          if (valid_num == 1) {
+            Tensor<gpu, 1, dim_t> outdata =
+                outputs[output_flag].data().get_with_shape<gpu, 1, dim_t>(Shape1(1), s);
+            ASSIGN_DISPATCH(outdata, req[output_flag], axis_size);
+          }
+        }
+      }
+      return;
     }
     // set the shapes of outputs
     mxnet::TShape shape_0(1, 0);

@@ -6396,8 +6396,8 @@ def test_np_cumsum():
 
     for shape in shapes:
         for axis in [None] + [i for i in range(0, len(shape))]:
-            for otype in [None, onp.int32, onp.int64]:
-                for itype in [onp.bool_, onp.int8, onp.int32, onp.int64]:
+            for otype in [None, onp.bool_, onp.int16, onp.uint16, onp.int32, onp.uint32, onp.int64]:
+                for itype in [onp.bool_, onp.int8, onp.int16, onp.uint16, onp.int32, onp.uint32, onp.int64]:
                     x = rand_ndarray(shape).astype(itype).as_np_ndarray()
                     np_out = onp.cumsum(x.asnumpy(), axis=axis, dtype=otype)
                     mx_out = np.cumsum(x, axis=axis, dtype=otype)

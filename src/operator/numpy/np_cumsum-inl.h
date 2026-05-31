@@ -125,8 +125,8 @@ void CumsumForwardImpl(const OpContext& ctx,
   }
 
   Stream<xpu>* s = ctx.get_stream<xpu>();
-  MSHADOW_TYPE_SWITCH_WITH_BOOL(in.type_flag_, IType, {
-    MSHADOW_TYPE_SWITCH(out.type_flag_, OType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(in.type_flag_, IType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out.type_flag_, OType, {
       Kernel<cumsum_forward, xpu>::Launch(
           s, out.Size() / middle, out.dptr<OType>(), in.dptr<IType>(), middle, trailing);
     });

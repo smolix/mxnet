@@ -12422,6 +12422,17 @@ def test_np_bincount():
     assert mx_out.dtype == np.int64
     assert_almost_equal(mx_out.asnumpy(), np_out)
 
+    for dtype in ['bool', 'int16', 'uint16', 'uint32']:
+        data = np.array([0, 1, 1], dtype=dtype)
+        mx_out = np.bincount(data)
+        np_out = onp.bincount(data.asnumpy())
+        assert mx_out.dtype == np.int64
+        assert_almost_equal(mx_out.asnumpy(), np_out)
+
+    x = mx.sym.var('x').as_np_ndarray()
+    with pytest.raises(MXNetError, match="Input data should be int type"):
+        mx.sym.np.bincount(x).infer_type(x='float32')
+
 
 @use_np
 def test_np_bincount_weight_backward():

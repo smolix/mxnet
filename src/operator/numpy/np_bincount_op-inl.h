@@ -62,6 +62,9 @@ inline bool NumpyBincountType(const nnvm::NodeAttrs& attrs,
                               std::vector<int>* in_attrs,
                               std::vector<int>* out_attrs) {
   const NumpyBincountParam& param = nnvm::get<NumpyBincountParam>(attrs.parsed);
+  if (in_attrs->at(0) != -1) {
+    CHECK(!common::is_float(in_attrs->at(0))) << "Input data should be int type";
+  }
   if (!param.has_weights) {
     CHECK_EQ(out_attrs->size(), 1U);
     CHECK_EQ(in_attrs->size(), 1U);

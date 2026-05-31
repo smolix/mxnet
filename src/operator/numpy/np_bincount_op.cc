@@ -32,7 +32,7 @@ void BinNumberCount(const NDArray& data,
                     const NDArray& out,
                     const size_t& N) {
   int bin = minlength;
-  MSHADOW_TYPE_SWITCH(data.dtype(), DType, {
+  MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(data.dtype(), DType, {
     DType* data_ptr = data.data().dptr<DType>();
     for (size_t i = 0; i < N; i++) {
       CHECK_GE(data_ptr[i], 0) << "input should be nonnegative number";
@@ -71,7 +71,7 @@ void NumpyBincountForwardImpl<cpu>(const OpContext& ctx,
   using namespace mxnet_op;
   BinNumberCount(data, minlength, out, data_n);
   mshadow::Stream<cpu>* s = ctx.get_stream<cpu>();
-  MSHADOW_TYPE_SWITCH(data.dtype(), DType, {
+  MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(data.dtype(), DType, {
     MSHADOW_TYPE_SWITCH(weights.dtype(), OType, {
       size_t out_size = out.shape()[0];
       Kernel<set_zero, cpu>::Launch(s, out_size, out.data().dptr<OType>());
@@ -92,7 +92,7 @@ void NumpyBincountForwardImpl<cpu>(const OpContext& ctx,
   using namespace mxnet_op;
   BinNumberCount(data, minlength, out, data_n);
   mshadow::Stream<cpu>* s = ctx.get_stream<cpu>();
-  MSHADOW_TYPE_SWITCH(data.dtype(), DType, {
+  MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(data.dtype(), DType, {
     MSHADOW_TYPE_SWITCH(out.dtype(), OType, {
       size_t out_size = out.shape()[0];
       Kernel<set_zero, cpu>::Launch(s, out_size, out.data().dptr<OType>());

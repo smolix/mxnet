@@ -440,7 +440,8 @@ def vecdot(a, b, axis=None):
     >>> 1*4 + 4*1 + 5*2 + 6*2
     30
     """
-    return _mx_nd_np.tensordot(a.flatten(), b.flatten(), axis)
+    axis = -1 if axis is None else axis
+    return _mx_nd_np.sum(a * b, axis=axis)
 
 
 def lstsq(a, b, rcond='warn'):

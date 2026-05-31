@@ -7257,6 +7257,19 @@ def test_np_linalg_trace_diagonal_use_last_axes():
 
 
 @use_np
+def test_np_linalg_vecdot_axis_semantics():
+    a_np = onp.array([[1, 2], [3, 4]], dtype='float32')
+    b_np = onp.array([[10, 20], [30, 40]], dtype='float32')
+    a = np.array(a_np)
+    b = np.array(b_np)
+
+    for axis in [None, -1, 0, 1]:
+        mx_axis = np.linalg.vecdot(a, b, axis=axis)
+        np_axis = onp.sum(a_np * b_np, axis=-1 if axis is None else axis)
+        assert_almost_equal(mx_axis.asnumpy(), np_axis)
+
+
+@use_np
 @pytest.mark.parametrize('hybridize', [True, False])
 def test_np_linalg_vector_norm_negative_tuple_axes(hybridize):
     class TestVectorNorm(HybridBlock):

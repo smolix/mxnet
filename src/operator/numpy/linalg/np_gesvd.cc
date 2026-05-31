@@ -89,6 +89,20 @@ inline bool NumpyLaGesvdShape(const nnvm::NodeAttrs& attrs,
   return false;
 }
 
+inline bool NumpyLaGesvdType(const nnvm::NodeAttrs& attrs,
+                             std::vector<int>* in_attrs,
+                             std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 1U);
+  CHECK_EQ(out_attrs->size(), 3U);
+  const int a_type = in_attrs->at(0);
+  CHECK(a_type == mshadow::kFloat32 || a_type == mshadow::kFloat64)
+      << "svd operation only supports 32-bit and 64-bit floating point";
+  TYPE_ASSIGN_CHECK(*out_attrs, 0, a_type);
+  TYPE_ASSIGN_CHECK(*out_attrs, 1, a_type);
+  TYPE_ASSIGN_CHECK(*out_attrs, 2, a_type);
+  return out_attrs->at(0) != -1 && out_attrs->at(1) != -1 && out_attrs->at(2) != -1;
+}
+
 NNVM_REGISTER_OP(_npi_svd)
     .describe(R"code()code" ADD_FILELINE)
     .set_num_inputs(1)
@@ -98,7 +112,7 @@ NNVM_REGISTER_OP(_npi_svd)
                                        return std::vector<std::string>{"A"};
                                      })
     .set_attr<mxnet::FInferShape>("FInferShape", NumpyLaGesvdShape)
-    .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<1, 3>)
+    .set_attr<nnvm::FInferType>("FInferType", NumpyLaGesvdType)
     .set_attr<nnvm::FInplaceOption>("FInplaceOption",
                                     [](const NodeAttrs& attrs) {
                                       return std::vector<std::pair<int, int>>{{0, 2}};

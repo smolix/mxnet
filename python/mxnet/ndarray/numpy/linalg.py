@@ -1050,6 +1050,8 @@ def eigvalsh(a, UPLO='L'):
     >>> LA.eigvalsh(a, UPLO='L')
     array([-2.87381886,  5.10144682,  6.38623114]) # in ascending order
     """
+    if UPLO not in ('L', 'U'):
+        raise ValueError("UPLO must be 'L' or 'U'")
     return _api_internal.eigvalsh(a, UPLO)
 
 
@@ -1186,5 +1188,7 @@ def eigh(a, UPLO='L'):
            [ 0.8242942 ,  0.56326365, -0.05721384],
            [-0.53661287,  0.80949366,  0.23825769]])
     """
+    if UPLO not in ('L', 'U'):
+        raise ValueError("UPLO must be 'L' or 'U'")
     w, v = _api_internal.eigh(a, UPLO)
     return (w, v)

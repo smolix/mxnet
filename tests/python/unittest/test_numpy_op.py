@@ -7108,6 +7108,17 @@ def test_np_linalg_svd_symbol_rank_validation():
 
 
 @use_np
+def test_np_linalg_svd_symbol_type_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    svd = mx.sym.Group(mx.sym.np.linalg.svd(a))
+    assert svd.infer_type(a='float32')[1] == [np.float32, np.float32, np.float32]
+    assert svd.infer_type(a='float64')[1] == [np.float64, np.float64, np.float64]
+    for dtype in ('float16', 'int32'):
+        with pytest.raises(MXNetError, match="32-bit and 64-bit floating point"):
+            svd.infer_type(a=dtype)
+
+
+@use_np
 @requires_lapack
 def test_np_linalg_qr():
     class TestQR(HybridBlock):
@@ -8303,6 +8314,15 @@ def test_np_linalg_eigvalsh():
             # check imperative once again
             mx_out = test_eigvalsh(a)
             check_eigvalsh(mx_out, a.asnumpy(), upper)
+
+
+@use_np
+def test_np_linalg_symbol_eigh_invalid_uplo():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(ValueError, match="UPLO"):
+        mx.sym.Group(mx.sym.np.linalg.eigh(a, UPLO='X')).infer_shape(a=(2, 2))
+    with pytest.raises(ValueError, match="UPLO"):
+        mx.sym.np.linalg.eigvalsh(a, UPLO='X').infer_shape(a=(2, 2))
 
 
 @use_np

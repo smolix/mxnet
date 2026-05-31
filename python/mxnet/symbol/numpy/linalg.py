@@ -951,6 +951,8 @@ def eigvalsh(a, UPLO='L'):
     the following way(s):
      - Does not support complex input and output.
     """
+    if UPLO not in ('L', 'U'):
+        raise ValueError("UPLO must be 'L' or 'U'")
     return _npi.eigvalsh(a, UPLO)
 
 
@@ -1058,4 +1060,6 @@ def eigh(a, UPLO='L'):
     the following way(s):
      - Does not support complex input and output.
     """
+    if UPLO not in ('L', 'U'):
+        raise ValueError("UPLO must be 'L' or 'U'")
     return _npi.eigh(a, UPLO)

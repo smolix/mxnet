@@ -7406,6 +7406,17 @@ def test_np_linalg_cholesky_symbol_shape_validation():
 
 
 @use_np
+def test_np_linalg_cholesky_symbol_type_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    cholesky = mx.sym.np.linalg.cholesky(a)
+    assert cholesky.infer_type(a='float32')[1] == [np.float32]
+    assert cholesky.infer_type(a='float64')[1] == [np.float64]
+    for dtype in ('float16', 'int32'):
+        with pytest.raises(MXNetError, match="32-bit and 64-bit floating point"):
+            cholesky.infer_type(a=dtype)
+
+
+@use_np
 @pytest.mark.parametrize('hybridize', [True, False])
 @pytest.mark.parametrize('dtype', ['float32', 'float64'])
 @pytest.mark.parametrize('shape', [

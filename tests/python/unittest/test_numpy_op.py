@@ -4462,6 +4462,18 @@ def test_np_append():
                     np_out = onp.append(a.asnumpy(), b.asnumpy(), axis=axis)
                     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
 
+    configs = [
+        ([1, 2], [3, 4], None),
+        (np.array([1, 2]), 3, None),
+        ([[1, 2]], [[3, 4]], 0),
+    ]
+    for arr, values, axis in configs:
+        mx_out = np.append(arr, values, axis=axis)
+        np_arr = arr.asnumpy() if isinstance(arr, np.ndarray) else arr
+        np_values = values.asnumpy() if isinstance(values, np.ndarray) else values
+        np_out = onp.append(np_arr, np_values, axis=axis)
+        assert same(mx_out.asnumpy(), np_out)
+
 
 @use_np
 def test_np_stack():

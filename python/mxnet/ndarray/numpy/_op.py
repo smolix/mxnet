@@ -4807,6 +4807,13 @@ def append(arr, values, axis=None):  # pylint: disable=redefined-outer-name
            [7., 8., 9.]])
     """
     out = None
+    arr = _as_np_ndarray(arr)
+    values = _as_np_ndarray(values)
+    dtype = _np.result_type(arr.dtype, values.dtype)
+    if arr.dtype != dtype:
+        arr = arr.astype(dtype)
+    if values.dtype != dtype:
+        values = values.astype(dtype)
     return _api_internal.concatenate(arr, values, axis, out)
 
 

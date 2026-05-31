@@ -5514,7 +5514,7 @@ def ravel(x, order='C'):
     This function differs from the original numpy.arange in the following aspects:
         - Only support row-major, C-style order.
     """
-    if order == 'F':
+    if order != 'C':
         raise NotImplementedError('order {} is not supported'.format(order))
     if isinstance(x, numeric_types):
         return _np.reshape(x, -1)

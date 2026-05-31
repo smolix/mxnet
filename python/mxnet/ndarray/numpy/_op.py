@@ -6371,7 +6371,7 @@ def ravel(x, order='C'):
     >>> print(np.ravel(x.T))
     [1. 4. 2. 5. 3. 6.]
     """
-    if order == 'F':
+    if order != 'C':
         raise NotImplementedError('order {} is not supported'.format(order))
     if isinstance(x, numeric_types):
         return _np.reshape(x, -1)

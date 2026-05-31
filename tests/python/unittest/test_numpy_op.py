@@ -5106,6 +5106,14 @@ def test_np_ravel():
                 np_out = onp.ravel(x.asnumpy())
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
 
+    x = np.arange(6).reshape((2, 3))
+    sym_x = mx.sym.var('ravel_data').as_np_ndarray()
+    for order in ['F', 'A', 'K', 'c']:
+        with pytest.raises(NotImplementedError):
+            np.ravel(x, order=order)
+        with pytest.raises(NotImplementedError):
+            mx.sym.np.ravel(sym_x, order=order)
+
 
 @use_np
 def test_np_randint():

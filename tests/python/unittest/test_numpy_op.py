@@ -8943,13 +8943,21 @@ def test_np_linalg_eig_eigh_bool_type_validation():
     with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
         mx.sym.Group(mx.sym.np.linalg.eig(a)).infer_type(a='bool')
     with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        mx.sym.np.linalg.eigvals(a).infer_type(a='bool')
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
         mx.sym.Group(mx.sym.np.linalg.eigh(a)).infer_type(a='bool')
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        mx.sym.np.linalg.eigvalsh(a).infer_type(a='bool')
 
     data = np.eye(2, dtype='bool')
     with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
         np.linalg.eig(data)
     with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        np.linalg.eigvals(data)
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
         np.linalg.eigh(data)
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        np.linalg.eigvalsh(data)
 
 
 @use_np

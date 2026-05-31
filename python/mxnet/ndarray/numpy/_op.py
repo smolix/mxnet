@@ -827,6 +827,10 @@ def insert(arr, obj, values, axis=None):
     array([[  0., 999.,   1.,   2., 999.,   3.],
            [  4., 999.,   5.,   6., 999.,   7.]])
     """
+    arr = _as_np_ndarray(arr)
+    if not isinstance(obj, (slice,) + integer_types) and not isinstance(obj, NDArray):
+        obj = _as_np_ndarray(obj).astype('int64')
+
     if isinstance(values, numeric_types):
         if isinstance(obj, slice):
             start = obj.start
@@ -836,12 +840,13 @@ def insert(arr, obj, values, axis=None):
         elif isinstance(obj, integer_types):
             return _api_internal.insert_scalar(arr, values, obj, axis)
         elif isinstance(obj, NDArray):
-            return _api_internal.insert_tensor(arr, obj, values, axis)
+            values = _as_np_ndarray(values)
+            if values.dtype != arr.dtype:
+                values = values.astype(arr.dtype)
+            return _api_internal.insert_tensor(arr, values, obj, axis)
 
-    if not isinstance(arr, NDArray):
-        raise TypeError("'arr' can not support type {}".format(str(type(arr))))
     if not isinstance(values, NDArray):
-        raise TypeError("'values' can not support type {}".format(str(type(values))))
+        values = _as_np_ndarray(values)
     if isinstance(obj, slice):
         start = obj.start
         stop = obj.stop
@@ -1341,8 +1346,7 @@ def delete(arr, obj, axis=None):
     >>> np.delete(arr, np.array([1,1,5]), None)
     array([ 1.,  3.,  4.,  5.,  7.,  8.,  9., 10., 11., 12.])
     """
-    if not isinstance(arr, NDArray):
-        raise TypeError("'arr' can not support type {}".format(str(type(arr))))
+    arr = _as_np_ndarray(arr)
     if isinstance(obj, slice):
         start = obj.start
         stop = obj.stop
@@ -1351,9 +1355,16 @@ def delete(arr, obj, axis=None):
     elif isinstance(obj, integer_types):
         return _api_internal.delete(arr, obj, axis)
     elif isinstance(obj, NDArray):
+        if obj.dtype == _np.bool_:
+            obj = flatnonzero(obj)
         return _api_internal.delete(arr, obj, axis)
     else:
-        raise TypeError("'obj' can not support type {}".format(str(type(obj))))
+        obj = _as_np_ndarray(obj)
+        if obj.dtype == _np.bool_:
+            obj = flatnonzero(obj)
+        else:
+            obj = obj.astype('int64')
+        return _api_internal.delete(arr, obj, axis)
 
 
 @set_module('mxnet.ndarray.numpy')

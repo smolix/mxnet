@@ -4122,6 +4122,22 @@ def test_np_insert_python_scalar_value(obj, axis):
 
 
 @use_np
+def test_np_insert_array_like_inputs():
+    configs = [
+        ([1, 2, 3], 1, 9, None),
+        (np.arange(4), [1, 3], 9, None),
+        ([[1, 2], [3, 4]], [1], [[9], [8]], 1),
+    ]
+    for arr, obj, values, axis in configs:
+        mx_out = np.insert(arr, obj, values, axis=axis)
+        np_arr = arr.asnumpy() if isinstance(arr, np.ndarray) else arr
+        np_obj = obj.asnumpy() if isinstance(obj, np.ndarray) else obj
+        np_values = values.asnumpy() if isinstance(values, np.ndarray) else values
+        np_out = onp.insert(np_arr, np_obj, np_values, axis=axis)
+        assert same(mx_out.asnumpy(), np_out)
+
+
+@use_np
 def test_np_split():
     class TestSplit(HybridBlock):
         def __init__(self, indices_or_sections, axis=None):
@@ -4862,6 +4878,21 @@ def test_np_delete_tensor_index_validation():
         np.delete(data, np.array([5], dtype='int64')).asnumpy()
     with pytest.raises(IndexError, match="integer type"):
         np.delete(data, np.array([1.5], dtype='float32')).asnumpy()
+
+
+@use_np
+def test_np_delete_array_like_inputs():
+    configs = [
+        ([1, 2, 3], 1, None),
+        (np.arange(5), [1, 3], None),
+        (np.arange(5), [False, True, False, True, False], None),
+    ]
+    for arr, obj, axis in configs:
+        mx_out = np.delete(arr, obj, axis=axis)
+        np_arr = arr.asnumpy() if isinstance(arr, np.ndarray) else arr
+        np_obj = obj.asnumpy() if isinstance(obj, np.ndarray) else obj
+        np_out = onp.delete(np_arr, np_obj, axis=axis)
+        assert same(mx_out.asnumpy(), np_out)
 
 
 @use_np

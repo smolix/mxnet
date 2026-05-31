@@ -8894,7 +8894,8 @@ def test_np_take():
         data_real = onp.random.normal(size=data_shape).astype('float32')
         idx_real = onp.random.randint(low=-100, high=100, size=idx_shape)
 
-        assert same(np.take(np.array(data_real), np.array(idx_real), axis=axis, mode=mode).asnumpy(),
+        indices = np.array(idx_real, dtype='int64')
+        assert same(np.take(np.array(data_real), indices, axis=axis, mode=mode).asnumpy(),
              onp.take(data_real, idx_real, axis=axis, mode=mode))
 
         grad_in = onp.zeros(data_shape, dtype='float32')
@@ -8905,7 +8906,7 @@ def test_np_take():
         x = np.array(data_real)
         x.attach_grad()
         with mx.autograd.record():
-            mx_out = test_take(x, np.array(idx_real))
+            mx_out = test_take(x, indices)
         assert same(mx_out.asnumpy(), onp.take(data_real, idx_real, axis=axis, mode=mode))
 
         if axis and axis < 0:
@@ -8934,6 +8935,15 @@ def test_np_take():
 
             for config in configs:
                 check_output_n_grad(config[0], config[1], config[2], mode)
+
+
+@use_np
+def test_np_take_raise_negative_index():
+    data = np.arange(3)
+    assert_almost_equal(np.take(data, np.array([-1], dtype='int64'), mode='raise').asnumpy(),
+                        onp.array([2]))
+    with pytest.raises(IndexError, match="out of bound"):
+        np.take(data, np.array([3], dtype='int64'), mode='raise').asnumpy()
 
 
 def test_np_builtin_op_signature():

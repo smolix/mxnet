@@ -614,7 +614,9 @@ void TakeOpForward<gpu>(const nnvm::NodeAttrs& attrs,
     MSHADOW_TYPE_SWITCH_WITH_BOOL(inputs[take_::kIdx].type_flag_, IType, {  // index data type
       if (param.mode == take_::kRaise) {
         // check out-of-bound indices
-        IType min       = 0;
+        IType min = common::is_float(inputs[take_::kIdx].type_flag_) ?
+                        static_cast<IType>(0) :
+                        static_cast<IType>(-arrshape[actual_axis]);
         IType max       = static_cast<IType>(arrshape[actual_axis] - 1);
         IType* idx_ptr  = inputs[take_::kIdx].dptr<IType>();
         size_t idx_size = idxshape.Size();
@@ -622,7 +624,9 @@ void TakeOpForward<gpu>(const nnvm::NodeAttrs& attrs,
             ctx.requested[0].get_space_typed<gpu, 1, char>(Shape1(1), s);
         char* is_valid_ptr = reinterpret_cast<char*>(workspace.dptr_);
         bool is_valid      = CheckIndexOutOfBound(s, idx_ptr, idx_size, min, max, is_valid_ptr);
-        CHECK(is_valid) << "Take indices contains indices out of bound";
+        if (!is_valid) {
+          LOG(FATAL) << "IndexError: Take indices contains indices out of bound";
+        }
       }
       if (actual_axis == 0) {
         if (param.mode == take_::kClip) {

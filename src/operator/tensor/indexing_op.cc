@@ -391,13 +391,17 @@ void TakeOpForward<cpu>(const nnvm::NodeAttrs& attrs,
   MSHADOW_TYPE_SWITCH_WITH_BOOL(outputs[take_::kOut].type_flag_, DType, {   // output data type
     MSHADOW_TYPE_SWITCH_WITH_BOOL(inputs[take_::kIdx].type_flag_, IType, {  // index data type
       if (param.mode == take_::kRaise) {
-        IType min = 0;
+        IType min = common::is_float(inputs[take_::kIdx].type_flag_) ?
+                        static_cast<IType>(0) :
+                        static_cast<IType>(-arrshape[actual_axis]);
         IType max = static_cast<IType>(arrshape[actual_axis] - 1);
         // check with single thread is faster since data is small
         IType* idx_ptr  = inputs[take_::kIdx].dptr<IType>();
         size_t idx_size = idxshape.Size();
         bool is_valid   = CheckIndexOutOfBound(idx_ptr, idx_size, min, max);
-        CHECK(is_valid) << "take operator contains indices out of bound";
+        if (!is_valid) {
+          LOG(FATAL) << "IndexError: take operator contains indices out of bound";
+        }
       }
       if (actual_axis == 0) {
         if (param.mode == take_::kClip) {

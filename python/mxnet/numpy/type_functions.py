@@ -129,7 +129,20 @@ def _get_dtype(array_or_dtype):
     elif isinstance(array_or_dtype, onp.dtype):
         return array_or_dtype
     else:
-        raise ValueError("Inputs of result_type must be ndarrays or dtypes")
+        try:
+            return onp.dtype(array_or_dtype)
+        except TypeError as err:
+            raise ValueError("Inputs of result_type must be ndarrays or dtypes") from err
+
+
+def _is_scalar(array_or_dtype):
+    return onp.isscalar(array_or_dtype)
+
+
+def _to_numpy_result_type_arg(array_or_dtype):
+    if isinstance(array_or_dtype, ndarray):
+        return onp.empty((), dtype=array_or_dtype.dtype)
+    return array_or_dtype
 
 
 def result_type(*arrays_and_dtypes):
@@ -150,6 +163,8 @@ def result_type(*arrays_and_dtypes):
         the dtype resulting from an operation involving the input arrays and dtypes.
     """
     if len(arrays_and_dtypes) > 0:
+        if any(_is_scalar(arg) for arg in arrays_and_dtypes):
+            return onp.result_type(*[_to_numpy_result_type_arg(arg) for arg in arrays_and_dtypes])
         ret = _get_dtype(arrays_and_dtypes[0])
         for d in arrays_and_dtypes[1:]:
             dd = _get_dtype(d)

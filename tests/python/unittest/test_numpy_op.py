@@ -13034,6 +13034,22 @@ def test_np_result_type(nums):
 
 
 @use_np
+def test_np_result_type_scalars():
+    configs = [
+        (1, 2.0),
+        (onp.int8(1), onp.float32(1)),
+        (np.array([1], dtype='int32'), 1.5),
+        (np.dtype('int32'), 1.5),
+    ]
+    for inputs in configs:
+        expected_inputs = [
+            x.asnumpy() if isinstance(x, np.ndarray) else x
+            for x in inputs
+        ]
+        assert np.result_type(*inputs) == onp.result_type(*expected_inputs)
+
+
+@use_np
 @pytest.mark.parametrize('func,func2,dtypes,ref_grad,low,high', [
     ('abs', 'abs', 'numeric', lambda x: -1. * (x < 0) + (x > 0), -1.0, 1.0),
     ('acos', 'arccos', 'floating-point', lambda x: -1. / (1. - x ** 2.) ** (1. / 2.), -1.0, 1.0),

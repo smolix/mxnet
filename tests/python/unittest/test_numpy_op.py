@@ -14127,6 +14127,28 @@ def test_np_floor_divide_mixed_int_float16_boundary():
 
 
 @use_np
+@pytest.mark.parametrize('lhs_dtype,rhs_dtype', [
+    ('int16', 'float16'),
+    ('uint16', 'float16'),
+    ('int32', 'float16'),
+    ('uint32', 'float32'),
+])
+def test_np_mixed_int_float_promotion_matches_numpy(lhs_dtype, rhs_dtype):
+    lhs_np = onp.array([3], dtype=lhs_dtype)
+    rhs_np = onp.array([2], dtype=rhs_dtype)
+    expected_dtype = onp.result_type(lhs_np, rhs_np)
+
+    assert np.result_type(np.array(lhs_np, dtype=lhs_np.dtype),
+                          np.array(rhs_np, dtype=rhs_np.dtype)) == expected_dtype
+    for mx_op, np_op in [(np.add, onp.add), (np.multiply, onp.multiply),
+                         (np.floor_divide, onp.floor_divide)]:
+        mx_out = mx_op(np.array(lhs_np, dtype=lhs_np.dtype), np.array(rhs_np, dtype=rhs_np.dtype))
+        np_out = np_op(lhs_np, rhs_np)
+        assert mx_out.dtype == expected_dtype
+        assert_almost_equal(mx_out.asnumpy(), np_out.astype(expected_dtype))
+
+
+@use_np
 @pytest.mark.parametrize('nums', [1, 2, 3, 4, 10, 100])
 def test_np_result_type(nums):
     PICK_LIST = np.numeric_dtypes + np.boolean_dtypes + [np.ones((1,), dtype=d) for d in np.numeric_dtypes + np.boolean_dtypes]

@@ -4791,6 +4791,20 @@ def test_np_stack():
     with pytest.raises(ValueError):
         mx.sym.np.stack([])
 
+    mismatched = [
+        ((2, 3), (2, 4)),
+        ((2, 3), (3, 3)),
+        ((2, 3), (2, 3, 1)),
+    ]
+    sym_a = mx.sym.var('a').as_np_ndarray()
+    sym_b = mx.sym.var('b').as_np_ndarray()
+    sym_stack = mx.sym.np.stack([sym_a, sym_b], axis=0)
+    for shape_a, shape_b in mismatched:
+        with pytest.raises(MXNetError, match="all input arrays must have the same shape"):
+            np.stack([np.ones(shape_a), np.zeros(shape_b)], axis=0)
+        with pytest.raises(MXNetError, match="all input arrays must have the same shape"):
+            sym_stack.infer_shape(a=shape_a, b=shape_b)
+
 
 @use_np
 def test_np_hstack():

@@ -2498,8 +2498,14 @@ inline bool StackOpShape(const nnvm::NodeAttrs& attrs,
   const StackParam& param = dmlc::get<StackParam>(attrs.parsed);
 
   mxnet::TShape dshape;
-  for (const mxnet::TShape& i : (*in_attrs)) {
-    shape_assign(&dshape, i);
+  for (size_t i = 0; i < in_attrs->size(); ++i) {
+    const mxnet::TShape& input_shape = in_attrs->at(i);
+    if (!shape_assign(&dshape, input_shape)) {
+      std::ostringstream os;
+      os << "all input arrays must have the same shape; input 0 has shape " << dshape
+         << " but input " << i << " has shape " << input_shape;
+      throw mxnet::op::InferShapeError(os.str(), i);
+    }
   }
   if (!shape_is_known(dshape))
     return false;

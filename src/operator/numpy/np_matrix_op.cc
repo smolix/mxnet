@@ -1015,12 +1015,9 @@ inline bool NumpyRollShape(const nnvm::NodeAttrs& attrs,
   if (!param.shift.has_value()) {
     LOG(FATAL) << "roll missing 1 required positional argument: 'shift'.";
   }
-  if (param.shift.value().ndim() > 1 && param.axis.has_value() &&
-      param.axis.value().ndim() != param.shift.value().ndim()) {
+  if (param.axis.has_value() && param.shift.value().ndim() > 1 &&
+      param.axis.value().ndim() > 1 && param.axis.value().ndim() != param.shift.value().ndim()) {
     LOG(FATAL) << "shift and `axis` must be a tuple of the same size.";
-  }
-  if (!param.axis.has_value() && param.shift.has_value() && param.shift.value().ndim() > 1) {
-    LOG(FATAL) << "shift must be an int.";
   }
   if (param.axis.has_value()) {
     mxnet::TShape axes(param.axis.value());
@@ -1029,10 +1026,6 @@ inline bool NumpyRollShape(const nnvm::NodeAttrs& attrs,
       if (axes[i] < 0) {
         axes[i] += ndim;
       }
-    }
-    std::sort(axes.begin(), axes.end());
-    for (index_t i = 1; i < axes.ndim(); i++) {
-      CHECK_LT(axes[i - 1], axes[i]) << "axes have duplicates " << axes;
     }
     CHECK_LT(axes[axes.ndim() - 1], ndim)
         << "axis " << axes[axes.ndim() - 1] << " Exceeds input dimensions " << (*in_attrs)[0];

@@ -8376,6 +8376,43 @@ def test_np_roll():
 
 
 @use_np
+def test_np_roll_repeated_axes_and_broadcast_shifts():
+    class TestRoll(HybridBlock):
+        def __init__(self, shift, axis=None):
+            super(TestRoll, self).__init__()
+            self._shift = shift
+            self._axis = axis
+
+        def forward(self, x):
+            return np.roll(x, shift=self._shift, axis=self._axis)
+
+    data = np.arange(12, dtype='float32').reshape((3, 4))
+    configs = [
+        ((1, 2), None),
+        ((1, 2, 3), None),
+        ((1, 2), 0),
+        ((1, 2, 3), -1),
+        (1, (0, 0)),
+        ((1, 2), (0, 0)),
+        ((1,), (0, 1)),
+    ]
+    for shift, axis in configs:
+        expected = onp.roll(data.asnumpy(), shift=shift, axis=axis)
+        for hybridize in [False, True]:
+            test_roll = TestRoll(shift, axis)
+            if hybridize:
+                test_roll.hybridize()
+            data.attach_grad()
+            with mx.autograd.record():
+                out = test_roll(data)
+            assert same(out.asnumpy(), expected)
+            out.backward()
+            assert same(data.grad.asnumpy(), onp.ones(data.shape))
+
+        assert same(np.roll(data, shift=shift, axis=axis).asnumpy(), expected)
+
+
+@use_np
 def test_np_trace():
     class TestTrace(HybridBlock):
         def __init__(self, axis1, axis2, offset):

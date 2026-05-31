@@ -569,7 +569,10 @@ void NumpyRollCompute(const nnvm::NodeAttrs& attrs,
   std::vector<index_t> shifts(ndim, 0);
   index_t input_size = inputs[0].Size();
   if (!param.axis.has_value()) {
-    index_t shift = param.shift.value()[0];
+    index_t shift = 0;
+    for (int i = 0; i < param.shift.value().ndim(); ++i) {
+      shift += param.shift.value()[i];
+    }
     shift         = shift % input_size;
     if (shift < 0) {
       shift += inputs[0].shape_.Size();
@@ -597,23 +600,28 @@ void NumpyRollCompute(const nnvm::NodeAttrs& attrs,
       CHECK_GE(axes[0], 0) << "Reduction axis " << param.axis.value()
                            << " Exceeds input dimensions " << inputs[0].shape_;
     }
-    if (param.shift.value().ndim() == 1) {
+    const int shift_ndim = param.shift.value().ndim();
+    if (shift_ndim == 1) {
       for (int i = 0; i < axes.ndim(); ++i) {
-        shifts[axes[i]] = param.shift.value()[0];
+        shifts[axes[i]] += param.shift.value()[0];
+      }
+    } else if (axes.ndim() == 1) {
+      for (int i = 0; i < shift_ndim; ++i) {
+        shifts[axes[0]] += param.shift.value()[i];
       }
     } else {
-      if (param.shift.value().ndim() != axes.ndim()) {
+      if (shift_ndim != axes.ndim()) {
         LOG(FATAL) << "shift and `axis` must be a tuple of the same size,";
       }
       for (int i = 0; i < axes.ndim(); ++i) {
-        shifts[axes[i]] = param.shift.value()[i];
+        shifts[axes[i]] += param.shift.value()[i];
       }
     }
     // keep shift in a legal range
     for (int i = 0; i < ndim; ++i) {
       index_t trans_shift = shifts[i] % inputs[0].shape_[i];
       if (trans_shift < 0) {
-        trans_shift = shifts[i] + inputs[0].shape_[i];
+        trans_shift += inputs[0].shape_[i];
       }
       shifts[i] = trans_shift;
     }

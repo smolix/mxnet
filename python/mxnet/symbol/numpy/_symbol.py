@@ -78,6 +78,25 @@ def _normalize_shape(shape):
                     .format(type(shape).__name__))
 
 
+def _normalize_broadcast_shape(shape):
+    if isinstance(shape, (integer_types, _np.integer)):
+        if shape < 0 and shape != -2:
+            raise ValueError("negative dimensions are not allowed")
+        return int(shape)
+    if isinstance(shape, (tuple, list)):
+        dims = []
+        for dim in shape:
+            if not isinstance(dim, (integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(dim).__name__))
+            if dim < 0 and dim != -2:
+                raise ValueError("negative dimensions are not allowed")
+            dims.append(int(dim))
+        return tuple(dims)
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(shape).__name__))
+
+
 @set_module('mxnet.symbol.numpy')
 class _Symbol(Symbol):
     def __getitem__(self, key): # pylint: disable = too-many-return-statements, inconsistent-return-statements
@@ -1290,6 +1309,7 @@ def broadcast_to(array, shape):
         If the array is not compatible with the new shape according to NumPy's
         broadcasting rules.
     """
+    shape = _normalize_broadcast_shape(shape)
     if _np.isscalar(array):
         return full(shape, array)
     return _npi.broadcast_to(array, shape)
@@ -7329,6 +7349,7 @@ def resize(a, new_shape):
     array([[0., 1., 2., 3.],
            [0., 1., 2., 3.]])
     """
+    new_shape = _normalize_shape(new_shape)
     return _npi.resize_fallback(a, new_shape=new_shape)
 
 # pylint: disable=redefined-outer-name

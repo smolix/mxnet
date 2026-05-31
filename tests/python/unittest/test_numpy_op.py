@@ -2653,6 +2653,17 @@ def test_np_broadcast_to(src_shape, dst_shape, hybridize):
 
 
 @use_np
+def test_np_broadcast_to_shape_validation():
+    data = np.ones((1,))
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    for shape, error_type in [((2.5,), TypeError), ((-1,), ValueError)]:
+        with pytest.raises(error_type):
+            np.broadcast_to(data, shape)
+        with pytest.raises(error_type):
+            mx.sym.np.broadcast_to(sym_data, shape)
+
+
+@use_np
 def test_np_more_array_like_wrappers():
     checks = [
         (onp.broadcast_to, np.broadcast_to, ([1, 2], (2, 2))),
@@ -11251,6 +11262,17 @@ def test_np_resize():
         # check imperative again
         ret = np.resize(a, shape_pair[1])
         assert_almost_equal(ret.asnumpy(), expected_ret, atol=1e-5, rtol=1e-5, use_broadcast=False)
+
+
+@use_np
+def test_np_resize_shape_validation():
+    data = np.ones((2,))
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    for shape, error_type in [((2.5,), TypeError), ((-1,), ValueError)]:
+        with pytest.raises(error_type):
+            np.resize(data, shape)
+        with pytest.raises(error_type):
+            mx.sym.np.resize(sym_data, shape)
 
 
 @use_np

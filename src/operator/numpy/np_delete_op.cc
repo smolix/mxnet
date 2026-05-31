@@ -37,11 +37,12 @@ bool NumpyDeleteType(const nnvm::NodeAttrs& attrs,
   int insize                    = (param.step.has_value() || param.int_ind.has_value()) ? 1 : 2;
   CHECK_EQ(in_type->size(), insize);
   CHECK_EQ(out_type->size(), 1U);
-  if (insize == 3) {
-    CHECK_NE((*in_type)[1], -1) << "Index type must be set for insert operator\n";
-    CHECK(((*in_type)[1] == mshadow::DataType<int64_t>::kFlag) ||
-          ((*in_type)[1] == mshadow::DataType<int32_t>::kFlag))
-        << "Index type only support int32 or int64.\n";
+  if (insize == 2) {
+    CHECK_NE((*in_type)[1], -1) << "Index type must be set for delete operator\n";
+    if (((*in_type)[1] != mshadow::DataType<int64_t>::kFlag) &&
+        ((*in_type)[1] != mshadow::DataType<int32_t>::kFlag)) {
+      LOG(FATAL) << "IndexError: arrays used as indices must be of integer type";
+    }
   }
   TYPE_ASSIGN_CHECK(*out_type, 0, (*in_type)[0]);
   TYPE_ASSIGN_CHECK(*in_type, 0, (*out_type)[0]);

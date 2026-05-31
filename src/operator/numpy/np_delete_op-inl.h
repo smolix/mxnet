@@ -133,6 +133,18 @@ struct IsDeleteCal {
   }
 };
 
+struct NormalizeDeleteIndices {
+  template <typename IType>
+  MSHADOW_XINLINE static void Map(index_t i, int N, IType* indices, char* invalid) {
+    int64_t idx = static_cast<int64_t>(indices[i]);
+    if (idx < -N || idx >= N) {
+      *invalid = 1;
+    } else if (idx < 0) {
+      indices[i] = static_cast<IType>(idx + N);
+    }
+  }
+};
+
 struct OutPosCal {
   /*!
    * \brief map the index from input to output. e.g.
@@ -301,12 +313,13 @@ void NumpyDeleteCompute(const nnvm::NodeAttrs& attrs,
       IType,
       {
         size_t temp_mem_size = sizeof(int64_t) * arr.shape()[axis] + sizeof(IType) * numtodel +
-                               sizeof(bool) * arr.shape()[axis];
+                               sizeof(bool) * arr.shape()[axis] + sizeof(char);
         Tensor<xpu, 1, char> temp_mem =
             ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(temp_mem_size), s);
         out_pos_ptr   = temp_mem.dptr_;
         indices_ptr   = out_pos_ptr + sizeof(int64_t) * arr.shape()[axis];
         is_delete_ptr = indices_ptr + sizeof(IType) * numtodel;
+        char* invalid_ptr = is_delete_ptr + sizeof(bool) * arr.shape()[axis];
         if (param.step.has_value()) {  // obj is slice, transfer slice to tensor
           Kernel<SliceToIndices, xpu>::Launch(
               s, numtodel, reinterpret_cast<IType*>(indices_ptr), start, step);
@@ -321,6 +334,26 @@ void NumpyDeleteCompute(const nnvm::NodeAttrs& attrs,
                                inputs[delete_::kObj].shape(),
                                inputs[delete_::kObj].data().dev_mask()),
                          inputs[delete_::kObj].data());
+        }
+        if (inputs.size() == 2U) {
+          mxnet_op::Kernel<mxnet_op::set_zero, xpu>::Launch(s, 1, invalid_ptr);
+          Kernel<NormalizeDeleteIndices, xpu>::Launch(
+              s, numtodel, N, reinterpret_cast<IType*>(indices_ptr), invalid_ptr);
+          char invalid = 0;
+#ifdef __CUDACC__
+          CUDA_CALL(cudaMemcpyAsync(&invalid,
+                                    invalid_ptr,
+                                    sizeof(char),
+                                    cudaMemcpyDeviceToHost,
+                                    mshadow::Stream<gpu>::GetStream(s)));
+          CUDA_CALL(cudaStreamSynchronize(mshadow::Stream<gpu>::GetStream(s)));
+#else
+          invalid = *invalid_ptr;
+#endif
+          if (invalid) {
+            LOG(FATAL) << "IndexError: index is out of bounds for axis " << axis
+                       << " with size " << N;
+          }
         }
         mxnet_op::Kernel<mxnet_op::set_zero, xpu>::Launch(
             s, arr.shape()[axis], reinterpret_cast<bool*>(is_delete_ptr));

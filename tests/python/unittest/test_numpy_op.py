@@ -29,7 +29,7 @@ import scipy.special as scipy_special
 import pytest
 import mxnet.ndarray.numpy._internal as _npi
 from functools import reduce
-from packaging.version import Version, parse
+from packaging.version import Version
 from mxnet import np, npx
 from mxnet.base import MXNetError
 from mxnet.gluon import HybridBlock
@@ -4651,7 +4651,9 @@ def test_np_delete():
             for idx in range(-1 * GetDimSize(shp, ax), GetDimSize(shp, ax)):
                 config.append(tuple([shp, idx, ax]))
             #test ndarray indices
-            idx =  onp.random.randint(-1 * shp[ax], shp[ax] + 1, size = (4)).tolist()
+            dim_size = GetDimSize(shp, ax)
+            idx = ([] if dim_size == 0 else
+                   onp.random.randint(-1 * dim_size, dim_size, size=(4)).tolist())
             config.append(tuple([shp, idx, ax]))
 
     for arr_shape, obj, axis in config:
@@ -4659,12 +4661,6 @@ def test_np_delete():
             if type(obj) == list:
                 obj_mxnp = np.array(obj, dtype=objtype)
                 obj_onp = onp.array(obj, dtype=objtype)
-                # To match mxnet.numpy's behavior of ignoring out-of-bounds indices,
-                # we may need to filter out indices that this numpy would not ignore.
-                onp_ignores_oob_indices = parse(onp.version.version) < parse('1.19')
-                if not onp_ignores_oob_indices:
-                    dim_size = GetDimSize(arr_shape,axis)
-                    obj_onp = obj_onp[((obj_onp>=0) & (obj_onp<dim_size))]
             elif type(obj) == slice:
                 obj_mxnp = obj
                 obj_onp = obj
@@ -4688,6 +4684,17 @@ def test_np_delete():
             np_out = onp.delete(a.asnumpy(), obj_onp, axis=axis)
 
             assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_np_delete_tensor_index_validation():
+    data = np.arange(5)
+    assert_almost_equal(np.delete(data, np.array([-1], dtype='int64')).asnumpy(),
+                        onp.array([0, 1, 2, 3]))
+    with pytest.raises(IndexError, match="out of bounds"):
+        np.delete(data, np.array([5], dtype='int64')).asnumpy()
+    with pytest.raises(IndexError, match="integer type"):
+        np.delete(data, np.array([1.5], dtype='float32')).asnumpy()
 
 
 @use_np

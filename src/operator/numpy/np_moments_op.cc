@@ -60,10 +60,20 @@ inline bool NumpyMomentsType(const nnvm::NodeAttrs& attrs,
   if (param.dtype.has_value()) {
     TYPE_ASSIGN_CHECK(*out_attrs, 0, param.dtype.value());
   } else {
-    TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
-    TYPE_ASSIGN_CHECK(*in_attrs, 0, out_attrs->at(0));
+    if (common::is_float(in_attrs->at(0))) {
+      TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
+      TYPE_ASSIGN_CHECK(*in_attrs, 0, out_attrs->at(0));
+    } else if (in_attrs->at(0) != -1) {
+      TYPE_ASSIGN_CHECK(*out_attrs, 0, mxnet::common::GetDefaultDtype());
+    }
   }
-  TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(0));
+  if (in_attrs->at(0) != -1) {
+    if (param.dtype.has_value() || common::is_float(in_attrs->at(0))) {
+      TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(0));
+    } else {
+      TYPE_ASSIGN_CHECK(*out_attrs, 1, mxnet::common::GetDefaultDtype());
+    }
+  }
 
   return out_attrs->at(0) != -1 && in_attrs->at(0) != -1;
 }

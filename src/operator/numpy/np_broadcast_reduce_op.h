@@ -1263,20 +1263,37 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
   BroadcastReduceShapeCompact(data.shape_, small, &src_shape, &dst_shape);
 
   // Get workspace and temp space for data - mean
-  size_t workspace_size = broadcast::ReduceWorkspaceSize(s, dst_shape, req[0], src_shape);
-  size_t temp_data_size = data.shape_.Size() * common::mshadow_type_info(inputs[0].type_flag_).size;
-  size_t temp_mem_size  = temp_data_size + workspace_size;
-  Tensor<xpu, 1, char> temp_mem =
-      ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(temp_mem_size), s);
-  char* workspace_ptr = temp_mem.dptr_ + temp_data_size;
-  Tensor<xpu, 1, char> workspace(workspace_ptr, Shape1(workspace_size), s);
+  size_t workspace_size = broadcast::ReduceWorkspaceSize(s, dst_shape, {kWriteTo}, src_shape);
+  TBlob compute_data    = data;
+  Tensor<xpu, 1, char> workspace;
+  TBlob temp_data_blob;
+  const int compute_type = mean.type_flag_;
+  MSHADOW_TYPE_SWITCH(compute_type, DType, {
+    const size_t cast_data_size =
+        data.type_flag_ != compute_type ? data.shape_.Size() * sizeof(DType) : 0;
+    const size_t temp_data_size = data.shape_.Size() * sizeof(DType);
+    const size_t temp_mem_size  = cast_data_size + temp_data_size + workspace_size;
+    Tensor<xpu, 1, char> temp_mem =
+        ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(temp_mem_size), s);
+    char* offset = temp_mem.dptr_;
+    if (cast_data_size != 0) {
+      compute_data = TBlob(reinterpret_cast<DType*>(offset), data.shape_, xpu::kDevMask);
+      CastCompute<xpu>(attrs, ctx, {data}, {kWriteTo}, {compute_data});
+      offset += cast_data_size;
+    }
+    Tensor<xpu, 1, DType> temp_data_tensor(
+        reinterpret_cast<DType*>(offset), Shape1(data.shape_.Size()), s);
+    temp_data_blob = TBlob(temp_data_tensor).reshape(data.shape_);
+    char* workspace_ptr = offset + temp_data_size;
+    workspace           = Tensor<xpu, 1, char>(workspace_ptr, Shape1(workspace_size), s);
+  });
   // Compute mean
 #if !defined(__CUDACC__)
   ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(
-      ctx, inputs, {kWriteTo}, {mean}, small, &workspace);
+      ctx, {compute_data}, {kWriteTo}, {mean}, small, &workspace);
 #else
   ReduceAxesRTCComputeImpl(
-      ctx, inputs, {kWriteTo}, {mean}, small, "red::sum{}", &workspace, true, "identity");
+      ctx, {compute_data}, {kWriteTo}, {mean}, small, "red::sum{}", &workspace, true, "identity");
 #endif
   // Compute data - mean
   Shape<6> data_shape, mean_shape;
@@ -1285,18 +1302,15 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
     mean_shape[i] = (i < small.ndim()) ? small[i] : 1;
   }
 #if !defined(__CUDACC__)
-  MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH(compute_type, DType, {
     MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, OType, {
-      DType* temp_data_ptr = reinterpret_cast<DType*>(temp_mem.dptr_);
       Kernel<VarBroadcastKernel, xpu>::Launch(s,
                                               data_shape.Size(),
-                                              temp_data_ptr,
-                                              data.dptr<DType>(),
+                                              temp_data_blob.dptr<DType>(),
+                                              compute_data.dptr<DType>(),
                                               mean.dptr<DType>(),
                                               data_shape,
                                               mean_shape);
-      Tensor<xpu, 1, DType> temp_data_tensor(temp_data_ptr, Shape1(data.shape_.Size()), s);
-      TBlob temp_data_blob = TBlob(temp_data_tensor).reshape(data.shape_);
       ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(
           ctx, {temp_data_blob}, {req[0]}, {moment}, small, &workspace, param.ddof);
       if (sqrt && req[0] != kNullOp) {
@@ -1306,17 +1320,14 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
     });
   });
 #else
-  MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, DType, {
-    DType* temp_data_ptr = reinterpret_cast<DType*>(temp_mem.dptr_);
+  MSHADOW_TYPE_SWITCH(compute_type, DType, {
     Kernel<VarBroadcastKernel, xpu>::Launch(s,
                                             data_shape.Size(),
-                                            temp_data_ptr,
-                                            data.dptr<DType>(),
+                                            temp_data_blob.dptr<DType>(),
+                                            compute_data.dptr<DType>(),
                                             mean.dptr<DType>(),
                                             data_shape,
                                             mean_shape);
-    Tensor<xpu, 1, DType> temp_data_tensor(temp_data_ptr, Shape1(data.shape_.Size()), s);
-    TBlob temp_data_blob = TBlob(temp_data_tensor).reshape(data.shape_);
     ReduceAxesRTCComputeImpl(ctx,
                              {temp_data_blob},
                              {req[0]},

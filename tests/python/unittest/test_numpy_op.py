@@ -1021,6 +1021,21 @@ def test_np_average_returned_sum_only_symbol():
 
 
 @use_np
+def test_np_average_returned_type():
+    data = np.arange(6, dtype='float32').reshape((2, 3))
+    for weights in [None, np.arange(1, 4, dtype='float32')]:
+        np_weights = None if weights is None else weights.asnumpy()
+        mx_out = np.average(data, axis=-1, weights=weights, returned=True)
+        np_out = onp.average(data.asnumpy(), axis=-1, weights=np_weights, returned=True)
+
+        assert isinstance(mx_out, tuple)
+        assert len(mx_out) == len(np_out)
+        for mx_arr, np_arr in zip(mx_out, np_out):
+            assert mx_arr.shape == np_arr.shape
+            assert_almost_equal(mx_arr.asnumpy(), np_arr)
+
+
+@use_np
 def test_np_var_std_backward():
     data_np = onp.array([1., 2., 3.], dtype='float32')
 

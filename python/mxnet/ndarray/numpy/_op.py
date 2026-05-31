@@ -5691,7 +5691,7 @@ def average(a, axis=None, weights=None, returned=False, out=None):
     if isinstance(out, NDArray):
         return out
     else:
-        return list(out)
+        return tuple(out)
 
 
 @set_module('mxnet.ndarray.numpy')

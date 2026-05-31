@@ -806,10 +806,7 @@ inline bool NumpyWeightedAverageShape(const nnvm::NodeAttrs& attrs,
       int red_axis = axes[0] < 0 ? axes[0] + a_shape.ndim() : axes[0];
       CHECK_EQ(a_shape[red_axis], w_shape[0])
           << "Length of weights not compatible with specified axis.";
-      SHAPE_ASSIGN_CHECK(
-          *out_attrs,
-          1,
-          NumpyReduceAxesShapeImpl(w_shape, dmlc::optional<mxnet::Tuple<int>>(), false));
+      SHAPE_ASSIGN_CHECK(*out_attrs, 1, out_attrs->at(0));
     } else {
       for (int i = 0; i < w_shape.ndim(); i++) {
         CHECK_EQ(w_shape[i], a_shape[i]);
@@ -817,7 +814,7 @@ inline bool NumpyWeightedAverageShape(const nnvm::NodeAttrs& attrs,
       SHAPE_ASSIGN_CHECK(*out_attrs, 1, NumpyReduceAxesShapeImpl(w_shape, param.axis, false));
     }
   } else {
-    SHAPE_ASSIGN_CHECK(*out_attrs, 1, TShape(0, -1));
+    SHAPE_ASSIGN_CHECK(*out_attrs, 1, out_attrs->at(0));
   }
 
   return shape_is_known(out_attrs->at(0)) && shape_is_known(out_attrs->at(1));
@@ -1011,7 +1008,7 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
     // Compute sum of weight
     TBlob scl;
     MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
-      if (req[1] == kWriteTo) {
+      if (!one_dim && req[1] == kWriteTo) {
         scl = sum_of_weights.reshape(small2);
       } else {
         auto* temp_scl_ptr = reinterpret_cast<DType*>(
@@ -1022,7 +1019,10 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
 #if !defined(__CUDACC__)
     ReduceAxesComputeImpl<xpu, mshadow_op::sum, true>(
         ctx, {weights}, {kWriteTo}, {scl}, small2, &workspace);
-    if (req[1] != kNullOp && req[1] != kWriteTo) {
+    if (one_dim && req[1] != kNullOp) {
+      BroadcastComputeImpl<xpu>(attrs, ctx, {scl}, {req[1]}, {sum_of_weights.reshape(small1)}, small2);
+    }
+    if (!one_dim && req[1] != kNullOp && req[1] != kWriteTo) {
       MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
         MXNET_ASSIGN_REQ_SWITCH(req[1], req_1, {
           mxnet_op::Kernel<weighted_average_assign<req_1>, xpu>::Launch(
@@ -1036,7 +1036,10 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
 #else
     ReduceAxesRTCComputeImpl(
         ctx, {weights}, {kWriteTo}, {scl}, small2, "red::sum{}", &workspace, false, "identity");
-    if (req[1] != kNullOp && req[1] != kWriteTo) {
+    if (one_dim && req[1] != kNullOp) {
+      BroadcastComputeImpl<xpu>(attrs, ctx, {scl}, {req[1]}, {sum_of_weights.reshape(small1)}, small2);
+    }
+    if (!one_dim && req[1] != kNullOp && req[1] != kWriteTo) {
       MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
         MXNET_ASSIGN_REQ_SWITCH(req[1], req_1, {
           mxnet_op::Kernel<weighted_average_assign<req_1>, xpu>::Launch(

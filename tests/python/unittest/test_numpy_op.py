@@ -1067,6 +1067,20 @@ def test_np_average_integral_returned_type():
 
 
 @use_np
+def test_np_symbol_average_integral_returned_type():
+    data = mx.sym.var('data').as_np_ndarray()
+    outputs = mx.sym.Group(mx.sym.np.average(data, returned=True))
+
+    _, out_types, _ = outputs.infer_type(data='int32')
+    assert out_types == [onp.float32, onp.float32]
+    exe = outputs._simple_bind(mx.cpu(), data=(2,), type_dict={'data': 'int32'})
+    exe.forward(data=mx.nd.array([1, 2], dtype='int32'))
+    assert [out.dtype for out in exe.outputs] == [onp.float32, onp.float32]
+    assert_almost_equal(exe.outputs[0].asnumpy(), onp.array(1.5, dtype=onp.float32))
+    assert_almost_equal(exe.outputs[1].asnumpy(), onp.array(2.0, dtype=onp.float32))
+
+
+@use_np
 def test_np_var_std_backward():
     data_np = onp.array([1., 2., 3.], dtype='float32')
 

@@ -31,6 +31,7 @@
 #include "../nn/moments-inl.h"
 #include "../tensor/broadcast_reduce_op.h"
 #include "../tensor/elemwise_binary_broadcast_op.h"
+#include "../tensor/elemwise_unary_op.h"
 #include "../../api/operator/op_utils.h"
 
 namespace mxnet {
@@ -1114,6 +1115,25 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
 }
 
 template <typename xpu>
+TBlob NumpyAverageCastInput(const nnvm::NodeAttrs& attrs,
+                            const OpContext& ctx,
+                            const TBlob& input,
+                            const int output_type) {
+  if (input.type_flag_ == output_type) {
+    return input;
+  }
+  mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
+  TBlob cast_input;
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(output_type, OType, {
+    mshadow::Tensor<xpu, 1, OType> cast_tensor =
+        ctx.requested[0].get_space_typed<xpu, 1, OType>(mshadow::Shape1(input.Size()), s);
+    cast_input = TBlob(cast_tensor).reshape(input.shape_);
+  });
+  CastCompute<xpu>(attrs, ctx, {input}, {kWriteTo}, {cast_input});
+  return cast_input;
+}
+
+template <typename xpu>
 void NumpyWeightedAverageForward(const nnvm::NodeAttrs& attrs,
                                  const OpContext& ctx,
                                  const std::vector<TBlob>& inputs,
@@ -1127,8 +1147,9 @@ void NumpyWeightedAverageForward(const nnvm::NodeAttrs& attrs,
   CHECK_NE(req[1], kWriteInplace) << "Average does not support write in-place";
   const auto& param = nnvm::get<NumpyWeightedAverageParam>(attrs.parsed);
   const TBlob& data = inputs[0];
+  const int output_type = outputs[0].type_flag_;
   TShape small;
-  MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH(output_type, DType, {
     if (!param.weighted) {
       small = NumpyReduceAxesShapeImpl(data.shape_, param.axis, true);
       // Compute sum of weights which equals to the product of sizes of reduced axes
@@ -1142,11 +1163,13 @@ void NumpyWeightedAverageForward(const nnvm::NodeAttrs& attrs,
     }
   });
   if (!param.weighted) {
+    TBlob compute_data = NumpyAverageCastInput<xpu>(attrs, ctx, data, output_type);
     // Compute mean
 #if !defined(__CUDACC__)
-    ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(ctx, inputs, req, {outputs[0]}, small);
+    ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(
+        ctx, {compute_data}, req, {outputs[0]}, small);
 #else
-    ReduceAxesRTCComputeImpl(ctx, inputs, req, {outputs[0]}, small, "red::sum{}", nullptr, true);
+    ReduceAxesRTCComputeImpl(ctx, {compute_data}, req, {outputs[0]}, small, "red::sum{}", nullptr, true);
 #endif
   } else {
     NumpyWeightedAverageComputeImpl<xpu>(attrs, ctx, inputs, req, outputs, param.axis);

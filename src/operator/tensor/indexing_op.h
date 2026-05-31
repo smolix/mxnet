@@ -1370,7 +1370,7 @@ void OneHotOpForward(const nnvm::NodeAttrs& attrs,
     mshadow::Tensor<xpu, 1, DType> out = outputs[0].FlatTo1D<xpu, DType>(s);
     ASSIGN_DISPATCH(out, req[0], static_cast<DType>(off_value));
     MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {           // request type switch
-      MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, IType, {  // indices data type switch
+      MSHADOW_TYPE_SWITCH_WITH_BOOL(inputs[0].type_flag_, IType, {  // indices data type switch
         Kernel<one_hot<req_type>, xpu>::Launch(s,
                                                inputs[0].Size(),
                                                outputs[0].dptr<DType>(),

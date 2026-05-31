@@ -5026,6 +5026,9 @@ def test_one_hot():
     test_normal_case(index_type=np.float64)
     test_normal_case(index_type=np.float32)
     test_normal_case(index_type=np.float16)
+    assert same(mx.nd.one_hot(mx.nd.array([False, True], dtype=np.bool_),
+                              depth=3, dtype=np.int32).asnumpy(),
+                np.array([[1, 0, 0], [0, 1, 0]], dtype=np.int32))
     with mx.np_shape():
         test_empty_indices()
     test_zero_depth()

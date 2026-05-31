@@ -64,6 +64,13 @@ def _size_product(size):
     return sample_count
 
 
+def _as_parameter_array(value):
+    if isinstance(value, (list, tuple, np.ndarray)):
+        from ...numpy import array as np_array
+        return np_array(value)
+    return value
+
+
 @wrap_ctx_to_device_func
 def randint(low, high=None, size=None, dtype=None, device=None, out=None):
     r"""Return random integers from `low` (inclusive) to `high` (exclusive).
@@ -178,6 +185,8 @@ def uniform(low=0.0, high=1.0, size=None, dtype=None, device=None, out=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    low = _as_parameter_array(low)
+    high = _as_parameter_array(high)
     return _api_internal.uniform(low, high, size, device, dtype, out)
 
 
@@ -222,6 +231,8 @@ def normal(loc=0.0, scale=1.0, size=None, dtype=None, device=None, out=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    loc = _as_parameter_array(loc)
+    scale = _as_parameter_array(scale)
     return _api_internal.normal(loc, scale, size, device, dtype, out)
 
 
@@ -298,6 +309,8 @@ def logistic(loc=0.0, scale=1.0, size=None, device=None, out=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    loc = _as_parameter_array(loc)
+    scale = _as_parameter_array(scale)
     return _api_internal.logistic(loc, scale, size, device, out)
 
 
@@ -337,6 +350,8 @@ def gumbel(loc=0.0, scale=1.0, size=None, device=None, out=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    loc = _as_parameter_array(loc)
+    scale = _as_parameter_array(scale)
     return _api_internal.gumbel(loc, scale, size, device, out)
 
 
@@ -633,6 +648,7 @@ def exponential(scale=1.0, size=None, device=None, out=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    scale = _as_parameter_array(scale)
     return _api_internal.exponential(scale, size, device, out)
 
 
@@ -686,6 +702,7 @@ def weibull(a, size=None, device=None, out=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    a = _as_parameter_array(a)
     return _api_internal.weibull(a, size, device, out)
 
 
@@ -729,6 +746,7 @@ def pareto(a, size=None, device=None, out=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    a = _as_parameter_array(a)
     return _api_internal.pareto(a, size, device, out)
 
 
@@ -772,6 +790,7 @@ def power(a, size=None, device=None, out=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    a = _as_parameter_array(a)
     return _api_internal.powerd(a, size, device, out)
 
 

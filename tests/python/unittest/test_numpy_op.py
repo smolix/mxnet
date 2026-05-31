@@ -6327,6 +6327,22 @@ def test_np_random_choice_array_like_a():
 
 
 @use_np
+def test_np_random_array_like_distribution_parameters():
+    configs = [
+        (lambda: np.random.uniform([0, 1], [1, 2]), (2,)),
+        (lambda: np.random.normal([0, 1], 1), (2,)),
+        (lambda: np.random.logistic([0, 1], [1, 1]), (2,)),
+        (lambda: np.random.gumbel([0, 1], [1, 1]), (2,)),
+        (lambda: np.random.exponential([1, 2]), (2,)),
+        (lambda: np.random.weibull([1, 2]), (2,)),
+        (lambda: np.random.pareto([1, 2]), (2,)),
+        (lambda: np.random.power([1, 2]), (2,)),
+    ]
+    for sampler, expected_shape in configs:
+        assert sampler().shape == expected_shape
+
+
+@use_np
 def test_np_eye():
     configs = [
         4,

@@ -6121,6 +6121,17 @@ def test_np_indices():
                 assert same(mx_out.asnumpy(), np_out)
                 assert mx_out.shape == np_out.shape
 
+    for bad_dimensions in [(2.0, 3), [onp.float64(2), 3]]:
+        with pytest.raises(TypeError):
+            np.indices(bad_dimensions)
+        with pytest.raises(TypeError):
+            mx.sym.np.indices(bad_dimensions)
+    for bad_dimensions in [(-1, 2), [-1, 2]]:
+        with pytest.raises(ValueError):
+            np.indices(bad_dimensions)
+        with pytest.raises(ValueError):
+            mx.sym.np.indices(bad_dimensions)
+
 
 @use_np
 def test_np_repeat():
@@ -11066,6 +11077,17 @@ def test_np_where():
         mx_out = np.where(cond, x, y)
         np_out = onp.where(cond, x, y)
         assert same(mx_out, np_out)
+
+    cond = np.array([True, False])
+    values = np.array([1, 2])
+    for x, y in [(None, values), (values, None)]:
+        with pytest.raises(ValueError):
+            np.where(cond, x, y)
+    sym_cond = mx.sym.var('sym_cond').as_np_ndarray()
+    sym_values = mx.sym.var('sym_values').as_np_ndarray()
+    for x, y in [(None, sym_values), (sym_values, None)]:
+        with pytest.raises(ValueError):
+            mx.sym.np.where(sym_cond, x, y)
 
 
 @use_np

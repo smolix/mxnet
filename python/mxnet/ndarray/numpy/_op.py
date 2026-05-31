@@ -5960,16 +5960,21 @@ def indices(dimensions, dtype=None, device=None):
     Note that it would be more straightforward in the above example to
     extract the required elements directly with ``x[:2, :3]``.
     """
-    if isinstance(dimensions, (tuple, list)):
-        if device is None:
-            device = str(current_device())
-        else:
-            device = str(device)
-        if dtype is not None and not isinstance(dtype, str):
-            dtype = get_dtype_name(dtype)
-        return _api_internal.indices(dimensions, dtype, device)
-    else:
+    if not isinstance(dimensions, (tuple, list)):
         raise ValueError("The dimensions must be sequence of ints")
+    for dim in dimensions:
+        if not isinstance(dim, (integer_types, _np.integer)):
+            raise TypeError("'{}' object cannot be interpreted as an integer"
+                            .format(type(dim).__name__))
+        if dim < 0:
+            raise ValueError("negative dimensions are not allowed")
+    if device is None:
+        device = str(current_device())
+    else:
+        device = str(device)
+    if dtype is not None and not isinstance(dtype, str):
+        dtype = get_dtype_name(dtype)
+    return _api_internal.indices(tuple(dimensions), dtype, device)
 # pylint: enable=redefined-outer-name
 
 
@@ -9276,6 +9281,8 @@ def where(condition, x=None, y=None):  # pylint: disable=too-many-return-stateme
            [ 0.,  2., -1.],
            [ 0.,  3., -1.]])
     """
+    if (x is None) != (y is None):
+        raise ValueError("either both or neither of x and y should be given")
     if x is None and y is None:
         return nonzero(condition)
     else:

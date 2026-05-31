@@ -5248,12 +5248,17 @@ def indices(dimensions, dtype=None, ctx=None):
     Note that it would be more straightforward in the above example to
     extract the required elements directly with ``x[:2, :3]``.
     """
-    if isinstance(dimensions, (tuple, list)):
-        if ctx is None:
-            ctx = current_context()
-        return _npi.indices(dimensions=dimensions, dtype=dtype, ctx=ctx)
-    else:
+    if not isinstance(dimensions, (tuple, list)):
         raise ValueError("The dimensions must be sequence of ints")
+    for dim in dimensions:
+        if not isinstance(dim, (integer_types, _np.integer)):
+            raise TypeError("'{}' object cannot be interpreted as an integer"
+                            .format(type(dim).__name__))
+        if dim < 0:
+            raise ValueError("negative dimensions are not allowed")
+    if ctx is None:
+        ctx = current_context()
+    return _npi.indices(dimensions=tuple(dimensions), dtype=dtype, ctx=ctx)
 # pylint: enable=redefined-outer-name
 
 
@@ -7592,6 +7597,8 @@ def where(condition, x, y):
         from `y` elsewhere.
 
     """
+    if x is None or y is None:
+        raise ValueError("either both or neither of x and y should be given")
     if isinstance(condition, numeric_types):
         if condition != 0:
             return x

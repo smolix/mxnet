@@ -1882,22 +1882,8 @@ struct NumpyDiagflatParam : public dmlc::Parameter<NumpyDiagflatParam> {
 };
 
 inline mxnet::TShape NumpyDiagflatShapeImpl(const mxnet::TShape& ishape, const int k) {
-  if (ishape.ndim() == 1) {
-    auto s = ishape[0] + std::abs(k);
-    return mxnet::TShape({s, s});
-  }
-
-  if (ishape.ndim() >= 2) {
-    auto s = 1;
-    for (int i = 0; i < ishape.ndim(); i++) {
-      if (ishape[i] >= 2) {
-        s = s * ishape[i];
-      }
-    }
-    s = s + std::abs(k);
-    return mxnet::TShape({s, s});
-  }
-  return mxnet::TShape({-1, -1});
+  const index_t s = ishape.Size() + std::abs(k);
+  return mxnet::TShape({s, s});
 }
 
 inline bool NumpyDiagflatOpShape(const nnvm::NodeAttrs& attrs,
@@ -1997,6 +1983,9 @@ void NumpyDiagflatOpBackward(const nnvm::NodeAttrs& attrs,
   const mxnet::TShape& oshape     = outputs[0].shape_;
   const NumpyDiagflatParam& param = nnvm::get<NumpyDiagflatParam>(attrs.parsed);
 
+  if (out_data.Size() == 0) {
+    return;
+  }
   NumpyDiagflatOpImpl<xpu, true>(in_data, out_data, oshape, ishape, in_data.Size(), param, s, req);
 }
 

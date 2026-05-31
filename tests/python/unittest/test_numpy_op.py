@@ -9654,6 +9654,37 @@ def test_np_diagflat():
 
 
 @use_np
+def test_np_diagflat_scalar_and_empty_inputs():
+    class TestDiagflat(HybridBlock):
+        def __init__(self, k=0):
+            super(TestDiagflat, self).__init__()
+            self._k = k
+
+        def forward(self, a):
+            return np.diagflat(a, k=self._k)
+
+    configs = [
+        ((), 0),
+        ((), 2),
+        ((1, 0), 0),
+        ((1, 0), 2),
+        ((2, 0), -2),
+        ((1, 0, 3), 2),
+    ]
+    for shape, k in configs:
+        data_np = onp.arange(onp.prod(shape), dtype='float32').reshape(shape)
+        data_mx = np.array(data_np, dtype='float32')
+        expected = onp.diagflat(data_np, k=k)
+        assert_almost_equal(np.diagflat(data_mx, k=k).asnumpy(), expected)
+
+        for hybridize in [False, True]:
+            test_diagflat = TestDiagflat(k)
+            if hybridize:
+                test_diagflat.hybridize()
+            assert_almost_equal(test_diagflat(data_mx).asnumpy(), expected)
+
+
+@use_np
 def test_np_pad():
     class TestPad(HybridBlock):
         def __init__(self, pad_width, mode='constant'):

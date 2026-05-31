@@ -4407,6 +4407,18 @@ def repeat(a, repeats, axis=None):
     return _api_internal.repeats(a, repeats, axis)
 
 
+def _normalize_split_indices(indices_or_sections):
+    if isinstance(indices_or_sections, set):
+        return list(indices_or_sections)
+    if isinstance(indices_or_sections, NDArray):
+        indices_or_sections = indices_or_sections.asnumpy()
+    if isinstance(indices_or_sections, _np.ndarray):
+        if indices_or_sections.ndim == 0:
+            return indices_or_sections.item()
+        return indices_or_sections.tolist()
+    return indices_or_sections
+
+
 # pylint: disable=redefined-outer-name
 @set_module('mxnet.ndarray.numpy')
 def split(ary, indices_or_sections, axis=0):
@@ -4443,8 +4455,7 @@ def split(ary, indices_or_sections, axis=0):
         If `indices_or_sections` is given as an integer, but
         a split does not result in equal division.
     """
-    if isinstance(indices_or_sections, set):
-        indices_or_sections = list(indices_or_sections)
+    indices_or_sections = _normalize_split_indices(indices_or_sections)
     return list(_api_internal.split(ary, indices_or_sections, axis))
 # pylint: enable=redefined-outer-name
 
@@ -4499,8 +4510,7 @@ def array_split(ary, indices_or_sections, axis=0):
     >>> np.array_split(x, 3)
     [array([0.,  1.,  2.]), array([3.,  4.]), array([5.,  6.])]
     """
-    if isinstance(indices_or_sections, set):
-        indices_or_sections = list(indices_or_sections)
+    indices_or_sections = _normalize_split_indices(indices_or_sections)
     return list(_api_internal.array_split(ary, indices_or_sections, axis))
 # pylint: enable=redefined-outer-name
 
@@ -4598,8 +4608,7 @@ def hsplit(ary, indices_or_sections):
     >>> np.hsplit(x, [2, 2])
     [array([0., 1.]), array([], dtype=float32), array([2., 3.])]
     """
-    if isinstance(indices_or_sections, set):
-        indices_or_sections = list(indices_or_sections)
+    indices_or_sections = _normalize_split_indices(indices_or_sections)
     return list(_api_internal.hsplit(ary, indices_or_sections))
 # pylint: enable=redefined-outer-name
 
@@ -4678,8 +4687,7 @@ def vsplit(ary, indices_or_sections):
             [6., 7.]]])]
 
     """
-    if isinstance(indices_or_sections, set):
-        indices_or_sections = list(indices_or_sections)
+    indices_or_sections = _normalize_split_indices(indices_or_sections)
     return list(_api_internal.vsplit(ary, indices_or_sections))
 
 
@@ -4737,8 +4745,7 @@ def dsplit(ary, indices_or_sections):
             [15.]]]),
     array([], shape=(2, 2, 0), dtype=float64)]
     """
-    if isinstance(indices_or_sections, set):
-        indices_or_sections = list(indices_or_sections)
+    indices_or_sections = _normalize_split_indices(indices_or_sections)
     return list(_api_internal.dsplit(ary, indices_or_sections))
 # pylint: enable=redefined-outer-name
 

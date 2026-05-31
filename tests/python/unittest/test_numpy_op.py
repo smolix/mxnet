@@ -4357,6 +4357,37 @@ def test_np_split_index_list_normalization():
 
 
 @use_np
+def test_np_split_ndarray_indices():
+    configs = [
+        ('split', np.arange(3, dtype='float32'), np.array([], dtype='int64'), 0),
+        ('split', np.arange(4, dtype='float32'), np.array([1, 3], dtype='int64'), 0),
+        ('split', np.arange(4, dtype='float32'), onp.array(2), 0),
+        ('array_split', np.arange(12, dtype='float32').reshape((3, 4)),
+         np.array([1, 3], dtype='int64'), 1),
+        ('array_split', np.arange(5, dtype='float32'), onp.array(3), 0),
+        ('hsplit', np.arange(12, dtype='float32').reshape((3, 4)),
+         np.array([1, 3], dtype='int64'), None),
+        ('vsplit', np.arange(12, dtype='float32').reshape((3, 4)),
+         onp.array([1, 2]), None),
+        ('dsplit', np.arange(24, dtype='float32').reshape((2, 3, 4)),
+         np.array([1, 3], dtype='int64'), None),
+    ]
+
+    for op_name, data, indices_or_sections, axis in configs:
+        onp_data = data.asnumpy()
+        onp_indices = (indices_or_sections.asnumpy()
+                       if isinstance(indices_or_sections, np.ndarray) else indices_or_sections)
+        onp_op = getattr(onp, op_name)
+        expected = (onp_op(onp_data, onp_indices) if axis is None
+                    else onp_op(onp_data, onp_indices, axis=axis))
+        mx_outs = (getattr(np, op_name)(data, indices_or_sections) if axis is None
+                   else getattr(np, op_name)(data, indices_or_sections, axis=axis))
+        assert len(mx_outs) == len(expected)
+        for mx_out, np_out in zip(mx_outs, expected):
+            assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
 def test_np_vsplit():
     class TestVsplit(HybridBlock):
         def __init__(self, indices_or_sections):

@@ -6156,6 +6156,39 @@ def test_np_repeat():
 
 
 @use_np
+def test_np_repeat_zero_repeats_axis_shape():
+    class TestRepeat(HybridBlock):
+        def __init__(self, repeats, axis=None):
+            super(TestRepeat, self).__init__()
+            self._repeats = repeats
+            self._axis = axis
+
+        def forward(self, x):
+            return x.repeat(self._repeats, self._axis)
+
+    configs = [
+        ((2, 3), 0, 1),
+        ((2, 3), [0, 0, 0], 1),
+        ((1, 3, 2), [0], 0),
+        ((2, 0, 3), [], 1),
+    ]
+    for shape, repeats, axis in configs:
+        data_np = onp.arange(onp.prod(shape)).reshape(shape)
+        data_mx = np.array(data_np, dtype=data_np.dtype)
+        expected = data_np.repeat(repeats, axis)
+        assert same(data_mx.repeat(repeats, axis).asnumpy(), expected)
+
+        for hybridize in [False, True]:
+            test_repeat = TestRepeat(repeats, axis)
+            if hybridize:
+                test_repeat.hybridize()
+            assert same(test_repeat(data_mx).asnumpy(), expected)
+
+    with pytest.raises(ValueError, match="broadcast"):
+        np.arange(6).reshape((2, 3)).repeat([0, 0], axis=1).asnumpy()
+
+
+@use_np
 def test_np_repeat_backward():
     configs = [
         ((3,), 2, None),

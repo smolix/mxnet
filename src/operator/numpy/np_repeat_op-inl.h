@@ -97,11 +97,6 @@ inline bool RepeatsOpShape(const nnvm::NodeAttrs& attrs,
   dmlc::optional<int> axisOpt;
   int axis = -1;
   GetRepeatsParams(param, ishape, &repeats, &axisOpt, &axis);
-  // If 0 repeats, return an empty 1-dim, 0-size array
-  if (0 == repeats) {
-    SHAPE_ASSIGN_CHECK(*out_attrs, 0, mxnet::TShape(1, 0));
-    return true;
-  }
 
   mxnet::Tuple<int> tuple_with_repetitions = param.repeats.value();
   if (tuple_with_repetitions.ndim() != 1) {
@@ -110,6 +105,17 @@ inline bool RepeatsOpShape(const nnvm::NodeAttrs& attrs,
         << "ValueError: Operands could not be broadcast together with shape "
         << "(" << len << ",)"
         << " (" << tuple_with_repetitions.ndim() << ",)";
+  }
+
+  if (0 == repeats) {
+    if (static_cast<bool>(axisOpt)) {
+      mxnet::TShape shape(ishape);
+      shape[axis] = 0;
+      SHAPE_ASSIGN_CHECK(*out_attrs, 0, shape);
+    } else {
+      SHAPE_ASSIGN_CHECK(*out_attrs, 0, mxnet::TShape(1, 0));
+    }
+    return true;
   }
 
   // If repeats > 0, multiply the size of the corresponding axis by repeats

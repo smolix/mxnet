@@ -66,6 +66,47 @@ inline bool LstsqOpType(const nnvm::NodeAttrs& attrs,
          out_attrs->at(3) != -1;
 }
 
+inline bool LstsqOpShape(const nnvm::NodeAttrs& attrs,
+                         mxnet::ShapeVector* in_attrs,
+                         mxnet::ShapeVector* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 2U);
+  CHECK_EQ(out_attrs->size(), 4U);
+
+  const mxnet::TShape& a_shape = in_attrs->at(0);
+  const mxnet::TShape& b_shape = in_attrs->at(1);
+  if (!ndim_is_known(a_shape) || !ndim_is_known(b_shape)) {
+    return false;
+  }
+
+  const int a_ndim = a_shape.ndim();
+  const int b_ndim = b_shape.ndim();
+  CHECK_EQ(a_ndim, 2) << a_ndim << "-dimensional array given. Array must be two-dimensional";
+  CHECK(b_ndim == 1 || b_ndim == 2)
+      << b_ndim << "-dimensional array given. Array must be one-dimensional or two-dimensional";
+
+  const dim_t a_nrow = a_shape[0];
+  const dim_t a_ncol = a_shape[1];
+  const dim_t b_nrow = b_shape[0];
+  const dim_t b_nrhs = b_ndim == 2 ? b_shape[1] : 1;
+  CHECK_EQ(a_nrow, b_nrow) << "Incompatible dimensions of inputs";
+
+  if (b_ndim == 2) {
+    SHAPE_ASSIGN_CHECK(*out_attrs, 0, mxnet::TShape(mxnet::Tuple<dim_t>({a_ncol, b_nrhs})));
+  } else {
+    SHAPE_ASSIGN_CHECK(*out_attrs, 0, mxnet::TShape(1, a_ncol));
+  }
+
+  if (a_nrow > a_ncol && b_nrhs > 0) {
+    SHAPE_ASSIGN_CHECK(*out_attrs, 1, mxnet::TShape(1, b_nrhs));
+  } else {
+    SHAPE_ASSIGN_CHECK(*out_attrs, 1, mxnet::TShape(1, 0));
+  }
+  SHAPE_ASSIGN_CHECK(*out_attrs, 2, mxnet::TShape(0, 0));
+  SHAPE_ASSIGN_CHECK(*out_attrs, 3, mxnet::TShape(1, std::min(a_nrow, a_ncol)));
+
+  return shape_is_known(*in_attrs) && shape_is_known(*out_attrs);
+}
+
 DMLC_REGISTER_PARAMETER(LstsqParam);
 
 NNVM_REGISTER_OP(_npi_lstsq)
@@ -77,6 +118,7 @@ NNVM_REGISTER_OP(_npi_lstsq)
                                      [](const NodeAttrs& attrs) {
                                        return std::vector<std::string>{"A", "B"};
                                      })
+    .set_attr<mxnet::FInferShape>("FInferShape", LstsqOpShape)
     .set_attr<nnvm::FInferType>("FInferType", LstsqOpType)
     .set_attr<FInferStorageType>("FInferStorageType", LstsqOpStorageType)
     .set_attr<FResourceRequest>("FResourceRequest",

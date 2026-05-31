@@ -7760,6 +7760,34 @@ def test_np_linalg_lstsq():
 
 
 @use_np
+def test_np_linalg_lstsq_symbol_shape_inference():
+    a = mx.sym.var('a').as_np_ndarray()
+    b = mx.sym.var('b').as_np_ndarray()
+
+    configs = [
+        ((3, 2), (3,), [(2,), (1,), (), (2,)]),
+        ((3, 2), (3, 4), [(2, 4), (4,), (), (2,)]),
+        ((4, 0), (4,), [(0,), (1,), (), (0,)]),
+        ((0, 2), (0,), [(2,), (0,), (), (0,)]),
+        ((4, 2), (4, 0), [(2, 0), (0,), (), (2,)]),
+        ((4, 6), (4, 3), [(6, 3), (0,), (), (4,)]),
+    ]
+    for a_shape, b_shape, expected_shapes in configs:
+        outs = mx.sym.np.linalg.lstsq(a, b)
+        inferred = [out.infer_shape(a=a_shape, b=b_shape)[1][0] for out in outs]
+        assert inferred == expected_shapes
+
+    invalid_configs = [
+        ((3,), (3,)),
+        ((3, 2), (4,)),
+        ((3, 2), (3, 2, 1)),
+    ]
+    for a_shape, b_shape in invalid_configs:
+        with pytest.raises(MXNetError):
+            mx.sym.Group(mx.sym.np.linalg.lstsq(a, b)).infer_shape(a=a_shape, b=b_shape)
+
+
+@use_np
 @requires_lapack
 def test_np_linalg_matrix_rank():
     class TestMatrixRank(HybridBlock):

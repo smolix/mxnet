@@ -12390,6 +12390,31 @@ def test_np_rollaxis():
 
 
 @use_np
+def test_np_manipulation_array_like_inputs():
+    configs = [
+        (lambda x: np.expand_dims(x, 0),
+         lambda x: onp.expand_dims(x, 0),
+         [1, 2]),
+        (lambda x: np.roll(x, 1),
+         lambda x: onp.roll(x, 1),
+         [1, 2, 3]),
+        (lambda x: np.moveaxis(x, 0, -1),
+         lambda x: onp.moveaxis(x, 0, -1),
+         [[[1]], [[2]]]),
+        (lambda x: np.copy(x),
+         lambda x: onp.copy(x),
+         [1, 2]),
+        (lambda x: np.diagflat(x),
+         lambda x: onp.diagflat(x),
+         [[1, 2], [3, 4]]),
+    ]
+    for mx_func, np_func, data in configs:
+        mx_out = mx_func(data)
+        np_out = np_func(data)
+        assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
 def test_npx_stop_gradient():
     class TestStopGradient(HybridBlock):
         def forward(self, a):

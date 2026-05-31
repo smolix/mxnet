@@ -6504,7 +6504,7 @@ def expand_dims(a, axis):
     >>> np.newaxis is None
     True
     """
-    return _mx_nd_np.expand_dims(a, axis)
+    return _mx_nd_np.expand_dims(asarray(a), axis)
 
 
 @set_module('mxnet.numpy')
@@ -10572,7 +10572,7 @@ def roll(a, shift, axis=None):
     array([[1., 2., 3., 4., 0.],
            [6., 7., 8., 9., 5.]])
    """
-    return _mx_nd_np.roll(a, shift, axis=axis)
+    return _mx_nd_np.roll(asarray(a), shift, axis=axis)
 
 
 @set_module('mxnet.numpy')
@@ -12969,7 +12969,7 @@ def moveaxis(a, source, destination):
     >>> np.moveaxis(x, [0, 1, 2], [-1, -2, -3]).shape
     (5, 4, 3)
     """
-    return _mx_nd_np.moveaxis(a, source, destination)
+    return _mx_nd_np.moveaxis(asarray(a), source, destination)
 
 @set_module('mxnet.numpy')
 def copy(a): # pylint: disable=redefined-outer-name
@@ -12998,7 +12998,7 @@ def copy(a): # pylint: disable=redefined-outer-name
     >>> x[0] == z[0]
         False
     """
-    return _mx_nd_np.copy(a)
+    return _mx_nd_np.copy(asarray(a))
 
 # pylint: disable=redefined-outer-name
 @set_module('mxnet.numpy')
@@ -13115,7 +13115,7 @@ def diagflat(v, k=0):
            [0, 0, 2],
            [0, 0, 0]])
     """
-    return _mx_nd_np.diagflat(v, k=k)
+    return _mx_nd_np.diagflat(asarray(v), k=k)
 
 
 @set_module('mxnet.numpy')

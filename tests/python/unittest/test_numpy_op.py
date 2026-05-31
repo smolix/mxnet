@@ -9948,6 +9948,18 @@ def test_np_unique_bool():
 
 
 @use_np
+def test_np_unique_float16_rejected():
+    data = np.array([1, 1, 2], dtype='float16')
+    with pytest.raises(mx.MXNetError, match="unique does not support float16"):
+        np.unique(data, return_counts=True)
+
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    with pytest.raises(mx.MXNetError, match="unique does not support float16"):
+        sym_out = mx.sym.np.unique(sym_data, return_counts=True)
+        mx.sym.Group([out.as_nd_ndarray() for out in sym_out]).infer_type(data='float16')
+
+
+@use_np
 def test_np_unique_empty_axis_outputs():
     class TestUnique(HybridBlock):
         def __init__(self, axis):

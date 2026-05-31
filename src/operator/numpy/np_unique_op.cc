@@ -21,10 +21,33 @@
  * \file np_unique_op.cc
  */
 
+#include <cmath>
+#include <type_traits>
+
 #include "./np_unique_op.h"
 
 namespace mxnet {
 namespace op {
+
+template <typename DType>
+MSHADOW_XINLINE bool NumpyUniqueIsNan(DType value) {
+  return std::is_floating_point<DType>::value && std::isnan(value);
+}
+
+template <typename DType>
+MSHADOW_XINLINE bool NumpyUniqueValueLess(DType lhs, DType rhs) {
+  const bool lhs_nan = NumpyUniqueIsNan(lhs);
+  const bool rhs_nan = NumpyUniqueIsNan(rhs);
+  if (lhs_nan || rhs_nan) {
+    return !lhs_nan && rhs_nan;
+  }
+  return lhs < rhs;
+}
+
+template <typename DType>
+MSHADOW_XINLINE bool NumpyUniqueValueEqual(DType lhs, DType rhs) {
+  return (NumpyUniqueIsNan(lhs) && NumpyUniqueIsNan(rhs)) || lhs == rhs;
+}
 
 inline bool NumpyUniqueType(const nnvm::NodeAttrs& attrs,
                             std::vector<int>* in_attrs,
@@ -85,11 +108,13 @@ struct UniqueComputeMaskCPUKernel {
     if (i == 0) {
       out_data[i] = 1;
     } else {
-      out_data[i] =
-          (std::memcmp(in_data + i * numel, in_data + (i - 1) * numel, numel * sizeof(DType)) ==
-           0) ?
-              0 :
-              1;
+      out_data[i] = 0;
+      for (dim_t j = 0; j < numel; ++j) {
+        if (!NumpyUniqueValueEqual(in_data[i * numel + j], in_data[(i - 1) * numel + j])) {
+          out_data[i] = 1;
+          break;
+        }
+      }
     }
   }
 };
@@ -104,82 +129,73 @@ void NumpyUniqueCPUNoneAxisImpl(const NumpyUniqueParam& param,
 
     DType* input_data = inputs[0].data().dptr<DType>();
     dim_t input_size  = inputs[0].shape().Size();
-    if (param.return_index || param.return_inverse || param.return_counts) {
-      // argsort, result in perm
-      std::vector<dim_t> perm(input_size);
-      std::iota(perm.begin(), perm.end(), 0);
-      std::stable_sort(perm.begin(), perm.end(), [&input_data](dim_t i1, dim_t i2) {
-        return input_data[i1] < input_data[i2];
-      });
-      // sorted data in aux
-      std::vector<DType> aux(input_size);
-      mxnet_op::Kernel<UniqueComputeAuxCPUKernel, cpu>::Launch(
-          stream, input_size, aux.data(), input_data, perm.data(), 1);
-      // calculate unique mask
-      std::vector<dim_t> mask(input_size);
-      mxnet_op::Kernel<UniqueComputeMaskCPUKernel, cpu>::Launch(
-          stream, input_size, mask.data(), aux.data(), 1);
-      // Calculate prefix sum
-      std::vector<int32_t> prefix_sum(input_size, 0);
-      int32_t valid_num = 0;
-      for (dim_t i = 0; i < input_size; i++) {
-        prefix_sum[i] = (i == 0) ? 0 : prefix_sum[i - 1];
-        prefix_sum[i] += (mask[i]) ? 1 : 0;
-      }
-      valid_num = prefix_sum[input_size - 1];
-      // set the output shape forcefully
-      mxnet::TShape s(1, valid_num);
-      if (NumpyUniqueShouldWrite(req, 0)) {
-        const_cast<NDArray&>(outputs[0]).Init(s);
-        // launch kernal to obtain unique array, reuse boolean_mask kernel
+    // argsort, result in perm
+    std::vector<dim_t> perm(input_size);
+    std::iota(perm.begin(), perm.end(), 0);
+    std::stable_sort(perm.begin(), perm.end(), [&input_data](dim_t i1, dim_t i2) {
+      return NumpyUniqueValueLess(input_data[i1], input_data[i2]);
+    });
+    // sorted data in aux
+    std::vector<DType> aux(input_size);
+    mxnet_op::Kernel<UniqueComputeAuxCPUKernel, cpu>::Launch(
+        stream, input_size, aux.data(), input_data, perm.data(), 1);
+    // calculate unique mask
+    std::vector<dim_t> mask(input_size);
+    mxnet_op::Kernel<UniqueComputeMaskCPUKernel, cpu>::Launch(
+        stream, input_size, mask.data(), aux.data(), 1);
+    // Calculate prefix sum
+    std::vector<int32_t> prefix_sum(input_size, 0);
+    int32_t valid_num = 0;
+    for (dim_t i = 0; i < input_size; i++) {
+      prefix_sum[i] = (i == 0) ? 0 : prefix_sum[i - 1];
+      prefix_sum[i] += (mask[i]) ? 1 : 0;
+    }
+    valid_num = prefix_sum[input_size - 1];
+    // set the output shape forcefully
+    mxnet::TShape s(1, valid_num);
+    if (NumpyUniqueShouldWrite(req, 0)) {
+      const_cast<NDArray&>(outputs[0]).Init(s);
+      // launch kernal to obtain unique array, reuse boolean_mask kernel
+      mxnet_op::Kernel<BooleanMaskForwardCPUKernel, cpu>::Launch(
+          stream, input_size, outputs[0].data().dptr<DType>(), aux.data(), prefix_sum.data(), 1);
+    }
+    // handle other optional outputs
+    int output_flag = 0;
+    if (param.return_index) {
+      output_flag += 1;
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        const_cast<NDArray&>(outputs[output_flag]).Init(s);
+        dim_t* unique_indices = outputs[output_flag].data().dptr<dim_t>();
+        // reuse boolean_mask kernel
         mxnet_op::Kernel<BooleanMaskForwardCPUKernel, cpu>::Launch(
-            stream, input_size, outputs[0].data().dptr<DType>(), aux.data(), prefix_sum.data(), 1);
+            stream, input_size, unique_indices, perm.data(), prefix_sum.data(), 1);
       }
-      // handle other optional outputs
-      int output_flag = 0;
-      if (param.return_index) {
-        output_flag += 1;
-        if (NumpyUniqueShouldWrite(req, output_flag)) {
-          const_cast<NDArray&>(outputs[output_flag]).Init(s);
-          dim_t* unique_indices = outputs[output_flag].data().dptr<dim_t>();
-          // reuse boolean_mask kernel
-          mxnet_op::Kernel<BooleanMaskForwardCPUKernel, cpu>::Launch(
-              stream, input_size, unique_indices, perm.data(), prefix_sum.data(), 1);
-        }
+    }
+    if (param.return_inverse) {
+      output_flag += 1;
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        const_cast<NDArray&>(outputs[output_flag]).Init(mxnet::TShape(1, input_size));
+        dim_t* unique_inverse = outputs[output_flag].data().dptr<dim_t>();
+        mxnet_op::Kernel<UniqueReturnInverseKernel, cpu>::Launch(
+            stream, input_size, unique_inverse, prefix_sum.data(), perm.data());
       }
-      if (param.return_inverse) {
-        output_flag += 1;
-        if (NumpyUniqueShouldWrite(req, output_flag)) {
-          const_cast<NDArray&>(outputs[output_flag]).Init(mxnet::TShape(1, input_size));
-          dim_t* unique_inverse = outputs[output_flag].data().dptr<dim_t>();
-          mxnet_op::Kernel<UniqueReturnInverseKernel, cpu>::Launch(
-              stream, input_size, unique_inverse, prefix_sum.data(), perm.data());
-        }
-      }
-      if (param.return_counts) {
-        output_flag += 1;
-        if (NumpyUniqueShouldWrite(req, output_flag)) {
-          std::vector<dim_t> idx(valid_num + 1);
-          auto iter = idx.begin();
-          for (dim_t i = 0; i < input_size; ++i) {
-            if (mask[i]) {
-              *iter = i;
-              ++iter;
-            }
+    }
+    if (param.return_counts) {
+      output_flag += 1;
+      if (NumpyUniqueShouldWrite(req, output_flag)) {
+        std::vector<dim_t> idx(valid_num + 1);
+        auto iter = idx.begin();
+        for (dim_t i = 0; i < input_size; ++i) {
+          if (mask[i]) {
+            *iter = i;
+            ++iter;
           }
-          *iter = input_size;
-          const_cast<NDArray&>(outputs[output_flag]).Init(s);
-          dim_t* unique_counts = outputs[output_flag].data().dptr<dim_t>();
-          mxnet_op::Kernel<UniqueReturnCountsKernel, cpu>::Launch(
-              stream, valid_num, unique_counts, idx.data());
         }
-      }
-    } else {
-      std::set<DType> set(input_data, input_data + input_size);
-      mxnet::TShape s(1, set.size());
-      if (NumpyUniqueShouldWrite(req, 0)) {
-        const_cast<NDArray&>(outputs[0]).Init(s);
-        std::copy(set.begin(), set.end(), outputs[0].data().dptr<DType>());
+        *iter = input_size;
+        const_cast<NDArray&>(outputs[output_flag]).Init(s);
+        dim_t* unique_counts = outputs[output_flag].data().dptr<dim_t>();
+        mxnet_op::Kernel<UniqueReturnCountsKernel, cpu>::Launch(
+            stream, valid_num, unique_counts, idx.data());
       }
     }
   });
@@ -220,9 +236,9 @@ void NumpyUniqueCPUImpl(const NumpyUniqueParam& param,
       for (dim_t i = 0; i < numel; ++i) {
         DType lhs = input_data[i + a * numel];
         DType rhs = input_data[i + b * numel];
-        if (lhs < rhs) {
+        if (NumpyUniqueValueLess(lhs, rhs)) {
           return true;
-        } else if (lhs > rhs) {
+        } else if (NumpyUniqueValueLess(rhs, lhs)) {
           return false;
         }
       }

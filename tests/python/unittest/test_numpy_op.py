@@ -8917,6 +8917,68 @@ def test_np_unique_empty_axis_outputs():
 
 
 @use_np
+def test_np_unique_nan_semantics():
+    class TestUnique(HybridBlock):
+        def __init__(self, return_index=False, return_inverse=False, return_counts=False):
+            super(TestUnique, self).__init__()
+            self._return_index = return_index
+            self._return_inverse = return_inverse
+            self._return_counts = return_counts
+
+        def forward(self, a):
+            return np.unique(a, self._return_index, self._return_inverse, self._return_counts)
+
+    def assert_equal_nan(mx_arr, np_arr):
+        assert mx_arr.shape == np_arr.shape
+        onp.testing.assert_equal(mx_arr.asnumpy(), np_arr)
+
+    data_np = onp.array([onp.nan, onp.nan, 1.0], dtype='float32')
+    data_mx = np.array(data_np, dtype='float32')
+    configs = [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (False, False, True),
+        (True, True, True),
+    ]
+    for config in configs:
+        expected = onp.unique(data_np, return_index=config[0],
+                              return_inverse=config[1], return_counts=config[2])
+        for hybridize in [False, True]:
+            test_unique = TestUnique(*config)
+            if hybridize:
+                test_unique.hybridize()
+            mx_out = test_unique(data_mx)
+            if isinstance(expected, tuple):
+                for mx_arr, np_arr in zip(mx_out, expected):
+                    assert_equal_nan(mx_arr, np_arr)
+            else:
+                assert_equal_nan(mx_out, expected)
+
+        mx_out = np.unique(data_mx, return_index=config[0],
+                           return_inverse=config[1], return_counts=config[2])
+        if isinstance(expected, tuple):
+            for mx_arr, np_arr in zip(mx_out, expected):
+                assert_equal_nan(mx_arr, np_arr)
+        else:
+            assert_equal_nan(mx_out, expected)
+
+    expected_all = onp.unique(data_np, return_index=True, return_inverse=True, return_counts=True)
+    mx_all = np.unique_all(data_mx)
+    assert_equal_nan(mx_all.values, expected_all[0])
+    assert_equal_nan(mx_all.indices, expected_all[1])
+    assert_equal_nan(mx_all.inverse_indices, expected_all[2])
+    assert_equal_nan(mx_all.counts, expected_all[3])
+
+    mx_inverse = np.unique_inverse(data_mx)
+    expected_inverse = onp.unique(data_np, return_inverse=True)
+    assert_equal_nan(mx_inverse.values, expected_inverse[0])
+    assert_equal_nan(mx_inverse.inverse_indices, expected_inverse[1])
+
+    assert_equal_nan(np.unique_values(data_mx), onp.unique(data_np))
+
+
+@use_np
 @pytest.mark.parametrize('shape,index,inverse,counts', [
     ((), True, True, True),
     ((1, ), True, True, True),

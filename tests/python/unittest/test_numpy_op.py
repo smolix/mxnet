@@ -5155,6 +5155,17 @@ def test_np_stack_helpers_array_like_inputs():
 
 
 @use_np
+def test_sym_np_hstack_dstack_direct_shape_inference():
+    a = mx.sym.var('a').as_np_ndarray()
+    b = mx.sym.var('b').as_np_ndarray()
+
+    assert mx.sym.np.hstack((a, b)).infer_shape(a=(2, 3), b=(2, 1))[1] == [(2, 4)]
+    assert mx.sym.np.hstack((a, b)).infer_shape(a=(3,), b=(1,))[1] == [(4,)]
+    assert mx.sym.np.dstack((a, b)).infer_shape(a=(3,), b=(3,))[1] == [(1, 3, 2)]
+    assert mx.sym.np.dstack((a, b)).infer_shape(a=(2, 3), b=(2, 3))[1] == [(2, 3, 2)]
+
+
+@use_np
 def test_np_dstack():
     class TestDStack(HybridBlock):
         def __init__(self):

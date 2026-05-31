@@ -466,11 +466,11 @@ bool HStackShape(const nnvm::NodeAttrs& attrs,
   int axis                  = (*in_shape)[0].ndim() > 1 ? 1 : 0;
   param_.dim                = axis;
   for (int i = 0; i < param_.num_args; ++i) {
+    mxnet::TShape tmp = (*in_shape)[i];
     // scalor tensor is treated as one dimensional vector
-    if ((*in_shape)[i].ndim() == 0) {
-      (*in_shape)[i] = mxnet::TShape(1, 1);
+    if (tmp.ndim() == 0) {
+      tmp = mxnet::TShape(1, 1);
     }
-    mxnet::TShape& tmp = (*in_shape)[i];
     if (tmp.ndim() > 0) {
       CheckAxis(axis, tmp.ndim());
       if (!mxnet::dim_size_is_known(tmp, axis)) {
@@ -494,13 +494,20 @@ bool HStackShape(const nnvm::NodeAttrs& attrs,
     return false;
   CHECK_NE(dshape.ndim(), 0) << "zero-dimensional arrays cannot be concatenated";
 
-  for (int i = 0; i < param_.num_args; ++i) {
-    CHECK(shape_assign(&(*in_shape)[i], dshape))
-        << "Incompatible input shape: expected " << dshape << ", got " << (*in_shape)[i];
-  }
-
   if (!has_unknown_dim_size) {
     dshape[axis] = size;
+  }
+  for (int i = 0; i < param_.num_args; ++i) {
+    mxnet::TShape tmp = (*in_shape)[i];
+    if (tmp.ndim() == 0) {
+      tmp = mxnet::TShape(1, 1);
+    }
+    for (int j = 0; j < tmp.ndim(); ++j) {
+      if (j != axis && mxnet::dim_size_is_known(tmp, j) && mxnet::dim_size_is_known(dshape, j)) {
+        CHECK_EQ(tmp[j], dshape[j])
+            << "Incompatible input shape: expected " << dshape << ", got " << (*in_shape)[i];
+      }
+    }
   }
   CHECK(shape_assign(&(*out_shape)[0], dshape))
       << "Incompatible output shape: expected " << dshape << ", got " << (*out_shape)[0];
@@ -520,19 +527,19 @@ bool DStackShape(const nnvm::NodeAttrs& attrs,
   int axis                  = 2;
   param_.dim                = axis;
   for (int i = 0; i < param_.num_args; ++i) {
-    if ((*in_shape)[i].ndim() == 0) {
-      (*in_shape)[i] = mxnet::TShape(3, 1);
-    } else if ((*in_shape)[i].ndim() == 1) {
+    mxnet::TShape tmp = (*in_shape)[i];
+    if (tmp.ndim() == 0) {
+      tmp = mxnet::TShape(3, 1);
+    } else if (tmp.ndim() == 1) {
       mxnet::TShape t = mxnet::TShape(3, 1);
-      t[1]            = (*in_shape)[i][0];
-      (*in_shape)[i]  = t;
-    } else if ((*in_shape)[i].ndim() == 2) {
+      t[1]            = tmp[0];
+      tmp             = t;
+    } else if (tmp.ndim() == 2) {
       mxnet::TShape t = mxnet::TShape(3, 1);
-      t[0]            = (*in_shape)[i][0];
-      t[1]            = (*in_shape)[i][1];
-      (*in_shape)[i]  = t;
+      t[0]            = tmp[0];
+      t[1]            = tmp[1];
+      tmp             = t;
     }
-    mxnet::TShape& tmp = (*in_shape)[i];
     if (tmp.ndim() > 0) {
       CheckAxis(axis, tmp.ndim());
       if (!mxnet::dim_size_is_known(tmp, axis)) {
@@ -556,13 +563,29 @@ bool DStackShape(const nnvm::NodeAttrs& attrs,
     return false;
   CHECK_NE(dshape.ndim(), 0) << "zero-dimensional arrays cannot be concatenated";
 
-  for (int i = 0; i < param_.num_args; ++i) {
-    CHECK(shape_assign(&(*in_shape)[i], dshape))
-        << "Incompatible input shape: expected " << dshape << ", got " << (*in_shape)[i];
-  }
-
   if (!has_unknown_dim_size) {
     dshape[axis] = size;
+  }
+  for (int i = 0; i < param_.num_args; ++i) {
+    mxnet::TShape tmp = (*in_shape)[i];
+    if (tmp.ndim() == 0) {
+      tmp = mxnet::TShape(3, 1);
+    } else if (tmp.ndim() == 1) {
+      mxnet::TShape t = mxnet::TShape(3, 1);
+      t[1]            = tmp[0];
+      tmp             = t;
+    } else if (tmp.ndim() == 2) {
+      mxnet::TShape t = mxnet::TShape(3, 1);
+      t[0]            = tmp[0];
+      t[1]            = tmp[1];
+      tmp             = t;
+    }
+    for (int j = 0; j < tmp.ndim(); ++j) {
+      if (j != axis && mxnet::dim_size_is_known(tmp, j) && mxnet::dim_size_is_known(dshape, j)) {
+        CHECK_EQ(tmp[j], dshape[j])
+            << "Incompatible input shape: expected " << dshape << ", got " << (*in_shape)[i];
+      }
+    }
   }
   CHECK(shape_assign(&(*out_shape)[0], dshape))
       << "Incompatible output shape: expected " << dshape << ", got " << (*out_shape)[0];

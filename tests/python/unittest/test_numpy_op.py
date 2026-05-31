@@ -6318,6 +6318,15 @@ def test_np_choice():
 
 
 @use_np
+def test_np_random_choice_array_like_a():
+    samples = np.random.choice([10, 20, 30], 2)
+    assert samples.shape == (2,)
+    assert set(samples.asnumpy().tolist()).issubset({10, 20, 30})
+    with pytest.raises(ValueError, match="1-dimensional"):
+        np.random.choice([[1, 2]], 1)
+
+
+@use_np
 def test_np_eye():
     configs = [
         4,

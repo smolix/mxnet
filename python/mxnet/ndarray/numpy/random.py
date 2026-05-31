@@ -563,6 +563,7 @@ def choice(a, size=None, replace=True, p=None, device=None, out=None):
     >>> np.random.choice(5, 3, replace=False, p=[0.1, 0, 0.3, 0.6, 0])
     array([2, 3, 0])
     """
+    from ...numpy import array as np_array
     from ...numpy import ndarray as np_ndarray
     if device is None:
         device = str(current_device())
@@ -572,7 +573,11 @@ def choice(a, size=None, replace=True, p=None, device=None, out=None):
     if size == ():
         size = None
     sample_count = _size_product(size)
+    if not isinstance(a, (integer_types, np.integer, np_ndarray)):
+        a = np_array(a)
     if isinstance(a, np_ndarray):
+        if a.ndim != 1:
+            raise ValueError("a must be 1-dimensional")
         if a.shape[0] == 0 and sample_count != 0:
             raise ValueError("a must be greater than 0 unless no samples are taken")
         if not replace and sample_count > a.shape[0]:

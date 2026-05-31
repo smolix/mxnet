@@ -3329,7 +3329,13 @@ def take(a, indices, axis=None, mode='raise', out=None):
     array([[4., 3.],
            [5., 7.]])
     """
-    return _mx_nd_np.take(asarray(a), asarray(indices), axis, mode, out)
+    if not isinstance(indices, ndarray):
+        indices_np = _np.asarray(indices)
+        if indices_np.dtype.kind not in ('i', 'u', 'b'):
+            raise TypeError('take indices must be integers')
+        index_dtype = 'bool' if indices_np.dtype.kind == 'b' else 'int64'
+        indices = array(indices_np, dtype=index_dtype)
+    return _mx_nd_np.take(asarray(a), indices, axis, mode, out)
 # pylint: enable=redefined-outer-name
 
 

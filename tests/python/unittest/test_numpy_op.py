@@ -10451,6 +10451,11 @@ def test_np_take_index_validation():
         mx.sym.np.take(data_sym, idx_sym, axis=1).as_nd_ndarray().infer_type(
             data='float32', idx='float32')
 
+    assert_almost_equal(np.take([10, 20, 30], [0, 2]).asnumpy(),
+                        onp.take([10, 20, 30], [0, 2]))
+    assert_almost_equal(np.take([10, 20, 30], onp.array([0, 2], dtype='int64')).asnumpy(),
+                        onp.take([10, 20, 30], onp.array([0, 2], dtype='int64')))
+
 
 @use_np
 @pytest.mark.parametrize('mode', ['clip', 'wrap'])

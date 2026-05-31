@@ -49,17 +49,17 @@ struct HistogramFusedKernel {
     }
   }
 
-  template <typename DType, typename CType>
+  template <typename DType, typename BType, typename CType>
   static MSHADOW_XINLINE void Map(int i,
                                   const DType* in_data,
-                                  const DType* bin_bounds,
+                                  const BType* bin_bounds,
                                   CType* bins,
                                   const int bin_cnt) {
-    DType data = in_data[i];
+    const double data = static_cast<double>(in_data[i]);
     int target = -1;
     if (data >= bin_bounds[0] && data <= bin_bounds[bin_cnt]) {
       target = 0;
-      while (data >= bin_bounds[target]) {
+      while (target < bin_cnt && data >= bin_bounds[target]) {
         target += 1;
       }
       target = min(target - 1, bin_cnt - 1);
@@ -80,17 +80,19 @@ void HistogramForwardImpl<gpu>(const OpContext& ctx,
   using namespace mxnet_op;
   mshadow::Stream<gpu>* s = ctx.get_stream<gpu>();
   MSHADOW_TYPE_SWITCH(in_data.type_flag_, DType, {
-    MSHADOW_IDX_TYPE_SWITCH(out_data.type_flag_, CType, {
-      int bin_cnt = out_bins.Size() - 1;
-      Kernel<set_zero, gpu>::Launch(s, bin_cnt, out_data.dptr<CType>());
-      Kernel<HistogramFusedKernel, gpu>::Launch(s,
-                                                in_data.Size(),
-                                                in_data.dptr<DType>(),
-                                                bin_bounds.dptr<DType>(),
-                                                out_data.dptr<CType>(),
-                                                bin_cnt);
-      Kernel<op_with_req<mshadow_op::identity, kWriteTo>, gpu>::Launch(
-          s, bin_bounds.Size(), out_bins.dptr<DType>(), bin_bounds.dptr<DType>());
+    MSHADOW_TYPE_SWITCH(bin_bounds.type_flag_, BType, {
+      MSHADOW_IDX_TYPE_SWITCH(out_data.type_flag_, CType, {
+        int bin_cnt = out_bins.Size() - 1;
+        Kernel<set_zero, gpu>::Launch(s, bin_cnt, out_data.dptr<CType>());
+        Kernel<HistogramFusedKernel, gpu>::Launch(s,
+                                                  in_data.Size(),
+                                                  in_data.dptr<DType>(),
+                                                  bin_bounds.dptr<BType>(),
+                                                  out_data.dptr<CType>(),
+                                                  bin_cnt);
+        Kernel<op_with_req<mshadow_op::identity, kWriteTo>, gpu>::Launch(
+            s, bin_bounds.Size(), out_bins.dptr<BType>(), bin_bounds.dptr<BType>());
+      });
     });
   });
 }

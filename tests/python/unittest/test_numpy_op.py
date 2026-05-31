@@ -6317,6 +6317,31 @@ def test_np_histogram_cpu_edge_and_invalid_bins():
         with pytest.raises(MXNetError, match="bin_cnt"):
             np.histogram(mx_a, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
 
+    dtype_cases = [
+        (onp.float32, onp.float64),
+        (onp.float64, onp.float32),
+        (onp.int32, onp.float64),
+    ]
+    for data_dtype, bins_dtype in dtype_cases:
+        data = np.array([0.0, 1.0, 2.0, 3.0], device=mx.cpu(), dtype=data_dtype)
+        bins = np.array([0.0, 1.0, 2.0, 3.0], device=mx.cpu(), dtype=bins_dtype)
+        mx_cnts, mx_bins = np.histogram(data, bins=bins)
+        np_cnts, np_bins = onp.histogram(data.asnumpy(), bins=bins.asnumpy())
+        assert mx_bins.dtype == bins_dtype
+        assert_almost_equal(mx_cnts.asnumpy(), np_cnts, rtol=1e-3, atol=1e-5)
+        assert_almost_equal(mx_bins.asnumpy(), np_bins, rtol=1e-3, atol=1e-5)
+
+    mx_cnts, mx_bins = np.histogram(
+        mx_a, bins=np.array([0.0, 1.0, 1.0, 3.0], device=mx.cpu(), dtype=onp.float64))
+    np_cnts, np_bins = onp.histogram(mx_a.asnumpy(), bins=onp.array([0.0, 1.0, 1.0, 3.0]))
+    assert_almost_equal(mx_cnts.asnumpy(), np_cnts, rtol=1e-3, atol=1e-5)
+    assert_almost_equal(mx_bins.asnumpy(), np_bins, rtol=1e-3, atol=1e-5)
+
+    with pytest.raises(MXNetError, match="must increase monotonically"):
+        np.histogram(
+            mx_a,
+            bins=np.array([0.0, 2.0, 1.0, 3.0], device=mx.cpu(), dtype=onp.float64))[0].asnumpy()
+
 
 @use_np
 # Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.

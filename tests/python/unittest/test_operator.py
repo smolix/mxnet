@@ -8453,6 +8453,30 @@ def test_histogram_cpu_edge_and_invalid_bins():
         with pytest.raises(MXNetError, match="bin_cnt"):
             mx.nd.histogram(x, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
 
+    dtype_cases = [
+        (np.float32, np.float64),
+        (np.float64, np.float32),
+        (np.int32, np.float64),
+    ]
+    for data_dtype, bins_dtype in dtype_cases:
+        data = mx.nd.array([0.0, 1.0, 2.0, 3.0], ctx=mx.cpu(), dtype=data_dtype)
+        bin_bounds = mx.nd.array([0.0, 1.0, 2.0, 3.0], ctx=mx.cpu(), dtype=bins_dtype)
+        histo, bins = mx.nd.histogram(data, bins=bin_bounds)
+        np_histo, np_bins = np.histogram(data.asnumpy(), bins=bin_bounds.asnumpy())
+        assert bins.dtype == bins_dtype
+        assert_almost_equal(histo.asnumpy(), np_histo)
+        assert_almost_equal(bins.asnumpy(), np_bins)
+
+    histo, bins = mx.nd.histogram(
+        x, bins=mx.nd.array([0.0, 1.0, 1.0, 3.0], ctx=mx.cpu(), dtype=np.float64))
+    np_histo, np_bins = np.histogram(x.asnumpy(), bins=np.array([0.0, 1.0, 1.0, 3.0]))
+    assert_almost_equal(histo.asnumpy(), np_histo)
+    assert_almost_equal(bins.asnumpy(), np_bins)
+
+    with pytest.raises(MXNetError, match="must increase monotonically"):
+        mx.nd.histogram(
+            x, bins=mx.nd.array([0.0, 2.0, 1.0, 3.0], ctx=mx.cpu(), dtype=np.float64))[0].asnumpy()
+
 
 def test_histogram_symbol_partial_outputs():
     data = mx.sym.Variable("data")

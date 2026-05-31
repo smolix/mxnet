@@ -3083,6 +3083,32 @@ inline mxnet::TShape GetSplitIndices(const mxnet::TShape& ishape, int axis, int 
   return indices;
 }
 
+inline index_t NormalizeSplitIndex(index_t idx, index_t axis_size) {
+  if (idx < 0) {
+    idx += axis_size;
+  }
+  if (idx < 0) {
+    return 0;
+  }
+  if (idx > axis_size) {
+    return axis_size;
+  }
+  return idx;
+}
+
+inline mxnet::TShape GetNormalizedSplitIndices(const mxnet::TShape& ishape,
+                                               int axis,
+                                               const SplitParam& param) {
+  mxnet::TShape indices =
+      (param.sections > 0) ? GetSplitIndices(ishape, axis, param.sections) : param.indices;
+  if (param.sections == 0) {
+    for (index_t i = 0; i < indices.ndim(); ++i) {
+      indices[i] = NormalizeSplitIndex(indices[i], ishape[axis]);
+    }
+  }
+  return indices;
+}
+
 inline bool SplitOpType(const nnvm::NodeAttrs& attrs,
                         std::vector<int>* in_attrs,
                         std::vector<int>* out_attrs) {
@@ -3106,8 +3132,7 @@ inline bool SplitOpShapeImpl(const nnvm::NodeAttrs& attrs,
   const SplitParam& param = nnvm::get<SplitParam>(attrs.parsed);
   mxnet::TShape dshape    = in_attrs->at(split_enum::kData);
   mxnet::TShape ishape    = in_attrs->at(split_enum::kData);
-  const mxnet::TShape indices =
-      (param.sections > 0) ? GetSplitIndices(ishape, real_axis, param.sections) : param.indices;
+  const mxnet::TShape indices = GetNormalizedSplitIndices(ishape, real_axis, param);
   int num_outputs = (param.sections > 0) ? indices.ndim() - 1 : indices.ndim();
   // Pre-compute squeezed output shape for future usage
   mxnet::TShape squeezed_dshape = dshape;
@@ -3271,8 +3296,7 @@ inline void SplitOpForwardImpl(const nnvm::NodeAttrs& attrs,
 
   size_t workspace_size       = 0;
   const mxnet::TShape& ishape = input_data.shape_;
-  const mxnet::TShape split_pts =
-      (param.sections > 0) ? GetSplitIndices(ishape, real_axis, param.sections) : param.indices;
+  const mxnet::TShape split_pts = GetNormalizedSplitIndices(ishape, real_axis, param);
   std::vector<size_t> indices;
   for (const auto& section : split_pts) {
     indices.push_back(section);
@@ -3351,8 +3375,7 @@ inline void SplitOpBackwardImpl(const nnvm::NodeAttrs& attrs,
 
   size_t workspace_size       = 0;
   const mxnet::TShape& ishape = input_grad.shape_;
-  const mxnet::TShape split_pts =
-      (param.sections > 0) ? GetSplitIndices(ishape, real_axis, param.sections) : param.indices;
+  const mxnet::TShape split_pts = GetNormalizedSplitIndices(ishape, real_axis, param);
   std::vector<size_t> indices;
   for (const auto& section : split_pts) {
     indices.push_back(section);

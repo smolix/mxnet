@@ -4194,6 +4194,56 @@ def test_np_array_split():
 
 
 @use_np
+def test_np_split_index_list_normalization():
+    class TestSplit(HybridBlock):
+        def __init__(self, op_name, indices_or_sections, axis=0):
+            super(TestSplit, self).__init__()
+            self._op_name = op_name
+            self._indices_or_sections = indices_or_sections
+            self._axis = axis
+
+        def forward(self, a):
+            op = getattr(np, self._op_name)
+            if self._op_name in ('hsplit', 'vsplit', 'dsplit'):
+                return op(a, self._indices_or_sections)
+            return op(a, self._indices_or_sections, axis=self._axis)
+
+    configs = [
+        ('split', np.arange(5, dtype='float32'), [-1], 0),
+        ('split', np.arange(5, dtype='float32'), [-6], 0),
+        ('split', np.arange(5, dtype='float32'), [0, -1, 6], 0),
+        ('array_split', np.arange(12, dtype='float32').reshape((3, 4)), [-1], 1),
+        ('array_split', np.arange(12, dtype='float32').reshape((3, 4)), [0, 5], 0),
+        ('hsplit', np.arange(12, dtype='float32').reshape((3, 4)), [-1], None),
+        ('vsplit', np.arange(12, dtype='float32').reshape((3, 4)), [-4], None),
+        ('dsplit', np.arange(24, dtype='float32').reshape((2, 3, 4)), [0, -1, 6], None),
+    ]
+
+    for op_name, data, indices_or_sections, axis in configs:
+        onp_data = data.asnumpy()
+        onp_op = getattr(onp, op_name)
+        expected = (onp_op(onp_data, indices_or_sections) if axis is None
+                    else onp_op(onp_data, indices_or_sections, axis=axis))
+        for hybridize in [False, True]:
+            test_split = TestSplit(op_name, indices_or_sections, axis=0 if axis is None else axis)
+            if hybridize:
+                test_split.hybridize()
+            data.attach_grad()
+            with mx.autograd.record():
+                mx_outs = test_split(data)
+            assert len(mx_outs) == len(expected)
+            for mx_out, np_out in zip(mx_outs, expected):
+                assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+            mx.autograd.backward(mx_outs)
+            assert_almost_equal(data.grad.asnumpy(), onp.ones(data.shape), rtol=1e-3, atol=1e-5)
+
+        mx_outs = (getattr(np, op_name)(data, indices_or_sections) if axis is None
+                   else getattr(np, op_name)(data, indices_or_sections, axis=axis))
+        for mx_out, np_out in zip(mx_outs, expected):
+            assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
 def test_np_vsplit():
     class TestVsplit(HybridBlock):
         def __init__(self, indices_or_sections):

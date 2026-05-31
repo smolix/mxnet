@@ -39,9 +39,7 @@ void DNNLSplitForward(const nnvm::NodeAttrs& attrs,
 
   const auto& ishape   = tensors.input.shape();
   const int split_axis = param.axis >= 0 ? param.axis : param.axis + ishape.ndim();
-  const mxnet::TShape split_pts =
-      (param.sections > 0) ? GetSplitIndices(tensors.input.shape(), split_axis, param.sections) :
-                             param.indices;
+  const mxnet::TShape split_pts = GetNormalizedSplitIndices(ishape, split_axis, param);
 
   const auto& fwd = DNNLSplitFwd::GetCached(param, tensors, split_pts, split_axis);
   fwd.Execute(tensors, split_pts, split_axis, req);

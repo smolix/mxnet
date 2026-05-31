@@ -33,6 +33,7 @@
 #include "../../tensor/la_op.h"
 #include "../../tensor/la_op-inl.h"
 #include "../../tensor/init_op.h"
+#include "../../tensor/elemwise_unary_op.h"
 #include "./broadcast_reduce_op_customized.h"
 #include "./np_gesvd-inl.h"
 #include "../np_matrix_op-inl.h"
@@ -830,6 +831,25 @@ void NumpyMatrixNormGradCompute(const nnvm::NodeAttrs& attrs,
 }
 
 template <typename xpu>
+TBlob NumpyNormCastInput(const nnvm::NodeAttrs& attrs,
+                         const OpContext& ctx,
+                         const TBlob& input,
+                         const int output_type) {
+  if (input.type_flag_ == output_type) {
+    return input;
+  }
+  mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
+  TBlob cast_input;
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(output_type, OType, {
+    mshadow::Tensor<xpu, 1, OType> cast_tensor =
+        ctx.requested[0].get_space_typed<xpu, 1, OType>(mshadow::Shape1(input.Size()), s);
+    cast_input = TBlob(cast_tensor).reshape(input.shape_);
+  });
+  CastCompute<xpu>(attrs, ctx, {input}, {kWriteTo}, {cast_input});
+  return cast_input;
+}
+
+template <typename xpu>
 void NumpyNormComputeForward(const nnvm::NodeAttrs& attrs,
                              const OpContext& ctx,
                              const std::vector<TBlob>& inputs,
@@ -843,9 +863,11 @@ void NumpyNormComputeForward(const nnvm::NodeAttrs& attrs,
     return;
   }
   const NumpyNormParam& param = nnvm::get<NumpyNormParam>(attrs.parsed);
+  TBlob compute_input = NumpyNormCastInput<xpu>(attrs, ctx, inputs[0], outputs[0].type_flag_);
+  std::vector<TBlob> compute_inputs({compute_input});
 
   if (param.flag == -2) {  // flattened L2 norm
-    std::vector<TBlob> flat_inputs({inputs[0].reshape(TShape(1, inputs[0].shape_.Size()))});
+    std::vector<TBlob> flat_inputs({compute_input.reshape(TShape(1, compute_input.shape_.Size()))});
     std::vector<TBlob> flat_outputs({outputs[0].reshape(TShape(1, 1))});
 #if !defined(__CUDACC__)
     ReduceAxesComputeImpl<xpu, mshadow_op::nrm2, false, false, mshadow_op::identity>(
@@ -865,9 +887,9 @@ void NumpyNormComputeForward(const nnvm::NodeAttrs& attrs,
   }
 
   if (param.axis.value().ndim() == 2) {
-    NumpyMatrixNormCompute<xpu>(attrs, ctx, inputs, req, outputs);
+    NumpyMatrixNormCompute<xpu>(attrs, ctx, compute_inputs, req, outputs);
   } else {
-    NumpyLpNormCompute<xpu>(attrs, ctx, inputs, req, outputs);
+    NumpyLpNormCompute<xpu>(attrs, ctx, compute_inputs, req, outputs);
   }
 }
 

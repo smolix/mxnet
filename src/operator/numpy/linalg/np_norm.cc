@@ -122,11 +122,7 @@ bool NumpyNormType(const nnvm::NodeAttrs& attrs,
   int in_type = in_attrs->at(0);
   int out_type;
   if (!common::is_float(in_type)) {
-    out_type = in_type;
-    LOG(WARNING) << "WARNING: Integer input to norm. This will result in integer "
-                    "output which is different from standard NumPy behavior and "
-                    "breaks gradient compute in backward. Please cast the input "
-                    "to floating point types first.";
+    out_type = mshadow::kFloat64;
   } else {
     out_type = in_type;
   }

@@ -7080,6 +7080,18 @@ def test_np_linalg_norm_invalid_orders():
 
 
 @use_np
+def test_np_linalg_norm_integer_promotes_to_float():
+    data = np.array([3, 4], dtype='int32')
+    ret = np.linalg.norm(data)
+    assert ret.dtype == onp.dtype('float64')
+    assert_almost_equal(ret.asnumpy(), onp.linalg.norm(data.asnumpy()))
+
+    sym_data = mx.sym.var('norm_data').as_np_ndarray()
+    sym_ret = mx.sym.np.linalg.norm(sym_data)
+    assert sym_ret.infer_type(norm_data='int32')[1] == [onp.dtype('float64')]
+
+
+@use_np
 @pytest.mark.parametrize('hybridize', [True, False])
 def test_np_linalg_vector_norm_negative_tuple_axes(hybridize):
     class TestVectorNorm(HybridBlock):
@@ -8023,6 +8035,9 @@ def test_np_linalg_solve_symbol_shape_validation():
     ]
     for a_shape, b_shape, expected_shape in test_cases:
         assert out.infer_shape(a=a_shape, b=b_shape)[1] == [expected_shape]
+
+    partial_shapes = out.infer_shape_partial(a=(2, 2))
+    assert partial_shapes[0][1] is None
 
     invalid_cases = [
         ((1, 2, 2), (3, 2)),

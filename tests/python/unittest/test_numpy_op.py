@@ -11395,6 +11395,15 @@ def test_np_diff():
         with pytest.raises(NotImplementedError, match="prepend and append options are not supported"):
             np.diff(np.array([1, 2, 4]), **kwargs)
 
+    for dtype in ['bool', 'int16', 'uint16', 'uint32']:
+        data_np = onp.array([1, 0, 1, 1, 0], dtype=dtype)
+        data = np.array(data_np, dtype=dtype)
+        for n in [1, 2, 3]:
+            mx_out = np.diff(data, n=n)
+            np_out = onp.diff(data_np, n=n)
+            assert mx_out.dtype == np_out.dtype
+            onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
 
 @use_np
 def test_np_ediff1d():
@@ -11522,6 +11531,17 @@ def test_np_ediff1d():
     assert_almost_equal(ary.grad.asnumpy(), onp.array([4.0, 5.0, 6.0], dtype=onp.float32))
     assert_almost_equal(to_begin.grad.asnumpy(), onp.array([6.0, 6.0], dtype=onp.float32))
     assert_almost_equal(to_end.grad.asnumpy(), onp.array([6.0, 6.0], dtype=onp.float32))
+
+    for dtype in ['int16', 'uint16', 'uint32']:
+        data_np = onp.array([1, 0, 2, 2], dtype=dtype)
+        data = np.array(data_np, dtype=dtype)
+        mx_out = np.ediff1d(data)
+        np_out = onp.ediff1d(data_np)
+        assert mx_out.dtype == np_out.dtype
+        onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+    with pytest.raises(mx.MXNetError, match="ediff1d does not support bool input"):
+        np.ediff1d(np.array([False, True, True], dtype='bool')).asnumpy()
 
 
 @use_np

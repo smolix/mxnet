@@ -27,6 +27,7 @@
 
 #include <mxnet/base.h>
 #include <mxnet/operator_util.h>
+#include <type_traits>
 #include <vector>
 #include <string>
 #include "../mxnet_op.h"
@@ -83,7 +84,13 @@ struct diff_forward {
     int indicator = 1;
     out[i]        = 0;
     for (int k = n; k >= 0; --k) {
-      out[i] += in[j + stride * k] * indicator * diffFactor[k];
+      if constexpr (std::is_same<OType, bool>::value) {
+        if (diffFactor[k] % 2 != 0) {
+          out[i] = out[i] != static_cast<bool>(in[j + stride * k]);
+        }
+      } else {
+        out[i] += in[j + stride * k] * indicator * diffFactor[k];
+      }
       indicator *= -1;
     }
   }
@@ -116,8 +123,8 @@ void DiffForwardImpl(const OpContext& ctx,
   Tensor<xpu, 1, int> diffFactor = ctx.requested[0].get_space_typed<xpu, 1, int>(Shape1(n + 1), s);
   Copy(diffFactor, Tensor<cpu, 1, int>(&buffer[0], Shape1(n + 1), 0), s);
 
-  MSHADOW_TYPE_SWITCH(in.type_flag_, IType, {
-    MSHADOW_TYPE_SWITCH(out.type_flag_, OType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(in.type_flag_, IType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out.type_flag_, OType, {
       MXNET_NDIM_SWITCH(in.ndim(), ndim, {
         Kernel<diff_forward, xpu>::Launch(s,
                                           out.Size(),

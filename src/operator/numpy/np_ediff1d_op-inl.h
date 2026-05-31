@@ -27,6 +27,7 @@
 
 #include <mxnet/base.h>
 #include <mxnet/operator_util.h>
+#include <type_traits>
 #include <vector>
 #include <string>
 #include "../mxnet_op.h"
@@ -90,7 +91,11 @@ struct ediff1d_forward {
                                   DType* out_data,
                                   const DType* in_data,
                                   const index_t padding) {
-    KERNEL_ASSIGN(out_data[i + padding], req, in_data[i + 1] - in_data[i]);
+    if constexpr (std::is_same<DType, bool>::value) {
+      KERNEL_ASSIGN(out_data[i + padding], req, in_data[i + 1] != in_data[i]);
+    } else {
+      KERNEL_ASSIGN(out_data[i + padding], req, in_data[i + 1] - in_data[i]);
+    }
   }
 };
 
@@ -109,7 +114,7 @@ void EDiff1DForward(const nnvm::NodeAttrs& attrs,
   const TBlob& in_data    = inputs[0];
   const TBlob& out_data   = outputs[0];
   mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
-  MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
     const EDiff1DParam& param = nnvm::get<EDiff1DParam>(attrs.parsed);
     size_t padding            = 0;
     size_t in_size            = (in_data.Size() > 0) ? in_data.Size() - 1 : 0;

@@ -6275,7 +6275,9 @@ def indices(dimensions, dtype=None, device=None):
         device = str(current_device())
     else:
         device = str(device)
-    if dtype is not None and not isinstance(dtype, str):
+    if dtype is None:
+        dtype = 'int64'
+    elif not isinstance(dtype, str):
         dtype = get_dtype_name(dtype)
     return _api_internal.indices(tuple(dimensions), dtype, device)
 # pylint: enable=redefined-outer-name

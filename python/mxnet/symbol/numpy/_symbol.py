@@ -5451,6 +5451,10 @@ def indices(dimensions, dtype=None, ctx=None):
                             .format(type(dim).__name__))
         if dim < 0:
             raise ValueError("negative dimensions are not allowed")
+    if dtype is None:
+        dtype = 'int64'
+    elif not isinstance(dtype, str):
+        dtype = get_dtype_name(dtype)
     if ctx is None:
         ctx = current_context()
     return _npi.indices(dimensions=tuple(dimensions), dtype=dtype, ctx=ctx)

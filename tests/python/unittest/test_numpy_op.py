@@ -6930,6 +6930,16 @@ def test_np_indices():
                 assert same(mx_out.asnumpy(), np_out)
                 assert mx_out.shape == np_out.shape
 
+    for hybridize in [False, True]:
+        net = TestIndices(dimensions=(2, 3), dtype=None)
+        if hybridize:
+            net.hybridize()
+        mx_out = net(np.zeros(shape=(), dtype='int64'))
+        np_out = onp.indices(dimensions=(2, 3))
+        assert mx_out.dtype == np_out.dtype
+        assert same(mx_out.asnumpy(), np_out)
+        assert mx_out.shape == np_out.shape
+
     mx_out = np.indices((2,), dtype='bool')
     np_out = onp.indices((2,), dtype='bool')
     assert mx_out.dtype == np_out.dtype

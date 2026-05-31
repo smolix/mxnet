@@ -5739,6 +5739,15 @@ def flip(m, axis=None, out=None):
     if isinstance(m, numeric_types):
         return _np.flip(m, axis)
     elif isinstance(m, _Symbol):
+        if isinstance(axis, (tuple, list)):
+            seen_axes = set()
+            for ax in axis:
+                if not isinstance(ax, (integer_types, _np.integer)):
+                    raise TypeError("'{}' object cannot be interpreted as an integer"
+                                    .format(type(ax).__name__))
+                if ax in seen_axes:
+                    raise ValueError("repeated axis")
+                seen_axes.add(ax)
         return _npi.flip(m, axis, out=out)
     else:
         raise TypeError('type {} not supported'.format(str(type(m))))
@@ -8087,6 +8096,8 @@ def reshape(a, newshape, reverse=False, order='C'):
            [3., 4.],
            [5., 6.]])
     """
+    if order != 'C':
+        raise NotImplementedError("reshape currently only supports order='C'")
     return _npi.reshape(a, newshape, reverse, order)
 
 @set_module('mxnet.symbol.numpy')

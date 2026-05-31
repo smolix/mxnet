@@ -6590,6 +6590,18 @@ def flip(m, axis=None, out=None):
     if isinstance(m, numeric_types):
         return _np.flip(m, axis)
     elif isinstance(m, ndarray):
+        if isinstance(axis, (tuple, list)):
+            normalized_axes = []
+            for ax in axis:
+                if not isinstance(ax, (integer_types, _np.integer)):
+                    raise TypeError("'{}' object cannot be interpreted as an integer"
+                                    .format(type(ax).__name__))
+                if ax < -m.ndim or ax >= m.ndim:
+                    raise _np.AxisError(ax, ndim=m.ndim)
+                ax = ax + m.ndim if ax < 0 else ax
+                if ax in normalized_axes:
+                    raise ValueError("repeated axis")
+                normalized_axes.append(ax)
         return _api_internal.flip(m, axis, out)
     else:
         raise TypeError('type {} not supported'.format(str(type(m))))
@@ -9798,6 +9810,8 @@ def reshape(a, newshape, order='C'):
            [3., 4.],
            [5., 6.]])
     """
+    if order != 'C':
+        raise NotImplementedError("reshape currently only supports order='C'")
     return _api_internal.reshape(a, newshape, False, order)
 
 @set_module('mxnet.ndarray.numpy')

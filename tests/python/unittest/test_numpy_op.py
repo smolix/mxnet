@@ -2259,6 +2259,12 @@ def test_np_reshape():
             np_out = onp.reshape(x.asnumpy(), shape2)
             assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5, use_broadcast=False)
 
+    x = np.arange(6).reshape(2, 3)
+    with pytest.raises(NotImplementedError):
+        np.reshape(x, (3, 2), order='F')
+    with pytest.raises(NotImplementedError):
+        mx.sym.np.reshape(mx.sym.var('reshape_x').as_np_ndarray(), (3, 2), order='F')
+
 
 @use_np
 @pytest.mark.parametrize('descending', [True, False])
@@ -8676,6 +8682,15 @@ def test_np_flip():
         out = np.flip(x)
     out.backward()
     assert same(x.grad.asnumpy(), onp.full(x.shape, 6.0, dtype=onp.float32))
+
+    x = np.arange(24, dtype='float32').reshape(2, 3, 4)
+    for axis in [(1, 1), (1, -2)]:
+        with pytest.raises(ValueError):
+            np.flip(x, axis=axis)
+    with pytest.raises(onp.AxisError):
+        np.flip(x, axis=(3,))
+    with pytest.raises(ValueError):
+        mx.sym.np.flip(mx.sym.var('flip_x').as_np_ndarray(), axis=(1, 1))
 
 
 @use_np

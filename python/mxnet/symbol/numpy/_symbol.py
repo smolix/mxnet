@@ -4265,7 +4265,10 @@ def dsplit(ary, indices_or_sections):
         indices = [0] + list(indices_or_sections)
     else:
         raise ValueError('indices_or_sections must either int or tuple of ints')
-    return _npi.dsplit(ary, indices, 2, False, sections)
+    ret = _npi.dsplit(ary, indices, 2, False, sections)
+    if not isinstance(ret, list):
+        return [ret]
+    return ret
 # pylint: enable=redefined-outer-name
 
 

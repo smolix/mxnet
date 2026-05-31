@@ -9489,6 +9489,7 @@ def test_np_hsplit():
         (3, 3),
         (3,),
         (1,),
+        1,
         2,
     ]
     for hybridize in [True, False]:
@@ -9537,6 +9538,7 @@ def test_np_dsplit():
         (3, 3),
         (3,),
         (1,),
+        1,
         2,
     ]
     for hybridize in [True, False]:

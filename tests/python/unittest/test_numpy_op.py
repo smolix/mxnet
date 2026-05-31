@@ -2323,6 +2323,26 @@ def test_np_reshape():
 
 
 @use_np
+def test_np_reshape_shape_validation():
+    data = np.arange(6).reshape((2, 3))
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    invalid_shapes = [
+        ((2.0, 3), TypeError),
+        (('2', 3), TypeError),
+        ((-2, 3), ValueError),
+        ((-4,), ValueError),
+        ((-5,), ValueError),
+        ((2, -2), ValueError),
+        ((-1, -1), ValueError),
+    ]
+    for shape, error_type in invalid_shapes:
+        with pytest.raises(error_type):
+            np.reshape(data, shape)
+        with pytest.raises(error_type):
+            mx.sym.np.reshape(sym_data, shape)
+
+
+@use_np
 @pytest.mark.parametrize('descending', [True, False])
 @pytest.mark.parametrize('shape', [
     (),
@@ -2820,6 +2840,12 @@ def test_np_transpose_error():
     dat = np.random.normal(0, 1, (3, 4, 5), dtype=np.float32)
     pytest.raises(ValueError, lambda: dat.transpose((0, 0, 1)))
     pytest.raises(MXNetError, lambda: dat.transpose((0, 1, 3)))
+    sym_dat = mx.sym.var('data').as_np_ndarray()
+    for axes in [(1.0, 0), ('1', 0)]:
+        with pytest.raises(TypeError):
+            np.transpose(dat, axes)
+        with pytest.raises(TypeError):
+            mx.sym.np.transpose(sym_dat, axes)
 
 
 @use_np
@@ -6592,6 +6618,24 @@ def test_np_repeat():
 
 
 @use_np
+def test_np_repeat_repeats_validation():
+    data = np.ones((2, 3))
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    invalid_repeats = [
+        (2.0, TypeError),
+        ('2', TypeError),
+        ([1.0, 2], TypeError),
+        (-1, ValueError),
+        ([1, -1], ValueError),
+    ]
+    for repeats, error_type in invalid_repeats:
+        with pytest.raises(error_type):
+            np.repeat(data, repeats, axis=0)
+        with pytest.raises(error_type):
+            mx.sym.np.repeat(sym_data, repeats, axis=0)
+
+
+@use_np
 def test_np_repeat_zero_repeats_axis_shape():
     class TestRepeat(HybridBlock):
         def __init__(self, repeats, axis=None):
@@ -10069,6 +10113,13 @@ def test_np_moveaxis():
         out = np.moveaxis(x, source=0, destination=2)
     out.backward()
     assert same(x.grad.asnumpy(), onp.full(x.shape, 6.0, dtype=onp.float32))
+
+    data = np.ones((2, 3))
+    with pytest.raises(MXNetError, match="source axis out of range"):
+        np.moveaxis(data, -3, 1)
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    with pytest.raises(MXNetError, match="source axis out of range"):
+        mx.sym.np.moveaxis(sym_data, -3, 1).infer_shape(data=(2, 3))
 
 
 @use_np

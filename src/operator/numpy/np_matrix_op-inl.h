@@ -1000,6 +1000,7 @@ inline mxnet::TShape NumpyMoveaxisShapeImpl(const nnvm::NodeAttrs& attrs, const 
       CHECK_LT(static_cast<size_t>(param.source[i]), ndim);
       real_src[i] = param.source[i];
     } else {
+      CHECK_GE(param.source[i] + ndim, 0) << "source axis out of range";
       CHECK_LT(param.source[i] + ndim, ndim);
       real_src[i] = param.source[i] + ndim;
     }
@@ -1007,6 +1008,7 @@ inline mxnet::TShape NumpyMoveaxisShapeImpl(const nnvm::NodeAttrs& attrs, const 
       CHECK_LT(static_cast<size_t>(param.destination[i]), ndim);
       real_des[i] = param.destination[i];
     } else {
+      CHECK_GE(param.destination[i] + ndim, 0) << "destination axis out of range";
       CHECK_LT(param.destination[i] + ndim, ndim);
       real_des[i] = param.destination[i] + ndim;
     }

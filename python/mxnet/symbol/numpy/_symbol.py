@@ -106,6 +106,66 @@ def _normalize_nonnegative_int(value):
     return int(value)
 
 
+def _normalize_reshape_shape(shape):
+    def normalize_dim(dim):
+        if not isinstance(dim, (integer_types, _np.integer)):
+            raise TypeError("'{}' object cannot be interpreted as an integer"
+                            .format(type(dim).__name__))
+        if dim < 0 and dim != -1:
+            raise ValueError("can only specify one unknown dimension")
+        return int(dim)
+
+    if isinstance(shape, (integer_types, _np.integer)):
+        return normalize_dim(shape)
+    if isinstance(shape, (tuple, list)):
+        dims = tuple(normalize_dim(dim) for dim in shape)
+        unknown_dim_count = 0
+        for dim in dims:
+            if dim == -1:
+                unknown_dim_count += 1
+        if unknown_dim_count > 1:
+            raise ValueError("can only specify one unknown dimension")
+        return dims
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(shape).__name__))
+
+
+def _normalize_axes(axes):
+    if axes is None:
+        return None
+    if not isinstance(axes, (tuple, list)):
+        raise TypeError("'{}' object cannot be interpreted as an integer"
+                        .format(type(axes).__name__))
+    normalized = []
+    for axis in axes:
+        if not isinstance(axis, (integer_types, _np.integer)):
+            raise TypeError("'{}' object cannot be interpreted as an integer"
+                            .format(type(axis).__name__))
+        normalized.append(int(axis))
+    return tuple(normalized)
+
+
+def _normalize_repeat_repeats(repeats):
+    if isinstance(repeats, (integer_types, _np.integer)):
+        if repeats < 0:
+            raise ValueError("repeats may not contain negative values")
+        return [int(repeats)]
+    if isinstance(repeats, _np.ndarray):
+        repeats = repeats.tolist()
+    if isinstance(repeats, (tuple, list)):
+        normalized = []
+        for repeat in repeats:
+            if not isinstance(repeat, (integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(repeat).__name__))
+            if repeat < 0:
+                raise ValueError("repeats may not contain negative values")
+            normalized.append(int(repeat))
+        return normalized
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(repeats).__name__))
+
+
 @set_module('mxnet.symbol.numpy')
 class _Symbol(Symbol):
     def __getitem__(self, key): # pylint: disable = too-many-return-statements, inconsistent-return-statements
@@ -2612,6 +2672,7 @@ def transpose(a, axes=None):
     p : _Symbol
         a with its axes permuted.
     """
+    axes = _normalize_axes(axes)
     return _npi.transpose(a, axes=axes)
 
 
@@ -2688,8 +2749,7 @@ def repeat(a, repeats, axis=None):
            [3, 4],
            [3, 4]])
     """
-    if isinstance(repeats, numeric_types):
-        repeats = [repeats]
+    repeats = _normalize_repeat_repeats(repeats)
     if axis is not None:
         tmp = swapaxes(a, 0, axis)
         res = _npi.repeats(tmp, repeats=repeats, axis=0)
@@ -8195,6 +8255,7 @@ def reshape(a, newshape, reverse=False, order='C'):
     """
     if order != 'C':
         raise NotImplementedError("reshape currently only supports order='C'")
+    newshape = _normalize_reshape_shape(newshape)
     return _npi.reshape(a, newshape, reverse, order)
 
 @set_module('mxnet.symbol.numpy')

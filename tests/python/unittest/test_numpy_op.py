@@ -2050,6 +2050,12 @@ def test_npx_batch_dot():
                                                                transpose_a=transpose_a,
                                                                transpose_b=transpose_b))
 
+    for dtype in ['bool', 'int16', 'uint16', 'uint32']:
+        lhs_val = mx.np.array(onp.ones((2, 2, 2)), dtype=dtype)
+        rhs_val = mx.np.array(onp.ones((2, 2, 2)), dtype=dtype)
+        with pytest.raises((ValueError, MXNetError), match="batch_dot only supports"):
+            mx.npx.batch_dot(lhs_val, rhs_val).asnumpy()
+
 
 @use_np
 @pytest.mark.parametrize('shape', [(4, 2), (4, 3, 4),

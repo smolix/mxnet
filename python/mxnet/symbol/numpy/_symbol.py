@@ -146,16 +146,16 @@ def _normalize_axes(axes):
 
 
 def _normalize_repeat_repeats(repeats):
-    if isinstance(repeats, (integer_types, _np.integer)):
+    if isinstance(repeats, _np.ndarray):
+        repeats = repeats.tolist()
+    if isinstance(repeats, (bool, _np.bool_, integer_types, _np.integer)):
         if repeats < 0:
             raise ValueError("repeats may not contain negative values")
         return [int(repeats)]
-    if isinstance(repeats, _np.ndarray):
-        repeats = repeats.tolist()
     if isinstance(repeats, (tuple, list)):
         normalized = []
         for repeat in repeats:
-            if not isinstance(repeat, (integer_types, _np.integer)):
+            if not isinstance(repeat, (bool, _np.bool_, integer_types, _np.integer)):
                 raise TypeError("'{}' object cannot be interpreted as an integer"
                                 .format(type(repeat).__name__))
             if repeat < 0:
@@ -164,6 +164,32 @@ def _normalize_repeat_repeats(repeats):
         return normalized
     raise TypeError("'{}' object cannot be interpreted as an integer"
                     .format(type(repeats).__name__))
+
+
+def _normalize_tensordot_axes(axes):
+    def normalize_axis(axis):
+        if not isinstance(axis, (integer_types, _np.integer)):
+            raise TypeError("'{}' object cannot be interpreted as an integer"
+                            .format(type(axis).__name__))
+        return int(axis)
+
+    if isinstance(axes, _np.ndarray):
+        axes = axes.tolist()
+    if isinstance(axes, (integer_types, _np.integer)):
+        return int(axes)
+    if isinstance(axes, (tuple, list)):
+        normalized = []
+        for axis in axes:
+            if isinstance(axis, _np.ndarray):
+                axis = axis.tolist()
+            if isinstance(axis, (integer_types, _np.integer)):
+                normalized.append(int(axis))
+            elif isinstance(axis, (tuple, list)):
+                normalized.append([normalize_axis(dim) for dim in axis])
+            else:
+                raise TypeError("Don't know how to handle type {}".format(type(axis)))
+        return normalized
+    return axes
 
 
 @set_module('mxnet.symbol.numpy')
@@ -2079,6 +2105,7 @@ def tensordot(a, b, axes=2):
     two sequences of the same length, with the first axis to sum over given
     first in both sequences, the second axis second, and so forth.
     """
+    axes = _normalize_tensordot_axes(axes)
     if _np.isscalar(axes):
         return _npi.tensordot_int_axes(a, b, axes)
 

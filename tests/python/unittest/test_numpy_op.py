@@ -244,6 +244,41 @@ def test_np_tensordot_duplicate_axes_rejected(axes):
 
 
 @use_np
+@pytest.mark.parametrize('axes', [
+    onp.array(1),
+    onp.array([[1], [0]]),
+    [onp.array([1]), onp.array([0])]
+])
+def test_np_tensordot_array_like_axes(axes):
+    class TestTensordot(HybridBlock):
+        def __init__(self, axes):
+            super(TestTensordot, self).__init__()
+            self._axes = axes
+
+        def forward(self, a, b):
+            return np.tensordot(a, b, axes=self._axes)
+
+    a_np = onp.arange(6, dtype=onp.float32).reshape((2, 3))
+    b_np = onp.arange(12, dtype=onp.float32).reshape((3, 4))
+    a = np.array(a_np)
+    b = np.array(b_np)
+    expected = onp.tensordot(a_np, b_np, axes=axes)
+
+    assert_almost_equal(np.tensordot(a, b, axes=axes).asnumpy(), expected)
+
+    net = TestTensordot(axes)
+    net.hybridize()
+    assert_almost_equal(net(a, b).asnumpy(), expected)
+
+    a_sym = mx.sym.var('a').as_np_ndarray()
+    b_sym = mx.sym.var('b').as_np_ndarray()
+    out = mx.sym.np.tensordot(a_sym, b_sym, axes=axes).as_nd_ndarray()
+    exe = out._bind(mx.cpu(), {'a': mx.nd.array(a_np), 'b': mx.nd.array(b_np)})
+    exe.forward()
+    assert_almost_equal(exe.outputs[0].asnumpy(), expected)
+
+
+@use_np
 @pytest.mark.parametrize('shape_a,shape_b', [
     ((3, 0), (0, 4)),
     ((3,), (3,)),
@@ -6983,6 +7018,8 @@ def test_np_repeat():
         ((4, 2), 2, 0),
         ((4, 2), 2, 1),
         ((4, 2), 2, -1),
+        ((4, 2), onp.array(2), None),
+        ((4, 2), onp.bool_(True), None),
         ((4, 2), [2,3] * 4, None),
         ((4, 2), [1,2], 1),
     ]

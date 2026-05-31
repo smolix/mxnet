@@ -10337,6 +10337,39 @@ def test_np_fallback_out_is_written(op_name):
     onp.testing.assert_array_equal(out.asnumpy(), expected)
 
 
+@use_np
+@pytest.mark.parametrize('op,args,dtype,expected', [
+    (np.signbit, (np.array([-1.0, 0.0, 2.0]),), 'bool',
+     onp.array([True, False, False])),
+    (np.float_power, (np.array([2.0, 3.0]), 2), 'float64',
+     onp.array([4.0, 9.0])),
+    (np.heaviside, (np.array([-1.0, 0.0, 1.0]), 0.5), 'float64',
+     onp.array([0.0, 0.5, 1.0])),
+])
+def test_np_fallback_ufunc_out_is_written(op, args, dtype, expected):
+    out = np.zeros(expected.shape, dtype=dtype)
+    ret = op(*args, out=out)
+    assert ret is out
+    onp.testing.assert_allclose(out.asnumpy(), expected)
+
+
+@use_np
+@pytest.mark.parametrize('op,args,expected', [
+    (np.modf, (np.array([1.25, -2.5]),),
+     (onp.array([0.25, -0.5]), onp.array([1.0, -2.0]))),
+    (np.frexp, (np.array([1.0, 2.0, 4.0]),),
+     onp.frexp(onp.array([1.0, 2.0, 4.0]))),
+    (np.divmod, (np.array([5, 7], dtype='int64'), 3),
+     onp.divmod(onp.array([5, 7]), 3)),
+])
+def test_np_multi_output_fallback_ufunc_out_is_written(op, args, expected):
+    outs = tuple(np.zeros(e.shape, dtype=e.dtype) for e in expected)
+    ret = op(*args, out=outs)
+    assert ret is outs
+    for got, exp in zip(outs, expected):
+        onp.testing.assert_array_equal(got.asnumpy(), exp)
+
+
 def test_np_builtin_op_signature():
     import inspect
     from mxnet import _numpy_op_doc

@@ -364,12 +364,6 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         ufunc_list = ["add", "subtract", "multiply", "divide", "true_divide", "floor_divide", "power",
                       "remainder", "bitwise_and", "bitwise_or", "bitwise_xor", "left_shift", "right_shift",
                       "greater", "greater_equal", "less", "less_equal", "not_equal", "equal", "matmul"]
-        if 'out' in kwargs:
-            # need to unfold tuple argument in kwargs
-            out = kwargs['out']
-            if len(out) != 1:
-                raise ValueError('The `out` parameter must have exactly one ndarray')
-            kwargs['out'] = out[0]
 
         if method == '__call__':
             name = ufunc.__name__
@@ -381,20 +375,32 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
                     raise ValueError("Falling back to NumPy operator {} with autograd active is not supported."
                                      "Please consider moving the operator to the outside of the autograd scope.")\
                                      .format(name)
-                new_inputs = [arg.asnumpy() if isinstance(arg, ndarray) else arg for arg in inputs]
+                cur_device = None
+                original_out = kwargs.get('out', None)
+                new_inputs, cur_device = _as_onp_array(inputs, cur_device)
+                new_kwargs, cur_device = _as_onp_array(kwargs, cur_device)
                 if onp_op not in _FALLBACK_ARRAY_UFUNC_WARNED_RECORD:
                     import logging
                     logging.warning("np.%s is a fallback operator, "
                                     "which is actually using official numpy's implementation", name)
                     _FALLBACK_ARRAY_UFUNC_WARNED_RECORD[onp_op] = True
-                out = onp_op(*new_inputs, **kwargs)
-                # Pick the device from any mxnet ndarray input; plain numpy
-                # arrays don't have a `.device` attribute before NumPy 2.x.
-                _dev = next((arg.device for arg in inputs if isinstance(arg, ndarray)),
-                            None)
-                return _as_mx_np_array(out, device=_dev)
+                out = _as_mx_np_array(onp_op(*new_inputs, **new_kwargs), device=cur_device)
+                if isinstance(original_out, tuple):
+                    if len(original_out) == 1:
+                        original_out[0][:] = out
+                        return original_out[0]
+                    for arr, value in zip(original_out, out):
+                        arr[:] = value
+                    return original_out
+                return out
+            if 'out' in kwargs:
+                # need to unfold tuple argument in kwargs
+                out = kwargs['out']
+                if len(out) != 1:
+                    raise ValueError('The `out` parameter must have exactly one ndarray')
+                kwargs['out'] = out[0]
             # ops with np mx_np
-            elif name in ufunc_list and isinstance(inputs[0], _np.ndarray):
+            if name in ufunc_list and isinstance(inputs[0], _np.ndarray):
                 # inplace
                 if 'out' in kwargs:
                     new_inputs = [arg.asnumpy() if isinstance(arg, ndarray) else arg for arg in inputs]

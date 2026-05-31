@@ -6448,15 +6448,27 @@ def test_np_eye():
     # check for exception input
     for config in exception_configs:
         if isinstance(config, tuple):
-            assertRaises(MXNetError, np.eye, *config)
+            assertRaises(ValueError, np.eye, *config)
         else:
-            assertRaises(MXNetError, np.eye, config)
+            assertRaises(ValueError, np.eye, config)
 
     assert same(np.identity(onp.int64(2)).asnumpy(), onp.identity(onp.int64(2)))
+    with pytest.raises(TypeError):
+        np.eye(2.5)
+    with pytest.raises(TypeError):
+        np.eye(2, M=3.5)
     with pytest.raises(TypeError):
         np.eye(3, k=1.5)
     with pytest.raises(TypeError):
         np.eye(3, k=onp.float64(1))
+    with pytest.raises(TypeError):
+        mx.sym.np.eye(2.5)
+    with pytest.raises(TypeError):
+        mx.sym.np.eye(2, M=3.5)
+    with pytest.raises(ValueError):
+        mx.sym.np.eye(-1)
+    with pytest.raises(ValueError):
+        mx.sym.np.eye(2, M=-1)
     with pytest.raises(TypeError):
         mx.sym.np.eye(3, k=1.5)
 

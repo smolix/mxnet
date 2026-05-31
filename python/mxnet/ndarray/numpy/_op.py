@@ -128,6 +128,15 @@ def _normalize_broadcast_shape(shape):
                     .format(type(shape).__name__))
 
 
+def _normalize_nonnegative_int(value):
+    if not isinstance(value, (integer_types, _np.integer)):
+        raise TypeError("'{}' object cannot be interpreted as an integer"
+                        .format(type(value).__name__))
+    if value < 0:
+        raise ValueError("negative dimensions are not allowed")
+    return int(value)
+
+
 @set_module('mxnet.ndarray.numpy')
 def shape(a):
     """
@@ -2034,6 +2043,8 @@ def eye(N, M=None, k=0, dtype=float, **kwargs):
     if not isinstance(k, (integer_types, _np.integer)):
         raise TypeError("'{}' object cannot be interpreted as an integer"
                         .format(type(k).__name__))
+    N = _normalize_nonnegative_int(N)
+    M = None if M is None else _normalize_nonnegative_int(M)
     # To avoid overflow errors, map large positive k values to the just-out-of-range "num_columns" value
     k = minimum(k, M if M is not None else N)
     # Similarly, map large negative k values to the just-out-of-range "-num_rows" value

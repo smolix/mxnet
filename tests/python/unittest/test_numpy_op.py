@@ -1341,6 +1341,28 @@ def test_np_linspace_retstep_edge_counts():
 
 
 @use_np
+@pytest.mark.parametrize('axis', [0, 1, -1])
+@pytest.mark.parametrize('retstep', [True, False])
+def test_np_linspace_array_like_start_stop(axis, retstep):
+    configs = [
+        ([0, 10], [2, 20], 3),
+        (onp.array([0, 10], dtype='float32'), onp.array([2, 20], dtype='float32'), 3),
+        (np.array([0, 10], dtype='float32'), np.array([2, 20], dtype='float32'), 3),
+    ]
+    for start, stop, num in configs:
+        np_start = start.asnumpy() if isinstance(start, np.ndarray) else start
+        np_stop = stop.asnumpy() if isinstance(stop, np.ndarray) else stop
+        mx_ret = np.linspace(start, stop, num=num, axis=axis, retstep=retstep)
+        np_ret = onp.linspace(np_start, np_stop, num=num, axis=axis, retstep=retstep,
+                              dtype=mx_ret[0].dtype if retstep else mx_ret.dtype)
+        if retstep:
+            assert_almost_equal(mx_ret[0].asnumpy(), np_ret[0], atol=1e-3, rtol=1e-5)
+            assert_almost_equal(mx_ret[1].asnumpy(), np_ret[1], atol=1e-3, rtol=1e-5)
+        else:
+            assert_almost_equal(mx_ret.asnumpy(), np_ret, atol=1e-3, rtol=1e-5)
+
+
+@use_np
 def test_np_linspace_arange():
     # check linspace equivalent to arange
     for test_index in range(1000):
@@ -4385,6 +4407,26 @@ def test_np_split_ndarray_indices():
         assert len(mx_outs) == len(expected)
         for mx_out, np_out in zip(mx_outs, expected):
             assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_np_split_float_ndarray_indices_rejected():
+    configs = [
+        ('split', np.arange(5, dtype='float32'), np.array([2, 4], dtype='float32'), 0),
+        ('array_split', np.arange(5, dtype='float32'), np.array([2, 4], dtype='float32'), 0),
+        ('hsplit', np.arange(12, dtype='float32').reshape((3, 4)),
+         np.array([1, 3], dtype='float32'), None),
+        ('vsplit', np.arange(12, dtype='float32').reshape((3, 4)),
+         np.array([1, 2], dtype='float32'), None),
+        ('dsplit', np.arange(24, dtype='float32').reshape((2, 3, 4)),
+         np.array([1, 3], dtype='float32'), None),
+    ]
+    for op_name, data, indices_or_sections, axis in configs:
+        with pytest.raises(TypeError, match="sequence of integers"):
+            if axis is None:
+                getattr(np, op_name)(data, indices_or_sections)
+            else:
+                getattr(np, op_name)(data, indices_or_sections, axis=axis)
 
 
 @use_np

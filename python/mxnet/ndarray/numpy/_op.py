@@ -2061,11 +2061,6 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None, axis
     - There could be an additional `device` argument to specify the device, e.g. the i-th
       GPU.
     """
-    if isinstance(start, (list, _np.ndarray, NDArray)) or \
-       isinstance(stop, (list, _np.ndarray, NDArray)):
-        raise NotImplementedError('start and stop only support int')
-    if axis != 0:
-        raise NotImplementedError("the function only support axis 0")
     if device is None:
         device = str(current_device())
     else:
@@ -2074,6 +2069,28 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None, axis
         dtype = get_dtype_name(dtype)
     if dtype is None:
         dtype = _np.float64 if is_np_default_dtype() else _np.float32
+    if isinstance(start, (list, tuple, _np.ndarray, NDArray)) or \
+       isinstance(stop, (list, tuple, _np.ndarray, NDArray)):
+        start = _as_np_ndarray(start).astype(dtype)
+        stop = _as_np_ndarray(stop).astype(dtype)
+        delta = stop - start
+        start = start + zeros_like(delta)
+        ndim = delta.ndim + 1
+        if axis < 0:
+            axis += ndim
+        if axis < 0 or axis >= ndim:
+            raise _np.AxisError(axis, ndim=ndim)
+        step = _np.nan if num <= int(endpoint) else delta / (num - int(endpoint))
+        steps_shape = [1] * ndim
+        steps_shape[axis] = num
+        sample_steps = reshape(arange(num, dtype=dtype, device=device), tuple(steps_shape))
+        if endpoint and num == 1:
+            samples = expand_dims(start, axis)
+        else:
+            samples = expand_dims(start, axis) + sample_steps * expand_dims(step, axis)
+        return (samples, step) if retstep else samples
+    if axis not in (0, -1):
+        raise _np.AxisError(axis, ndim=1)
     if retstep:
         divisor = num - int(endpoint)
         step = _np.nan if divisor <= 0 else (stop - start) / divisor
@@ -4413,9 +4430,15 @@ def _normalize_split_indices(indices_or_sections):
     if isinstance(indices_or_sections, NDArray):
         indices_or_sections = indices_or_sections.asnumpy()
     if isinstance(indices_or_sections, _np.ndarray):
+        if not _np.issubdtype(indices_or_sections.dtype, _np.integer):
+            raise TypeError("indices_or_sections must be an integer or a sequence of integers")
         if indices_or_sections.ndim == 0:
             return indices_or_sections.item()
         return indices_or_sections.tolist()
+    if isinstance(indices_or_sections, (list, tuple)):
+        indices = _np.asarray(indices_or_sections)
+        if indices.size != 0 and not _np.issubdtype(indices.dtype, _np.integer):
+            raise TypeError("indices_or_sections must be an integer or a sequence of integers")
     return indices_or_sections
 
 

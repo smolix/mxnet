@@ -2642,6 +2642,15 @@ def test_np_tri():
 
 
 @use_np
+def test_np_tri_extended_dtypes():
+    for dtype in ['bool', 'int16', 'uint16', 'uint32']:
+        mx_out = np.tri(3, 4, 1, dtype=dtype)
+        np_out = onp.tri(3, 4, 1, dtype=dtype)
+        assert mx_out.dtype == np_out.dtype
+        onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
 def test_np_tri_negative_dimensions():
     class TestTri(HybridBlock):
         def __init__(self, N, M=None, k=0, dtype=None):
@@ -6751,6 +6760,17 @@ def test_np_eye():
                 mx_out = net(x)
                 assert same(mx_out.asnumpy(), np_out)
 
+    mx_ret = np.eye(4, 3, 1, dtype='bool')
+    np_ret = onp.eye(4, 3, 1, dtype='bool')
+    assert mx_ret.dtype == np_ret.dtype
+    onp.testing.assert_array_equal(mx_ret.asnumpy(), np_ret)
+
+    for dtype in ['int16', 'uint16', 'uint32', 'uint64']:
+        mx_ret = np.identity(3, dtype=dtype)
+        np_ret = onp.identity(3, dtype=dtype)
+        assert mx_ret.dtype == np_ret.dtype
+        onp.testing.assert_array_equal(mx_ret.asnumpy(), np_ret)
+
 
 @use_np
 def test_np_indices():
@@ -6794,6 +6814,17 @@ def test_np_indices():
                 mx_out = net(x)
                 assert same(mx_out.asnumpy(), np_out)
                 assert mx_out.shape == np_out.shape
+
+    mx_out = np.indices((2,), dtype='bool')
+    np_out = onp.indices((2,), dtype='bool')
+    assert mx_out.dtype == np_out.dtype
+    onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+    for dtype in ['int16', 'uint16', 'uint32', 'uint64']:
+        mx_out = np.indices((2, 3), dtype=dtype)
+        np_out = onp.indices((2, 3), dtype=dtype)
+        assert mx_out.dtype == np_out.dtype
+        onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
 
     for bad_dimensions in [(2.0, 3), [onp.float64(2), 3]]:
         with pytest.raises(TypeError):
@@ -9515,6 +9546,15 @@ def test_np_windows():
                     mx_out = getattr(np, func)(M=config)
                     np_out = np_func(M=config).astype(dtype)
                     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+    for func in funcs:
+        np_func = getattr(onp, func)
+        mx_func = getattr(np, func)
+        for dtype in ['bool', 'int16', 'uint16', 'uint32', 'uint64']:
+            mx_out = mx_func(M=6, dtype=dtype)
+            np_out = np_func(M=6).astype(dtype)
+            assert mx_out.dtype == np_out.dtype
+            onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
 
 
 @use_np

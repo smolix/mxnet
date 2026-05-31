@@ -603,7 +603,7 @@ inline void EyeFillImpl(const TBlob& out_data,
   const nnvm::dim_t rnnz  = std::max(N - std::abs(k), (nnvm::dim_t)0);
   const nnvm::dim_t nnz   = k > 0 ? std::min(cnnz, N) : std::min(rnnz, num_cols);
   mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
-  MSHADOW_TYPE_SWITCH_EXT(out_data.type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
     MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
       Fill(s, out_data, req[0], static_cast<DType>(0));
       if (nnz > 0) {

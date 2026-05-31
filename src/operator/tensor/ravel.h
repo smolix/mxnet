@@ -107,10 +107,13 @@ inline bool UnravelOpType(const nnvm::NodeAttrs& attrs,
                           std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 1U);
   CHECK_EQ(out_attrs->size(), 1U);
-  if (!common::is_int(in_attrs->at(0))) {
+  if (in_attrs->at(0) == -1) {
+    return false;
+  }
+  if (!common::is_int(in_attrs->at(0)) && in_attrs->at(0) != mshadow::kBool) {
     LOG(FATAL) << "TypeError: only int indices permitted";
   }
-  TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
+  TYPE_ASSIGN_CHECK(*out_attrs, 0, mshadow::kInt64);
   return out_attrs->at(0) != -1;
 }
 
@@ -132,21 +135,21 @@ struct ravel_index {
 };
 
 struct unravel_index {
-  template <typename DType>
+  template <typename IType, typename OType>
   MSHADOW_XINLINE static void Map(int i,
                                   index_t N,
                                   index_t ndim,
                                   index_t* shape,
-                                  DType* unravelled,
-                                  DType* ravelled) {
+                                  OType* unravelled,
+                                  const IType* ravelled) {
     index_t idx(ravelled[i]);
 #pragma unroll
     for (int j = ndim - 1; j > 0; --j) {
       index_t tmp           = idx / shape[j];
-      unravelled[i + j * N] = idx - tmp * shape[j];
+      unravelled[i + j * N] = static_cast<OType>(idx - tmp * shape[j]);
       idx                   = tmp;
     }
-    unravelled[i] = idx;
+    unravelled[i] = static_cast<OType>(idx);
   }
 };
 
@@ -218,14 +221,16 @@ void UnravelForward(const nnvm::NodeAttrs& attrs,
   Tensor<xpu, 1, index_t> invalid_flag =
       ctx.requested[0].get_space_typed<xpu, 1, index_t>(Shape1(1), s);
   Copy(work, Tensor<cpu, 1, index_t>(&buffer[0], Shape1(buffer.size()), 0), s);
-  MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, OType, {
-    Tensor<xpu, 1, OType> in  = inputs[0].FlatTo1D<xpu, OType>(s);
-    Tensor<xpu, 1, OType> out = outputs[0].FlatTo1D<xpu, OType>(s);
-    if (check_bounds) {
-      CheckUnravelIndexBounds(s, in.dptr_, in.shape_.Size(), max_index, invalid_flag.dptr_);
-    }
-    mxnet_op::Kernel<unravel_index, xpu>::Launch(
-        s, in.shape_.Size(), in.shape_.Size(), shape.ndim(), work.dptr_, out.dptr_, in.dptr_);
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(inputs[0].type_flag_, IType, {
+    Tensor<xpu, 1, IType> in = inputs[0].FlatTo1D<xpu, IType>(s);
+    MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, OType, {
+      Tensor<xpu, 1, OType> out = outputs[0].FlatTo1D<xpu, OType>(s);
+      if (check_bounds) {
+        CheckUnravelIndexBounds(s, in.dptr_, in.shape_.Size(), max_index, invalid_flag.dptr_);
+      }
+      mxnet_op::Kernel<unravel_index, xpu>::Launch(
+          s, in.shape_.Size(), in.shape_.Size(), shape.ndim(), work.dptr_, out.dptr_, in.dptr_);
+    });
   });
 }
 

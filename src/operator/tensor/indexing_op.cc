@@ -387,6 +387,8 @@ void TakeOpForward<cpu>(const nnvm::NodeAttrs& attrs,
 
   Stream<cpu>* s        = ctx.get_stream<cpu>();
   const int actual_axis = param.axis + ((param.axis < 0) ? arrshape.ndim() : 0);
+  CHECK(!(arrshape[actual_axis] == 0 && idxshape.Size() > 0))
+      << "IndexError: cannot do a non-empty take from an empty axes";
 
   MSHADOW_TYPE_SWITCH_WITH_BOOL(outputs[take_::kOut].type_flag_, DType, {   // output data type
     MSHADOW_TYPE_SWITCH_WITH_BOOL(inputs[take_::kIdx].type_flag_, IType, {  // index data type

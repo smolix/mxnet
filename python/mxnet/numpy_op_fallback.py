@@ -162,6 +162,11 @@ class Unravel_indexProp(operator.CustomOpProp):
         out_shape = dim_list + tuple(in_shape[0])
         return (in_shape[0],), (out_shape,), ()
 
+    def infer_type(self, in_type):
+        if np.dtype(in_type[0]).kind not in ('b', 'i', 'u'):
+            raise TypeError('only int indices permitted')
+        return (in_type[0],), (np.int64,), ()
+
     def create_operator(self, ctx, in_shapes, in_dtypes):
         return Unravel_index(self._shape)
 

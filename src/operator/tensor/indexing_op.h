@@ -596,6 +596,8 @@ inline bool TakeOpShape(const nnvm::NodeAttrs& attrs,
   using namespace mshadow;
   const mxnet::TShape& arrshape = (*in_attrs)[take_::kArr];
   const mxnet::TShape& idxshape = (*in_attrs)[take_::kIdx];
+  if (arrshape.ndim() < 0)
+    return false;
   if (!shape_is_known(idxshape))
     return false;
   const TakeParam& param = nnvm::get<TakeParam>(attrs.parsed);
@@ -625,7 +627,11 @@ inline bool TakeOpType(const nnvm::NodeAttrs& attrs,
                        std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 2U);
   CHECK_EQ(out_attrs->size(), 1U);
-  CHECK_NE((*in_attrs)[1], -1) << "Index type must be set for take operator";
+  if ((*in_attrs)[1] == -1) {
+    return false;
+  }
+  CHECK(common::is_int((*in_attrs)[1]) || (*in_attrs)[1] == mshadow::kBool)
+      << "TypeError: take indices must be integers";
 
   TYPE_ASSIGN_CHECK(*out_attrs, 0, (*in_attrs)[0]);
   TYPE_ASSIGN_CHECK(*in_attrs, 0, (*out_attrs)[0]);

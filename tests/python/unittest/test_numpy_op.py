@@ -10296,6 +10296,26 @@ def test_np_take_raise_negative_index():
         np.take(data, np.array([3], dtype='int64'), mode='raise').asnumpy()
 
 
+@use_np
+def test_np_take_index_validation():
+    data = np.array([[10, 11, 12], [20, 21, 22]], dtype='float32')
+    with pytest.raises(mx.MXNetError, match="take indices must be integers"):
+        np.take(data, np.array([0.0, 2.0], dtype='float32'), axis=1).asnumpy()
+
+    data_sym = mx.sym.var('data').as_np_ndarray()
+    idx_sym = mx.sym.var('idx').as_np_ndarray()
+    with pytest.raises(mx.MXNetError, match="take indices must be integers"):
+        mx.sym.np.take(data_sym, idx_sym, axis=1).as_nd_ndarray().infer_type(
+            data='float32', idx='float32')
+
+
+@use_np
+@pytest.mark.parametrize('mode', ['clip', 'wrap'])
+def test_np_take_nonempty_from_empty_axis_rejected(mode):
+    with pytest.raises(IndexError, match="non-empty take from an empty axes"):
+        np.take(np.array([], dtype='float32'), np.array([0], dtype='int64'), mode=mode).asnumpy()
+
+
 def test_np_builtin_op_signature():
     import inspect
     from mxnet import _numpy_op_doc
@@ -12444,6 +12464,32 @@ def test_np_unravel_index_bounds():
             np.unravel_index(indices, (2, 3))[0].asnumpy()
     with pytest.raises(TypeError, match="only int indices permitted"):
         np.unravel_index(np.array([1.5], dtype='float32'), (2, 3))[0].asnumpy()
+
+
+@use_np
+@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
+def test_np_unravel_index_extended_index_dtypes(dtype):
+    raw = [True, False] if dtype == 'bool' else [0, 5]
+    indices = np.array(raw, dtype=dtype)
+    mx_out = np.unravel_index(indices, (2, 3))
+    np_out = onp.unravel_index(onp.array(raw, dtype=dtype), (2, 3))
+    assert len(mx_out) == len(np_out)
+    for elem_mx, elem_np in zip(mx_out, np_out):
+        assert elem_mx.dtype == elem_np.dtype
+        onp.testing.assert_array_equal(elem_mx.asnumpy(), elem_np)
+
+    sym_indices = mx.sym.var('indices').as_np_ndarray()
+    inferred = mx.sym.np.unravel_index(sym_indices, (2, 3)).as_nd_ndarray().infer_type(
+        indices=dtype)
+    assert inferred[1] == [onp.int64]
+
+
+@use_np
+def test_np_unravel_index_symbol_rejects_float_indices():
+    sym_indices = mx.sym.var('indices').as_np_ndarray()
+    with pytest.raises(mx.MXNetError):
+        mx.sym.np.unravel_index(sym_indices, (2, 3)).as_nd_ndarray().infer_type(
+            indices='float32')
 
 
 @use_np

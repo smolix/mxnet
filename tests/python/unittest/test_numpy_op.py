@@ -10316,6 +10316,27 @@ def test_np_take_nonempty_from_empty_axis_rejected(mode):
         np.take(np.array([], dtype='float32'), np.array([0], dtype='int64'), mode=mode).asnumpy()
 
 
+@use_np
+@pytest.mark.parametrize('op_name', ['choose', 'compress'])
+def test_np_fallback_out_is_written(op_name):
+    if op_name == 'choose':
+        out = np.zeros((3,), dtype='int64')
+        ret = np.choose(np.array([0, 1, 0], dtype='int64'),
+                        [np.array([1, 2, 3], dtype='int64'),
+                         np.array([4, 5, 6], dtype='int64')],
+                        out=out)
+        expected = onp.array([1, 5, 3], dtype='int64')
+    else:
+        out = np.zeros((2,), dtype='int64')
+        ret = np.compress(np.array([1, 0, 1], dtype='bool'),
+                          np.array([7, 8, 9], dtype='int64'),
+                          out=out)
+        expected = onp.array([7, 9], dtype='int64')
+
+    assert ret is out
+    onp.testing.assert_array_equal(out.asnumpy(), expected)
+
+
 def test_np_builtin_op_signature():
     import inspect
     from mxnet import _numpy_op_doc

@@ -423,6 +423,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
                                  "Please consider moving the operator to the outside of the autograd scope.")\
                                  .format(func)
             cur_device = None
+            original_out = kwargs.get('out', None)
             new_args, cur_device = _as_onp_array(args, cur_device)
             new_kwargs, cur_device = _as_onp_array(kwargs, cur_device)
             if cur_device is None:
@@ -434,7 +435,11 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
                                 "which is actually using official numpy's implementation.", func_name)
                 _FALLBACK_ARRAY_FUNCTION_WARNED_RECORD[func] = True
             out = func(*new_args, **new_kwargs)
-            return _as_mx_np_array(out, device=cur_device)
+            out = _as_mx_np_array(out, device=cur_device)
+            if isinstance(original_out, ndarray):
+                original_out[:] = out
+                return original_out
+            return out
         else:
             if py_all(issubclass(t, ndarray) for t in types):
                 return mx_np_func(*args, **kwargs)

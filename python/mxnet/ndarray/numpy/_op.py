@@ -2459,6 +2459,11 @@ def triu_indices(n, k=0, m=None, device=None):
            [  8,   9,  -1,  -1],
            [ 12,  13,  14,  -1]])
         """
+    if m is None:
+        m = n
+    if n < 0 or m < 0:
+        empty = zeros((0,), dtype='int64', device=device)
+        return empty, empty
     return nonzero(~tri(N=n, M=m, k=k-1, dtype=bool, device=device))
 
 

@@ -9042,6 +9042,16 @@ def test_np_tril_indices_partial_outputs():
 
 
 @use_np
+def test_np_triu_indices_negative_dimensions():
+    for n, m in [(-2, None), (2, -2), (-2, 3), (-2, -3), (0, -3)]:
+        mx_out = np.triu_indices(n, m=m)
+        np_out = onp.triu_indices(n, m=m)
+        assert len(mx_out) == 2
+        assert same(mx_out[0], np_out[0])
+        assert same(mx_out[1], np_out[1])
+
+
+@use_np
 def test_np_fill_diagonal():
     class TestFillDiagonal(HybridBlock):
         def __init__(self, val, wrap=False):

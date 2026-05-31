@@ -2607,6 +2607,45 @@ def test_np_broadcast_to(src_shape, dst_shape, hybridize):
         ret = test_scalar_broadcast_to(np.empty(()))
     assert_almost_equal(ret.asnumpy(), expected_ret, rtol=1e-5, atol=1e-6, use_broadcast=False)
 
+
+@use_np
+def test_np_more_array_like_wrappers():
+    checks = [
+        (onp.broadcast_to, np.broadcast_to, ([1, 2], (2, 2))),
+        (onp.take, np.take, ([10, 20, 30], [0, 2])),
+        (onp.stack, np.stack, ([1, 2],)),
+        (onp.inner, np.inner, ([1, 2], [3, 4])),
+        (onp.outer, np.outer, ([1, 2], [3, 4])),
+        (onp.zeros_like, np.zeros_like, ([1, 2],)),
+        (onp.ones_like, np.ones_like, ([1, 2],)),
+    ]
+    for np_func, mx_func, args in checks:
+        expected = np_func(*args)
+        actual = mx_func(*args)
+        assert same(actual.asnumpy(), expected)
+
+    assert np.empty_like([1, 2]).shape == onp.empty_like([1, 2]).shape
+
+    expected = onp.where([True, False], [1, 2], [3, 4])
+    actual = np.where([True, False], [1, 2], [3, 4])
+    assert same(actual.asnumpy(), expected)
+
+    expected = onp.where([[0, 1], [2, 0]])
+    actual = np.where([[0, 1], [2, 0]])
+    for actual_elem, expected_elem in zip(actual, expected):
+        assert same(actual_elem.asnumpy(), expected_elem)
+
+    expected = onp.nonzero([0, 2, 0, 3])
+    actual = np.nonzero([0, 2, 0, 3])
+    for actual_elem, expected_elem in zip(actual, expected):
+        assert same(actual_elem.asnumpy(), expected_elem)
+
+    expected = onp.unique([2, 1, 2], return_index=True, return_inverse=True, return_counts=True)
+    actual = np.unique([2, 1, 2], return_index=True, return_inverse=True, return_counts=True)
+    for actual_elem, expected_elem in zip(actual, expected):
+        assert same(actual_elem.asnumpy(), expected_elem)
+
+
 @use_np
 @pytest.mark.parametrize('src_shape,npx_dst_shape,np_dst_shape', [
     ((5,), (3, 4, -2), (3, 4, 5)),
@@ -2828,6 +2867,28 @@ def test_np_broadcast_arrays_array_like_inputs():
         rets = np.broadcast_arrays(*[np.array(arg) if isinstance(arg, onp.ndarray) else arg for arg in args])
         for expected_ret, ret in zip(expected_rets, rets):
             assert same(expected_ret, ret.asnumpy())
+
+
+@use_np
+def test_np_array_like_shape_wrappers():
+    configs = [
+        (onp.ravel, np.ravel, ([1, 2, 3],)),
+        (onp.reshape, np.reshape, ([1, 2, 3, 4], (2, 2))),
+        (onp.squeeze, np.squeeze, ([[1], [2]],), {'axis': 1}),
+        (onp.repeat, np.repeat, ([1, 2], 2)),
+        (onp.tile, np.tile, ([1, 2], 2)),
+        (onp.diag, np.diag, ([1, 2],)),
+        (onp.diagonal, np.diagonal, ([[1, 2], [3, 4]],)),
+        (onp.trace, np.trace, ([[1, 2], [3, 4]],)),
+        (onp.transpose, np.transpose, ([[1, 2], [3, 4]],)),
+        (onp.flip, np.flip, ([[1, 2], [3, 4]],), {'axis': 0}),
+    ]
+    for config in configs:
+        np_func, mx_func, args = config[:3]
+        kwargs = config[3] if len(config) == 4 else {}
+        expected = np_func(*args, **kwargs)
+        actual = mx_func(*args, **kwargs)
+        assert same(actual.asnumpy(), expected)
 
 
 @use_np

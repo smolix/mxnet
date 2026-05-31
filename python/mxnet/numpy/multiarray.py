@@ -2965,7 +2965,7 @@ def broadcast_to(array, shape):  # pylint: disable=redefined-outer-name
         If the array is not compatible with the new shape according to NumPy's
         broadcasting rules.
     """
-    return _mx_nd_np.broadcast_to(array, shape)
+    return _mx_nd_np.broadcast_to(asarray(array), shape)
 
 
 # pylint: disable=too-many-arguments, redefined-outer-name
@@ -3090,7 +3090,7 @@ def empty_like(prototype, dtype=None, device=None, order='C', subok=False, shape
     array([[4.9e-324, 9.9e-324, 1.5e-323], # uninitialized
            [2.0e-323, 2.5e-323, 3.0e-323]])
     """
-    ret = _mx_nd_np.empty_like(prototype, dtype=dtype, order=order, subok=subok, shape=shape)
+    ret = _mx_nd_np.empty_like(asarray(prototype), dtype=dtype, order=order, subok=subok, shape=shape)
     if device is not None:
         ret.to_device(device)
     return ret
@@ -3317,7 +3317,7 @@ def take(a, indices, axis=None, mode='raise', out=None):
     array([[4., 3.],
            [5., 7.]])
     """
-    return _mx_nd_np.take(a, indices, axis, mode, out)
+    return _mx_nd_np.take(asarray(a), asarray(indices), axis, mode, out)
 # pylint: enable=redefined-outer-name
 
 
@@ -3422,7 +3422,7 @@ def unique(ar, return_index=False, return_inverse=False, return_counts=False, ax
     >>> u[indices]
     array([1., 2., 6., 4., 2., 3., 2.])
     """
-    return _mx_nd_np.unique(ar, return_index, return_inverse, return_counts, axis)
+    return _mx_nd_np.unique(asarray(ar), return_index, return_inverse, return_counts, axis)
 
 
 @set_module('mxnet.numpy')
@@ -6572,7 +6572,7 @@ def tile(A, reps):
     array([2, 2, 2]) # repeating integer `2`
 
     """
-    return _mx_nd_np.tile(A, reps)
+    return _mx_nd_np.tile(asarray(A), reps)
 
 
 @set_module('mxnet.numpy')
@@ -6619,7 +6619,7 @@ def trace(a, offset=0, axis1=0, axis2=1, out=None):
     >>> np.trace(a).shape
     (2, 3)
     """
-    return _mx_nd_np.trace(a, offset, axis1, axis2, out)
+    return _mx_nd_np.trace(asarray(a), offset, axis1, axis2, out)
 
 
 @set_module('mxnet.numpy')
@@ -6662,7 +6662,7 @@ def transpose(a, axes=None):
     >>> np.transpose(x, (1, 0, 2)).shape
     (2, 1, 3)
     """
-    return _mx_nd_np.transpose(a, axes)
+    return _mx_nd_np.transpose(asarray(a), axes)
 
 
 @set_module('mxnet.numpy')
@@ -6702,7 +6702,7 @@ def permute_dims(a, axes=None):
     >>> np.permute_dims(x, (1, 0, 2)).shape
     (2, 1, 3)
     """
-    return _mx_nd_np.transpose(a, axes)
+    return _mx_nd_np.transpose(asarray(a), axes)
 
 
 @set_module('mxnet.numpy')
@@ -6745,7 +6745,7 @@ def repeat(a, repeats, axis=None):
            [3, 4],
            [3, 4]])
     """
-    return _mx_nd_np.repeat(a, repeats, axis)
+    return _mx_nd_np.repeat(asarray(a), repeats, axis)
 
 
 @set_module('mxnet.numpy')
@@ -7533,7 +7533,7 @@ def stack(arrays, axis=0, out=None):
            [2., 3.],
            [3., 4.]])
     """
-    return _mx_nd_np.stack(arrays, axis=axis, out=out)
+    return _mx_nd_np.stack([asarray(arr) for arr in arrays], axis=axis, out=out)
 
 
 @set_module('mxnet.numpy')
@@ -8873,7 +8873,7 @@ def ravel(x, order='C'):
     >>> print(np.ravel(x.T))
     [1. 4. 2. 5. 3. 6.]
     """
-    return _mx_nd_np.ravel(x, order)
+    return _mx_nd_np.ravel(asarray(x), order)
 
 
 @set_module('mxnet.numpy')
@@ -9289,7 +9289,7 @@ def flip(m, axis=None, out=None):
            [[1, 0],
             [3, 2]]])
     """
-    return _mx_nd_np.flip(m, axis, out=out)
+    return _mx_nd_np.flip(asarray(m), axis, out=out)
 
 
 @set_module('mxnet.numpy')
@@ -9998,7 +9998,7 @@ def inner(a, b):
     array([[ 14.,  38.,  62.],
            [ 86., 110., 134.]])
     """
-    return tensordot(a, b, [-1, -1])
+    return tensordot(asarray(a), asarray(b), [-1, -1])
 
 
 @set_module('mxnet.numpy')
@@ -10051,7 +10051,7 @@ def outer(a, b):
            [-2., -1.,  0.,  1.,  2.],
            [-2., -1.,  0.,  1.,  2.]])
     """
-    return tensordot(a.flatten(), b.flatten(), 0)
+    return tensordot(asarray(a).flatten(), asarray(b).flatten(), 0)
 
 
 @set_module('mxnet.numpy')
@@ -11102,7 +11102,7 @@ def nonzero(a):
     >>> (a > 3).nonzero()
     (array([1, 1, 1, 2, 2, 2], dtype=int64), array([0, 1, 2, 0, 1, 2], dtype=int64))
     """
-    return _mx_nd_np.nonzero(a)
+    return _mx_nd_np.nonzero(asarray(a))
 
 
 @set_module('mxnet.numpy')
@@ -11722,7 +11722,7 @@ def zeros_like(a, dtype=None, order='C', device=None, out=None):
     >>> np.zeros_like(y)
     array([0., 0., 0.], dtype=float64)
     """
-    return _mx_nd_np.full_like(a, fill_value=0, dtype=dtype, order=order, device=device, out=out)
+    return _mx_nd_np.full_like(asarray(a), fill_value=0, dtype=dtype, order=order, device=device, out=out)
 # pylint: enable=redefined-outer-name
 
 
@@ -11783,7 +11783,7 @@ def ones_like(a, dtype=None, order='C', device=None, out=None):
     >>> np.ones_like(y)
     array([1., 1., 1.], dtype=float64)
     """
-    return _mx_nd_np.full_like(a, fill_value=1, dtype=dtype, order=order, device=device, out=out)
+    return _mx_nd_np.full_like(asarray(a), fill_value=1, dtype=dtype, order=order, device=device, out=out)
 # pylint: enable=redefined-outer-name
 
 
@@ -12013,7 +12013,7 @@ def squeeze(x, axis=None):
     >>> np.squeeze(x, axis=2).shape
     (1, 3)
     """
-    return _mx_nd_np.squeeze(x, axis=axis)
+    return _mx_nd_np.squeeze(asarray(x), axis=axis)
 
 
 @set_module('mxnet.numpy')
@@ -12338,6 +12338,12 @@ def where(condition, x=None, y=None):
            [ 0.,  2., -1.],
            [ 0.,  3., -1.]])
     """
+    if not isinstance(condition, (numeric_types, ndarray)):
+        condition = asarray(condition)
+    if x is not None and not isinstance(x, (numeric_types, ndarray)):
+        x = asarray(x)
+    if y is not None and not isinstance(y, (numeric_types, ndarray)):
+        y = asarray(y)
     return _mx_nd_np.where(condition, x, y)
 
 
@@ -12919,7 +12925,7 @@ def reshape(a, newshape, order='C'):
            [3., 4.],
            [5., 6.]])
     """
-    return _mx_nd_np.reshape(a, newshape, order)
+    return _mx_nd_np.reshape(asarray(a), newshape, order)
 
 @set_module('mxnet.numpy')
 def moveaxis(a, source, destination):
@@ -13068,7 +13074,7 @@ def diag(v, k=0):
            [0, 4, 0],
            [0, 0, 8]])
     """
-    return _mx_nd_np.diag(v, k=k)
+    return _mx_nd_np.diag(asarray(v), k=k)
 
 
 @set_module('mxnet.numpy')
@@ -13162,7 +13168,7 @@ def diagonal(a, offset=0, axis1=0, axis2=1):
     array([[0, 6],
             [1, 7]])
     """
-    return _mx_nd_np.diagonal(a, offset=offset, axis1=axis1, axis2=axis2)
+    return _mx_nd_np.diagonal(asarray(a), offset=offset, axis1=axis1, axis2=axis2)
 
 
 # pylint: disable=redefined-outer-name, too-many-arguments

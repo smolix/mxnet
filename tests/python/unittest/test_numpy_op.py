@@ -7628,23 +7628,30 @@ def test_np_linalg_solve():
 
 
 @use_np
-def test_np_linalg_solve_symbol_broadcast_shape_inference():
+def test_np_linalg_solve_symbol_shape_validation():
     a = mx.sym.var('a').as_np_ndarray()
     b = mx.sym.var('b').as_np_ndarray()
     out = mx.sym.np.linalg.solve(a, b)
 
     test_cases = [
-        ((1, 2, 2), (3, 2), (3, 2)),
-        ((3, 2, 2), (1, 2), (3, 2)),
-        ((3, 2, 2), (2,), (3, 2)),
-        ((1, 3, 2, 2), (4, 1, 2), (4, 3, 2)),
-        ((1, 2, 2), (3, 2, 1), (3, 2, 1)),
+        ((2, 2), (2,), (2,)),
+        ((3, 2, 2), (3, 2), (3, 2)),
+        ((3, 2, 2), (3, 2, 1), (3, 2, 1)),
     ]
     for a_shape, b_shape, expected_shape in test_cases:
         assert out.infer_shape(a=a_shape, b=b_shape)[1] == [expected_shape]
 
-    with pytest.raises(MXNetError, match="dimensions don't match"):
-        out.infer_shape(a=(2, 2, 2), b=(3, 2))
+    invalid_cases = [
+        ((1, 2, 2), (3, 2)),
+        ((3, 2, 2), (1, 2)),
+        ((3, 2, 2), (2,)),
+        ((1, 3, 2, 2), (4, 1, 2)),
+        ((1, 2, 2), (3, 2, 1)),
+        ((2, 2, 2), (3, 2)),
+    ]
+    for a_shape, b_shape in invalid_cases:
+        with pytest.raises(MXNetError, match="dimensions don't match"):
+            out.infer_shape(a=a_shape, b=b_shape)
 
 
 @requires_lapack
@@ -7903,6 +7910,10 @@ def test_np_linalg_tensorsolve_invalid_axes():
     for axes in [(99,), (-5,)]:
         tensorsolve = mx.sym.np.linalg.tensorsolve(a, b, axes=axes)
         with pytest.raises(MXNetError, match="out of bounds"):
+            tensorsolve.infer_shape(a=(2, 2, 2, 2), b=(2, 2))
+    for axes in [(1, 1), (0, 1, 2, 3, 0)]:
+        tensorsolve = mx.sym.np.linalg.tensorsolve(a, b, axes=axes)
+        with pytest.raises(MXNetError, match="duplicate"):
             tensorsolve.infer_shape(a=(2, 2, 2, 2), b=(2, 2))
 
 

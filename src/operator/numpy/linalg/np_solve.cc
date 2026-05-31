@@ -48,8 +48,7 @@ inline bool SolveOpShape(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(in_a_shape[in_a_ndim - 2], in_a_shape[in_a_ndim - 1])
       << "Input A's last two dimension must be equal";
 
-  const bool vector_rhs = in_b_ndim == 1 || in_a_ndim == in_b_ndim + 1;
-  if (vector_rhs) {
+  if (in_a_ndim == in_b_ndim + 1) {
     CHECK_EQ(in_a_shape[in_a_ndim - 1], in_b_shape[in_b_ndim - 1])
         << "Input A's and B's last dimension must be equal";
   } else if (in_a_ndim == in_b_ndim) {
@@ -58,28 +57,11 @@ inline bool SolveOpShape(const nnvm::NodeAttrs& attrs,
   } else {
     dmlc::LogMessageFatal(__FILE__, __LINE__).stream() << "A's and B's dimensions don't match";
   }
-
-  const int a_batch_ndim = in_a_ndim - 2;
-  const int b_batch_ndim = vector_rhs ? in_b_ndim - 1 : in_b_ndim - 2;
-  const int out_batch_ndim = std::max(a_batch_ndim, b_batch_ndim);
-  const int out_core_ndim  = vector_rhs ? 1 : 2;
-  mxnet::TShape out_shape(out_batch_ndim + out_core_ndim, 1);
-  for (int i = 0; i < out_batch_ndim; ++i) {
-    const int a_axis = a_batch_ndim - out_batch_ndim + i;
-    const int b_axis = b_batch_ndim - out_batch_ndim + i;
-    const dim_t a_dim = a_axis < 0 ? 1 : in_a_shape[a_axis];
-    const dim_t b_dim = b_axis < 0 ? 1 : in_b_shape[b_axis];
-    CHECK(a_dim == b_dim || a_dim == 1 || b_dim == 1) << "A's and B's dimensions don't match";
-    out_shape[i] = std::max(a_dim, b_dim);
-  }
-  if (vector_rhs) {
-    out_shape[out_batch_ndim] = in_b_shape[in_b_ndim - 1];
-  } else {
-    out_shape[out_batch_ndim]     = in_b_shape[in_b_ndim - 2];
-    out_shape[out_batch_ndim + 1] = in_b_shape[in_b_ndim - 1];
+  for (int i = 0; i < in_a_ndim - 2; ++i) {
+    CHECK_EQ(in_a_shape[i], in_b_shape[i]) << "A's and B's dimensions don't match";
   }
 
-  SHAPE_ASSIGN_CHECK(*out_attrs, 0, out_shape);
+  SHAPE_ASSIGN_CHECK(*out_attrs, 0, in_b_shape);
   return !mxnet::op::shape_is_none(in_b_shape) && !mxnet::op::shape_is_none(out_attrs->at(0));
 }
 

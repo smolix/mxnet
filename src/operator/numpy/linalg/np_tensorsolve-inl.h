@@ -68,6 +68,12 @@ inline void FixNegativeAxes(mxnet::Tuple<int>* a_axes_param, const mxnet::TShape
       i += a_ndim;
     }
   }
+  for (int i = 0; i < a_axes_param->ndim(); ++i) {
+    for (int j = i + 1; j < a_axes_param->ndim(); ++j) {
+      CHECK_NE((*a_axes_param)[i], (*a_axes_param)[j])
+          << "duplicate value in 'axes'";
+    }
+  }
 }
 
 // Get remained axes and axes of a.

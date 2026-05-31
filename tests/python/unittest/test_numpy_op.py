@@ -9390,7 +9390,7 @@ def test_np_trace():
         (2, 0, 2, 3)
     ]
     offsets = range(-5, 5)
-    dtypes = ['int32', 'float16', 'float32', 'float64']
+    dtypes = ['float16', 'float32', 'float64']
     for hybridize in [True, False]:
         for shape in shapes:
             ndim = len(shape)
@@ -9423,6 +9423,21 @@ def test_np_trace():
                                 data = mx.nd.array(data_np, dtype=dtype)
                                 out_mx = np.trace(data.as_np_ndarray(), axis1=axis1, axis2=axis2, offset=offset)
                                 assert_almost_equal(out_mx.asnumpy(), expected_np, rtol=rtol, atol=atol)
+
+    trace_dtype_cases = [
+        ('bool', [[True, False], [False, True]], 2),
+        ('int8', [[2, 0], [0, 3]], 5),
+        ('uint8', [[250, 0], [0, 250]], 500),
+        ('int16', [[30000, 0], [0, 30000]], 60000),
+        ('uint16', [[60000, 0], [0, 60000]], 120000),
+        ('int32', [[100000, 0], [0, 100000]], 200000),
+        ('uint32', [[4000000000, 0], [0, 4000000000]], 8000000000),
+    ]
+    for dtype, values, expected in trace_dtype_cases:
+        data = np.array(values, dtype=dtype)
+        out = np.trace(data)
+        assert out.dtype == onp.dtype('int64')
+        onp.testing.assert_array_equal(out.asnumpy(), onp.array(expected, dtype='int64'))
 
     # bad params
     params = [

@@ -7496,6 +7496,26 @@ def test_np_linalg_solve():
         check_solve(mx_out, a, b)
 
 
+@use_np
+def test_np_linalg_solve_symbol_broadcast_shape_inference():
+    a = mx.sym.var('a').as_np_ndarray()
+    b = mx.sym.var('b').as_np_ndarray()
+    out = mx.sym.np.linalg.solve(a, b)
+
+    test_cases = [
+        ((1, 2, 2), (3, 2), (3, 2)),
+        ((3, 2, 2), (1, 2), (3, 2)),
+        ((3, 2, 2), (2,), (3, 2)),
+        ((1, 3, 2, 2), (4, 1, 2), (4, 3, 2)),
+        ((1, 2, 2), (3, 2, 1), (3, 2, 1)),
+    ]
+    for a_shape, b_shape, expected_shape in test_cases:
+        assert out.infer_shape(a=a_shape, b=b_shape)[1] == [expected_shape]
+
+    with pytest.raises(MXNetError, match="dimensions don't match"):
+        out.infer_shape(a=(2, 2, 2), b=(3, 2))
+
+
 @requires_lapack
 def test_np_linalg_tensorinv():
     class TestTensorinv(HybridBlock):

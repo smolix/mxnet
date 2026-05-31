@@ -8878,6 +8878,45 @@ def test_np_unique_mixed_output_requests():
 
 
 @use_np
+def test_np_unique_empty_axis_outputs():
+    class TestUnique(HybridBlock):
+        def __init__(self, axis):
+            super(TestUnique, self).__init__()
+            self._axis = axis
+
+        def forward(self, a):
+            return np.unique(a, True, True, True, axis=self._axis)
+
+    configs = [
+        ((0, 3), 0),
+        ((0, 3), 1),
+        ((2, 0), 0),
+        ((2, 0), 1),
+        ((0, 3, 2), 1),
+        ((2, 0, 3), 2),
+    ]
+    for shape, axis in configs:
+        data_np = onp.empty(shape, dtype='float32')
+        data_mx = np.array(data_np, dtype='float32')
+        expected = onp.unique(data_np, return_index=True, return_inverse=True,
+                              return_counts=True, axis=axis)
+        for hybridize in [False, True]:
+            test_unique = TestUnique(axis)
+            if hybridize:
+                test_unique.hybridize()
+            mx_out = test_unique(data_mx)
+            for mx_arr, np_arr in zip(mx_out, expected):
+                assert mx_arr.shape == np_arr.shape
+                assert_almost_equal(mx_arr.asnumpy(), np_arr, rtol=1e-3, atol=1e-5)
+
+        mx_out = np.unique(data_mx, return_index=True, return_inverse=True,
+                           return_counts=True, axis=axis)
+        for mx_arr, np_arr in zip(mx_out, expected):
+            assert mx_arr.shape == np_arr.shape
+            assert_almost_equal(mx_arr.asnumpy(), np_arr, rtol=1e-3, atol=1e-5)
+
+
+@use_np
 @pytest.mark.parametrize('shape,index,inverse,counts', [
     ((), True, True, True),
     ((1, ), True, True, True),

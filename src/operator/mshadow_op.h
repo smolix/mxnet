@@ -307,7 +307,7 @@ struct mixed_floor_divide {
                                         std::is_integral<DType>::value,
                                     int>::type = 0>
   MSHADOW_XINLINE static float Map(DType a, float b) {
-    return ::floorf(a / static_cast<float>(b));
+    return ::floorf(static_cast<float>(a) / static_cast<float>(b));
   }
 
   template <
@@ -317,7 +317,7 @@ struct mixed_floor_divide {
               std::is_same<DType, mshadow::bfloat::bf16_t>::value || std::is_integral<DType>::value,
           int>::type = 0>
   MSHADOW_XINLINE static double Map(DType a, double b) {
-    return ::floor(a / static_cast<double>(b));
+    return ::floor(static_cast<double>(a) / static_cast<double>(b));
   }
 };
 
@@ -334,7 +334,7 @@ struct mixed_rfloor_divide {
                                         std::is_integral<DType>::value,
                                     int>::type = 0>
   MSHADOW_XINLINE static float Map(DType a, float b) {
-    return ::floorf(b / static_cast<float>(a));
+    return ::floorf(static_cast<float>(b) / static_cast<float>(a));
   }
 
   template <
@@ -344,7 +344,7 @@ struct mixed_rfloor_divide {
               std::is_same<DType, mshadow::bfloat::bf16_t>::value || std::is_integral<DType>::value,
           int>::type = 0>
   MSHADOW_XINLINE static double Map(DType a, double b) {
-    return ::floor(b / static_cast<double>(a));
+    return ::floor(static_cast<double>(b) / static_cast<double>(a));
   }
 };
 

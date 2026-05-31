@@ -14319,3 +14319,21 @@ def test_np_standard_binary_funcs(func, func2, promoted, dtypes, ref_grad_a, ref
                     assert mx_out.dtype == np.bool_
                 assert_almost_equal(mx_out.asnumpy(), np_out.astype(mx_out.dtype), rtol=rtol, atol=atol,
                                     use_broadcast=False, equal_nan=True)
+
+
+@use_np
+def test_np_floor_divide_mixed_float16_promotes_before_division():
+    left_np = onp.array([8.31], dtype='float16')
+    right_np = onp.array([2.771545], dtype='float32')
+    left = np.array(left_np, dtype='float16')
+    right = np.array(right_np, dtype='float32')
+
+    out = np.floor_divide(left, right)
+    expected = onp.floor_divide(left_np, right_np).astype(out.dtype)
+    assert out.dtype == onp.dtype('float32')
+    assert_almost_equal(out.asnumpy(), expected)
+
+    out = np.floor_divide(right, left)
+    expected = onp.floor_divide(right_np, left_np).astype(out.dtype)
+    assert out.dtype == onp.dtype('float32')
+    assert_almost_equal(out.asnumpy(), expected)

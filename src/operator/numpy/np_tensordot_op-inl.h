@@ -57,6 +57,16 @@ inline void ShiftAxes(Tuple<int>* axes_summed, const int ndim) {
   }
 }
 
+inline void CheckTensordotAxes(const Tuple<int>& axes_summed, const int ndim) {
+  std::vector<bool> seen(ndim, false);
+  for (const auto& axis : axes_summed) {
+    CHECK_GE(axis, 0) << "axes don't match array";
+    CHECK_LT(axis, ndim) << "axes don't match array";
+    CHECK(!seen[axis]) << "axes don't match array";
+    seen[axis] = true;
+  }
+}
+
 /**
  * Gets matrix dimensions of a and b after transpose and reshape.
  */

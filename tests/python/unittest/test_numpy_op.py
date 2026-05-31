@@ -229,6 +229,21 @@ def test_np_tensordot_unsupported_dtypes_rejected(axes, dtype):
 
 
 @use_np
+@pytest.mark.parametrize('axes', [([0, 0], [0, 1]), ([0, 1], [0, 0]), ([-2, 0], [0, 1])])
+def test_np_tensordot_duplicate_axes_rejected(axes):
+    a = np.ones((2, 2))
+    b = np.ones((2, 2))
+    with pytest.raises(mx.MXNetError, match="axes don't match array"):
+        np.tensordot(a, b, axes=axes).asnumpy()
+
+    a_sym = mx.sym.var('a').as_np_ndarray()
+    b_sym = mx.sym.var('b').as_np_ndarray()
+    with pytest.raises(mx.MXNetError, match="axes don't match array"):
+        mx.sym.np.tensordot(a_sym, b_sym, axes=axes).as_nd_ndarray().infer_shape(
+            a=(2, 2), b=(2, 2))
+
+
+@use_np
 @pytest.mark.parametrize('shape_a,shape_b', [
     ((3, 0), (0, 4)),
     ((3,), (3,)),

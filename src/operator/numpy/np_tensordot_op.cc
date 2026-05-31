@@ -56,6 +56,8 @@ bool TensordotOpShape(const nnvm::NodeAttrs& attrs,
     Tuple<int> b_axes_summed    = param.b_axes_summed;
     ShiftAxes(&a_axes_summed, a_shape.ndim());
     ShiftAxes(&b_axes_summed, b_shape.ndim());
+    CheckTensordotAxes(a_axes_summed, a_shape.ndim());
+    CheckTensordotAxes(b_axes_summed, b_shape.ndim());
 
     Tuple<int> a_axes_remained;
     Tuple<int> b_axes_remained;
@@ -177,6 +179,8 @@ bool TensordotIntAxesOpShape(const nnvm::NodeAttrs& attrs,
     Tuple<int> a_axes_summed;
     Tuple<int> b_axes_summed;
     GetSummedAxes(&a_axes_summed, &b_axes_summed, axes, a_shape);
+    CheckTensordotAxes(a_axes_summed, a_shape.ndim());
+    CheckTensordotAxes(b_axes_summed, b_shape.ndim());
 
     Tuple<int> a_axes_remained;
     Tuple<int> b_axes_remained;

@@ -102,6 +102,18 @@ inline bool UnravelOpShape(const nnvm::NodeAttrs& attrs,
   return false;
 }
 
+inline bool UnravelOpType(const nnvm::NodeAttrs& attrs,
+                          std::vector<int>* in_attrs,
+                          std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 1U);
+  CHECK_EQ(out_attrs->size(), 1U);
+  if (!common::is_int(in_attrs->at(0))) {
+    LOG(FATAL) << "TypeError: only int indices permitted";
+  }
+  TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
+  return out_attrs->at(0) != -1;
+}
+
 struct ravel_index {
   template <typename DType>
   MSHADOW_XINLINE static void Map(index_t i,
@@ -138,6 +150,28 @@ struct unravel_index {
   }
 };
 
+template <typename DType>
+inline void CheckUnravelIndexBounds(mshadow::Stream<cpu>* s,
+                                    const DType* indices,
+                                    size_t size,
+                                    index_t max_index,
+                                    index_t* invalid_flag) {
+  for (size_t i = 0; i < size; ++i) {
+    const int64_t idx = static_cast<int64_t>(indices[i]);
+    if (idx < 0 || idx >= max_index) {
+      LOG(FATAL) << "IndexError: index " << idx << " is out of bounds for array with size "
+                 << max_index;
+    }
+  }
+}
+
+template <typename DType>
+void CheckUnravelIndexBounds(mshadow::Stream<gpu>* s,
+                             const DType* indices,
+                             size_t size,
+                             index_t max_index,
+                             index_t* invalid_flag);
+
 template <typename xpu>
 void RavelForward(const nnvm::NodeAttrs& attrs,
                   const OpContext& ctx,
@@ -169,12 +203,27 @@ void UnravelForward(const nnvm::NodeAttrs& attrs,
   Stream<xpu>* s             = ctx.get_stream<xpu>();
   const mxnet::TShape& shape = nnvm::get<RavelParam>(attrs.parsed).shape;
   std::vector<index_t> buffer(shape.data(), shape.data() + shape.ndim());
+  index_t max_index = 1;
+  bool check_bounds = true;
+  for (int i = 0; i < shape.ndim(); ++i) {
+    CHECK_NE(shape[i], 0) << "Shape dimensions must be nonzero.";
+    if (shape[i] < 0) {
+      check_bounds = false;
+    } else {
+      max_index *= shape[i];
+    }
+  }
   Tensor<xpu, 1, index_t> work =
       ctx.requested[0].get_space_typed<xpu, 1, index_t>(Shape1(shape.ndim()), s);
+  Tensor<xpu, 1, index_t> invalid_flag =
+      ctx.requested[0].get_space_typed<xpu, 1, index_t>(Shape1(1), s);
   Copy(work, Tensor<cpu, 1, index_t>(&buffer[0], Shape1(buffer.size()), 0), s);
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, OType, {
     Tensor<xpu, 1, OType> in  = inputs[0].FlatTo1D<xpu, OType>(s);
     Tensor<xpu, 1, OType> out = outputs[0].FlatTo1D<xpu, OType>(s);
+    if (check_bounds) {
+      CheckUnravelIndexBounds(s, in.dptr_, in.shape_.Size(), max_index, invalid_flag.dptr_);
+    }
     mxnet_op::Kernel<unravel_index, xpu>::Launch(
         s, in.shape_.Size(), in.shape_.Size(), shape.ndim(), work.dptr_, out.dptr_, in.dptr_);
   });

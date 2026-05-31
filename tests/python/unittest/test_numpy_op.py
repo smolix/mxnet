@@ -10848,6 +10848,15 @@ def test_np_unravel_index(ishape, rshape, dtype, hybridize):
 
 
 @use_np
+def test_np_unravel_index_bounds():
+    for indices in [np.array([-1], dtype='int64'), np.array([6], dtype='int64')]:
+        with pytest.raises(IndexError, match="out of bounds"):
+            np.unravel_index(indices, (2, 3))[0].asnumpy()
+    with pytest.raises(TypeError, match="only int indices permitted"):
+        np.unravel_index(np.array([1.5], dtype='float32'), (2, 3))[0].asnumpy()
+
+
+@use_np
 def test_np_diag_indices_from():
     class TestDiag_indices_from(HybridBlock):
         def __init__(self) :

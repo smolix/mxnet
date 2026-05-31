@@ -93,7 +93,7 @@ Examples::
                                        return std::vector<std::string>{"data"};
                                      })
     .set_attr<mxnet::FInferShape>("FInferShape", UnravelOpShape)
-    .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<1, 1>)
+    .set_attr<nnvm::FInferType>("FInferType", UnravelOpType)
     .set_attr<FCompute>("FCompute<cpu>", UnravelForward<cpu>)
     .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)
     .add_argument("data", "NDArray-or-Symbol", "Array of flat indices")

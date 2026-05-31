@@ -154,18 +154,32 @@ struct NumpyPadParam : public dmlc::Parameter<NumpyPadParam> {
   }
 };
 
+inline std::pair<int, int> NumpyPadGetWidth(const mxnet::Tuple<Tuple<int>>& width,
+                                            const int ndim,
+                                            const int axis) {
+  CHECK_GT(width.ndim(), 0) << "pad_width cannot be empty";
+  if (width.ndim() == 1) {
+    CHECK(width[0].ndim() == 1 || width[0].ndim() == 2)
+        << "pad_width could not be broadcast to input rank";
+    int before = width[0][0];
+    int after  = width[0].ndim() == 1 ? before : width[0][1];
+    return std::make_pair(before, after);
+  }
+  if (width.ndim() == 2 && width[0].ndim() == 1 && width[1].ndim() == 1) {
+    return std::make_pair(width[0][0], width[1][0]);
+  }
+  CHECK_EQ(width.ndim(), ndim) << "pad_width could not be broadcast to input rank";
+  CHECK_EQ(width[axis].ndim(), 2) << "pad_width could not be broadcast to input rank";
+  return std::make_pair(width[axis][0], width[axis][1]);
+}
+
 inline mxnet::TShape NumpyPadShapeImpl(const mxnet::TShape& ishape,
                                        const mxnet::Tuple<Tuple<int>> pad_width) {
-  if (ishape.ndim() == 1) {
-    index_t s = ishape[0] + pad_width[0][0] + pad_width[1][0];
-    return mxnet::TShape({s});
-  } else if (ishape.ndim() >= 2) {
-    int i;
+  if (ishape.ndim() >= 1) {
     mxnet::TShape oshape(ishape.ndim(), -1);
-    for (i = ishape.ndim() - 1; i >= 0; i--) {
-      index_t base = ishape[i];
-      base         = base + pad_width[i][0] + pad_width[i][1];
-      oshape[i]    = base;
+    for (int i = ishape.ndim() - 1; i >= 0; i--) {
+      const auto width = NumpyPadGetWidth(pad_width, ishape.ndim(), i);
+      oshape[i]       = ishape[i] + width.first + width.second;
     }
     return oshape;
   }
@@ -583,14 +597,10 @@ void NumpyPadOpImpl(const TBlob& in_data,
     mshadow::Shape<NDim * 2> width;
     int dimcounter = 0;
     index_t* odptr = reinterpret_cast<index_t*>(oshape);
-    if (ndim == 1) {
-      width[0] = param.pad_width[0][0];
-      width[1] = param.pad_width[1][0];
-    } else {
-      for (dimcounter = 0; dimcounter < NDim; dimcounter++) {
-        width[dimcounter * 2]     = param.pad_width[dimcounter][0];
-        width[dimcounter * 2 + 1] = param.pad_width[dimcounter][1];
-      }
+    for (dimcounter = 0; dimcounter < NDim; dimcounter++) {
+      const auto pad_width       = NumpyPadGetWidth(param.pad_width, ndim, dimcounter);
+      width[dimcounter * 2]     = pad_width.first;
+      width[dimcounter * 2 + 1] = pad_width.second;
     }
     index_t* idptr = reinterpret_cast<index_t*>(ishape);
     switch (mode) {
@@ -772,14 +782,10 @@ void NumpyPadOpBackImpl(const TBlob& in_data,
     mshadow::Shape<NDim * 2> width;
     int dimcounter = 0;
     index_t* odptr = reinterpret_cast<index_t*>(oshape);
-    if (ndim == 1) {
-      width[0] = param.pad_width[0][0];
-      width[1] = param.pad_width[1][0];
-    } else {
-      for (dimcounter = 0; dimcounter < NDim; dimcounter++) {
-        width[dimcounter * 2]     = param.pad_width[dimcounter][0];
-        width[dimcounter * 2 + 1] = param.pad_width[dimcounter][1];
-      }
+    for (dimcounter = 0; dimcounter < NDim; dimcounter++) {
+      const auto pad_width       = NumpyPadGetWidth(param.pad_width, ndim, dimcounter);
+      width[dimcounter * 2]     = pad_width.first;
+      width[dimcounter * 2 + 1] = pad_width.second;
     }
     index_t* idptr = reinterpret_cast<index_t*>(ishape);
     MSHADOW_TYPE_SWITCH_WITH_BOOL(out_data.type_flag_, DType, {

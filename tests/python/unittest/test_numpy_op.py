@@ -10802,6 +10802,13 @@ def test_np_pad():
                 test_pad.hybridize()
             assert_almost_equal(test_pad(x).asnumpy(), expected)
 
+    sym_x = mx.sym.var('pad_data').as_np_ndarray()
+    for shape, pad_width in itertools.product([(3,), (2, 3), (2, 3, 4)],
+                                              [1, (1,), (1, 2), ((1, 2),)]):
+        expected_shape = onp.pad(onp.ones(shape), pad_width, mode='constant').shape
+        sym_out = mx.sym.np.pad(sym_x, pad_width, mode='constant')
+        assert sym_out.infer_shape(pad_data=shape)[1][0] == expected_shape
+
     with pytest.raises(ValueError):
         np.pad(x, -1)
     with pytest.raises(ValueError):

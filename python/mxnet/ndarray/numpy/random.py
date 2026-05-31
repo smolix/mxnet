@@ -400,7 +400,7 @@ def multinomial(n, pvals, size=None):
     if n < 0:
         raise ValueError("n < 0")
     if isinstance(pvals, np.ndarray):
-        raise ValueError('numpy ndarray is not supported!')
+        pvals = pvals.tolist()
     if any(isinstance(i, list) for i in pvals):
         raise ValueError('object too deep for desired array')
     size = _normalize_size(size)
@@ -440,6 +440,7 @@ def rayleigh(scale=1.0, size=None, device=None, out=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    scale = _as_parameter_array(scale)
     return _api_internal.rayleigh(scale, size, device, out)
 
 
@@ -522,6 +523,8 @@ def multivariate_normal(mean, cov, size=None, check_valid=None, tol=None):
     if tol is not None:
         raise NotImplementedError('Parameter `tol` is not supported')
     size = _normalize_size(size)
+    mean = _as_parameter_array(mean)
+    cov = _as_parameter_array(cov)
     return _npi.mvn_fallback(mean, cov, size=size)
 
 
@@ -841,6 +844,8 @@ def gamma(shape, scale=1.0, size=None, dtype=None, device=None, out=None):
         device = str(device)
     if dtype is not None and not isinstance(dtype, str):
         dtype = get_dtype_name(dtype)
+    shape = _as_parameter_array(shape)
+    scale = _as_parameter_array(scale)
     return _api_internal.gamma(shape, scale, size, device, dtype, out)
 
 
@@ -963,6 +968,8 @@ def f(dfnum, dfden, size=None, device=None):
     the measured value is 36, so the null hypothesis is rejected at the 1%
     level.
     """
+    dfnum = _as_parameter_array(dfnum)
+    dfden = _as_parameter_array(dfden)
     X = chisquare(df=dfnum, size=size, device=device)
     Y = chisquare(df=dfden, size=size, device=device)
     return (X * dfden) / (Y * dfnum)
@@ -1046,6 +1053,7 @@ def chisquare(df, size=None, dtype=None, device=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    df = _as_parameter_array(df)
     return gamma(df/2, 2, size=size, dtype=dtype, device=device)
 
 
@@ -1152,4 +1160,6 @@ def laplace(loc=0.0, scale=1.0, size=None, dtype=None, device=None, out=None):
     size = _normalize_size(size)
     if size == ():
         size = None
+    loc = _as_parameter_array(loc)
+    scale = _as_parameter_array(scale)
     return _api_internal.laplace(loc, scale, size, dtype, device, out)

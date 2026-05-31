@@ -4447,6 +4447,10 @@ def repeat(a, repeats, axis=None):
 
 
 def _normalize_split_indices(indices_or_sections):
+    if isinstance(indices_or_sections, (integer_types, _np.integer)):
+        if indices_or_sections <= 0:
+            raise ValueError("number sections must be larger than 0")
+        return int(indices_or_sections)
     if isinstance(indices_or_sections, set):
         return list(indices_or_sections)
     if isinstance(indices_or_sections, NDArray):

@@ -4010,6 +4010,22 @@ def delete(arr, obj, axis=None):
 
 
 # pylint: disable=redefined-outer-name
+def _normalize_symbol_split_indices(indices_or_sections):
+    indices = []
+    sections = 0
+    if isinstance(indices_or_sections, (integer_types, _np.integer)):
+        sections = int(indices_or_sections)
+        if sections <= 0:
+            raise ValueError("number sections must be larger than 0")
+    elif isinstance(indices_or_sections, (list, set, tuple)):
+        indices = [0] + list(indices_or_sections)
+        if any(not isinstance(i, (integer_types, _np.integer)) for i in indices):
+            raise TypeError("indices_or_sections must be an integer or a sequence of integers")
+    else:
+        raise ValueError('indices_or_sections must either int or tuple / list / set of ints')
+    return indices, sections
+
+
 @set_module('mxnet.symbol.numpy')
 def split(ary, indices_or_sections, axis=0):
     """Split an array into multiple sub-arrays.
@@ -4043,14 +4059,7 @@ def split(ary, indices_or_sections, axis=0):
     ValueError
         If `indices_or_sections` is given as an integer, but
         a split does not result in equal division."""
-    indices = []
-    sections = 0
-    if isinstance(indices_or_sections, int):
-        sections = indices_or_sections
-    elif isinstance(indices_or_sections, (list, set, tuple)):
-        indices = [0] + list(indices_or_sections)
-    else:
-        raise ValueError('indices_or_sections must either int or tuple / list / set of ints')
+    indices, sections = _normalize_symbol_split_indices(indices_or_sections)
     return _npi.split(ary, indices, axis, False, sections)
 # pylint: enable=redefined-outer-name
 
@@ -4088,14 +4097,7 @@ def array_split(ary, indices_or_sections, axis=0):
     sub-arrays : list of ndarrays
         A list of sub-arrays.
     """
-    indices = []
-    sections = 0
-    if isinstance(indices_or_sections, int):
-        sections = indices_or_sections
-    elif isinstance(indices_or_sections, (list, set, tuple)):
-        indices = [0] + list(indices_or_sections)
-    else:
-        raise ValueError('indices_or_sections must either int or tuple / list / set of ints')
+    indices, sections = _normalize_symbol_split_indices(indices_or_sections)
     ret = _npi.array_split(ary, indices, axis, False, sections)
     if not isinstance(ret, list):
         return [ret]
@@ -4196,14 +4198,7 @@ def hsplit(ary, indices_or_sections):
     >>> np.hsplit(x, [2, 2])
     [array([0., 1.]), array([], dtype=float32), array([2., 3.])]
     """
-    indices = []
-    sections = 0
-    if isinstance(indices_or_sections, int):
-        sections = indices_or_sections
-    elif isinstance(indices_or_sections, (list, set, tuple)):
-        indices = [0] + list(indices_or_sections)
-    else:
-        raise ValueError('indices_or_sections must either int or tuple of ints')
+    indices, sections = _normalize_symbol_split_indices(indices_or_sections)
     return _npi.hsplit(ary, indices, 1, False, sections)
 # pylint: enable=redefined-outer-name
 
@@ -4257,14 +4252,7 @@ def vsplit(ary, indices_or_sections):
     an error will be thrown.
 
     """
-    indices = []
-    sections = 0
-    if isinstance(indices_or_sections, int):
-        sections = indices_or_sections
-    elif isinstance(indices_or_sections, (list, set, tuple)):
-        indices = [0] + list(indices_or_sections)
-    else:
-        raise ValueError('indices_or_sections must either int or tuple of ints')
+    indices, sections = _normalize_symbol_split_indices(indices_or_sections)
     return _npi.split(ary, indices, 0, False, sections)
 # pylint: enable=redefined-outer-name
 
@@ -4296,14 +4284,7 @@ def dsplit(ary, indices_or_sections):
 
         If an index exceeds the dimension of the array along axis 2, an error will be thrown.
     """
-    indices = []
-    sections = 0
-    if isinstance(indices_or_sections, int):
-        sections = indices_or_sections
-    elif isinstance(indices_or_sections, (list, set, tuple)):
-        indices = [0] + list(indices_or_sections)
-    else:
-        raise ValueError('indices_or_sections must either int or tuple of ints')
+    indices, sections = _normalize_symbol_split_indices(indices_or_sections)
     ret = _npi.dsplit(ary, indices, 2, False, sections)
     if not isinstance(ret, list):
         return [ret]

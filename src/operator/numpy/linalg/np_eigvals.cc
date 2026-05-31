@@ -105,7 +105,14 @@ NNVM_REGISTER_OP(_npi_eigvalsh)
                                      [](const NodeAttrs& attrs) {
                                        return std::vector<std::string>{"A"};
                                      })
-    .set_attr<mxnet::FInferShape>("FInferShape", EigvalsOpShape)
+    .set_attr<mxnet::FInferShape>("FInferShape",
+                                  [](const nnvm::NodeAttrs& attrs,
+                                     mxnet::ShapeVector* in_attrs,
+                                     mxnet::ShapeVector* out_attrs) {
+                                    ValidateEighEigvalshUPLO(
+                                        nnvm::get<EigvalshParam>(attrs.parsed).UPLO);
+                                    return EigvalsOpShape(attrs, in_attrs, out_attrs);
+                                  })
     .set_attr<nnvm::FInferType>("FInferType", EigvalsOpType)
     .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
     .set_attr<FCompute>("FCompute<cpu>", EigvalshOpForward<cpu>)

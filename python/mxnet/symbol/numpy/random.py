@@ -62,6 +62,14 @@ def _size_product(size):
     return sample_count
 
 
+def _reject_array_like_parameter(value, name):
+    from ...numpy import ndarray as np_ndarray
+    if isinstance(value, (list, tuple, np.ndarray, np_ndarray)):
+        raise TypeError("symbolic random parameter '{}' must be a scalar or Symbol; "
+                        "array-like constants are not supported in symbolic graphs"
+                        .format(name))
+
+
 def randint(low, high=None, size=None, dtype=None, ctx=None, out=None):
     r"""Return random integers from `low` (inclusive) to `high` (exclusive).
 
@@ -187,6 +195,8 @@ def uniform(low=0.0, high=1.0, size=None, dtype=None, ctx=None, out=None):
         Drawn samples from the parameterized uniform distribution.
     """
     from ._symbol import _Symbol as np_symbol
+    _reject_array_like_parameter(low, 'low')
+    _reject_array_like_parameter(high, 'high')
     input_type = (isinstance(low, np_symbol), isinstance(high, np_symbol))
     if ctx is None:
         ctx = current_context()
@@ -239,6 +249,8 @@ def normal(loc=0.0, scale=1.0, size=None, dtype=None, ctx=None, out=None):
         Drawn samples from the parameterized normal distribution.
     """
     from ._symbol import _Symbol as np_symbol
+    _reject_array_like_parameter(loc, 'loc')
+    _reject_array_like_parameter(scale, 'scale')
     input_type = (isinstance(loc, np_symbol), isinstance(scale, np_symbol))
     if ctx is None:
         ctx = current_context()
@@ -320,6 +332,8 @@ def logistic(loc=0.0, scale=1.0, size=None, ctx=None, out=None):
         Drawn samples from the parameterized logistic distribution.
     """
     from ._symbol import _Symbol as np_symbol
+    _reject_array_like_parameter(loc, 'loc')
+    _reject_array_like_parameter(scale, 'scale')
     input_type = (isinstance(loc, np_symbol), isinstance(scale, np_symbol))
     if ctx is None:
         ctx = current_context()
@@ -364,6 +378,8 @@ def gumbel(loc=0.0, scale=1.0, size=None, ctx=None, out=None):
         Drawn samples from the parameterized gumbel distribution.
     """
     from ._symbol import _Symbol as np_symbol
+    _reject_array_like_parameter(loc, 'loc')
+    _reject_array_like_parameter(scale, 'scale')
     input_type = (isinstance(loc, np_symbol), isinstance(scale, np_symbol))
     if ctx is None:
         ctx = current_context()
@@ -437,6 +453,9 @@ def choice(a, size=None, replace=True, p=None, ctx=None, out=None):
     array([2, 3, 0])
     """
     from ._symbol import _Symbol as np_symbol
+    _reject_array_like_parameter(a, 'a')
+    if p is not None:
+        _reject_array_like_parameter(p, 'p')
     if ctx is None:
         ctx = current_context()
     size = _normalize_size(size)
@@ -488,6 +507,8 @@ def laplace(loc=0.0, scale=1.0, size=None, dtype=None, ctx=None, out=None):
         Drawn samples from the parameterized Laplace distribution.
     """
     from ._symbol import _Symbol as np_symbol
+    _reject_array_like_parameter(loc, 'loc')
+    _reject_array_like_parameter(scale, 'scale')
     input_type = (isinstance(loc, np_symbol), isinstance(scale, np_symbol))
     if dtype is None:
         dtype = 'float32'
@@ -546,6 +567,8 @@ def gamma(shape, scale=1.0, size=None, dtype=None, ctx=None, out=None):
     waiting times between Poisson distributed events are relevant.
     """
     from ._symbol import _Symbol as np_symbol
+    _reject_array_like_parameter(shape, 'shape')
+    _reject_array_like_parameter(scale, 'scale')
     input_type = (isinstance(shape, np_symbol), isinstance(scale, np_symbol))
     if ctx is None:
         ctx = current_context()
@@ -591,6 +614,7 @@ def rayleigh(scale=1.0, size=None, ctx=None, out=None):
         Drawn samples from the parameterized Rayleigh distribution.
     """
     from ..numpy import _Symbol as np_symbol
+    _reject_array_like_parameter(scale, 'scale')
     tensor_type_name = np_symbol
     if ctx is None:
         ctx = current_context()
@@ -650,6 +674,8 @@ def beta(a, b, size=None, dtype=None, ctx=None):
     out : _Symbol
         Drawn samples from the parameterized beta distribution.
     """
+    _reject_array_like_parameter(a, 'a')
+    _reject_array_like_parameter(b, 'b')
     if dtype is None:
         dtype = np.float64 if is_np_default_dtype() else np.float32
     if ctx is None:
@@ -696,6 +722,8 @@ def f(dfnum, dfden, size=None, ctx=None):
     out : _Symbol
         Drawn samples from the parameterized Fisher distribution.
     """
+    _reject_array_like_parameter(dfnum, 'dfnum')
+    _reject_array_like_parameter(dfden, 'dfden')
     X = chisquare(df=dfnum, size=size, ctx=ctx)
     Y = chisquare(df=dfden, size=size, ctx=ctx)
     return (X * dfden) / (Y * dfnum)
@@ -765,6 +793,7 @@ def chisquare(df, size=None, dtype=None, ctx=None):
            https://www.itl.nist.gov/div898/handbook/eda/section3/eda3666.htm
 
     """
+    _reject_array_like_parameter(df, 'df')
     if dtype is None:
         dtype = np.float64 if is_np_default_dtype() else np.float32
     if ctx is None:
@@ -797,6 +826,7 @@ def exponential(scale=1.0, size=None, ctx=None, out=None):
         Drawn samples from the parameterized exponential distribution.
     """
     from ..numpy import _Symbol as np_symbol
+    _reject_array_like_parameter(scale, 'scale')
     tensor_type_name = np_symbol
     if ctx is None:
         ctx = current_context()
@@ -856,6 +886,7 @@ def weibull(a, size=None, ctx=None, out=None):
     to model dwell time on pages, in quantitative finance to model risk etc.
     """
     from ..numpy import _Symbol as np_symbol
+    _reject_array_like_parameter(a, 'a')
     tensor_type_name = np_symbol
     if ctx is None:
         ctx = current_context()
@@ -902,6 +933,7 @@ def pareto(a, size=None, ctx=None, out=None):
     is a power law distribution. Pareto created it to describe the wealth in the economy.
     """
     from ..numpy import _Symbol as np_symbol
+    _reject_array_like_parameter(a, 'a')
     tensor_type_name = np_symbol
     if ctx is None:
         ctx = current_context()
@@ -948,6 +980,7 @@ def power(a, size=None, ctx=None, out=None):
     a special case of the Beta distribution.
     """
     from ..numpy import _Symbol as np_symbol
+    _reject_array_like_parameter(a, 'a')
     tensor_type_name = np_symbol
     if ctx is None:
         ctx = current_context()
@@ -1035,6 +1068,8 @@ def multivariate_normal(mean, cov, size=None, check_valid=None, tol=None):
            [ 2.2425299 ,  2.8104177 ],
            [ 0.36229908, -8.386591  ]])
     """
+    _reject_array_like_parameter(mean, 'mean')
+    _reject_array_like_parameter(cov, 'cov')
     if check_valid is not None:
         raise NotImplementedError('Parameter `check_valid` is not supported')
     if tol is not None:

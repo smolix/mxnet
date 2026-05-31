@@ -4443,6 +4443,35 @@ def test_np_split_float_ndarray_indices_rejected():
 
 
 @use_np
+def test_np_split_zero_sections_rejected():
+    configs = [
+        ('split', np.arange(4, dtype='float32'), 0),
+        ('array_split', np.arange(4, dtype='float32'), 0),
+        ('hsplit', np.arange(4, dtype='float32'), 0),
+        ('vsplit', np.arange(4, dtype='float32').reshape((2, 2)), 0),
+        ('dsplit', np.arange(8, dtype='float32').reshape((1, 2, 4)), 0),
+    ]
+    for op_name, data, sections in configs:
+        with pytest.raises(ValueError, match="number sections"):
+            getattr(np, op_name)(data, sections)
+
+
+@use_np
+def test_symbol_np_split_zero_sections_rejected():
+    data = mx.sym.var('data').as_np_ndarray()
+    configs = [
+        (mx.sym.np.split, (data, 0), {'axis': 0}),
+        (mx.sym.np.array_split, (data, 0), {'axis': 0}),
+        (mx.sym.np.hsplit, (data, 0), {}),
+        (mx.sym.np.vsplit, (data, 0), {}),
+        (mx.sym.np.dsplit, (data, 0), {}),
+    ]
+    for op, args, kwargs in configs:
+        with pytest.raises(ValueError, match="number sections"):
+            op(*args, **kwargs)
+
+
+@use_np
 def test_np_vsplit():
     class TestVsplit(HybridBlock):
         def __init__(self, indices_or_sections):
@@ -6337,9 +6366,19 @@ def test_np_random_array_like_distribution_parameters():
         (lambda: np.random.weibull([1, 2]), (2,)),
         (lambda: np.random.pareto([1, 2]), (2,)),
         (lambda: np.random.power([1, 2]), (2,)),
+        (lambda: np.random.rayleigh([1, 2]), (2,)),
+        (lambda: np.random.laplace([0, 1], [1, 1]), (2,)),
+        (lambda: np.random.gamma([1, 2], [1, 1]), (2,)),
+        (lambda: np.random.beta([1, 2], [2, 3]), (2,)),
+        (lambda: np.random.chisquare([1, 2]), (2,)),
+        (lambda: np.random.f([1, 2], [3, 4]), (2,)),
+        (lambda: np.random.multinomial(3, onp.array([0.5, 0.5])), (2,)),
     ]
     for sampler, expected_shape in configs:
         assert sampler().shape == expected_shape
+
+    with pytest.raises(TypeError, match="array-like constants are not supported"):
+        mx.sym.np.random.uniform([0, 1], [1, 2])
 
 
 @use_np
@@ -7182,6 +7221,14 @@ def test_np_linalg_svd_symbol_type_validation():
 
 
 @use_np
+def test_np_linalg_svd_imperative_type_validation():
+    for dtype in ('float16', 'int32', 'int64', 'bool'):
+        data = np.ones((2, 2), dtype=dtype)
+        with pytest.raises(MXNetError, match="32-bit and 64-bit floating point"):
+            np.linalg.svd(data)
+
+
+@use_np
 @requires_lapack
 def test_np_linalg_qr():
     class TestQR(HybridBlock):
@@ -7477,6 +7524,14 @@ def test_np_linalg_cholesky_symbol_type_validation():
     for dtype in ('float16', 'int32'):
         with pytest.raises(MXNetError, match="32-bit and 64-bit floating point"):
             cholesky.infer_type(a=dtype)
+
+
+@use_np
+def test_np_linalg_cholesky_imperative_type_validation():
+    for dtype in ('float16', 'int32', 'int64', 'bool'):
+        data = np.eye(2, dtype=dtype)
+        with pytest.raises(MXNetError, match="32-bit and 64-bit floating point"):
+            np.linalg.cholesky(data)
 
 
 @use_np
@@ -8405,14 +8460,35 @@ def test_np_linalg_eigvalsh():
 def test_np_linalg_symbol_eigh_invalid_uplo():
     a = mx.sym.var('a').as_np_ndarray()
     data = np.eye(2)
+    from mxnet.ndarray.numpy import _api_internal
+    from mxnet.symbol.numpy import _internal as _sym_npi
     with pytest.raises(ValueError, match="UPLO"):
         np.linalg.eigh(data, UPLO='X')
     with pytest.raises(ValueError, match="UPLO"):
         np.linalg.eigvalsh(data, UPLO='X')
+    with pytest.raises(MXNetError, match="UPLO"):
+        _api_internal.eigh(data, 'X')
+    with pytest.raises(MXNetError, match="UPLO"):
+        _api_internal.eigvalsh(data, 'X')
+    with pytest.raises(MXNetError, match="UPLO"):
+        mx.sym.Group(_sym_npi.eigh(a, 'X')).infer_shape(a=(2, 2))
+    with pytest.raises(MXNetError, match="UPLO"):
+        _sym_npi.eigvalsh(a, 'X').infer_shape(a=(2, 2))
     with pytest.raises(ValueError, match="UPLO"):
         mx.sym.Group(mx.sym.np.linalg.eigh(a, UPLO='X')).infer_shape(a=(2, 2))
     with pytest.raises(ValueError, match="UPLO"):
         mx.sym.np.linalg.eigvalsh(a, UPLO='X').infer_shape(a=(2, 2))
+    with pytest.raises(MXNetError, match="UPLO"):
+        mx.sym.Group(mx.sym.np._internal.eigh(a, UPLO='X')).infer_shape(a=(2, 2))
+    with pytest.raises(MXNetError, match="UPLO"):
+        mx.sym.np._internal.eigvalsh(a, UPLO='X').infer_shape(a=(2, 2))
+
+
+@use_np
+def test_np_linalg_eig_imperative_float16_validation():
+    data = np.eye(2, dtype='float16')
+    with pytest.raises(MXNetError, match="float16 is unsupported"):
+        np.linalg.eig(data)
 
 
 @use_np

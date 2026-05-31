@@ -34,7 +34,7 @@ bool NonzeroType(const nnvm::NodeAttrs& attrs,
   return out_attrs->at(0) != -1;
 }
 
-#define MAXDIM 5
+#define MAXDIM 10
 
 bool NonzeroStorageType(const nnvm::NodeAttrs& attrs,
                         const int dev_mask,
@@ -102,7 +102,7 @@ void NonzeroForwardCPU(const nnvm::NodeAttrs& attrs,
   s[0] = valid_num;
   const_cast<NDArray&>(out).Init(s);
   // get the shape from the input
-  MXNET_NDIM_SWITCH(in.shape().ndim(), ndim, {
+  MXNET_NDIM_SWITCH_EX(in.shape().ndim(), ndim, {
     mshadow::Shape<ndim> shape   = in.shape().get<ndim>();
     mshadow::Stream<cpu>* stream = ctx.get_stream<cpu>();
     mxnet_op::Kernel<NonzeroForwardKernel, cpu>::Launch(

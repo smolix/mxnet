@@ -9564,6 +9564,18 @@ def test_np_nonzero():
                 np_out = onp.transpose(np_out)
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol, atol)
 
+    for shape in [(1, 1, 1, 1, 1, 1), (0, 1, 1, 1, 1, 1)]:
+        x = np.ones(shape, dtype='int32')
+        mx_out = npx.nonzero(x)
+        np_out = onp.transpose(onp.nonzero(x.asnumpy()))
+        assert mx_out.shape == np_out.shape
+        assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+        mx_np_out = np.nonzero(x)
+        assert len(mx_np_out) == len(shape)
+        for mx_axis, np_axis in zip(mx_np_out, onp.nonzero(x.asnumpy())):
+            assert_almost_equal(mx_axis.asnumpy(), np_axis, rtol=1e-3, atol=1e-5)
+
 
 @use_np
 def test_np_unique():

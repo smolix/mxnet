@@ -4310,6 +4310,8 @@ def concatenate(seq, axis=0, out=None):
     array([[1., 2., 5.],
            [3., 4., 6.]])
     """
+    if len(seq) == 0:
+        raise ValueError("need at least one array to concatenate")
     return _npi.concatenate(*seq, axis=axis, out=out)
 
 
@@ -4376,6 +4378,8 @@ def stack(arrays, axis=0, out=None):
             raise ValueError("expected iterable for arrays but got {}".format(type(arrays)))
         return [arr for arr in arrays]
     arrays = get_list(arrays)
+    if len(arrays) == 0:
+        raise ValueError("need at least one array to stack")
     return _npi.stack(*arrays, axis=axis, out=out)
 
 

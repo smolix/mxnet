@@ -4370,6 +4370,11 @@ def test_np_concat():
         np_out = onp.concatenate([a.asnumpy(), b.asnumpy(), c.asnumpy(), d.asnumpy()], axis=axis)
         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
 
+    with pytest.raises(ValueError):
+        np.concatenate([])
+    with pytest.raises(ValueError):
+        mx.sym.np.concatenate([])
+
 
 @use_np
 def test_np_append():
@@ -4473,6 +4478,11 @@ def test_np_stack():
                 np_out = onp.stack([np_a, np_b, np_c, np_d], axis=axis)
                 mx_out = np.stack([mx_a, mx_b, mx_c, mx_d], axis=axis)
                 assert same(mx_out.asnumpy(), np_out)
+
+    with pytest.raises(ValueError):
+        np.stack([])
+    with pytest.raises(ValueError):
+        mx.sym.np.stack([])
 
 
 @use_np

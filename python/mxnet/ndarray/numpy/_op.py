@@ -4706,6 +4706,8 @@ def concatenate(seq, axis=0, out=None):
     array([[1., 2., 5.],
            [3., 4., 6.]])
     """
+    if len(seq) == 0:
+        raise ValueError("need at least one array to concatenate")
     return _api_internal.concatenate(*seq, axis, out)
 
 
@@ -4776,6 +4778,8 @@ def stack(arrays, axis=0, out=None):
         return [arr for arr in arrays]
 
     arrays = get_list(arrays)
+    if len(arrays) == 0:
+        raise ValueError("need at least one array to stack")
     return _api_internal.stack(*arrays, axis, out)
 
 

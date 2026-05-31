@@ -5797,6 +5797,11 @@ def test_np_histogram_cpu_edge_and_invalid_bins():
     assert_almost_equal(mx_bins.asnumpy(), onp.array([0.0, 1.0, 2.0, 3.0]),
                         rtol=1e-3, atol=1e-5)
 
+    mx_cnts, mx_bins = np.histogram(mx_a, bins=3, range=(0, 3))
+    assert_almost_equal(mx_cnts.asnumpy(), onp.array([1, 1, 2]), rtol=1e-3, atol=1e-5)
+    assert_almost_equal(mx_bins.asnumpy(), onp.array([0.0, 1.0, 2.0, 3.0]),
+                        rtol=1e-3, atol=1e-5)
+
     for bin_cnt in (0, -1):
         with pytest.raises(MXNetError, match="bin_cnt"):
             np.histogram(mx_a, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()

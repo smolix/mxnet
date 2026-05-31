@@ -1886,6 +1886,7 @@ def histogram(a, bins=10, range=None, normed=None, weights=None, density=None): 
     if isinstance(bins, numeric_types):
         if range is None:
             raise NotImplementedError("automatic range is not supported yet...")
+        range = (float(range[0]), float(range[1]))
         return tuple(_api_internal.histogram(a, None, bins, range))
     if isinstance(bins, (list, tuple)):
         raise NotImplementedError("array_like bins is not supported yet...")

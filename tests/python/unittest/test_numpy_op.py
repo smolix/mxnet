@@ -7059,6 +7059,13 @@ def test_np_linalg_svdvals(shape, dtype, hybridize):
 
 
 @use_np
+def test_np_linalg_svd_symbol_rank_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="at least two-dimensional"):
+        mx.sym.Group(mx.sym.np.linalg.svd(a)).infer_shape(a=(3,))
+
+
+@use_np
 @requires_lapack
 def test_np_linalg_qr():
     class TestQR(HybridBlock):
@@ -7199,6 +7206,13 @@ def test_np_linalg_qr():
         ret = np.linalg.qr(data, mode='reduced')
         Q, R = ret[0], ret[1]
         check_qr(Q, R, data_np)
+
+
+@use_np
+def test_np_linalg_qr_symbol_rank_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="at least two-dimensional"):
+        mx.sym.Group(mx.sym.np.linalg.qr(a)).infer_shape(a=(3,))
 
 
 @use_np

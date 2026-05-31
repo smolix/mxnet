@@ -41,6 +41,10 @@ inline bool NumpyLaQrShape(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(out_attrs->size(), 2U);
   const mxnet::TShape& in_a = (*in_attrs)[0];
 
+  if (!ndim_is_known(in_a)) {
+    return false;
+  }
+  CHECK_GE(in_a.ndim(), 2) << "Array must be at least two-dimensional";
   if (in_a.ndim() >= 2) {
     // Forward shape inference.
     const int ndim(in_a.ndim());

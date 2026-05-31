@@ -44,6 +44,9 @@ inline bool NumpyLaGesvdShape(const nnvm::NodeAttrs& attrs,
   const mxnet::TShape& out_ut = (*out_attrs)[0];
   const mxnet::TShape& out_l  = (*out_attrs)[1];
   const mxnet::TShape& out_v  = (*out_attrs)[2];
+  if (ndim_is_known(in_a) && in_a.ndim() < 2) {
+    LOG(FATAL) << "Array must be at least two-dimensional";
+  }
   if (in_a.ndim() >= 2) {
     // Forward shape inference.
     const int ndim(in_a.ndim());

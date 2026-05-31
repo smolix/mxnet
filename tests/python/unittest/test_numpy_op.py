@@ -11377,6 +11377,10 @@ def test_np_diff():
     np_backward += onp.tile(onp.array([[-1.0, 0.0, 0.0, 1.0]], dtype=onp.float32), (3, 1))
     assert_almost_equal(x.grad.asnumpy(), np_backward)
 
+    for kwargs in [{'prepend': 0}, {'append': 0}, {'prepend': np.array([0])}]:
+        with pytest.raises(NotImplementedError, match="prepend and append options are not supported"):
+            np.diff(np.array([1, 2, 4]), **kwargs)
+
 
 @use_np
 def test_np_ediff1d():

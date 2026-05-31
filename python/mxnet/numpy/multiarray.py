@@ -11431,7 +11431,7 @@ def diff(a, n=1, axis=-1, prepend=None, append=None):  # pylint: disable=redefin
     -----
     Optional inputs `prepend` and `append` are not supported yet
     """
-    if (prepend or append):
+    if prepend is not None or append is not None:
         raise NotImplementedError('prepend and append options are not supported yet')
     return _mx_nd_np.diff(a, n=n, axis=axis)
 

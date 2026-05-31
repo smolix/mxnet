@@ -8434,6 +8434,8 @@ def test_np_full():
         ((2, 3), np.array([1, 2, 3], dtype=np.int64)),
         ((0, 3), np.array([1, 2, 3], dtype=np.float32)),
         ((0, 3), np.array([1, 2, 3], dtype=np.int64)),
+        ((2,), [7, 8]),
+        ((2, 2), [7, 8]),
     ]
 
     rtol, atol = 1e-3, 1e-5
@@ -8507,6 +8509,13 @@ def test_np_full_like():
 
         # check imperative again
         ret = np.full_like(a, fill_value, param_dtype)
+        assert_almost_equal(ret.asnumpy(), expected_ret, rtol=1e-3, atol=1e-5)
+
+    for fill_value in ([7, 8], np.array(7)):
+        a = np.arange(2)
+        np_fill_value = fill_value.asnumpy() if isinstance(fill_value, np.ndarray) else fill_value
+        ret = np.full_like(a, fill_value)
+        expected_ret = onp.full_like(a.asnumpy(), fill_value=np_fill_value)
         assert_almost_equal(ret.asnumpy(), expected_ret, rtol=1e-3, atol=1e-5)
 
 

@@ -394,6 +394,8 @@ def full(shape, fill_value, dtype=None, order='C', device=None, out=None):  # py
     """
     if order != 'C':
         raise NotImplementedError
+    if not isinstance(fill_value, NDArray) and not isinstance(fill_value, (bool,) + numeric_types):
+        fill_value = _as_np_ndarray(fill_value)
     if isinstance(fill_value, NDArray):
         if dtype is None:
             ret = broadcast_to(fill_value, shape)
@@ -471,6 +473,11 @@ def full_like(a, fill_value, dtype=None, order='C', device=None, out=None): # py
     """
     if order != 'C':
         raise NotImplementedError
+    if not isinstance(fill_value, NDArray) and not isinstance(fill_value, (bool,) + numeric_types):
+        fill_value = _as_np_ndarray(fill_value)
+    if isinstance(fill_value, NDArray):
+        dtype = a.dtype if dtype is None else dtype
+        return broadcast_to(fill_value, a.shape).astype(dtype)
     if isinstance(fill_value, bool):
         fill_value = int(fill_value)
     if device is None:

@@ -54,6 +54,21 @@ __all__ = ['shape', 'zeros', 'zeros_like', 'ones', 'ones_like', 'full', 'full_li
            'positive', 'logaddexp', 'floor_divide', 'bitwise_left_shift', 'bitwise_right_shift']
 
 
+def _as_np_ndarray(obj):
+    if isinstance(obj, NDArray):
+        return obj
+    dtype = None
+    if isinstance(obj, numeric_types):
+        dtype = dtype_from_number(obj)
+    obj = _np.array(obj, dtype=dtype)
+    ret = zeros(obj.shape, dtype=obj.dtype)
+    if len(obj.shape) == 0:
+        ret[()] = obj
+    else:
+        ret[:] = obj
+    return ret
+
+
 @set_module('mxnet.ndarray.numpy')
 def shape(a):
     """
@@ -4873,7 +4888,7 @@ def vstack(arrays, out=None):
             raise ValueError("expected iterable for arrays but got {}".format(type(arrays)))
         return [arr for arr in arrays]
 
-    arrays = get_list(arrays)
+    arrays = [_as_np_ndarray(arr) for arr in get_list(arrays)]
     return _api_internal.vstack(*arrays)
 
 
@@ -4918,7 +4933,7 @@ def row_stack(arrays):
             raise ValueError("expected iterable for arrays but got {}".format(type(arrays)))
         return [arr for arr in arrays]
 
-    arrays = get_list(arrays)
+    arrays = [_as_np_ndarray(arr) for arr in get_list(arrays)]
     return _api_internal.vstack(*arrays)
 
 
@@ -4949,7 +4964,7 @@ def column_stack(tup):
            [2., 3.],
            [3., 4.]])
     """
-    return _api_internal.column_stack(*tup)
+    return _api_internal.column_stack(*[_as_np_ndarray(arr) for arr in tup])
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -4988,7 +5003,7 @@ def hstack(arrays):
            [2., 3.],
            [3., 4.]])
     """
-    return _api_internal.hstack(*arrays)
+    return _api_internal.hstack(*[_as_np_ndarray(arr) for arr in arrays])
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -5030,7 +5045,7 @@ def dstack(arrays):
            [[2, 3]],
            [[3, 4]]])
     """
-    return _api_internal.dstack(*arrays)
+    return _api_internal.dstack(*[_as_np_ndarray(arr) for arr in arrays])
 
 
 @set_module('mxnet.ndarray.numpy')

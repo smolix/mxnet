@@ -7736,7 +7736,7 @@ def dstack(arrays):
            [[2, 3]],
            [[3, 4]]])
     """
-    return _npi.dstack(*arrays)
+    return _mx_nd_np.dstack(arrays)
 
 
 @set_module('mxnet.numpy')

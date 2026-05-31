@@ -2817,6 +2817,20 @@ def test_np_broadcast_arrays(shapes):
 
 
 @use_np
+def test_np_broadcast_arrays_array_like_inputs():
+    configs = [
+        (onp.array([1, 2]), 3),
+        (onp.array([1, 2]), [3, 4]),
+        (1, onp.array([[2], [3]])),
+    ]
+    for args in configs:
+        expected_rets = onp.broadcast_arrays(*args)
+        rets = np.broadcast_arrays(*[np.array(arg) if isinstance(arg, onp.ndarray) else arg for arg in args])
+        for expected_ret, ret in zip(expected_rets, rets):
+            assert same(expected_ret, ret.asnumpy())
+
+
+@use_np
 def test_np_tile():
     config = [
         ((), ()),
@@ -4564,6 +4578,21 @@ def test_np_hstack():
             mx_out = np.hstack((a, b, c, d))
             np_out = onp.hstack((a.asnumpy(),b.asnumpy(), c.asnumpy(), d.asnumpy()))
             assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_np_stack_helpers_array_like_inputs():
+    configs = [
+        (onp.hstack, np.hstack, (([1, 2], [3, 4]),)),
+        (onp.vstack, np.vstack, (([1, 2], [3, 4]),)),
+        (onp.dstack, np.dstack, (([1, 2], [3, 4]),)),
+        (onp.column_stack, np.column_stack, (([1, 2], [3, 4]),)),
+        (onp.column_stack, np.column_stack, ((1, 2),)),
+    ]
+    for np_func, mx_func, args in configs:
+        expected = np_func(*args)
+        actual = mx_func(*args)
+        assert same(expected, actual.asnumpy())
 
 
 @use_np

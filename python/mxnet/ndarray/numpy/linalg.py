@@ -34,6 +34,34 @@ def _normalize_axis_tuple(axis, ndim):
     return axis
 
 
+def _validate_norm_ord(x, ord, axis):
+    if ord is None:
+        return
+    matrix_ords = ['fro', 'f', 'nuc', 'inf', '-inf', 1, -1, 2, -2]
+    vector_string_ords = ['inf', '-inf']
+    if axis is None:
+        if x.ndim == 1:
+            if isinstance(ord, str) and ord not in vector_string_ords:
+                raise ValueError("Invalid norm order '{}' for vectors".format(ord))
+        elif x.ndim == 2:
+            if ord not in matrix_ords:
+                raise ValueError("Invalid norm order for matrices.")
+        else:
+            raise ValueError("Improper number of dimensions to norm.")
+    elif isinstance(axis, int):
+        if isinstance(ord, str) and ord not in vector_string_ords:
+            raise ValueError("Invalid norm order '{}' for vectors".format(ord))
+    elif isinstance(axis, tuple):
+        if len(axis) == 1:
+            if isinstance(ord, str) and ord not in vector_string_ords:
+                raise ValueError("Invalid norm order '{}' for vectors".format(ord))
+        elif len(axis) == 2:
+            if ord not in matrix_ords:
+                raise ValueError("Invalid norm order for matrices.")
+        else:
+            raise ValueError("Improper number of dimensions to norm.")
+
+
 def matrix_rank(M, tol=None, hermitian=False):
     """
     Return matrix rank of array using SVD method
@@ -337,6 +365,7 @@ def norm(x, ord=None, axis=None, keepdims=False):
     >>> np.linalg.norm(m[0, :, :]), np.linalg.norm(m[1, :, :])
     (array(3.7416573), array(11.224973))
     """
+    _validate_norm_ord(x, ord, axis)
     if axis is None and ord is None:
         return _api_internal.norm(x, 2, None, keepdims, -2)
     if axis is None or isinstance(axis, (int, tuple)):  # pylint: disable=too-many-nested-blocks

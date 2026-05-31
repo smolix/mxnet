@@ -6539,6 +6539,20 @@ def test_np_linalg_norm_negative_matrix_axes(ord, hybridize):
 
 
 @use_np
+def test_np_linalg_norm_invalid_orders():
+    invalid_configs = [
+        (np.arange(3), 'fro', None),
+        (np.arange(3), 'bad', None),
+        (np.arange(6).reshape((2, 3)), 3, None),
+        (np.arange(6).reshape((2, 3)), 'bad', (0, 1)),
+        (np.arange(24).reshape((2, 3, 4)), 2, None),
+    ]
+    for data, ord, axis in invalid_configs:
+        with pytest.raises(ValueError):
+            np.linalg.norm(data, ord=ord, axis=axis)
+
+
+@use_np
 @pytest.mark.parametrize('hybridize', [True, False])
 def test_np_linalg_vector_norm_negative_tuple_axes(hybridize):
     class TestVectorNorm(HybridBlock):

@@ -8404,6 +8404,11 @@ def test_np_linalg_eigvalsh():
 @use_np
 def test_np_linalg_symbol_eigh_invalid_uplo():
     a = mx.sym.var('a').as_np_ndarray()
+    data = np.eye(2)
+    with pytest.raises(ValueError, match="UPLO"):
+        np.linalg.eigh(data, UPLO='X')
+    with pytest.raises(ValueError, match="UPLO"):
+        np.linalg.eigvalsh(data, UPLO='X')
     with pytest.raises(ValueError, match="UPLO"):
         mx.sym.Group(mx.sym.np.linalg.eigh(a, UPLO='X')).infer_shape(a=(2, 2))
     with pytest.raises(ValueError, match="UPLO"):

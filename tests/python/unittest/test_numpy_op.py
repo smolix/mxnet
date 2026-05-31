@@ -11142,6 +11142,30 @@ def test_np_expand_dims():
                 y = np.expand_dims(x, axis)
                 assert_almost_equal(y.asnumpy(), expected, use_broadcast=False)
 
+    tuple_axis_configs = [
+        ((2, 3), (0,)),
+        ((2, 3), (0, 2)),
+        ((2, 3), (2, 0)),
+        ((2, 3), (-1, 0)),
+        ((2, 3), [1, 2]),
+    ]
+    for shape, axis in tuple_axis_configs:
+        x_np = onp.random.uniform(0, 100, size=shape).astype('float32')
+        expected = onp.expand_dims(x_np, axis)
+        x = np.array(x_np)
+        assert_almost_equal(np.expand_dims(x, axis).asnumpy(), expected, use_broadcast=False)
+        for hybridize in [False, True]:
+            test_expand_dims = TestExpandDims(axis)
+            if hybridize:
+                test_expand_dims.hybridize()
+            assert_almost_equal(test_expand_dims(x).asnumpy(), expected, use_broadcast=False)
+
+    x = np.ones((2, 3))
+    with pytest.raises(ValueError):
+        np.expand_dims(x, (0, 0))
+    with pytest.raises(onp.AxisError):
+        np.expand_dims(x, (4,))
+
 
 @use_np
 @pytest.mark.parametrize('ishape', [

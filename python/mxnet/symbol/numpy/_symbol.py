@@ -2302,6 +2302,19 @@ def expand_dims(a, axis):
         Output array. The number of dimensions is one greater than that of
         the input array.
     """
+    if isinstance(axis, (tuple, list)):
+        seen_axes = set()
+        for ax in axis:
+            if not isinstance(ax, (integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(ax).__name__))
+            if ax in seen_axes:
+                raise ValueError("repeated axis")
+            seen_axes.add(ax)
+        ret = a
+        for ax in sorted(axis):
+            ret = _npi.expand_dims(ret, ax)
+        return ret
     return _npi.expand_dims(a, axis)
 
 

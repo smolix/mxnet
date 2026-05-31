@@ -4015,6 +4015,18 @@ def test_np_insert():
 
 
 @use_np
+@pytest.mark.parametrize('obj', [1, slice(1, 2), np.array([1], dtype='int64')])
+@pytest.mark.parametrize('axis', [1, -1])
+def test_np_insert_python_scalar_value(obj, axis):
+    data = np.arange(6, dtype='float32').reshape((2, 3))
+    obj_np = obj.asnumpy() if isinstance(obj, np.ndarray) else obj
+    mx_out = np.insert(data, obj, 9, axis=axis)
+    np_out = onp.insert(data.asnumpy(), obj_np, 9, axis=axis)
+    assert mx_out.shape == np_out.shape
+    assert_almost_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
 def test_np_split():
     class TestSplit(HybridBlock):
         def __init__(self, indices_or_sections, axis=None):

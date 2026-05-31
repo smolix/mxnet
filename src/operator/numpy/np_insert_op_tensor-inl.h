@@ -141,7 +141,9 @@ void NumpyInsertTensorCompute(const nnvm::NodeAttrs& attrs,
   if ((inputs[obj_pos].shape_.ndim() == 0 || indices_len == 1) && param.val.has_value()) {
     MSHADOW_TYPE_SWITCH(vtype, VType, {
       // If insert use single index and 'value' is inputed as numerical parameter
-      values = TBlob(ctx.requested[0].get_space_typed<xpu, 1, VType>(Shape1(1), s));
+      TShape value_shape(values.shape_);
+      values = TBlob(ctx.requested[0].get_space_typed<xpu, 1, VType>(Shape1(value_shape.Size()), s))
+                   .reshape(value_shape);
       Fill(s, values, kWriteTo, param.val.value());
     });
   }

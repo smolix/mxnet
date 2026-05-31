@@ -266,8 +266,8 @@ void NumpyRepeatsAxisZeroOpForward(const nnvm::NodeAttrs& attrs,
     mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
     const TBlob& in_data    = inputs[0];
     const TBlob& out_data   = outputs[0];
-    MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, IType, {
-      MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, OType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(inputs[0].type_flag_, IType, {
+      MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(outputs[0].type_flag_, OType, {
         mxnet_op::Kernel<repeat_noaxis_fwd, xpu>::Launch(
             s, out_data.Size(), out_data.dptr<OType>(), in_data.dptr<IType>(), ind);
       });

@@ -175,7 +175,7 @@ void TriuOpProcess(const TBlob& in_data,
   const mxnet::TShape& oshape = out_data.shape_;
 
   if (ishape.ndim() == 2 && oshape.ndim() == 2) {
-    MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
       MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
         Kernel<triu2D<req_type>, xpu>::Launch(s,
                                               dsize,
@@ -186,7 +186,7 @@ void TriuOpProcess(const TBlob& in_data,
       });
     });
   } else if (ishape.ndim() > 2) {
-    MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
       MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
         Kernel<triu3D<req_type>, xpu>::Launch(s,
                                               dsize,
@@ -197,7 +197,7 @@ void TriuOpProcess(const TBlob& in_data,
       });
     });
   } else {
-    MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
       MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
         if (back) {
           Kernel<triu1Dbackward<req_type>, xpu>::Launch(

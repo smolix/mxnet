@@ -6845,6 +6845,23 @@ def test_np_repeat():
 
 
 @use_np
+def test_np_matrix_selection_extended_dtypes():
+    for dtype in ['bool', 'int16', 'uint16', 'uint32']:
+        data_np = onp.array([[1, 0], [3, 4]], dtype=dtype)
+        data = np.array(data_np, dtype=dtype)
+        for mx_op, np_op in [(np.diag, onp.diag), (np.tril, onp.tril), (np.triu, onp.triu)]:
+            mx_out = mx_op(data)
+            np_out = np_op(data_np)
+            assert mx_out.dtype == np_out.dtype
+            onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+        mx_out = np.repeat(data, 2)
+        np_out = onp.repeat(data_np, 2)
+        assert mx_out.dtype == np_out.dtype
+        onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
 def test_np_repeat_repeats_validation():
     data = np.ones((2, 3))
     sym_data = mx.sym.var('data').as_np_ndarray()
@@ -12186,6 +12203,21 @@ def test_np_where():
     for x, y in [(None, sym_values), (sym_values, None)]:
         with pytest.raises(ValueError):
             mx.sym.np.where(sym_cond, x, y)
+
+
+@use_np
+def test_np_where_extended_integer_dtypes():
+    cond_np = onp.array([[True, False], [False, True]])
+    cond = np.array(cond_np, dtype='bool')
+    for dtype in ['int16', 'uint16', 'uint32']:
+        x_np = onp.array([[1, 2], [3, 4]], dtype=dtype)
+        y_np = onp.array([[5, 6], [7, 8]], dtype=dtype)
+        x = np.array(x_np, dtype=dtype)
+        y = np.array(y_np, dtype=dtype)
+        mx_out = np.where(cond, x, y)
+        np_out = onp.where(cond_np, x_np, y_np)
+        assert mx_out.dtype == np_out.dtype
+        onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
 
 
 @use_np

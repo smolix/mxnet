@@ -1684,7 +1684,7 @@ void NumpyDiagOpImpl(const TBlob& in_data,
       offset = 0;
     }
 
-    MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
       MXNET_ASSIGN_REQ_SWITCH(req, req_type, {
         if (back && req != kAddTo && req != kNullOp) {
           out_data.FlatTo1D<xpu, DType>(s) = 0;
@@ -1695,7 +1695,7 @@ void NumpyDiagOpImpl(const TBlob& in_data,
       });
     });
   } else {
-    MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
       MXNET_ASSIGN_REQ_SWITCH(req, req_type, {
         Kernel<diag_gen<req_type, back>, xpu>::Launch(s,
                                                       dsize,

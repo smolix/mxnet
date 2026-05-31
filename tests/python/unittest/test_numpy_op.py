@@ -1262,10 +1262,19 @@ def test_np_creation_shape_validation():
             op((2.5,))
         with pytest.raises(ValueError, match="negative dimensions"):
             op((-1,))
+    for op in (mx.sym.np.zeros, mx.sym.np.ones):
+        with pytest.raises(TypeError, match="interpreted as an integer"):
+            op((2.5,))
+        with pytest.raises(ValueError, match="negative dimensions"):
+            op((-1,))
     with pytest.raises(TypeError, match="interpreted as an integer"):
         np.full((2.5,), 1)
     with pytest.raises(ValueError, match="negative dimensions"):
         np.full((-1,), 1)
+    with pytest.raises(TypeError, match="interpreted as an integer"):
+        mx.sym.np.full((2.5,), 1)
+    with pytest.raises(ValueError, match="negative dimensions"):
+        mx.sym.np.full((-1,), 1)
 
 
 @use_np

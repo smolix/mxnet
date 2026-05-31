@@ -59,6 +59,25 @@ __all__ = ['zeros', 'zeros_like', 'ones', 'ones_like', 'full', 'full_like', 'emp
            'where', 'bincount', 'rollaxis', 'diagflat', 'repeat', 'prod', 'pad', 'cumsum', 'sum', 'diag', 'diagonal']
 
 
+def _normalize_shape(shape):
+    if isinstance(shape, (integer_types, _np.integer)):
+        if shape < 0:
+            raise ValueError("negative dimensions are not allowed")
+        return int(shape)
+    if isinstance(shape, (tuple, list)):
+        dims = []
+        for dim in shape:
+            if not isinstance(dim, (integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(dim).__name__))
+            if dim < 0:
+                raise ValueError("negative dimensions are not allowed")
+            dims.append(int(dim))
+        return tuple(dims)
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(shape).__name__))
+
+
 @set_module('mxnet.symbol.numpy')
 class _Symbol(Symbol):
     def __getitem__(self, key): # pylint: disable = too-many-return-statements, inconsistent-return-statements
@@ -1115,6 +1134,7 @@ def zeros(shape, dtype=float, order='C', ctx=None):
         ctx = current_context()
     if dtype is None or dtype is float:
         dtype = _np.float64 if is_np_default_dtype() else _np.float32
+    shape = _normalize_shape(shape)
     return _npi.zeros(shape=shape, ctx=ctx, dtype=dtype)
 
 
@@ -1149,6 +1169,7 @@ def ones(shape, dtype=None, order='C', ctx=None):
         raise NotImplementedError
     if ctx is None:
         ctx = current_context()
+    shape = _normalize_shape(shape)
     return _npi.ones(shape=shape, ctx=ctx, dtype=dtype)
 
 
@@ -1327,6 +1348,7 @@ def full(shape, fill_value, dtype=None, order='C', ctx=None, out=None):  # pylin
         raise NotImplementedError
     if ctx is None:
         ctx = current_context()
+    shape = _normalize_shape(shape)
     if isinstance(fill_value, Symbol):
         if dtype is None:
             ret = broadcast_to(fill_value, shape)

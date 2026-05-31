@@ -11732,6 +11732,16 @@ def test_np_diagonal(config, k, dtype, hybridize, call_by_instance):
 
 
 @use_np
+def test_np_diagonal_repeated_axes():
+    x = np.ones((2, 3))
+    with pytest.raises(ValueError, match="axis1 and axis2 cannot be the same"):
+        np.diagonal(x, axis1=0, axis2=0)
+    sym_x = mx.sym.var('diagonal_data').as_np_ndarray()
+    with pytest.raises(ValueError, match="axis1 and axis2 cannot be the same"):
+        mx.sym.np.diagonal(sym_x, axis1=0, axis2=0)
+
+
+@use_np
 def test_np_nan_to_num():
     def take_ele_grad(ele):
         if onp.isinf(ele) or onp.isnan(ele):

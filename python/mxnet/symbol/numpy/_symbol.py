@@ -8464,6 +8464,8 @@ def diagonal(a, offset=0, axis1=0, axis2=1):
     -------
     ValueError:  If the dimension of a is less than 2.
     """
+    if axis1 == axis2:
+        raise ValueError('axis1 and axis2 cannot be the same')
     return _npi.diagonal(a, offset=offset, axis1=axis1, axis2=axis2)
 
 

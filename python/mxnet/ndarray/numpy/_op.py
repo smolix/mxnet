@@ -10284,6 +10284,8 @@ def diagonal(a, offset=0, axis1=0, axis2=1):
     array([[0, 6],
             [1, 7]])
     """
+    if axis1 == axis2:
+        raise ValueError('axis1 and axis2 cannot be the same')
     return _api_internal.diagonal(a, offset, axis1, axis2)
 
 

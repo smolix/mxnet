@@ -133,16 +133,16 @@ void HistogramForwardImpl<cpu>(const OpContext& ctx,
       ctx.requested[0].get_space_typed<cpu, 1, int>(Shape1(in_data.Size()), s);
 
   MSHADOW_TYPE_SWITCH(in_data.type_flag_, DType, {
-    Kernel<FillBinBoundsKernel, cpu>::Launch(
-        s, bin_cnt + 1, out_bins.dptr<DType>(), bin_cnt, min, max);
-    Kernel<ComputeBinKernel, cpu>::Launch(s,
-                                          in_data.Size(),
-                                          in_data.dptr<DType>(),
-                                          out_bins.dptr<DType>(),
-                                          bin_indices.dptr_,
-                                          bin_cnt,
-                                          min,
-                                          max);
+    MSHADOW_TYPE_SWITCH(out_bins.type_flag_, BType, {
+      Kernel<FillBinBoundsKernel, cpu>::Launch(
+          s, bin_cnt + 1, out_bins.dptr<BType>(), bin_cnt, min, max);
+      Kernel<ComputeBinKernel, cpu>::Launch(s,
+                                            in_data.Size(),
+                                            in_data.dptr<DType>(),
+                                            bin_indices.dptr_,
+                                            out_bins.dptr<BType>(),
+                                            bin_cnt);
+    });
   });
   MSHADOW_TYPE_SWITCH(out_data.type_flag_, CType, {
     Kernel<set_zero, cpu>::Launch(s, bin_cnt, out_data.dptr<CType>());

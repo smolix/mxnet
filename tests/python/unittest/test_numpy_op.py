@@ -6550,6 +6550,17 @@ def test_np_histogram_cpu_edge_and_invalid_bins():
     assert_almost_equal(mx_bins.asnumpy(), onp.array([0.0, 1.0, 2.0, 3.0]),
                         rtol=1e-3, atol=1e-5)
 
+    int_data = np.array([0, 1, 2], device=mx.cpu(), dtype='int32')
+    mx_cnts, mx_bins = np.histogram(int_data, bins=2, range=(0, 2))
+    np_cnts, np_bins = onp.histogram(int_data.asnumpy(), bins=2, range=(0, 2))
+    assert mx_bins.dtype == np_bins.dtype
+    assert_almost_equal(mx_cnts.asnumpy(), np_cnts, rtol=1e-3, atol=1e-5)
+    assert_almost_equal(mx_bins.asnumpy(), np_bins, rtol=1e-3, atol=1e-5)
+
+    bool_data = np.array([True, False], device=mx.cpu(), dtype='bool')
+    with pytest.raises(MXNetError, match="histogram does not support bool"):
+        np.histogram(bool_data, bins=2, range=(0, 1))[0].asnumpy()
+
     for bin_cnt in (0, -1):
         with pytest.raises(MXNetError, match="bin_cnt"):
             np.histogram(mx_a, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()

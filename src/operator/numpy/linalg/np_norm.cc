@@ -174,6 +174,11 @@ bool NumpyNormShape(const nnvm::NodeAttrs& attrs,
           << "axis " << param.axis.value()[i] << " is out of bounds for array of dimension "
           << (*in_attrs)[0].ndim();
     }
+    for (int i = 0; i < axis.ndim(); ++i) {
+      for (int j = i + 1; j < axis.ndim(); ++j) {
+        CHECK_NE(axis[i], axis[j]) << "duplicate value in 'axis'";
+      }
+    }
     const_cast<NumpyNormParam&>(param).axis = axis;
     if (param.axis.value().ndim() == 2) {
       return NumpyMatrixNormShape(attrs, in_attrs, out_attrs);

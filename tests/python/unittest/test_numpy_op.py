@@ -6749,6 +6749,8 @@ def test_np_linalg_norm_invalid_orders():
     a = mx.sym.var('a').as_np_ndarray()
     with pytest.raises(MXNetError, match="out of bounds"):
         mx.sym.np.linalg.norm(a, axis=-3).infer_shape(a=(2, 3))
+    with pytest.raises(ValueError, match="duplicate"):
+        mx.sym.np.linalg.norm(a, axis=(0, 0))
 
 
 @use_np

@@ -327,6 +327,8 @@ def norm(x, ord=None, axis=None, keepdims=False):
             if isinstance(axis, int):
                 axis = (axis, )
             if len(axis) == 2:
+                if len(set(axis)) != len(axis):
+                    raise ValueError("duplicate value in axis")
                 axis = _normalize_axis_tuple(axis, x.ndim)
                 if ord in ['inf', '-inf']:
                     row_axis, col_axis = axis

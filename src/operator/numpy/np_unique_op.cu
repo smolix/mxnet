@@ -26,6 +26,43 @@
 namespace mxnet {
 namespace op {
 
+#define MXNET_UNIQUE_TYPE_SWITCH_WITH_BOOL(type, DType, ...)   \
+  switch (type) {                                              \
+    case mshadow::kFloat32: {                                  \
+      typedef float DType;                                     \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kFloat64: {                                  \
+      typedef double DType;                                    \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kFloat16:                                    \
+      LOG(FATAL) << "This operation does not support float16"; \
+      break;                                                   \
+    case mshadow::kUint8: {                                    \
+      typedef uint8_t DType;                                   \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kInt8: {                                     \
+      typedef int8_t DType;                                    \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kInt32: {                                    \
+      typedef int32_t DType;                                   \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kInt64: {                                    \
+      typedef int64_t DType;                                   \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kBool: {                                     \
+      typedef bool DType;                                      \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    default:                                                   \
+      LOG(FATAL) << "Unknown type enum " << type;              \
+  }
+
 struct UniqueComputeAuxGPUKernel {
   // assume that idx have been flattened to a 1-D tensor (N,)
   // assume that out_data and in_data have been flattened to 2-D tensors, (N, M) and (K, M)
@@ -95,7 +132,7 @@ void NumpyUniqueGPUNoneAxisImpl(const NumpyUniqueParam& param,
                                 const std::vector<NDArray>& inputs,
                                 const std::vector<OpReqType>& req,
                                 const std::vector<NDArray>& outputs) {
-  MXNET_NO_FLOAT16_TYPE_SWITCH(outputs[0].dtype(), DType, {
+  MXNET_UNIQUE_TYPE_SWITCH_WITH_BOOL(outputs[0].dtype(), DType, {
     mshadow::Stream<gpu>* stream = ctx.get_stream<gpu>();
     cudaStream_t cuda_stream     = mshadow::Stream<gpu>::GetStream(stream);
     auto policy                  = thrust::cuda::par.on(stream->stream_);
@@ -203,7 +240,7 @@ void NumpyUniqueGPUImpl(const NumpyUniqueParam& param,
   CHECK(param.axis.value() >= -1 * inputs[0].shape().ndim() &&
         param.axis.value() < inputs[0].shape().ndim())
       << "Axis should be in the range of [-r, r-1] where r is the rank of input tensor";
-  MXNET_NO_FLOAT16_TYPE_SWITCH(outputs[0].dtype(), DType, {
+  MXNET_UNIQUE_TYPE_SWITCH_WITH_BOOL(outputs[0].dtype(), DType, {
     using namespace mshadow;
     using namespace mshadow::expr;
     Stream<gpu>* stream      = ctx.get_stream<gpu>();
@@ -345,7 +382,7 @@ void NumpyUniqueGPUForward(const nnvm::NodeAttrs& attrs,
     mxnet::TShape shape_1(1, 1);
     if (NumpyUniqueShouldWrite(req, 0)) {
       const_cast<NDArray&>(outputs[0]).Init(shape_1);
-      MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
+      MXNET_UNIQUE_TYPE_SWITCH_WITH_BOOL(outputs[0].dtype(), DType, {
         CUDA_CALL(cudaMemcpyAsync(outputs[0].data().dptr<DType>(),
                                   inputs[0].data().dptr<DType>(),
                                   sizeof(DType),

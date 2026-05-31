@@ -22,12 +22,50 @@
  */
 
 #include <cmath>
+#include <memory>
 #include <type_traits>
 
 #include "./np_unique_op.h"
 
 namespace mxnet {
 namespace op {
+
+#define MXNET_UNIQUE_TYPE_SWITCH_WITH_BOOL(type, DType, ...)   \
+  switch (type) {                                              \
+    case mshadow::kFloat32: {                                  \
+      typedef float DType;                                     \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kFloat64: {                                  \
+      typedef double DType;                                    \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kFloat16:                                    \
+      LOG(FATAL) << "This operation does not support float16"; \
+      break;                                                   \
+    case mshadow::kUint8: {                                    \
+      typedef uint8_t DType;                                   \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kInt8: {                                     \
+      typedef int8_t DType;                                    \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kInt32: {                                    \
+      typedef int32_t DType;                                   \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kInt64: {                                    \
+      typedef int64_t DType;                                   \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    case mshadow::kBool: {                                     \
+      typedef bool DType;                                      \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
+    default:                                                   \
+      LOG(FATAL) << "Unknown type enum " << type;              \
+  }
 
 template <typename DType>
 MSHADOW_XINLINE bool NumpyUniqueIsNan(DType value) {
@@ -124,7 +162,7 @@ void NumpyUniqueCPUNoneAxisImpl(const NumpyUniqueParam& param,
                                 const std::vector<NDArray>& inputs,
                                 const std::vector<OpReqType>& req,
                                 const std::vector<NDArray>& outputs) {
-  MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
+  MXNET_UNIQUE_TYPE_SWITCH_WITH_BOOL(outputs[0].dtype(), DType, {
     mshadow::Stream<cpu>* stream = ctx.get_stream<cpu>();
 
     DType* input_data = inputs[0].data().dptr<DType>();
@@ -136,13 +174,13 @@ void NumpyUniqueCPUNoneAxisImpl(const NumpyUniqueParam& param,
       return NumpyUniqueValueLess(input_data[i1], input_data[i2]);
     });
     // sorted data in aux
-    std::vector<DType> aux(input_size);
+    std::unique_ptr<DType[]> aux(new DType[input_size]);
     mxnet_op::Kernel<UniqueComputeAuxCPUKernel, cpu>::Launch(
-        stream, input_size, aux.data(), input_data, perm.data(), 1);
+        stream, input_size, aux.get(), input_data, perm.data(), 1);
     // calculate unique mask
     std::vector<dim_t> mask(input_size);
     mxnet_op::Kernel<UniqueComputeMaskCPUKernel, cpu>::Launch(
-        stream, input_size, mask.data(), aux.data(), 1);
+        stream, input_size, mask.data(), aux.get(), 1);
     // Calculate prefix sum
     std::vector<int32_t> prefix_sum(input_size, 0);
     int32_t valid_num = 0;
@@ -157,7 +195,7 @@ void NumpyUniqueCPUNoneAxisImpl(const NumpyUniqueParam& param,
       const_cast<NDArray&>(outputs[0]).Init(s);
       // launch kernal to obtain unique array, reuse boolean_mask kernel
       mxnet_op::Kernel<BooleanMaskForwardCPUKernel, cpu>::Launch(
-          stream, input_size, outputs[0].data().dptr<DType>(), aux.data(), prefix_sum.data(), 1);
+          stream, input_size, outputs[0].data().dptr<DType>(), aux.get(), prefix_sum.data(), 1);
     }
     // handle other optional outputs
     int output_flag = 0;
@@ -209,7 +247,7 @@ void NumpyUniqueCPUImpl(const NumpyUniqueParam& param,
   CHECK(param.axis.value() >= -1 * inputs[0].shape().ndim() &&
         param.axis.value() < inputs[0].shape().ndim())
       << "Axis should be in the range of [-r, r-1] where r is the rank of input tensor";
-  MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
+  MXNET_UNIQUE_TYPE_SWITCH_WITH_BOOL(outputs[0].dtype(), DType, {
     using namespace mshadow;
     using namespace mshadow::expr;
     Stream<cpu>* stream = ctx.get_stream<cpu>();
@@ -338,7 +376,7 @@ void NumpyUniqueCPUForward(const nnvm::NodeAttrs& attrs,
     mxnet::TShape shape_1(1, 1);
     if (NumpyUniqueShouldWrite(req, 0)) {
       const_cast<NDArray&>(outputs[0]).Init(shape_1);
-      MSHADOW_TYPE_SWITCH(outputs[0].dtype(), DType, {
+      MXNET_UNIQUE_TYPE_SWITCH_WITH_BOOL(outputs[0].dtype(), DType, {
         Tensor<cpu, 1, DType> unique_out =
             outputs[0].data().get_with_shape<cpu, 1, DType>(Shape1(1), s);
         ASSIGN_DISPATCH(unique_out, req[0], inputs[0].data().dptr<DType>()[0]);

@@ -9655,6 +9655,25 @@ def test_np_unique_mixed_output_requests():
 
 
 @use_np
+def test_np_unique_bool():
+    data = np.array([True, False, True], dtype='bool')
+    expected = onp.unique(data.asnumpy(), return_index=True, return_inverse=True, return_counts=True)
+    actual = np.unique(data, return_index=True, return_inverse=True, return_counts=True)
+    for mx_out, np_out in zip(actual, expected):
+        assert mx_out.shape == np_out.shape
+        assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+    axis_data = np.array([[True, False], [True, False], [False, True]], dtype='bool')
+    expected = onp.unique(axis_data.asnumpy(), return_index=True,
+                          return_inverse=True, return_counts=True, axis=0)
+    actual = np.unique(axis_data, return_index=True, return_inverse=True,
+                       return_counts=True, axis=0)
+    for mx_out, np_out in zip(actual, expected):
+        assert mx_out.shape == np_out.shape
+        assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
 def test_np_unique_empty_axis_outputs():
     class TestUnique(HybridBlock):
         def __init__(self, axis):

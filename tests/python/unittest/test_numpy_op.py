@@ -1256,6 +1256,19 @@ def test_np_shape():
 
 
 @use_np
+def test_np_creation_shape_validation():
+    for op in (np.zeros, np.ones):
+        with pytest.raises(TypeError, match="interpreted as an integer"):
+            op((2.5,))
+        with pytest.raises(ValueError, match="negative dimensions"):
+            op((-1,))
+    with pytest.raises(TypeError, match="interpreted as an integer"):
+        np.full((2.5,), 1)
+    with pytest.raises(ValueError, match="negative dimensions"):
+        np.full((-1,), 1)
+
+
+@use_np
 @pytest.mark.parametrize('config', [
     (0.0, 1.0, 10),
     (-2, 4, 30),
@@ -5750,6 +5763,15 @@ def test_np_random_rayleigh():
     def _test_rayleigh_exception(scale):
         output = np.random.rayleigh(scale=scale).asnumpy()
     assertRaises(ValueError, _test_rayleigh_exception, -1)
+
+
+@use_np
+def test_np_symbol_random_rayleigh_default_scale():
+    mx.random.seed(123)
+    mx_out = np.random.rayleigh(size=5)
+    mx.random.seed(123)
+    sym_out = mx.sym.np.random.rayleigh(size=5).eval()[0]
+    assert_almost_equal(sym_out.asnumpy(), mx_out.asnumpy(), rtol=1e-5, atol=1e-6)
 
 
 @use_np

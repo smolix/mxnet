@@ -570,7 +570,7 @@ def gamma(shape, scale=1.0, size=None, dtype=None, ctx=None, out=None):
     raise ValueError("Distribution parameters must be either _Symbol or numbers")
 
 
-def rayleigh(scale=0.0, size=None, ctx=None, out=None):
+def rayleigh(scale=1.0, size=None, ctx=None, out=None):
     r"""Draw samples from a Rayleigh distribution.
     The :math:`\chi` and Weibull distributions are generalizations of the
     Rayleigh.

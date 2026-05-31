@@ -69,6 +69,25 @@ def _as_np_ndarray(obj):
     return ret
 
 
+def _normalize_shape(shape):
+    if isinstance(shape, (integer_types, _np.integer)):
+        if shape < 0:
+            raise ValueError("negative dimensions are not allowed")
+        return int(shape)
+    if isinstance(shape, (tuple, list)):
+        dims = []
+        for dim in shape:
+            if not isinstance(dim, (integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(dim).__name__))
+            if dim < 0:
+                raise ValueError("negative dimensions are not allowed")
+            dims.append(int(dim))
+        return tuple(dims)
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(shape).__name__))
+
+
 @set_module('mxnet.ndarray.numpy')
 def shape(a):
     """
@@ -134,6 +153,7 @@ def zeros(shape, dtype=None, order='C', device=None):  # pylint: disable=redefin
     """
     if order != 'C':
         raise NotImplementedError
+    shape = _normalize_shape(shape)
     # If the following code (4 lines) regarding device is removed
     # np.zeros((3, 4)) can be as fast as 4.96 us
     if device is None:
@@ -175,6 +195,7 @@ def ones(shape, dtype=None, order='C', device=None):  # pylint: disable=redefine
     """
     if order != 'C':
         raise NotImplementedError
+    shape = _normalize_shape(shape)
     if device is None:
         device = str(current_device())
     else:
@@ -394,6 +415,7 @@ def full(shape, fill_value, dtype=None, order='C', device=None, out=None):  # py
     """
     if order != 'C':
         raise NotImplementedError
+    shape = _normalize_shape(shape)
     if not isinstance(fill_value, NDArray) and not isinstance(fill_value, (bool,) + numeric_types):
         fill_value = _as_np_ndarray(fill_value)
     if isinstance(fill_value, NDArray):

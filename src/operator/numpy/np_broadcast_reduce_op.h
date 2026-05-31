@@ -36,6 +36,21 @@
 namespace mxnet {
 namespace op {
 
+inline int NumpyDefaultAccumulatorType(const int dtype) {
+  switch (dtype) {
+    case mshadow::kBool:
+    case mshadow::kInt8:
+    case mshadow::kInt16:
+    case mshadow::kInt32:
+    case mshadow::kUint8:
+    case mshadow::kUint16:
+    case mshadow::kUint32:
+      return mshadow::kInt64;
+    default:
+      return dtype;
+  }
+}
+
 struct NumpyReduceAxesParam : public dmlc::Parameter<NumpyReduceAxesParam> {
   dmlc::optional<mxnet::Tuple<int>> axis;
   dmlc::optional<int> dtype;

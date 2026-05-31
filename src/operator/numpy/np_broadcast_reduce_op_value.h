@@ -56,11 +56,8 @@ inline bool NumpySumType(const nnvm::NodeAttrs& attrs,
              "int32, int64, float32, float64.";
     }
     TYPE_ASSIGN_CHECK(*out_attrs, 0, param.dtype.value());
-  } else if (in_attrs->at(0) == mshadow::kBool) {
-    TYPE_ASSIGN_CHECK(*out_attrs, 0, mshadow::kInt64);
   } else {
-    TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
-    TYPE_ASSIGN_CHECK(*in_attrs, 0, out_attrs->at(0));
+    TYPE_ASSIGN_CHECK(*out_attrs, 0, NumpyDefaultAccumulatorType(in_attrs->at(0)));
   }
 
   return out_attrs->at(0) != -1 && in_attrs->at(0) != -1;

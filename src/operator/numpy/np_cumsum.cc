@@ -23,6 +23,7 @@
  */
 
 #include "./np_cumsum-inl.h"
+#include "./np_broadcast_reduce_op.h"
 
 namespace mxnet {
 namespace op {
@@ -53,11 +54,7 @@ inline bool CumsumType(const nnvm::NodeAttrs& attrs,
   if (param.dtype.has_value()) {
     TYPE_ASSIGN_CHECK(*out_attrs, 0, param.dtype.value());
   } else {
-    TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
-    TYPE_ASSIGN_CHECK(*in_attrs, 0, out_attrs->at(0));
-    if (out_attrs->at(0) == mshadow::kBool) {
-      (*out_attrs)[0] = mshadow::kInt64;
-    }
+    TYPE_ASSIGN_CHECK(*out_attrs, 0, NumpyDefaultAccumulatorType(in_attrs->at(0)));
   }
 
   return out_attrs->at(0) != -1 && in_attrs->at(0) != -1;

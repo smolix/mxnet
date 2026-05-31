@@ -753,6 +753,15 @@ def test_np_sum(shape, axis, keepdims, itype, acc_type, dtype, hybridize):
 
 
 @use_np
+def test_np_sum_default_integer_dtype():
+    data = np.array([100, 30, 2], dtype='int8')
+    mx_out = np.sum(data)
+    np_out = onp.sum(data.asnumpy())
+    assert mx_out.dtype == np_out.dtype
+    assert_almost_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
 @pytest.mark.parametrize('bool_agg', ['all', 'any'])
 @pytest.mark.parametrize('shape', [
     (), (5, ), (10, ), (2, 5), (5, 5), (10, 10),
@@ -2449,6 +2458,15 @@ def test_np_prod():
                         mx_out = np.prod(x, axis=axis, dtype=dtype, keepdims=keepdims)
                         np_out = onp.prod(x.asnumpy(), axis=axis, keepdims=keepdims).astype(dtype)
                         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5, use_broadcast=False)
+
+
+@use_np
+def test_np_prod_default_integer_dtype():
+    data = np.array([100, 30, 2], dtype='int8')
+    mx_out = np.prod(data)
+    np_out = onp.prod(data.asnumpy())
+    assert mx_out.dtype == np_out.dtype
+    assert_almost_equal(mx_out.asnumpy(), np_out)
 
 
 @use_np
@@ -5693,6 +5711,30 @@ def test_np_cumsum():
                     mx_out = np.cumsum(x, axis=axis, dtype=otype)
                     assert mx_out.shape == np_out.shape
                     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+    data = np.array([100, 30, 2], dtype='int8')
+    mx_out = np.cumsum(data)
+    np_out = onp.cumsum(data.asnumpy())
+    assert mx_out.dtype == np_out.dtype
+    assert_almost_equal(mx_out.asnumpy(), np_out)
+
+    data = np.arange(6, dtype='float32').reshape((2, 3))
+    data.attach_grad()
+    with mx.autograd.record():
+        mx_out = np.cumsum(data, axis=-1)
+    np_out = onp.cumsum(data.asnumpy(), axis=-1)
+    assert_almost_equal(mx_out.asnumpy(), np_out)
+    mx_out.backward()
+    assert_almost_equal(data.grad.asnumpy(),
+                        onp.array([[3.0, 2.0, 1.0], [3.0, 2.0, 1.0]], dtype=onp.float32))
+
+    data = np.array([1.0, 2.0, 3.0], dtype='float32')
+    data.attach_grad('add')
+    data.grad[:] = 5
+    with mx.autograd.record():
+        out = np.cumsum(data).sum()
+    out.backward()
+    assert_almost_equal(data.grad.asnumpy(), onp.array([8.0, 7.0, 6.0], dtype=onp.float32))
 
 
 @use_np

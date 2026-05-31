@@ -60,7 +60,13 @@ inline void FixNegativeAxes(mxnet::Tuple<int>* a_axes_param, const mxnet::TShape
   }
   const int a_ndim = a_shape.ndim();
   for (auto& i : *a_axes_param) {
-    i = (i + a_ndim) % a_ndim;
+    CHECK_GE(i, -a_ndim) << "axis " << i << " is out of bounds for array of dimension "
+                         << a_ndim;
+    CHECK_LT(i, a_ndim) << "axis " << i << " is out of bounds for array of dimension "
+                        << a_ndim;
+    if (i < 0) {
+      i += a_ndim;
+    }
   }
 }
 

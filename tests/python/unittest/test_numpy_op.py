@@ -7673,6 +7673,17 @@ def test_np_linalg_tensorsolve():
 
 
 @use_np
+def test_np_linalg_tensorsolve_invalid_axes():
+    a = mx.sym.var('a').as_np_ndarray()
+    b = mx.sym.var('b').as_np_ndarray()
+
+    for axes in [(99,), (-5,)]:
+        tensorsolve = mx.sym.np.linalg.tensorsolve(a, b, axes=axes)
+        with pytest.raises(MXNetError, match="out of bounds"):
+            tensorsolve.infer_shape(a=(2, 2, 2, 2), b=(2, 2))
+
+
+@use_np
 @requires_lapack
 def test_np_linalg_lstsq():
     class TestLstsq(HybridBlock):

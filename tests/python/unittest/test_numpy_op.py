@@ -7243,6 +7243,20 @@ def test_np_linalg_norm_integer_promotes_to_float():
 
 
 @use_np
+def test_np_linalg_trace_diagonal_use_last_axes():
+    data_np = onp.arange(24).reshape((2, 3, 4))
+    data = np.array(data_np)
+
+    trace = np.linalg.trace(data)
+    expected_trace = onp.trace(data_np, axis1=-2, axis2=-1)
+    assert_almost_equal(trace.asnumpy(), expected_trace)
+
+    diag = np.linalg.diagonal(data)
+    expected_diag = onp.diagonal(data_np, axis1=-2, axis2=-1)
+    assert_almost_equal(diag.asnumpy(), expected_diag)
+
+
+@use_np
 @pytest.mark.parametrize('hybridize', [True, False])
 def test_np_linalg_vector_norm_negative_tuple_axes(hybridize):
     class TestVectorNorm(HybridBlock):

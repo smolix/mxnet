@@ -178,8 +178,7 @@ def trace(a, offset=0):
     array([[18., 20., 22.],
         [24., 26., 28.]])
     """
-    # axis1, axis2: defaults are the first two axes of `a`.
-    return _mx_nd_np.trace(a, offset=offset, axis1=0, axis2=1, out=None)
+    return _mx_nd_np.trace(a, offset=offset, axis1=-2, axis2=-1, out=None)
 
 
 def tensordot(a, b, axes=2):
@@ -278,7 +277,7 @@ def diagonal(a, offset=0):
     >>> np.linalg.diagonal(x, offset=-1)
     array([3., 7.])
     """
-    return _mx_nd_np.diag(a, k=offset)
+    return _mx_nd_np.diagonal(a, offset=offset, axis1=-2, axis2=-1)
 
 
 def cross(a, b, axis=-1):

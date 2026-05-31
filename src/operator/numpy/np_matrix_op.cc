@@ -955,6 +955,7 @@ NNVM_REGISTER_OP(_backward_np_dstack)
     .set_attr<FCompute>("FCompute<cpu>", DStackGradCompute<cpu>);
 
 DMLC_REGISTER_PARAMETER(NumpyTrilindicesParam);
+DMLC_REGISTER_PARAMETER(NumpyTriangleIndicesFromParam);
 
 inline bool TrilindicesOpType(const nnvm::NodeAttrs& attrs,
                               std::vector<int>* in_attrs,
@@ -997,6 +998,42 @@ inline bool TrilindicesOpShape(const nnvm::NodeAttrs& attrs,
   return shape_is_known(out_attrs->at(0)) && shape_is_known(out_attrs->at(1));
 }
 
+inline bool TriangleIndicesFromOpType(const nnvm::NodeAttrs& attrs,
+                                      std::vector<int>* in_attrs,
+                                      std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 1U);
+  CHECK_EQ(out_attrs->size(), 2U);
+
+  TYPE_ASSIGN_CHECK(*out_attrs, 0, mshadow::kInt64);
+  TYPE_ASSIGN_CHECK(*out_attrs, 1, mshadow::kInt64);
+
+  return true;
+}
+
+template <bool upper>
+inline bool TriangleIndicesFromOpShape(const nnvm::NodeAttrs& attrs,
+                                       mxnet::ShapeVector* in_attrs,
+                                       mxnet::ShapeVector* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 1U);
+  CHECK_EQ(out_attrs->size(), 2U);
+
+  const mxnet::TShape& ishape = (*in_attrs)[0];
+  if (!mxnet::shape_is_known(ishape)) {
+    return false;
+  }
+  CHECK_EQ(ishape.ndim(), 2) << "ValueError: input array must be 2-d";
+
+  const NumpyTriangleIndicesFromParam& param =
+      nnvm::get<NumpyTriangleIndicesFromParam>(attrs.parsed);
+  index_t length = TriangleIndicesLength(ishape[0], ishape[1], param.k, upper);
+  mxnet::TShape oshape(1, length);
+
+  SHAPE_ASSIGN_CHECK(*out_attrs, 0, oshape);
+  SHAPE_ASSIGN_CHECK(*out_attrs, 1, oshape);
+
+  return shape_is_known(out_attrs->at(0)) && shape_is_known(out_attrs->at(1));
+}
+
 NNVM_REGISTER_OP(_npi_tril_indices)
     .set_attr_parser(ParamParser<NumpyTrilindicesParam>)
     .set_num_inputs(0)
@@ -1009,6 +1046,42 @@ NNVM_REGISTER_OP(_npi_tril_indices)
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
                                 })
     .add_arguments(NumpyTrilindicesParam::__FIELDS__());
+
+NNVM_REGISTER_OP(_npi_tril_indices_from)
+    .set_attr_parser(ParamParser<NumpyTriangleIndicesFromParam>)
+    .set_num_inputs(1)
+    .set_num_outputs(2)
+    .set_attr<nnvm::FListInputNames>("FListInputNames",
+                                     [](const NodeAttrs& attrs) {
+                                       return std::vector<std::string>{"data"};
+                                     })
+    .set_attr<mxnet::FInferShape>("FInferShape", TriangleIndicesFromOpShape<false>)
+    .set_attr<nnvm::FInferType>("FInferType", TriangleIndicesFromOpType)
+    .set_attr<FCompute>("FCompute<cpu>", TriangleIndicesFromOpForward<cpu, false>)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& n) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
+    .add_argument("data", "NDArray-or-Symbol", "Input ndarray")
+    .add_arguments(NumpyTriangleIndicesFromParam::__FIELDS__());
+
+NNVM_REGISTER_OP(_npi_triu_indices_from)
+    .set_attr_parser(ParamParser<NumpyTriangleIndicesFromParam>)
+    .set_num_inputs(1)
+    .set_num_outputs(2)
+    .set_attr<nnvm::FListInputNames>("FListInputNames",
+                                     [](const NodeAttrs& attrs) {
+                                       return std::vector<std::string>{"data"};
+                                     })
+    .set_attr<mxnet::FInferShape>("FInferShape", TriangleIndicesFromOpShape<true>)
+    .set_attr<nnvm::FInferType>("FInferType", TriangleIndicesFromOpType)
+    .set_attr<FCompute>("FCompute<cpu>", TriangleIndicesFromOpForward<cpu, true>)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& n) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
+    .add_argument("data", "NDArray-or-Symbol", "Input ndarray")
+    .add_arguments(NumpyTriangleIndicesFromParam::__FIELDS__());
 
 inline bool NumpyRollShape(const nnvm::NodeAttrs& attrs,
                            mxnet::ShapeVector* in_attrs,

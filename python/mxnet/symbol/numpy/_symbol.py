@@ -2496,7 +2496,7 @@ def tril_indices_from(arr, k=0):
     """
     Return the indices for the lower-triangle of arr.
     """
-    return _nonzero_columns(tril(ones_like(arr), k))
+    return _npi.tril_indices_from(arr, k)
 
 
 @set_module('mxnet.symbol.numpy')
@@ -2504,7 +2504,7 @@ def triu_indices_from(arr, k=0):
     """
     Return the indices for the upper-triangle of arr.
     """
-    return _nonzero_columns(triu(ones_like(arr), k))
+    return _npi.triu_indices_from(arr, k)
 
 
 @set_module('mxnet.symbol.numpy')

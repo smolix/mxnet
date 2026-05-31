@@ -9523,6 +9523,12 @@ def test_np_symbol_triangle_indices_from():
         assert same(exe.outputs[0], expected[0])
         assert same(exe.outputs[1], expected[1])
 
+    x = mx.sym.var('x').as_np_ndarray()
+    for func in [mx.sym.np.tril_indices_from, mx.sym.np.triu_indices_from]:
+        out = mx.sym.Group(func(x))
+        with pytest.raises(MXNetError, match="input array must be 2-d"):
+            out.infer_shape(x=(2, 2, 2))
+
 
 @use_np
 def test_np_triu_indices_negative_dimensions():

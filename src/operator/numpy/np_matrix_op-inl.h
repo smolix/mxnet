@@ -405,6 +405,18 @@ struct NumpyTrilindicesParam : public dmlc::Parameter<NumpyTrilindicesParam> {
   }
 };
 
+struct NumpyTriangleIndicesFromParam : public dmlc::Parameter<NumpyTriangleIndicesFromParam> {
+  index_t k;
+  DMLC_DECLARE_PARAMETER(NumpyTriangleIndicesFromParam) {
+    DMLC_DECLARE_FIELD(k).set_default(0).describe("Diagonal offset");
+  }
+  void SetAttrDict(std::unordered_map<std::string, std::string>* dict) {
+    std::ostringstream k_s;
+    k_s << k;
+    (*dict)["k"] = k_s.str();
+  }
+};
+
 template <int req0, int req1>
 struct TrilindicesOpForwardImpl {
   template <typename DType>
@@ -477,6 +489,116 @@ void TrilindicesOpForward(const nnvm::NodeAttrs& attrs,
     MXNET_REQ_TYPE_SWITCH(req[0], req0_type, {
       MXNET_REQ_TYPE_SWITCH(req[1], req1_type, {
         Kernel<TrilindicesOpForwardImpl<req0_type, req1_type>, xpu>::Launch(
+            s, length, out_data0.dptr<DType>(), out_data1.dptr<DType>(), indices, length);
+      });
+    });
+  });
+}
+
+inline index_t TriangleIndicesLength(index_t n, index_t m, index_t k, bool upper) {
+  index_t length = 0;
+  if (upper) {
+    for (index_t i = 0; i < n; ++i) {
+      index_t start = std::max(static_cast<index_t>(0), i + k);
+      if (start < m) {
+        length += m - start;
+      }
+    }
+  } else {
+    index_t end = k;
+    for (index_t i = 0; i < n; ++i) {
+      index_t mi = std::min(end, m - 1);
+      if (mi >= 0) {
+        length += mi + 1;
+      }
+      end++;
+    }
+  }
+  return length;
+}
+
+template <bool upper, int req0, int req1>
+struct TriangleIndicesFromOpForwardImpl {
+  template <typename DType>
+  MSHADOW_XINLINE static void Map(index_t i,
+                                  DType* out_data0,
+                                  DType* out_data1,
+                                  index_t* data,
+                                  index_t length) {
+    KERNEL_ASSIGN(out_data0[i], req0, data[i]);
+    KERNEL_ASSIGN(out_data1[i], req1, data[i + length]);
+  }
+};
+
+template <typename xpu, bool upper>
+void TriangleIndicesFromOpForward(const nnvm::NodeAttrs& attrs,
+                                  const OpContext& ctx,
+                                  const std::vector<TBlob>& inputs,
+                                  const std::vector<OpReqType>& req,
+                                  const std::vector<TBlob>& outputs) {
+  using namespace mxnet_op;
+  using namespace mshadow;
+  CHECK_EQ(inputs.size(), 1U);
+  CHECK_EQ(outputs.size(), 2U);
+  Stream<xpu>* s = ctx.get_stream<xpu>();
+  const NumpyTriangleIndicesFromParam& param =
+      nnvm::get<NumpyTriangleIndicesFromParam>(attrs.parsed);
+
+  const TBlob& in_data   = inputs[0];
+  const TBlob& out_data0 = outputs[0];
+  const TBlob& out_data1 = outputs[1];
+  CHECK_EQ(out_data0.shape_[0], out_data1.shape_[0]);
+  index_t length = out_data0.shape_[0];
+
+  std::vector<index_t> indices_cpu(2 * length, 0);
+  size_t total_temp_size = 2 * length * sizeof(index_t);
+  Tensor<xpu, 1, char> temp_space =
+      ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(total_temp_size), s);
+  index_t* indices = reinterpret_cast<index_t*>(temp_space.dptr_);
+
+  index_t n   = in_data.shape_[0];
+  index_t m   = in_data.shape_[1];
+  index_t idx = 0;
+  if (upper) {
+    for (index_t i = 0; i < n; ++i) {
+      index_t start = std::max(static_cast<index_t>(0), i + param.k);
+      for (index_t j = start; j < m; ++j) {
+        indices_cpu[idx]          = i;
+        indices_cpu[idx + length] = j;
+        idx++;
+      }
+    }
+  } else {
+    index_t end = param.k;
+    for (index_t i = 0; i < n; ++i) {
+      for (index_t j = 0; j <= std::min(end, m - 1); ++j) {
+        indices_cpu[idx]          = i;
+        indices_cpu[idx + length] = j;
+        idx++;
+      }
+      end++;
+    }
+  }
+
+  if (ctx.run_ctx.ctx.dev_mask() == gpu::kDevMask) {
+#if MXNET_USE_CUDA
+    cudaMemcpyAsync(indices,
+                    indices_cpu.data(),
+                    indices_cpu.size() * sizeof(index_t),
+                    cudaMemcpyHostToDevice,
+                    Stream<gpu>::GetStream(ctx.get_stream<gpu>()));
+#else
+    LOG(FATAL) << "Illegal attempt to use GPU in a CPU-only build";
+#endif
+  } else {
+    std::memcpy(indices, indices_cpu.data(), indices_cpu.size() * sizeof(index_t));
+  }
+
+  CHECK_EQ(req.size(), 2U);
+  MSHADOW_IDX_TYPE_SWITCH(out_data0.type_flag_, DType, {
+    MXNET_REQ_TYPE_SWITCH(req[0], req0_type, {
+      MXNET_REQ_TYPE_SWITCH(req[1], req1_type, {
+        Kernel<TriangleIndicesFromOpForwardImpl<upper, req0_type, req1_type>, xpu>::Launch(
             s, length, out_data0.dptr<DType>(), out_data1.dptr<DType>(), indices, length);
       });
     });

@@ -57,6 +57,16 @@ NNVM_REGISTER_OP(_npi_tril_indices)
                                        [](const NodeAttrs& attrs, const bool) { return false; })
     .set_attr<FCompute>("FCompute<gpu>", TrilindicesOpForward<gpu>);
 
+NNVM_REGISTER_OP(_npi_tril_indices_from)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs& attrs, const bool) { return false; })
+    .set_attr<FCompute>("FCompute<gpu>", TriangleIndicesFromOpForward<gpu, false>);
+
+NNVM_REGISTER_OP(_npi_triu_indices_from)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs& attrs, const bool) { return false; })
+    .set_attr<FCompute>("FCompute<gpu>", TriangleIndicesFromOpForward<gpu, true>);
+
 NNVM_REGISTER_OP(_npi_roll)
     .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
                                        [](const NodeAttrs& attrs, const bool) { return false; })

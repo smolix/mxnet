@@ -46,7 +46,8 @@ __all__ = ['zeros', 'zeros_like', 'ones', 'ones_like', 'full', 'full_like', 'emp
            'logspace', 'expand_dims', 'tile', 'arange', 'array_split', 'split', 'hsplit', 'vsplit', 'dsplit',
            'concatenate', 'append', 'stack', 'vstack', 'row_stack', 'column_stack', 'hstack', 'dstack',
            'average', 'mean', 'maximum', 'fmax', 'minimum', 'fmin', 'any', 'all', 'around', 'round', 'round_',
-           'flatnonzero', 'tril_indices', 'amax', 'amin', 'max', 'min', 'logical_and', 'logical_or', 'logical_xor',
+           'flatnonzero', 'tril_indices', 'triu_indices', 'tril_indices_from', 'triu_indices_from',
+           'amax', 'amin', 'max', 'min', 'logical_and', 'logical_or', 'logical_xor',
            'swapaxes', 'clip', 'argmax', 'argmin', 'std', 'var', 'indices', 'copysign', 'ravel', 'unravel_index',
            'diag_indices_from', 'hanning', 'hamming', 'blackman', 'flip', 'flipud', 'fliplr',
            'hypot', 'bitwise_and', 'bitwise_xor', 'bitwise_or', 'rad2deg', 'deg2rad', 'unique', 'lcm', 'gcd', 'interp',
@@ -2470,6 +2471,40 @@ def tril_indices(n, k=0, m=None):
     if m is None:
         m = n
     return _npi.tril_indices(n, k, m)
+
+
+def _nonzero_columns(a):
+    out = _npi.nonzero(a)
+    return out[:, 0], out[:, 1]
+
+
+@set_module('mxnet.symbol.numpy')
+def triu_indices(n, k=0, m=None):
+    """
+    Return the indices for the upper-triangle of an (n, m) array.
+    """
+    if m is None:
+        m = n
+    if n < 0 or m < 0:
+        empty = zeros((0,), dtype='int64')
+        return empty, empty
+    return _nonzero_columns(logical_not(tri(n, m, k - 1, dtype=bool)))
+
+
+@set_module('mxnet.symbol.numpy')
+def tril_indices_from(arr, k=0):
+    """
+    Return the indices for the lower-triangle of arr.
+    """
+    return _nonzero_columns(tril(ones_like(arr), k))
+
+
+@set_module('mxnet.symbol.numpy')
+def triu_indices_from(arr, k=0):
+    """
+    Return the indices for the upper-triangle of arr.
+    """
+    return _nonzero_columns(triu(ones_like(arr), k))
 
 
 @set_module('mxnet.symbol.numpy')

@@ -9384,6 +9384,41 @@ def test_np_tril_indices_partial_outputs():
 
 
 @use_np
+def test_np_symbol_triu_indices():
+    for n, k, m in [(4, 0, 4), (4, 2, 5), (4, -1, 3), (-2, 0, 3), (2, 0, -3)]:
+        row, col = mx.sym.np.triu_indices(n, k=k, m=m)
+        expected = onp.triu_indices(n, k=k, m=m)
+
+        group_exe = mx.sym.Group([row, col])._simple_bind(ctx=mx.cpu())
+        group_exe.forward(is_train=False)
+        assert same(group_exe.outputs[0], expected[0])
+        assert same(group_exe.outputs[1], expected[1])
+
+        row_exe = row._simple_bind(ctx=mx.cpu())
+        row_exe.forward(is_train=False)
+        assert same(row_exe.outputs[0], expected[0])
+
+        col_exe = col._simple_bind(ctx=mx.cpu())
+        col_exe.forward(is_train=False)
+        assert same(col_exe.outputs[0], expected[1])
+
+
+@use_np
+def test_np_symbol_triangle_indices_from():
+    for upper, k in [(False, 0), (False, -1), (True, 0), (True, 1)]:
+        x = mx.sym.var('x').as_np_ndarray()
+        mx_out = mx.sym.np.triu_indices_from(x, k=k) if upper else mx.sym.np.tril_indices_from(x, k=k)
+        expected = onp.triu_indices_from(onp.ones((4, 5)), k=k) if upper else \
+            onp.tril_indices_from(onp.ones((4, 5)), k=k)
+
+        exe = mx.sym.Group(mx_out)._simple_bind(ctx=mx.cpu(), x=(4, 5))
+        exe.forward(is_train=False, x=mx.nd.ones((4, 5)))
+        assert len(mx_out) == 2
+        assert same(exe.outputs[0], expected[0])
+        assert same(exe.outputs[1], expected[1])
+
+
+@use_np
 def test_np_triu_indices_negative_dimensions():
     for n, m in [(-2, None), (2, -2), (-2, 3), (-2, -3), (0, -3)]:
         mx_out = np.triu_indices(n, m=m)

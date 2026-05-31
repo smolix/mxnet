@@ -33,8 +33,10 @@ from .._internal import _set_np_symbol_class
 from . import _internal as _npi
 try:
     from __builtin__ import slice as py_slice
+    from __builtin__ import any as py_any
 except ImportError:
     from builtins import slice as py_slice
+    from builtins import any as py_any
 
 __all__ = ['zeros', 'zeros_like', 'ones', 'ones_like', 'full', 'full_like', 'empty_like', 'bitwise_not', 'invert',
            'delete', 'add', 'broadcast_to', 'subtract', 'multiply', 'divide', 'mod', 'remainder', 'fmod',
@@ -4166,7 +4168,7 @@ def _normalize_symbol_split_indices(indices_or_sections):
             raise ValueError("number sections must be larger than 0")
     elif isinstance(indices_or_sections, (list, set, tuple)):
         indices = [0] + list(indices_or_sections)
-        if any(not isinstance(i, (integer_types, _np.integer)) for i in indices):
+        if py_any(not isinstance(i, (integer_types, _np.integer)) for i in indices):
             raise TypeError("indices_or_sections must be an integer or a sequence of integers")
     else:
         raise ValueError('indices_or_sections must either int or tuple / list / set of ints')

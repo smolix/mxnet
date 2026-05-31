@@ -4770,6 +4770,26 @@ def test_np_split_ndarray_indices():
 
 
 @use_np
+def test_sym_np_split_sequence_indices():
+    def check_split(op, shape, indices_or_sections):
+        data = onp.arange(onp.prod(shape), dtype=onp.float32).reshape(shape)
+        data_sym = mx.sym.var('data').as_np_ndarray()
+        outs = op(data_sym, indices_or_sections)
+        expected = getattr(onp, op.__name__)(data, indices_or_sections)
+        exe = mx.sym.Group([out.as_nd_ndarray() for out in outs])._bind(
+            mx.cpu(), {'data': mx.nd.array(data)})
+        exe.forward()
+        for mx_out, np_out in zip(exe.outputs, expected):
+            assert_almost_equal(mx_out.asnumpy(), np_out)
+
+    check_split(mx.sym.np.split, (4,), [2])
+    check_split(mx.sym.np.array_split, (4,), [2])
+    check_split(mx.sym.np.hsplit, (2, 4), [2])
+    check_split(mx.sym.np.vsplit, (4, 2), [2])
+    check_split(mx.sym.np.dsplit, (2, 3, 4), [2])
+
+
+@use_np
 def test_np_split_float_ndarray_indices_rejected():
     configs = [
         ('split', np.arange(5, dtype='float32'), np.array([2, 4], dtype='float32'), 0),

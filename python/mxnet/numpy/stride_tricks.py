@@ -19,6 +19,7 @@
 
 from ..ndarray.ndarray import _get_broadcast_shape
 from ..ndarray import numpy as _mx_nd_np
+from .multiarray import asarray
 
 
 __all__ = ['broadcast_arrays']
@@ -56,6 +57,7 @@ def broadcast_arrays(*args):
            [1., 2., 3.]]), array([[4., 4., 4.],
            [5., 5., 5.]])]
     """
+    args = [asarray(array) for array in args]
     shape = _broadcast_shape(*args)
 
     if all(array.shape == shape for array in args):

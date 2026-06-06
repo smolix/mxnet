@@ -1784,6 +1784,7 @@ struct ClipParam : public dmlc::Parameter<ClipParam> {
   }
 };
 
+template <int req>
 struct clip {
   template <typename DType>
   MSHADOW_XINLINE static void Map(index_t i,
@@ -1793,15 +1794,16 @@ struct clip {
                                   const float a_max) {
     DType data = datas[i];
     if (data > a_max) {
-      out[i] = a_max;
+      KERNEL_ASSIGN(out[i], req, DType(a_max));
     } else if (data < a_min) {
-      out[i] = a_min;
+      KERNEL_ASSIGN(out[i], req, DType(a_min));
     } else {
-      out[i] = data;
+      KERNEL_ASSIGN(out[i], req, data);
     }
   }
 };
 
+template <int req>
 struct clip_grad {
   template <typename DType>
   MSHADOW_XINLINE static void Map(index_t i,
@@ -1812,11 +1814,11 @@ struct clip_grad {
                                   const float a_max) {
     DType data = datas[i];
     if (data > a_max) {
-      out[i] = 0;
+      KERNEL_ASSIGN(out[i], req, DType(0));
     } else if (data < a_min) {
-      out[i] = 0;
+      KERNEL_ASSIGN(out[i], req, DType(0));
     } else {
-      out[i] = grad[i];
+      KERNEL_ASSIGN(out[i], req, grad[i]);
     }
   }
 };
@@ -1833,12 +1835,14 @@ void Clip(const nnvm::NodeAttrs& attrs,
   Stream<xpu>* s = ctx.get_stream<xpu>();
 
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    mxnet_op::Kernel<mxnet::op::clip, xpu>::Launch(s,
-                                                   outputs[0].Size(),
-                                                   outputs[0].dptr<DType>(),
-                                                   inputs[0].dptr<DType>(),
-                                                   param.a_min,
-                                                   param.a_max);
+    MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+      mxnet_op::Kernel<mxnet::op::clip<req_type>, xpu>::Launch(s,
+                                                               outputs[0].Size(),
+                                                               outputs[0].dptr<DType>(),
+                                                               inputs[0].dptr<DType>(),
+                                                               param.a_min,
+                                                               param.a_max);
+    });
   });
 }
 
@@ -1866,13 +1870,15 @@ void ClipGrad_(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(inputs[0].type_flag_, outputs[0].type_flag_);
   Stream<xpu>* s = ctx.get_stream<xpu>();
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    Kernel<clip_grad, xpu>::Launch(s,
-                                   outputs[0].Size(),
-                                   outputs[0].dptr<DType>(),
-                                   inputs[0].dptr<DType>(),
-                                   inputs[1].dptr<DType>(),
-                                   param.a_min,
-                                   param.a_max);
+    MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+      Kernel<clip_grad<req_type>, xpu>::Launch(s,
+                                               outputs[0].Size(),
+                                               outputs[0].dptr<DType>(),
+                                               inputs[0].dptr<DType>(),
+                                               inputs[1].dptr<DType>(),
+                                               param.a_min,
+                                               param.a_max);
+    });
   });
 }
 
@@ -2492,8 +2498,14 @@ inline bool StackOpShape(const nnvm::NodeAttrs& attrs,
   const StackParam& param = dmlc::get<StackParam>(attrs.parsed);
 
   mxnet::TShape dshape;
-  for (const mxnet::TShape& i : (*in_attrs)) {
-    shape_assign(&dshape, i);
+  for (size_t i = 0; i < in_attrs->size(); ++i) {
+    const mxnet::TShape& input_shape = in_attrs->at(i);
+    if (!shape_assign(&dshape, input_shape)) {
+      std::ostringstream os;
+      os << "all input arrays must have the same shape; input 0 has shape " << dshape
+         << " but input " << i << " has shape " << input_shape;
+      throw mxnet::op::InferShapeError(os.str(), i);
+    }
   }
   if (!shape_is_known(dshape))
     return false;
@@ -3077,6 +3089,32 @@ inline mxnet::TShape GetSplitIndices(const mxnet::TShape& ishape, int axis, int 
   return indices;
 }
 
+inline index_t NormalizeSplitIndex(index_t idx, index_t axis_size) {
+  if (idx < 0) {
+    idx += axis_size;
+  }
+  if (idx < 0) {
+    return 0;
+  }
+  if (idx > axis_size) {
+    return axis_size;
+  }
+  return idx;
+}
+
+inline mxnet::TShape GetNormalizedSplitIndices(const mxnet::TShape& ishape,
+                                               int axis,
+                                               const SplitParam& param) {
+  mxnet::TShape indices =
+      (param.sections > 0) ? GetSplitIndices(ishape, axis, param.sections) : param.indices;
+  if (param.sections == 0) {
+    for (index_t i = 0; i < indices.ndim(); ++i) {
+      indices[i] = NormalizeSplitIndex(indices[i], ishape[axis]);
+    }
+  }
+  return indices;
+}
+
 inline bool SplitOpType(const nnvm::NodeAttrs& attrs,
                         std::vector<int>* in_attrs,
                         std::vector<int>* out_attrs) {
@@ -3100,8 +3138,7 @@ inline bool SplitOpShapeImpl(const nnvm::NodeAttrs& attrs,
   const SplitParam& param = nnvm::get<SplitParam>(attrs.parsed);
   mxnet::TShape dshape    = in_attrs->at(split_enum::kData);
   mxnet::TShape ishape    = in_attrs->at(split_enum::kData);
-  const mxnet::TShape indices =
-      (param.sections > 0) ? GetSplitIndices(ishape, real_axis, param.sections) : param.indices;
+  const mxnet::TShape indices = GetNormalizedSplitIndices(ishape, real_axis, param);
   int num_outputs = (param.sections > 0) ? indices.ndim() - 1 : indices.ndim();
   // Pre-compute squeezed output shape for future usage
   mxnet::TShape squeezed_dshape = dshape;
@@ -3265,8 +3302,7 @@ inline void SplitOpForwardImpl(const nnvm::NodeAttrs& attrs,
 
   size_t workspace_size       = 0;
   const mxnet::TShape& ishape = input_data.shape_;
-  const mxnet::TShape split_pts =
-      (param.sections > 0) ? GetSplitIndices(ishape, real_axis, param.sections) : param.indices;
+  const mxnet::TShape split_pts = GetNormalizedSplitIndices(ishape, real_axis, param);
   std::vector<size_t> indices;
   for (const auto& section : split_pts) {
     indices.push_back(section);
@@ -3345,8 +3381,7 @@ inline void SplitOpBackwardImpl(const nnvm::NodeAttrs& attrs,
 
   size_t workspace_size       = 0;
   const mxnet::TShape& ishape = input_grad.shape_;
-  const mxnet::TShape split_pts =
-      (param.sections > 0) ? GetSplitIndices(ishape, real_axis, param.sections) : param.indices;
+  const mxnet::TShape split_pts = GetNormalizedSplitIndices(ishape, real_axis, param);
   std::vector<size_t> indices;
   for (const auto& section : split_pts) {
     indices.push_back(section);

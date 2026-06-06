@@ -139,6 +139,37 @@ void MixedIntRealBinaryElemwiseCompute(const OpContext& ctx,
 }
 
 template <typename xpu, typename OP>
+void CastBothAndBinaryBroadcastCompute(const nnvm::NodeAttrs& attrs,
+                                       const OpContext& ctx,
+                                       const TBlob& lhs,
+                                       const TBlob& rhs,
+                                       const TBlob& out,
+                                       const std::vector<OpReqType>& req,
+                                       const std::vector<TBlob>& outputs) {
+  using namespace mshadow;
+  Stream<xpu>* s = ctx.get_stream<xpu>();
+
+  TBlob temp_tblob_l;
+  TBlob temp_tblob_r;
+  MSHADOW_REAL_TYPE_SWITCH(out.type_flag_, OType, {
+    Tensor<xpu, 1, OType> workspace =
+        ctx.requested[0].get_space_typed<xpu, 1, OType>(Shape1(lhs.Size() + rhs.Size()), s);
+    TBlob temp_tblob = TBlob(workspace);
+    temp_tblob_l     = TBlob(reinterpret_cast<OType*>(temp_tblob.dptr_),
+                         lhs.shape_,
+                         temp_tblob.dev_mask(),
+                         temp_tblob.dev_id());
+    temp_tblob_r     = TBlob(reinterpret_cast<OType*>(temp_tblob.dptr_) + lhs.Size(),
+                         rhs.shape_,
+                         temp_tblob.dev_mask(),
+                         temp_tblob.dev_id());
+  });
+  CastCompute<xpu>(attrs, ctx, {lhs}, {kWriteTo}, {temp_tblob_l});
+  CastCompute<xpu>(attrs, ctx, {rhs}, {kWriteTo}, {temp_tblob_r});
+  BinaryBroadcastCompute<xpu, OP>(attrs, ctx, {temp_tblob_l, temp_tblob_r}, req, outputs);
+}
+
+template <typename xpu, typename OP>
 void MixedIntBinaryElemwiseCompute(const nnvm::NodeAttrs& attrs,
                                    const OpContext& ctx,
                                    const TBlob& lhs,
@@ -242,8 +273,10 @@ void MixedBinaryElemwiseCompute(const nnvm::NodeAttrs& attrs,
   } else if (common::is_float(lhs.type_flag_) || common::is_float(rhs.type_flag_)) {
     if (lhs.type_flag_ == out.type_flag_) {
       MixedIntRealBinaryElemwiseCompute<xpu, ROP>(ctx, lhs, rhs, out, req[0]);
-    } else {
+    } else if (rhs.type_flag_ == out.type_flag_) {
       MixedIntRealBinaryElemwiseCompute<xpu, LOP>(ctx, rhs, lhs, out, req[0]);
+    } else {
+      CastBothAndBinaryBroadcastCompute<xpu, OP>(attrs, ctx, lhs, rhs, out, req, outputs);
     }
   } else {
     MixedIntBinaryElemwiseCompute<xpu, OP>(attrs, ctx, lhs, rhs, out, req[0]);
@@ -378,44 +411,46 @@ void MixedBinaryBroadcastCompute(const nnvm::NodeAttrs& attrs,
             attrs.op->name, ctx, rhs, lhs, out, req[0], ndim, new_oshape, new_rshape, new_lshape);
       }
     } else if (common::is_float(lhs.type_flag_) || common::is_float(rhs.type_flag_)) {
-      CHECK(lhs.type_flag_ == out.type_flag_ || rhs.type_flag_ == out.type_flag_)
-          << "One of the input type should be the same as the output";
-      BROADCAST_NDIM_SWITCH(ndim, NDim, {
-        mshadow::Shape<NDim> oshape  = new_oshape.get<NDim>();
-        mshadow::Shape<NDim> lstride = mxnet_op::calc_stride(new_lshape.get<NDim>());
-        mshadow::Shape<NDim> rstride = mxnet_op::calc_stride(new_rshape.get<NDim>());
-        if (lhs.type_flag_ == out.type_flag_) {
-          MSHADOW_REAL_TYPE_SWITCH(out.type_flag_, LType, {
-            MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(rhs.type_flag_, RType, {
-              mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, ROP>,
-                               xpu>::template LaunchEx<>(s,
-                                                       new_oshape.Size(),
-                                                       req[0],
-                                                       rstride,
-                                                       lstride,
-                                                       oshape,
-                                                       rhs.dptr<RType>(),
-                                                       lhs.dptr<LType>(),
-                                                       out.dptr<LType>());
+      if (lhs.type_flag_ == out.type_flag_ || rhs.type_flag_ == out.type_flag_) {
+        BROADCAST_NDIM_SWITCH(ndim, NDim, {
+          mshadow::Shape<NDim> oshape  = new_oshape.get<NDim>();
+          mshadow::Shape<NDim> lstride = mxnet_op::calc_stride(new_lshape.get<NDim>());
+          mshadow::Shape<NDim> rstride = mxnet_op::calc_stride(new_rshape.get<NDim>());
+          if (lhs.type_flag_ == out.type_flag_) {
+            MSHADOW_REAL_TYPE_SWITCH(out.type_flag_, LType, {
+              MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(rhs.type_flag_, RType, {
+                mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, ROP>,
+                                 xpu>::template LaunchEx<>(s,
+                                                         new_oshape.Size(),
+                                                         req[0],
+                                                         rstride,
+                                                         lstride,
+                                                         oshape,
+                                                         rhs.dptr<RType>(),
+                                                         lhs.dptr<LType>(),
+                                                         out.dptr<LType>());
+              });
             });
-          });
-        } else {
-          MSHADOW_REAL_TYPE_SWITCH(out.type_flag_, RType, {
-            MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(lhs.type_flag_, LType, {
-              mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, LOP>,
-                               xpu>::template LaunchEx<>(s,
-                                                       new_oshape.Size(),
-                                                       req[0],
-                                                       lstride,
-                                                       rstride,
-                                                       oshape,
-                                                       lhs.dptr<LType>(),
-                                                       rhs.dptr<RType>(),
-                                                       out.dptr<RType>());
+          } else {
+            MSHADOW_REAL_TYPE_SWITCH(out.type_flag_, RType, {
+              MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(lhs.type_flag_, LType, {
+                mxnet_op::Kernel<mxnet_op::binary_broadcast_kernel<NDim, LOP>,
+                                 xpu>::template LaunchEx<>(s,
+                                                         new_oshape.Size(),
+                                                         req[0],
+                                                         lstride,
+                                                         rstride,
+                                                         oshape,
+                                                         lhs.dptr<LType>(),
+                                                         rhs.dptr<RType>(),
+                                                         out.dptr<RType>());
+              });
             });
-          });
-        }
-      });
+          }
+        });
+      } else {
+        CastBothAndBinaryBroadcastCompute<xpu, OP>(attrs, ctx, lhs, rhs, out, req, outputs);
+      }
     } else if (!common::is_float(lhs.type_flag_) && !common::is_float(rhs.type_flag_)) {
       TBlob temp_tblob;
       if (lhs.type_flag_ == out.type_flag_) {

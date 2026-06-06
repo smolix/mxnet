@@ -96,7 +96,7 @@ void NumpyBincountForwardImpl<gpu>(const OpContext& ctx,
   using namespace mxnet_op;
   mshadow::Stream<gpu>* s = ctx.get_stream<gpu>();
 
-  MXNET_NO_FLOAT16_TYPE_SWITCH(data.dtype(), DType, {
+  MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(data.dtype(), DType, {
     DType* h_ptr;
     DType* d_ptr;
     int bin                        = minlength;
@@ -122,7 +122,7 @@ void NumpyBincountForwardImpl<gpu>(const OpContext& ctx,
     const_cast<NDArray&>(out).Init(s);  // set the output shape forcefully
   });
 
-  MSHADOW_TYPE_SWITCH(data.dtype(), DType, {
+  MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(data.dtype(), DType, {
     MSHADOW_TYPE_SWITCH(weights.dtype(), OType, {
       size_t out_size = out.shape().Size();
       Kernel<set_zero, gpu>::Launch(s, out_size, out.data().dptr<OType>());
@@ -144,7 +144,7 @@ void NumpyBincountForwardImpl<gpu>(const OpContext& ctx,
   using namespace mxnet_op;
   mshadow::Stream<gpu>* s = ctx.get_stream<gpu>();
 
-  MXNET_NO_FLOAT16_TYPE_SWITCH(data.dtype(), DType, {
+  MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(data.dtype(), DType, {
     DType* h_ptr;
     DType* d_ptr;
     int bin                        = minlength;
@@ -170,7 +170,7 @@ void NumpyBincountForwardImpl<gpu>(const OpContext& ctx,
     const_cast<NDArray&>(out).Init(s);  // set the output shape forcefully
   });
 
-  MSHADOW_TYPE_SWITCH(data.dtype(), DType, {
+  MXNET_INT_TYPE_SWITCH_EXT_WITH_BOOL(data.dtype(), DType, {
     MSHADOW_TYPE_SWITCH(out.dtype(), OType, {
       size_t out_size = out.shape().Size();
       Kernel<set_zero, gpu>::Launch(s, out_size, out.data().dptr<OType>());
@@ -181,6 +181,9 @@ void NumpyBincountForwardImpl<gpu>(const OpContext& ctx,
 }
 
 NNVM_REGISTER_OP(_npi_bincount).set_attr<FComputeEx>("FComputeEx<gpu>", NumpyBincountForward<gpu>);
+
+NNVM_REGISTER_OP(_backward_npi_bincount)
+    .set_attr<FComputeEx>("FComputeEx<gpu>", NumpyBincountBackward<gpu>);
 
 }  // namespace op
 }  // namespace mxnet

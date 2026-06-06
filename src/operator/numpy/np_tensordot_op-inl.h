@@ -57,6 +57,16 @@ inline void ShiftAxes(Tuple<int>* axes_summed, const int ndim) {
   }
 }
 
+inline void CheckTensordotAxes(const Tuple<int>& axes_summed, const int ndim) {
+  std::vector<bool> seen(ndim, false);
+  for (const auto& axis : axes_summed) {
+    CHECK_GE(axis, 0) << "axes don't match array";
+    CHECK_LT(axis, ndim) << "axes don't match array";
+    CHECK(!seen[axis]) << "axes don't match array";
+    seen[axis] = true;
+  }
+}
+
 /**
  * Gets matrix dimensions of a and b after transpose and reshape.
  */
@@ -195,11 +205,21 @@ void MatrixDot(const OpContext& ctx,
 /**
  * Scalar multiply.
  */
+template <typename DType>
+MSHADOW_XINLINE DType NumpyCompatibleMul(DType lhs, DType rhs) {
+  return lhs * rhs;
+}
+
+template <>
+MSHADOW_XINLINE bool NumpyCompatibleMul<bool>(bool lhs, bool rhs) {
+  return lhs && rhs;
+}
+
 template <int req>
 struct scalar_mul_kernel {
   template <typename DType>
   MSHADOW_XINLINE static void Map(index_t i, DType* out, const DType* tensor, const DType* scalar) {
-    KERNEL_ASSIGN(out[i], req, tensor[i] * scalar[0]);
+    KERNEL_ASSIGN(out[i], req, NumpyCompatibleMul(tensor[i], scalar[0]));
   }
 };
 

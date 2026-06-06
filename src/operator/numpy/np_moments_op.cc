@@ -60,10 +60,16 @@ inline bool NumpyMomentsType(const nnvm::NodeAttrs& attrs,
   if (param.dtype.has_value()) {
     TYPE_ASSIGN_CHECK(*out_attrs, 0, param.dtype.value());
   } else {
-    TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
-    TYPE_ASSIGN_CHECK(*in_attrs, 0, out_attrs->at(0));
+    if (common::is_float(in_attrs->at(0))) {
+      TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
+      TYPE_ASSIGN_CHECK(*in_attrs, 0, out_attrs->at(0));
+    } else if (in_attrs->at(0) != -1) {
+      TYPE_ASSIGN_CHECK(*out_attrs, 0, mxnet::common::GetDefaultDtype());
+    }
   }
-  TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(0));
+  if (out_attrs->at(0) != -1) {
+    TYPE_ASSIGN_CHECK(*out_attrs, 1, out_attrs->at(0));
+  }
 
   return out_attrs->at(0) != -1 && in_attrs->at(0) != -1;
 }
@@ -92,7 +98,7 @@ NNVM_REGISTER_OP(_npi_std)
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
                                 })
     .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes);
+    .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseInOut{"_backward_npi_std"});
 
 NNVM_REGISTER_OP(_npi_var)
     .set_num_inputs(1)
@@ -118,7 +124,21 @@ NNVM_REGISTER_OP(_npi_var)
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
                                 })
     .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes);
+    .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseInOut{"_backward_npi_var"});
+
+NNVM_REGISTER_OP(_backward_npi_std)
+    .set_attr_parser(ParamParser<NumpyMomentsParam>)
+    .set_num_inputs(5)
+    .set_num_outputs(1)
+    .set_attr<nnvm::TIsBackward>("TIsBackward", true)
+    .set_attr<FCompute>("FCompute<cpu>", NumpyMomentsBackward<cpu, true>);
+
+NNVM_REGISTER_OP(_backward_npi_var)
+    .set_attr_parser(ParamParser<NumpyMomentsParam>)
+    .set_num_inputs(5)
+    .set_num_outputs(1)
+    .set_attr<nnvm::TIsBackward>("TIsBackward", true)
+    .set_attr<FCompute>("FCompute<cpu>", NumpyMomentsBackward<cpu, false>);
 
 inline bool NumpyWeightedAverageType(const nnvm::NodeAttrs& attrs,
                                      std::vector<int>* in_attrs,
@@ -127,12 +147,24 @@ inline bool NumpyWeightedAverageType(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(in_attrs->size(), (param.weighted ? 2U : 1U));
   CHECK_EQ(out_attrs->size(), 2U);
 
-  TYPE_ASSIGN_CHECK(*in_attrs, 0, out_attrs->at(0));
-  TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
   if (param.weighted) {
-    TYPE_ASSIGN_CHECK(*in_attrs, 1, in_attrs->at(0));
+    if (in_attrs->at(0) != -1) {
+      TYPE_ASSIGN_CHECK(*in_attrs, 1, in_attrs->at(0));
+    } else if (in_attrs->at(1) != -1) {
+      TYPE_ASSIGN_CHECK(*in_attrs, 0, in_attrs->at(1));
+    }
+    if (in_attrs->at(0) != -1) {
+      const int output_type =
+          common::is_float(in_attrs->at(0)) ? in_attrs->at(0) : mxnet::common::GetDefaultDtype();
+      TYPE_ASSIGN_CHECK(*out_attrs, 0, output_type);
+      TYPE_ASSIGN_CHECK(*out_attrs, 1, output_type);
+    }
+  } else if (in_attrs->at(0) != -1) {
+    const int output_type =
+        common::is_float(in_attrs->at(0)) ? in_attrs->at(0) : mxnet::common::GetDefaultDtype();
+    TYPE_ASSIGN_CHECK(*out_attrs, 0, output_type);
+    TYPE_ASSIGN_CHECK(*out_attrs, 1, output_type);
   }
-  TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(0));
 
   return in_attrs->at(0) != -1 && out_attrs->at(0) != -1 &&
          (!param.weighted || (in_attrs->at(1) != -1)) && out_attrs->at(1) != -1;

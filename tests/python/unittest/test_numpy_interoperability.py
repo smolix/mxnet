@@ -495,9 +495,9 @@ def _add_workload_linalg_norm():
                 k_index = B.ndim - row_axis - col_axis
                 for k in range(B.shape[k_index]):
                     if row_axis < col_axis:
-                        OpArgMngr.add_workload('linalg.norm', np.take(B[:], np.array(k), axis=k_index))
+                        OpArgMngr.add_workload('linalg.norm', np.take(B[:], np.array(k, dtype='int64'), axis=k_index))
                     else:
-                        OpArgMngr.add_workload('linalg.norm', np.take(B[:], np.array(k), axis=k_index).T)
+                        OpArgMngr.add_workload('linalg.norm', np.take(B[:], np.array(k, dtype='int64'), axis=k_index).T)
         A = np.arange(1, 25, dtype=dt).reshape(2, 3, 4)
         OpArgMngr.add_workload('linalg.norm', A, ord=None, axis=None)
         OpArgMngr.add_workload('linalg.norm', A, ord=None, axis=None, keepdims=True)

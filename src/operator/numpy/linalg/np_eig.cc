@@ -102,6 +102,7 @@ inline bool EigOpType(const nnvm::NodeAttrs& attrs,
   int a_type = in_attrs->at(0);
   // unsupport float16
   CHECK_NE(a_type, mshadow::kFloat16) << "array type float16 is unsupported in linalg";
+  CHECK_NE(a_type, mshadow::kBool) << "array type bool is unsupported in linalg";
   if (mshadow::kFloat32 == a_type) {
     TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
     TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(0));
@@ -136,7 +137,14 @@ NNVM_REGISTER_OP(_npi_eigh)
                                      [](const NodeAttrs& attrs) {
                                        return std::vector<std::string>{"A"};
                                      })
-    .set_attr<mxnet::FInferShape>("FInferShape", EigOpShape)
+    .set_attr<mxnet::FInferShape>("FInferShape",
+                                  [](const nnvm::NodeAttrs& attrs,
+                                     mxnet::ShapeVector* in_attrs,
+                                     mxnet::ShapeVector* out_attrs) {
+                                    ValidateEighEigvalshUPLO(
+                                        nnvm::get<EighParam>(attrs.parsed).UPLO);
+                                    return EigOpShape(attrs, in_attrs, out_attrs);
+                                  })
     .set_attr<nnvm::FInferType>("FInferType", EigOpType)
     .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
     .set_attr<FCompute>("FCompute<cpu>", EighOpForward<cpu>)

@@ -364,12 +364,6 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         ufunc_list = ["add", "subtract", "multiply", "divide", "true_divide", "floor_divide", "power",
                       "remainder", "bitwise_and", "bitwise_or", "bitwise_xor", "left_shift", "right_shift",
                       "greater", "greater_equal", "less", "less_equal", "not_equal", "equal", "matmul"]
-        if 'out' in kwargs:
-            # need to unfold tuple argument in kwargs
-            out = kwargs['out']
-            if len(out) != 1:
-                raise ValueError('The `out` parameter must have exactly one ndarray')
-            kwargs['out'] = out[0]
 
         if method == '__call__':
             name = ufunc.__name__
@@ -381,20 +375,32 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
                     raise ValueError("Falling back to NumPy operator {} with autograd active is not supported."
                                      "Please consider moving the operator to the outside of the autograd scope.")\
                                      .format(name)
-                new_inputs = [arg.asnumpy() if isinstance(arg, ndarray) else arg for arg in inputs]
+                cur_device = None
+                original_out = kwargs.get('out', None)
+                new_inputs, cur_device = _as_onp_array(inputs, cur_device)
+                new_kwargs, cur_device = _as_onp_array(kwargs, cur_device)
                 if onp_op not in _FALLBACK_ARRAY_UFUNC_WARNED_RECORD:
                     import logging
                     logging.warning("np.%s is a fallback operator, "
                                     "which is actually using official numpy's implementation", name)
                     _FALLBACK_ARRAY_UFUNC_WARNED_RECORD[onp_op] = True
-                out = onp_op(*new_inputs, **kwargs)
-                # Pick the device from any mxnet ndarray input; plain numpy
-                # arrays don't have a `.device` attribute before NumPy 2.x.
-                _dev = next((arg.device for arg in inputs if isinstance(arg, ndarray)),
-                            None)
-                return _as_mx_np_array(out, device=_dev)
+                out = _as_mx_np_array(onp_op(*new_inputs, **new_kwargs), device=cur_device)
+                if isinstance(original_out, tuple):
+                    if len(original_out) == 1:
+                        original_out[0][:] = out
+                        return original_out[0]
+                    for arr, value in zip(original_out, out):
+                        arr[:] = value
+                    return original_out
+                return out
+            if 'out' in kwargs:
+                # need to unfold tuple argument in kwargs
+                out = kwargs['out']
+                if len(out) != 1:
+                    raise ValueError('The `out` parameter must have exactly one ndarray')
+                kwargs['out'] = out[0]
             # ops with np mx_np
-            elif name in ufunc_list and isinstance(inputs[0], _np.ndarray):
+            if name in ufunc_list and isinstance(inputs[0], _np.ndarray):
                 # inplace
                 if 'out' in kwargs:
                     new_inputs = [arg.asnumpy() if isinstance(arg, ndarray) else arg for arg in inputs]
@@ -423,6 +429,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
                                  "Please consider moving the operator to the outside of the autograd scope.")\
                                  .format(func)
             cur_device = None
+            original_out = kwargs.get('out', None)
             new_args, cur_device = _as_onp_array(args, cur_device)
             new_kwargs, cur_device = _as_onp_array(kwargs, cur_device)
             if cur_device is None:
@@ -434,7 +441,11 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
                                 "which is actually using official numpy's implementation.", func_name)
                 _FALLBACK_ARRAY_FUNCTION_WARNED_RECORD[func] = True
             out = func(*new_args, **new_kwargs)
-            return _as_mx_np_array(out, device=cur_device)
+            out = _as_mx_np_array(out, device=cur_device)
+            if isinstance(original_out, ndarray):
+                original_out[:] = out
+                return original_out
+            return out
         else:
             if py_all(issubclass(t, ndarray) for t in types):
                 return mx_np_func(*args, **kwargs)
@@ -630,6 +641,7 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
             idcs = _mx_nd_np.stack([i if isinstance(i, self.__class__) else i.as_np_ndarray() for i in idcs])
         vshape = get_oshape_of_gather_nd_op(self.shape, idcs.shape)
         value_nd = self._prepare_value_nd(value, bcast_shape=vshape, squeeze_axes=new_axes)
+        _npi.gather_nd(self, idcs).wait_to_read()
         self._scatter_set_nd(value_nd, idcs)
 
     # pylint: disable=redefined-outer-name
@@ -911,7 +923,11 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
             if not unsupported:
                 new_shape += (-4,)
                 sliced = _npi.slice(self, begin, end, step)
-                return _mx_nd_np.reshape(sliced, new_shape)
+                # Use the low-level reshape op directly: ``new_shape`` carries
+                # MXNet special codes (-2 copy, -3 merge, -4 split) that the
+                # public np.reshape wrapper rejects (it enforces NumPy/PyTorch
+                # semantics where only -1 is allowed). Mirrors the symbol path.
+                return _npi.reshape(sliced, new_shape)
 
         # Special handling for cases only supported in imperative mode
         if dc.is_deferred_compute():
@@ -2965,7 +2981,7 @@ def broadcast_to(array, shape):  # pylint: disable=redefined-outer-name
         If the array is not compatible with the new shape according to NumPy's
         broadcasting rules.
     """
-    return _mx_nd_np.broadcast_to(array, shape)
+    return _mx_nd_np.broadcast_to(asarray(array), shape)
 
 
 # pylint: disable=too-many-arguments, redefined-outer-name
@@ -3090,7 +3106,7 @@ def empty_like(prototype, dtype=None, device=None, order='C', subok=False, shape
     array([[4.9e-324, 9.9e-324, 1.5e-323], # uninitialized
            [2.0e-323, 2.5e-323, 3.0e-323]])
     """
-    ret = _mx_nd_np.empty_like(prototype, dtype=dtype, order=order, subok=subok, shape=shape)
+    ret = _mx_nd_np.empty_like(asarray(prototype), dtype=dtype, order=order, subok=subok, shape=shape)
     if device is not None:
         ret.to_device(device)
     return ret
@@ -3317,7 +3333,13 @@ def take(a, indices, axis=None, mode='raise', out=None):
     array([[4., 3.],
            [5., 7.]])
     """
-    return _mx_nd_np.take(a, indices, axis, mode, out)
+    if not isinstance(indices, ndarray):
+        indices_np = _np.asarray(indices)
+        if indices_np.dtype.kind not in ('i', 'u', 'b'):
+            raise TypeError('take indices must be integers')
+        index_dtype = 'bool' if indices_np.dtype.kind == 'b' else 'int64'
+        indices = array(indices_np, dtype=index_dtype)
+    return _mx_nd_np.take(asarray(a), indices, axis, mode, out)
 # pylint: enable=redefined-outer-name
 
 
@@ -3422,7 +3444,7 @@ def unique(ar, return_index=False, return_inverse=False, return_counts=False, ax
     >>> u[indices]
     array([1., 2., 6., 4., 2., 3., 2.])
     """
-    return _mx_nd_np.unique(ar, return_index, return_inverse, return_counts, axis)
+    return _mx_nd_np.unique(asarray(ar), return_index, return_inverse, return_counts, axis)
 
 
 @set_module('mxnet.numpy')
@@ -6504,7 +6526,7 @@ def expand_dims(a, axis):
     >>> np.newaxis is None
     True
     """
-    return _mx_nd_np.expand_dims(a, axis)
+    return _mx_nd_np.expand_dims(asarray(a), axis)
 
 
 @set_module('mxnet.numpy')
@@ -6572,7 +6594,7 @@ def tile(A, reps):
     array([2, 2, 2]) # repeating integer `2`
 
     """
-    return _mx_nd_np.tile(A, reps)
+    return _mx_nd_np.tile(asarray(A), reps)
 
 
 @set_module('mxnet.numpy')
@@ -6619,7 +6641,7 @@ def trace(a, offset=0, axis1=0, axis2=1, out=None):
     >>> np.trace(a).shape
     (2, 3)
     """
-    return _mx_nd_np.trace(a, offset, axis1, axis2, out)
+    return _mx_nd_np.trace(asarray(a), offset, axis1, axis2, out)
 
 
 @set_module('mxnet.numpy')
@@ -6662,7 +6684,7 @@ def transpose(a, axes=None):
     >>> np.transpose(x, (1, 0, 2)).shape
     (2, 1, 3)
     """
-    return _mx_nd_np.transpose(a, axes)
+    return _mx_nd_np.transpose(asarray(a), axes)
 
 
 @set_module('mxnet.numpy')
@@ -6702,7 +6724,7 @@ def permute_dims(a, axes=None):
     >>> np.permute_dims(x, (1, 0, 2)).shape
     (2, 1, 3)
     """
-    return _mx_nd_np.transpose(a, axes)
+    return _mx_nd_np.transpose(asarray(a), axes)
 
 
 @set_module('mxnet.numpy')
@@ -6745,7 +6767,7 @@ def repeat(a, repeats, axis=None):
            [3, 4],
            [3, 4]])
     """
-    return _mx_nd_np.repeat(a, repeats, axis)
+    return _mx_nd_np.repeat(asarray(a), repeats, axis)
 
 
 @set_module('mxnet.numpy')
@@ -7533,7 +7555,7 @@ def stack(arrays, axis=0, out=None):
            [2., 3.],
            [3., 4.]])
     """
-    return _mx_nd_np.stack(arrays, axis=axis, out=out)
+    return _mx_nd_np.stack([asarray(arr) for arr in arrays], axis=axis, out=out)
 
 
 @set_module('mxnet.numpy')
@@ -7736,7 +7758,7 @@ def dstack(arrays):
            [[2, 3]],
            [[3, 4]]])
     """
-    return _npi.dstack(*arrays)
+    return _mx_nd_np.dstack(arrays)
 
 
 @set_module('mxnet.numpy')
@@ -8873,7 +8895,7 @@ def ravel(x, order='C'):
     >>> print(np.ravel(x.T))
     [1. 4. 2. 5. 3. 6.]
     """
-    return _mx_nd_np.ravel(x, order)
+    return _mx_nd_np.ravel(asarray(x), order)
 
 
 @set_module('mxnet.numpy')
@@ -9289,7 +9311,7 @@ def flip(m, axis=None, out=None):
            [[1, 0],
             [3, 2]]])
     """
-    return _mx_nd_np.flip(m, axis, out=out)
+    return _mx_nd_np.flip(asarray(m), axis, out=out)
 
 
 @set_module('mxnet.numpy')
@@ -9998,7 +10020,7 @@ def inner(a, b):
     array([[ 14.,  38.,  62.],
            [ 86., 110., 134.]])
     """
-    return tensordot(a, b, [-1, -1])
+    return tensordot(asarray(a), asarray(b), [-1, -1])
 
 
 @set_module('mxnet.numpy')
@@ -10051,7 +10073,7 @@ def outer(a, b):
            [-2., -1.,  0.,  1.,  2.],
            [-2., -1.,  0.,  1.,  2.]])
     """
-    return tensordot(a.flatten(), b.flatten(), 0)
+    return tensordot(asarray(a).flatten(), asarray(b).flatten(), 0)
 
 
 @set_module('mxnet.numpy')
@@ -10572,7 +10594,7 @@ def roll(a, shift, axis=None):
     array([[1., 2., 3., 4., 0.],
            [6., 7., 8., 9., 5.]])
    """
-    return _mx_nd_np.roll(a, shift, axis=axis)
+    return _mx_nd_np.roll(asarray(a), shift, axis=axis)
 
 
 @set_module('mxnet.numpy')
@@ -11102,7 +11124,7 @@ def nonzero(a):
     >>> (a > 3).nonzero()
     (array([1, 1, 1, 2, 2, 2], dtype=int64), array([0, 1, 2, 0, 1, 2], dtype=int64))
     """
-    return _mx_nd_np.nonzero(a)
+    return _mx_nd_np.nonzero(asarray(a))
 
 
 @set_module('mxnet.numpy')
@@ -11431,7 +11453,7 @@ def diff(a, n=1, axis=-1, prepend=None, append=None):  # pylint: disable=redefin
     -----
     Optional inputs `prepend` and `append` are not supported yet
     """
-    if (prepend or append):
+    if prepend is not None or append is not None:
         raise NotImplementedError('prepend and append options are not supported yet')
     return _mx_nd_np.diff(a, n=n, axis=axis)
 
@@ -11722,7 +11744,7 @@ def zeros_like(a, dtype=None, order='C', device=None, out=None):
     >>> np.zeros_like(y)
     array([0., 0., 0.], dtype=float64)
     """
-    return _mx_nd_np.full_like(a, fill_value=0, dtype=dtype, order=order, device=device, out=out)
+    return _mx_nd_np.full_like(asarray(a), fill_value=0, dtype=dtype, order=order, device=device, out=out)
 # pylint: enable=redefined-outer-name
 
 
@@ -11783,7 +11805,7 @@ def ones_like(a, dtype=None, order='C', device=None, out=None):
     >>> np.ones_like(y)
     array([1., 1., 1.], dtype=float64)
     """
-    return _mx_nd_np.full_like(a, fill_value=1, dtype=dtype, order=order, device=device, out=out)
+    return _mx_nd_np.full_like(asarray(a), fill_value=1, dtype=dtype, order=order, device=device, out=out)
 # pylint: enable=redefined-outer-name
 
 
@@ -12013,7 +12035,7 @@ def squeeze(x, axis=None):
     >>> np.squeeze(x, axis=2).shape
     (1, 3)
     """
-    return _mx_nd_np.squeeze(x, axis=axis)
+    return _mx_nd_np.squeeze(asarray(x), axis=axis)
 
 
 @set_module('mxnet.numpy')
@@ -12338,6 +12360,12 @@ def where(condition, x=None, y=None):
            [ 0.,  2., -1.],
            [ 0.,  3., -1.]])
     """
+    if not isinstance(condition, (numeric_types, ndarray)):
+        condition = asarray(condition)
+    if x is not None and not isinstance(x, (numeric_types, ndarray)):
+        x = asarray(x)
+    if y is not None and not isinstance(y, (numeric_types, ndarray)):
+        y = asarray(y)
     return _mx_nd_np.where(condition, x, y)
 
 
@@ -12919,7 +12947,7 @@ def reshape(a, newshape, order='C'):
            [3., 4.],
            [5., 6.]])
     """
-    return _mx_nd_np.reshape(a, newshape, order)
+    return _mx_nd_np.reshape(asarray(a), newshape, order)
 
 @set_module('mxnet.numpy')
 def moveaxis(a, source, destination):
@@ -12963,7 +12991,7 @@ def moveaxis(a, source, destination):
     >>> np.moveaxis(x, [0, 1, 2], [-1, -2, -3]).shape
     (5, 4, 3)
     """
-    return _mx_nd_np.moveaxis(a, source, destination)
+    return _mx_nd_np.moveaxis(asarray(a), source, destination)
 
 @set_module('mxnet.numpy')
 def copy(a): # pylint: disable=redefined-outer-name
@@ -12992,7 +13020,7 @@ def copy(a): # pylint: disable=redefined-outer-name
     >>> x[0] == z[0]
         False
     """
-    return _mx_nd_np.copy(a)
+    return _mx_nd_np.copy(asarray(a))
 
 # pylint: disable=redefined-outer-name
 @set_module('mxnet.numpy')
@@ -13068,7 +13096,7 @@ def diag(v, k=0):
            [0, 4, 0],
            [0, 0, 8]])
     """
-    return _mx_nd_np.diag(v, k=k)
+    return _mx_nd_np.diag(asarray(v), k=k)
 
 
 @set_module('mxnet.numpy')
@@ -13109,7 +13137,7 @@ def diagflat(v, k=0):
            [0, 0, 2],
            [0, 0, 0]])
     """
-    return _mx_nd_np.diagflat(v, k=k)
+    return _mx_nd_np.diagflat(asarray(v), k=k)
 
 
 @set_module('mxnet.numpy')
@@ -13162,7 +13190,7 @@ def diagonal(a, offset=0, axis1=0, axis2=1):
     array([[0, 6],
             [1, 7]])
     """
-    return _mx_nd_np.diagonal(a, offset=offset, axis1=axis1, axis2=axis2)
+    return _mx_nd_np.diagonal(asarray(a), offset=offset, axis1=axis1, axis2=axis2)
 
 
 # pylint: disable=redefined-outer-name, too-many-arguments

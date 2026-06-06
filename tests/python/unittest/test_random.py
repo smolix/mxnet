@@ -796,6 +796,8 @@ def test_multinomial_generator():
         [0, 0, 0, 1, 2, 2, 3]
         """
         ind = mx.nd.expand_dims(mx.nd.cumsum(mx.nd.concat(mx.nd.array([0]), arr[:arr.size-1], dim=0)), axis=0)
+        # scatter_nd indices must be integer.
+        ind = ind.astype('int64')
         data = mx.nd.ones((arr.size,))
         shape = (int(mx.nd.sum(arr).asscalar()),)
         return mx.nd.cumsum(mx.nd.scatter_nd(data, ind, shape)) - 1

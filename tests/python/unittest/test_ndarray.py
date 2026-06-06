@@ -546,7 +546,8 @@ def test_ndarray_slice():
 
     a = mx.nd.array([[0, 1], [2, 3]])
     assert (a[[1, 1, 0], [0, 1, 0]].asnumpy() == [2, 3, 0]).all()
-    assert (a[mx.nd.array([1, 1, 0]), mx.nd.array([0, 1, 0])].asnumpy() == [2, 3, 0]).all()
+    assert (a[mx.nd.array([1, 1, 0], dtype='int64'),
+              mx.nd.array([0, 1, 0], dtype='int64')].asnumpy() == [2, 3, 0]).all()
 
     shape = (4, 4)
     A = mx.nd.random.uniform(shape=shape)
@@ -1262,7 +1263,7 @@ def test_ndarray_take():
                 idx_shape += (np.random.randint(low=3, high=5), )
             idx_real = np.random.randint(low=0, high=data_shape[0], size=idx_shape)
             data_real_mx = mx.nd.array(data_real)
-            idx_real_mx = mx.nd.array(idx_real)
+            idx_real_mx = mx.nd.array(idx_real, dtype='int64')
             result = mx.nd.take(data_real_mx, idx_real_mx)
             assert_almost_equal(result.asnumpy(), data_real[idx_real])
 
@@ -1388,7 +1389,7 @@ def test_ndarray_fluent():
     check_fluent_regular('slice', {'begin': (2, 5, 1), 'end': (4, 7, 6)}, shape=(5, 17, 6))
     check_fluent_regular('slice_axis', {'axis': 1, 'begin': 5, 'end': 7})
     check_fluent_regular('slice_like', {'axes': (0, -2), 'shape_like': mx.nd.zeros((3, 3))})
-    check_fluent_regular('take', {'indices': mx.nd.array([2, 3])})
+    check_fluent_regular('take', {'indices': mx.nd.array([2, 3], dtype='int64')})
     check_fluent_regular('pick', {'axis': 1, 'index': mx.nd.array([[2], [3], [5], [6], [11]])})
     check_fluent_regular('clip', {'a_min': 0.25, 'a_max': 0.75})
     check_fluent_regular('broadcast_axes', {'axis': (2,), 'size': (5,)})

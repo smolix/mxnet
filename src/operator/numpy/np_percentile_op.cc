@@ -82,6 +82,12 @@ inline bool NumpyPercentileType(const nnvm::NodeAttrs& attrs,
 
 DMLC_REGISTER_PARAMETER(NumpyPercentileParam);
 
+std::vector<nnvm::NodeEntry> NumpyPercentileGradient(
+    const nnvm::ObjectPtr& n,
+    const std::vector<nnvm::NodeEntry>& ograds) {
+  return MakeNonlossGradNode("_backward_npi_percentile", n, ograds, n->inputs, n->attrs.dict);
+}
+
 NNVM_REGISTER_OP(_npi_percentile)
     .set_num_inputs([](const NodeAttrs& attrs) {
       const NumpyPercentileParam& param = nnvm::get<NumpyPercentileParam>(attrs.parsed);
@@ -105,10 +111,25 @@ NNVM_REGISTER_OP(_npi_percentile)
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
                                 })
     .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)
+    .set_attr<nnvm::FGradient>("FGradient", NumpyPercentileGradient)
     .add_argument("a", "NDArray-or-Symbol", "Input data")
     .add_argument("q", "NDArray-or-Symbol", "Input percentile")
     .add_arguments(NumpyPercentileParam::__FIELDS__());
+
+NNVM_REGISTER_OP(_backward_npi_percentile)
+    .set_num_inputs([](const NodeAttrs& attrs) {
+      const NumpyPercentileParam& param = nnvm::get<NumpyPercentileParam>(attrs.parsed);
+      return param.q_scalar.has_value() ? 2 : 3;
+    })
+    .set_num_outputs([](const NodeAttrs& attrs) {
+      const NumpyPercentileParam& param = nnvm::get<NumpyPercentileParam>(attrs.parsed);
+      return param.q_scalar.has_value() ? 1 : 2;
+    })
+    .set_attr_parser(ParamParser<NumpyPercentileParam>)
+    .set_attr<nnvm::TIsBackward>("TIsBackward", true)
+    .set_attr<mxnet::FInferShape>("FInferShape", NumpyPercentileBackwardShape)
+    .set_attr<nnvm::FInferType>("FInferType", NumpyPercentileBackwardType)
+    .set_attr<FCompute>("FCompute<cpu>", NumpyPercentileBackward<cpu>);
 
 }  // namespace op
 }  // namespace mxnet

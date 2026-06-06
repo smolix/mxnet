@@ -1,104 +1,125 @@
-# Performance notes — Blackwell / CUDA 13 port
+# Performance notes — measured facts
 
-This branch of MXNet builds and passes the test suite on **NVIDIA Blackwell
-(sm_120)** with the **CUDA 13.0 / cuDNN 9.14 / NCCL 2.28** toolchain. It's
-correct, but it is **not yet performance-tuned for Blackwell**. The aim of the
-port was "make it run again"; making it fast is a follow-up.
+This file was rewritten on 2026-06-06 after the earlier "Blackwell / CUDA 13
+port" notes were found to be **stale** — they described an intermediate port
+state and quoted numbers measured on a different GPU. The claims below are
+measured on the current branch and hardware. The retired claims and why they
+were wrong are recorded at the bottom for traceability.
 
-## Observed performance on RTX PRO 4000 Blackwell (24 GB)
+## Test hardware
 
-| Op | Shape | Throughput | Tensor-core peak (fp16) | Util |
-|---|---|---|---|---|
-| `mx.nd.dot` fp32 | 1024³ × 100 | **0.89 TFLOP/s** | (not applicable) | low |
-| `mx.nd.dot` fp16 | 2048³ × 50 | **2.7 TFLOP/s** | ~150 TFLOP/s | ~2% |
-| Conv2D fwd+bwd fp32 | 16×3×64×64, 3×3 → 8 ch | runs via cuDNN 9 autotune | — | — |
+- **GPU:** NVIDIA GeForce RTX 4090 (Ada, sm_89), 24 GB GDDR6X (~1008 GB/s).
+- **Toolchain:** CUDA 13.3, cuDNN 9.23, gcc 13.3, oneDNN v3.11.3 (vendored).
+- Build: `USE_CUDA=ON`, `USE_CUDNN=ON`, `USE_ONEDNN=ON`, `USE_LAPACK=ON`,
+  `MXNET_CUDA_ARCH=8.9`. (Reproduce the scan with `perf_scan.py`.)
 
-For comparison: peak Blackwell fp16 dense tensor-core throughput on this part
-is around **150 TFLOP/s**. The current build hits ~2% of that — i.e. **we're
-roughly 50× off peak** for large fp16 matmul.
+Theoretical peaks used below (RTX 4090): fp16 tensor (fp32 accum) ~165 TFLOP/s,
+TF32 ~82.6, fp32 ~82.6, memory bandwidth ~1008 GB/s.
 
-During the test suite the GPUs sit at ~1–8% utilisation for nearly all of the
-~13,000 unit tests. That's typical of a correctness suite (tiny shapes,
-asnumpy() round-trips dominate), but it also matches what we see on real
-workloads: this build is **Python-and-dispatch-bound**, not GPU-bound.
+## Measured throughput (this branch, RTX 4090)
 
-## What's missing for "good" Blackwell performance
+| Workload | Measurement | % of peak | Verdict |
+|---|---|---|---|
+| matmul fp16 4096³ (`nd.dot`) | **162 TFLOP/s** | ~98% fp16 | already optimal |
+| matmul fp16 2048³ | 123 TFLOP/s | ~75% | good |
+| matmul fp32 4096³ (TF32) | 55 TFLOP/s | ~67% TF32 | acceptable |
+| matmul bf16 (FullyConnected) | works (fixed) | — | see note |
+| Conv2D fwd (cuDNN) 256ch | ~60 TFLOP/s | — | cuDNN-bound |
+| elementwise add (large) | ~800 GB/s effective | ~80% | good |
+| **reduction sum / max (any shape)** | **~300 GB/s** | **~30%** | **slow — see below** |
+| softmax 4096×4096 | 0.17 ms | — | fine |
+| layernorm 4096×4096 | 0.69 ms | — | fine |
+| tiny-op dispatch (async) | ~34 µs/op | — | architectural |
 
-### 1. Tensor-core / cuBLASLt / CUTLASS paths
-MXNet's matmul path goes through legacy `cublasGemmEx`/`cublasGemmStridedBatchedEx`
-with `CUBLAS_GEMM_DEFAULT_TENSOR_OP` (or `_DEFAULT` for fp32). This used to be
-"fast enough" on Ampere but is no longer competitive on Hopper/Blackwell, where
-cuBLASLt picks better kernels and CUTLASS provides hand-tuned MMA paths.
+## What is NOT a problem on this hardware (retired claims)
 
-Plausible work: introduce a `cublasLtMatmul` path in `src/operator/linalg_impl.h`
-gated behind an env var; later add a CUTLASS-based fallback for shapes cuBLASLt
-doesn't handle well.
+The earlier notes listed these as open perf problems. Measurement shows they are
+already resolved or never reproduced on Ada:
 
-### 2. fp16 / bf16 with proper tensor-core math
-`MXNET_FC_TRUE_FP16` is the existing knob for fp16-everywhere. It's off by
-default and the pseudo-fp16 path (fp32 accumulation) doesn't hit MMA on
-Blackwell. For real perf, the build needs:
-- `CUBLAS_COMPUTE_16F_PEDANTIC` / `CUBLAS_COMPUTE_32F_FAST_16F` selection logic
-- bf16 type support end-to-end (currently mxnet uses a custom `bfloat16` struct
-  rather than cuDNN/CUDA's native `__nv_bfloat16`)
+- **cuBLASLt / tensor-core matmul.** Claimed "fp16 ~50× off peak". Reality: fp16
+  matmul is **~98% of peak** via the legacy `cublasGemmEx` path; enabling the
+  (already-implemented) `cublaslt_gemm` path (`MXNET_USE_CUBLASLT=1`) gives no
+  measurable change on Ada. The ~50× figure was a Blackwell-era measurement.
+- **cuDNN 9 RNN.** Claimed GPU RNN `LOG(FATAL)`s on CUDA 13. Reality:
+  `rnn-inl.h` already uses `cudnnSetRNNDescriptor_v8`; GPU LSTM/GRU/RNN
+  forward+backward all work on CUDA 13 / cuDNN 9.
+- **oneDNN old / disabled.** Claimed vendored oneDNN is ~v0.21 and
+  `USE_ONEDNN=OFF`. Reality: vendored oneDNN is **v3.11.3** (has AMX),
+  `USE_ONEDNN=ON`, actively used (DNNL_VERBOSE shows brgemm/brconv primitives).
 
-### 3. cuDNN 9 RNN port
-The legacy cuDNN 7-style RNN API (`cudnnSetRNNDescriptor_v6`,
-`cudnnRNNForwardInference`, `cudnnRNNBackwardData`, plus the `*Ex` variants)
-was removed in cuDNN 9. **This port gates them out behind `CUDNN_VERSION < 9000`**;
-on cuDNN 9 builds (i.e. anything CUDA 13) GPU RNN/LSTM/GRU falls through to
-`LOG(FATAL)` and the operator is effectively unavailable on GPU.
+## Real, open performance issue
 
-Real fix: port `src/operator/rnn-inl.h` to the cuDNN 8 v8 RNN API
-(`cudnnSetRNNDescriptor_v8`, single `cudnnRNNForward` with `fwdMode`,
-`cudnnRNNBackwardData_v8`, `cudnnRNNBackwardWeights_v8`,
-`cudnnGetRNNWeightSpaceSize`, `cudnnGetRNNTempSpaceSizes`,
-`cudnnGetRNNWeightParams`). Estimated cost: ~3–5 days including the weight
-layout differences (`cudnnGetRNNLinLayerMatrixParams` returns a different
-packing than `cudnnGetRNNWeightParams`).
+### Reductions are slow on both GPU and CPU (root-caused; needs a kernel project)
 
-### 4. oneDNN bump for CPU ops
-The vendored oneDNN commit (`58be3660fb`, ~v0.21-era) predates Blackwell *and*
-predates AMX. CPU ops in this build are routed to OpenBLAS as a result
-(`USE_ONEDNN=OFF`).
+Measured `sum`/`mean`/`max` reduction throughput:
 
-Bump `3rdparty/onednn` to `v3.5+` (which has both Blackwell GPU support and
-modern CPU kernels) and re-enable `USE_ONEDNN=ON`. Most call sites should just
-work; the bf16 INT8 quantisation subgraphs may need touch-ups.
+| case | GPU (RTX 4090) | CPU (EPYC 7502, 16t) |
+|---|---|---|
+| trailing-axis reduce (e.g. (4096,4096) axis=1) | ~30% BW | fast (oneDNN `jit:avx`, 0.5 ms) |
+| global reduce (→ scalar) | ~30% BW (300 GB/s) | **17 GB/s, single-threaded** |
+| outer/strided-axis reduce (axis=0) | ~30% BW | **~3 GB/s** (21 ms) native |
 
-### 5. Fused operators (NNVM passes)
-The fused-op JIT (`src/operator/fusion/`) targets Pascal/Volta/Ampere kernel
-patterns. On Blackwell it still works correctly but doesn't exploit Blackwell-
-specific instructions (e.g. fp8 MMA, distributed shared memory). Whether this
-matters depends on the workload; for inference latency, the unfused path is
-usually already cuDNN.
+Root causes:
+- **GPU** (`reduce_rtc.cc` + `ReduceImplConfig` in `broadcast_reduce-inl.h`,
+  `nthread_reduce=512`, `kBaseGridNum=1024`, `maxLoopPerTB=64`): for the
+  all-reduce N=1 case `gridDim.x` collapses to 1; parallelism is only in
+  `gridDim.y` (~512 blocks) with a long per-block serial loop and a
+  shared-memory tree reduction; loads are not vectorized (no float4).
+- **CPU global reduce**: the native `seq_reduce_compute` (`broadcast_reduce-inl.h`)
+  parallelizes its `#pragma omp parallel for` over the OUTPUT elements N. A
+  global reduce has N=1, so it runs on a single thread regardless of
+  `OMP_NUM_THREADS` (oneDNN's global reduction is likewise single-threaded).
+  Needs a two-stage reduction (split the reduced dim M across threads → partial
+  sums → combine) when N is small.
+- **CPU outer-axis reduce**: parallel over N but the per-output reduction walks
+  memory with a large stride and is not vectorized → ~3 GB/s.
 
-### 6. Custom CUDA kernels not yet retuned
-Lots of mxnet's own kernels (in `src/operator/tensor/`, `src/operator/nn/`,
-`src/operator/contrib/`) were tuned for sm_70/sm_80 launch params (block size
-256/512 etc.). They run correctly on sm_120 but launch configs may be
-suboptimal for Blackwell's SM layout (twice as many SMs, different shared-mem
-size). A profiling pass over the top-N ops by call frequency would be
-worthwhile.
+Investigated and rejected (measured): routing non-trailing-axis reductions to
+oneDNN. oneDNN v3.11.3's reduction is only optimized for consecutive trailing
+dims; outer-axis via oneDNN is *worse* than native ((4096,4096) axis=0:
+~99 ms oneDNN vs ~21 ms native), so the existing `SupportDNNLReduceImpl` gate
+is correct and was kept.
 
-## Known correctness caveats
+Status / fixes:
+- **CPU global sum/mean: FIXED** (commit "Add fast flat OpenMP path for global
+  sum/mean reduction"). A flat `#pragma omp parallel for reduction(+)` with a
+  double accumulator (`FlatGlobalSum` + a `SupportDNNLReduceImpl` global
+  exclusion) replaced the single-threaded path: float32 17→~48 GB/s (~2.8x,
+  and more accurate: rel_err 5e-9 vs 4.7e-6), float64 sum ~91 GB/s (~5x).
+  2429 reduction tests pass. (float64 *mean* still takes the native path — a
+  perf loose end, not a regression.)
+- **CPU outer/strided-axis** (~3 GB/s): still open — needs a vectorized/blocked
+  strided reduction in the native kernel; oneDNN is worse here (confirmed).
+- **GPU reductions** (~19% BW, ~190 GB/s): still open. The clean fix is to route
+  global sum/mean/max to `cub::DeviceReduce` (CUB is vendored in
+  `3rdparty/nvidia_cub` and already used by `optimizer_op.cu`). It must use a
+  `cub::TransformInputIterator` casting to a double accumulator (to preserve the
+  current `safe_acc` precision and not regress tight numeric tests), a double
+  temp output, and a small cast/normalize kernel honoring `req`. cub
+  DeviceReduce is near-peak (~900 GB/s on this GPU → ~5x). Scoped CUDA work;
+  validate across dtype/shape before landing.
 
-These remained after the port and aren't Blackwell-specific:
+## Notes / smaller items
 
-- **`test_pooling_versions`** — one element in ~480k differs by ~5% between
-  cuDNN 9's max-pool kernel and the CPU reference. The test's tolerance was
-  written against an older cuDNN. Not a wrong result, just outside the legacy
-  tolerance.
-- **`test_subgraph::test_make_subgraph`** — sparse-storage NDArray save fails
-  under numpy-shape semantics; pre-existing MXNet limitation flagged at
-  `src/ndarray/ndarray.cc:1867`.
-- **`test_symbol::test_symbol_infer_shape`**, `test_load_save_symbol` —
-  `infer_shape_partial` API returns `None` where the test expects `()` for
-  unknown-shape; also test isolation between np-shape and np-array semantics.
-- **`test_profiler::test_custom_operator_profiling`** — Python custom-op
-  callback signature drift; not investigated.
-- **`test_gluon_data::test_multi_worker`** — `DataLoader` collation produces a
-  `dtype('O')` array with newer NumPy that the C++ side rejects.
+- **bf16 GPU** was broken (separate fixes landed this branch): elementwise/
+  reduction aborted ("Unknown type flag 12" — missing `mshadow_type_info` case
+  and RTC `bfloat16` type); `nd.dot(bf16)` segfaulted (now a clean error);
+  `FullyConnected(bf16)` aborted (NVCC `MSHADOW_REAL_TYPE_SWITCH` omits bf16 —
+  now dispatched explicitly to the bf16 `linalg_gemm`). Covered by
+  `tests/python/gpu/test_bf16_gpu_ops.py`.
+- **Dispatch overhead** (~34 µs/op async) is architectural (Python→FFI→engine→
+  launch). It dominates tiny-op workloads and shows up as low GPU utilization on
+  correctness suites; reducing it is an engine/FFI effort, not a kernel change.
+- `nd.dot` supports fp16/fp32/fp64 only by design; bf16 matmul is reached via
+  `FullyConnected` (and other linalg_gemm callers), not `nd.dot`.
 
-None of these were caused by the port; they're upstream MXNet brokenness that
-the original (now-retired) CI never caught because it ran older Python/NumPy/scipy.
+---
+
+## Retired claims (original 2026 Blackwell notes)
+
+The original file claimed the build was "not yet performance-tuned" with fp16
+matmul "~50× off peak", legacy `cublasGemmEx` "no longer competitive", the
+cuDNN-9 RNN API gated out to `LOG(FATAL)`, and oneDNN at ~v0.21 with
+`USE_ONEDNN=OFF`. Each was either Blackwell-specific or describes an earlier
+port state; none hold for the current branch on Ada (see "What is NOT a
+problem" above). Kept here only so the history is traceable.

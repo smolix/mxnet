@@ -41,6 +41,10 @@ inline bool NumpyLaQrShape(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(out_attrs->size(), 2U);
   const mxnet::TShape& in_a = (*in_attrs)[0];
 
+  if (!ndim_is_known(in_a)) {
+    return false;
+  }
+  CHECK_GE(in_a.ndim(), 2) << "Array must be at least two-dimensional";
   if (in_a.ndim() >= 2) {
     // Forward shape inference.
     const int ndim(in_a.ndim());
@@ -75,6 +79,7 @@ inline bool NumpyLaQrType(const nnvm::NodeAttrs& attrs,
   int a_type = in_attrs->at(0);
   // unsupport float16
   CHECK_NE(a_type, mshadow::kFloat16) << "array type float16 is unsupported in linalg";
+  CHECK_NE(a_type, mshadow::kBool) << "array type bool is unsupported in linalg";
   if (mshadow::kFloat32 == a_type) {
     TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
     TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(0));

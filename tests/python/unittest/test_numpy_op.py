@@ -29,7 +29,7 @@ import scipy.special as scipy_special
 import pytest
 import mxnet.ndarray.numpy._internal as _npi
 from functools import reduce
-from packaging.version import Version, parse
+from packaging.version import Version
 from mxnet import np, npx
 from mxnet.base import MXNetError
 from mxnet.gluon import HybridBlock
@@ -214,6 +214,71 @@ def test_np_tensordot(a_shape, b_shape, axes, hybridize, dtype):
 
 
 @use_np
+@pytest.mark.parametrize('axes', [1, ([1], [0])])
+@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
+def test_np_tensordot_unsupported_dtypes_rejected(axes, dtype):
+    a = np.array([[1, 2], [3, 4]], dtype=dtype)
+    b = np.array([[1, 2], [3, 4]], dtype=dtype)
+    with pytest.raises((ValueError, mx.MXNetError), match="floating point"):
+        np.tensordot(a, b, axes=axes).asnumpy()
+
+    a_sym = mx.sym.var('a').as_np_ndarray()
+    b_sym = mx.sym.var('b').as_np_ndarray()
+    with pytest.raises(mx.MXNetError, match="floating point"):
+        mx.sym.np.tensordot(a_sym, b_sym, axes=axes).as_nd_ndarray().infer_type(a=dtype, b=dtype)
+
+
+@use_np
+@pytest.mark.parametrize('axes', [([0, 0], [0, 1]), ([0, 1], [0, 0]), ([-2, 0], [0, 1])])
+def test_np_tensordot_duplicate_axes_rejected(axes):
+    a = np.ones((2, 2))
+    b = np.ones((2, 2))
+    with pytest.raises(mx.MXNetError, match="axes don't match array"):
+        np.tensordot(a, b, axes=axes).asnumpy()
+
+    a_sym = mx.sym.var('a').as_np_ndarray()
+    b_sym = mx.sym.var('b').as_np_ndarray()
+    with pytest.raises(mx.MXNetError, match="axes don't match array"):
+        mx.sym.np.tensordot(a_sym, b_sym, axes=axes).as_nd_ndarray().infer_shape(
+            a=(2, 2), b=(2, 2))
+
+
+@use_np
+@pytest.mark.parametrize('axes', [
+    onp.array(1),
+    onp.array([[1], [0]]),
+    [onp.array([1]), onp.array([0])]
+])
+def test_np_tensordot_array_like_axes(axes):
+    class TestTensordot(HybridBlock):
+        def __init__(self, axes):
+            super(TestTensordot, self).__init__()
+            self._axes = axes
+
+        def forward(self, a, b):
+            return np.tensordot(a, b, axes=self._axes)
+
+    a_np = onp.arange(6, dtype=onp.float32).reshape((2, 3))
+    b_np = onp.arange(12, dtype=onp.float32).reshape((3, 4))
+    a = np.array(a_np)
+    b = np.array(b_np)
+    expected = onp.tensordot(a_np, b_np, axes=axes)
+
+    assert_almost_equal(np.tensordot(a, b, axes=axes).asnumpy(), expected)
+
+    net = TestTensordot(axes)
+    net.hybridize()
+    assert_almost_equal(net(a, b).asnumpy(), expected)
+
+    a_sym = mx.sym.var('a').as_np_ndarray()
+    b_sym = mx.sym.var('b').as_np_ndarray()
+    out = mx.sym.np.tensordot(a_sym, b_sym, axes=axes).as_nd_ndarray()
+    exe = out._bind(mx.cpu(), {'a': mx.nd.array(a_np), 'b': mx.nd.array(b_np)})
+    exe.forward()
+    assert_almost_equal(exe.outputs[0].asnumpy(), expected)
+
+
+@use_np
 @pytest.mark.parametrize('shape_a,shape_b', [
     ((3, 0), (0, 4)),
     ((3,), (3,)),
@@ -258,6 +323,21 @@ def test_np_dot_error(shape_a, shape_b):
     b = mx.nd.array(random.random()) if len(shape_b) == 0 else rand_ndarray(shape_b)
     with pytest.raises(mx.base.MXNetError):
         mx_res = np.dot(a.as_np_ndarray(), b.as_np_ndarray())
+
+
+@use_np
+@pytest.mark.parametrize('op_name', ['dot', 'matmul'])
+@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
+def test_np_matrix_product_unsupported_dtypes_rejected(op_name, dtype):
+    a = np.array([[1, 2], [3, 4]], dtype=dtype)
+    b = np.array([[1, 2], [3, 4]], dtype=dtype)
+    with pytest.raises((ValueError, mx.MXNetError), match="floating point"):
+        getattr(np, op_name)(a, b).asnumpy()
+
+    a_sym = mx.sym.var('a').as_np_ndarray()
+    b_sym = mx.sym.var('b').as_np_ndarray()
+    with pytest.raises(mx.MXNetError, match="floating point"):
+        getattr(mx.sym.np, op_name)(a_sym, b_sym).as_nd_ndarray().infer_type(a=dtype, b=dtype)
 
 
 @use_np
@@ -655,6 +735,17 @@ def test_np_kron(a_shape, b_shape, dtype, hybridize):
 
 
 @use_np
+@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
+def test_np_kron_extended_dtypes(dtype):
+    a_np = onp.array([[1, 0], [0, 1]], dtype=dtype)
+    b_np = onp.array([[1, 1], [0, 1]], dtype=dtype)
+    mx_out = np.kron(np.array(a_np, dtype=dtype), np.array(b_np, dtype=dtype))
+    np_out = onp.kron(a_np, b_np)
+    assert mx_out.dtype == np_out.dtype
+    onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
 @pytest.mark.parametrize('shape', [rand_shape_nd(4, dim=4), (4, 0, 4, 0)])
 @pytest.mark.parametrize('axis', [0, 1, 2, 3, (), None])
 @pytest.mark.parametrize('keepdims', [True, False])
@@ -750,6 +841,15 @@ def test_np_sum(shape, axis, keepdims, itype, acc_type, dtype, hybridize):
     mx_out = np.sum(x, axis=axis, dtype=dtype, keepdims=keepdims)
     np_out = onp.sum(x.asnumpy(), axis=axis, dtype=acc_type, keepdims=keepdims).astype(dtype)
     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5, use_broadcast=False)
+
+
+@use_np
+def test_np_sum_default_integer_dtype():
+    data = np.array([100, 30, 2], dtype='int8')
+    mx_out = np.sum(data)
+    np_out = onp.sum(data.asnumpy())
+    assert mx_out.dtype == np_out.dtype
+    assert_almost_equal(mx_out.asnumpy(), np_out)
 
 
 @use_np
@@ -1012,6 +1112,170 @@ def test_np_average_returned_sum_only_symbol():
 
 
 @use_np
+def test_np_average_returned_type():
+    data = np.arange(6, dtype='float32').reshape((2, 3))
+    for weights in [None, np.arange(1, 4, dtype='float32')]:
+        np_weights = None if weights is None else weights.asnumpy()
+        mx_out = np.average(data, axis=-1, weights=weights, returned=True)
+        np_out = onp.average(data.asnumpy(), axis=-1, weights=np_weights, returned=True)
+
+        assert isinstance(mx_out, tuple)
+        assert len(mx_out) == len(np_out)
+        for mx_arr, np_arr in zip(mx_out, np_out):
+            assert mx_arr.shape == np_arr.shape
+            assert_almost_equal(mx_arr.asnumpy(), np_arr)
+
+
+@use_np
+def test_np_average_integral_returned_type():
+    data = np.array([1, 2], dtype='int32')
+    avg, sum_of_weights = np.average(data, returned=True)
+    assert avg.dtype == onp.float32
+    assert sum_of_weights.dtype == onp.float32
+    assert_almost_equal(avg.asnumpy(), onp.array(1.5, dtype=onp.float32))
+    assert_almost_equal(sum_of_weights.asnumpy(), onp.array(2.0, dtype=onp.float32))
+
+    weights = np.array([1, 1], dtype='int32')
+    avg, sum_of_weights = np.average(data, weights=weights, returned=True)
+    assert avg.dtype == onp.float32
+    assert sum_of_weights.dtype == onp.float32
+    assert_almost_equal(avg.asnumpy(), onp.array(1.5, dtype=onp.float32))
+    assert_almost_equal(sum_of_weights.asnumpy(), onp.array(2.0, dtype=onp.float32))
+
+    matrix = np.array([[1, 2, 4], [2, 3, 5]], dtype='int32')
+    avg, sum_of_weights = np.average(matrix, axis=1, returned=True)
+    assert avg.dtype == onp.float32
+    assert sum_of_weights.dtype == onp.float32
+    assert_almost_equal(avg.asnumpy(), onp.array([7.0 / 3.0, 10.0 / 3.0], dtype=onp.float32))
+    assert_almost_equal(sum_of_weights.asnumpy(), onp.array([3.0, 3.0], dtype=onp.float32))
+
+    bool_data = np.array([True, False, True], dtype='bool')
+    avg, sum_of_weights = np.average(bool_data, returned=True)
+    assert avg.dtype == onp.float32
+    assert sum_of_weights.dtype == onp.float32
+    assert_almost_equal(avg.asnumpy(), onp.array(2.0 / 3.0, dtype=onp.float32))
+    assert_almost_equal(sum_of_weights.asnumpy(), onp.array(3.0, dtype=onp.float32))
+
+
+@use_np
+def test_np_symbol_average_integral_returned_type():
+    data = mx.sym.var('data').as_np_ndarray()
+    weights = mx.sym.var('weights').as_np_ndarray()
+    outputs = mx.sym.Group(mx.sym.np.average(data, returned=True))
+    weighted_outputs = mx.sym.Group(mx.sym.np.average(data, axis=1, weights=weights, returned=True))
+
+    _, out_types, _ = outputs.infer_type(data='int32')
+    assert out_types == [onp.float32, onp.float32]
+    exe = outputs._simple_bind(mx.cpu(), data=(2,), type_dict={'data': 'int32'})
+    exe.forward(data=mx.nd.array([1, 2], dtype='int32'))
+    assert [out.dtype for out in exe.outputs] == [onp.float32, onp.float32]
+    assert_almost_equal(exe.outputs[0].asnumpy(), onp.array(1.5, dtype=onp.float32))
+    assert_almost_equal(exe.outputs[1].asnumpy(), onp.array(2.0, dtype=onp.float32))
+
+    _, weighted_out_types, _ = weighted_outputs.infer_type(data='int32', weights='int32')
+    assert weighted_out_types == [onp.float32, onp.float32]
+    weighted_exe = weighted_outputs._simple_bind(mx.cpu(), data=(2, 2), weights=(2,),
+                                                 type_dict={'data': 'int32', 'weights': 'int32'})
+    weighted_exe.forward(data=mx.nd.array([[1, 3], [5, 7]], dtype='int32'),
+                         weights=mx.nd.array([1, 3], dtype='int32'))
+    assert [out.dtype for out in weighted_exe.outputs] == [onp.float32, onp.float32]
+    assert_almost_equal(weighted_exe.outputs[0].asnumpy(),
+                        onp.array([2.5, 6.5], dtype=onp.float32))
+    assert_almost_equal(weighted_exe.outputs[1].asnumpy(),
+                        onp.array([4.0, 4.0], dtype=onp.float32))
+
+    full_weighted_outputs = mx.sym.Group(mx.sym.np.average(data, axis=1, weights=weights,
+                                                           returned=True))
+    full_weighted_exe = full_weighted_outputs._simple_bind(
+        mx.cpu(), data=(2, 2), weights=(2, 2), type_dict={'data': 'int32', 'weights': 'int32'})
+    full_weighted_exe.forward(data=mx.nd.array([[1, 3], [5, 7]], dtype='int32'),
+                              weights=mx.nd.array([[1, 3], [2, 2]], dtype='int32'))
+    assert [out.dtype for out in full_weighted_exe.outputs] == [onp.float32, onp.float32]
+    assert_almost_equal(full_weighted_exe.outputs[0].asnumpy(),
+                        onp.array([2.5, 6.0], dtype=onp.float32))
+    assert_almost_equal(full_weighted_exe.outputs[1].asnumpy(),
+                        onp.array([4.0, 4.0], dtype=onp.float32))
+
+
+@use_np
+def test_np_var_std_integral_dtype():
+    data = np.array([1, 2], dtype='int32')
+    for mx_op, np_op, expected in [(np.var, onp.var, 0.25), (np.std, onp.std, 0.5)]:
+        mx_out = mx_op(data)
+        np_out = np_op(data.asnumpy()).astype('float32')
+        assert mx_out.dtype == onp.float32
+        assert_almost_equal(mx_out.asnumpy(), np_out)
+        assert_almost_equal(mx_out.asnumpy(), onp.array(expected, dtype=onp.float32))
+
+        mx_out = mx_op(data, dtype='float64')
+        np_out = np_op(data.asnumpy(), dtype=onp.float64)
+        assert mx_out.dtype == onp.float64
+        assert_almost_equal(mx_out.asnumpy(), np_out)
+
+    matrix = np.array([[1, 2, 4], [2, 3, 5]], dtype='int32')
+    for mx_op, np_op in [(np.var, onp.var), (np.std, onp.std)]:
+        mx_out = mx_op(matrix, axis=1)
+        np_out = np_op(matrix.asnumpy(), axis=1).astype('float32')
+        assert mx_out.dtype == onp.float32
+        assert_almost_equal(mx_out.asnumpy(), np_out)
+
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    for sym_op, np_op in [(mx.sym.np.var, onp.var), (mx.sym.np.std, onp.std)]:
+        sym_out = sym_op(sym_data)
+        _, out_types, _ = sym_out.infer_type(data='int32')
+        assert out_types == [onp.float32]
+        exe = sym_out._simple_bind(mx.cpu(), data=(2,), type_dict={'data': 'int32'})
+        exe.forward(data=mx.nd.array([1, 2], dtype='int32'))
+        assert exe.outputs[0].dtype == onp.float32
+        assert_almost_equal(exe.outputs[0].asnumpy(),
+                            np_op(onp.array([1, 2], dtype='int32')).astype('float32'))
+
+        sym_out = sym_op(sym_data, dtype='float64')
+        _, out_types, _ = sym_out.infer_type(data='int32')
+        assert out_types == [onp.float64]
+        exe = sym_out._simple_bind(mx.cpu(), data=(2,), type_dict={'data': 'int32'})
+        exe.forward(data=mx.nd.array([1, 2], dtype='int32'))
+        assert exe.outputs[0].dtype == onp.float64
+        assert_almost_equal(exe.outputs[0].asnumpy(),
+                            np_op(onp.array([1, 2], dtype='int32'), dtype=onp.float64))
+
+
+@use_np
+def test_np_var_std_backward():
+    data_np = onp.array([1., 2., 3.], dtype='float32')
+
+    data = np.array(data_np, dtype='float32')
+    data.attach_grad()
+    with mx.autograd.record():
+        out = np.var(data)
+    out.backward()
+    assert_almost_equal(data.grad.asnumpy(), 2 * (data_np - data_np.mean()) / data_np.size)
+
+    data = np.array(data_np, dtype='float32')
+    data.attach_grad()
+    with mx.autograd.record():
+        out = np.std(data)
+    out.backward()
+    assert_almost_equal(
+        data.grad.asnumpy(),
+        (data_np - data_np.mean()) / (data_np.std() * data_np.size))
+
+
+@use_np
+def test_np_var_backward_axis():
+    data_np = onp.array([[1., 2., 3.], [2., 4., 8.]], dtype='float32')
+    data = np.array(data_np, dtype='float32')
+    data.attach_grad()
+
+    with mx.autograd.record():
+        out = np.var(data, axis=1).sum()
+    out.backward()
+
+    expected = 2 * (data_np - data_np.mean(axis=1, keepdims=True)) / data_np.shape[1]
+    assert_almost_equal(data.grad.asnumpy(), expected)
+
+
+@use_np
 def test_np_mean():
     class TestMean(HybridBlock):
         def __init__(self, axis=None, dtype=None, keepdims=False):
@@ -1104,6 +1368,14 @@ def test_np_mean():
                     np_out = onp.mean(x.asnumpy(), axis=axis, dtype=dtype, keepdims=keepdims).astype(dtype)
                     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
 
+    x = np.arange(6, dtype='float32').reshape(2, 3)
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        out = np.mean(x, axis=1).sum()
+    out.backward()
+    assert_almost_equal(x.grad.asnumpy(), onp.full(x.shape, 5.0 + 1.0 / 3.0, dtype=onp.float32))
+
 
 @use_np
 def test_np_moment():
@@ -1189,6 +1461,28 @@ def test_np_shape():
 
 
 @use_np
+def test_np_creation_shape_validation():
+    for op in (np.zeros, np.ones):
+        with pytest.raises(TypeError, match="interpreted as an integer"):
+            op((2.5,))
+        with pytest.raises(ValueError, match="negative dimensions"):
+            op((-1,))
+    for op in (mx.sym.np.zeros, mx.sym.np.ones):
+        with pytest.raises(TypeError, match="interpreted as an integer"):
+            op((2.5,))
+        with pytest.raises(ValueError, match="negative dimensions"):
+            op((-1,))
+    with pytest.raises(TypeError, match="interpreted as an integer"):
+        np.full((2.5,), 1)
+    with pytest.raises(ValueError, match="negative dimensions"):
+        np.full((-1,), 1)
+    with pytest.raises(TypeError, match="interpreted as an integer"):
+        mx.sym.np.full((2.5,), 1)
+    with pytest.raises(ValueError, match="negative dimensions"):
+        mx.sym.np.full((-1,), 1)
+
+
+@use_np
 @pytest.mark.parametrize('config', [
     (0.0, 1.0, 10),
     (-2, 4, 30),
@@ -1259,6 +1553,40 @@ def test_np_linspace_gluon(config, dtype, endpoint, hybridize):
 def test_np_linspace_error(config):
     with pytest.raises(MXNetError):
         np.linspace(*config)
+
+
+@use_np
+def test_np_linspace_retstep_edge_counts():
+    for num, endpoint in itertools.product([0, 1, 2], [True, False]):
+        mx_ret = np.linspace(0, 1, num=num, endpoint=endpoint, retstep=True)
+        np_ret = onp.linspace(0, 1, num=num, endpoint=endpoint, retstep=True)
+        assert_almost_equal(mx_ret[0].asnumpy(), np_ret[0], atol=1e-3, rtol=1e-5)
+        if onp.isnan(np_ret[1]):
+            assert onp.isnan(mx_ret[1])
+        else:
+            assert same(mx_ret[1], np_ret[1])
+
+
+@use_np
+@pytest.mark.parametrize('axis', [0, 1, -1])
+@pytest.mark.parametrize('retstep', [True, False])
+def test_np_linspace_array_like_start_stop(axis, retstep):
+    configs = [
+        ([0, 10], [2, 20], 3),
+        (onp.array([0, 10], dtype='float32'), onp.array([2, 20], dtype='float32'), 3),
+        (np.array([0, 10], dtype='float32'), np.array([2, 20], dtype='float32'), 3),
+    ]
+    for start, stop, num in configs:
+        np_start = start.asnumpy() if isinstance(start, np.ndarray) else start
+        np_stop = stop.asnumpy() if isinstance(stop, np.ndarray) else stop
+        mx_ret = np.linspace(start, stop, num=num, axis=axis, retstep=retstep)
+        np_ret = onp.linspace(np_start, np_stop, num=num, axis=axis, retstep=retstep,
+                              dtype=mx_ret[0].dtype if retstep else mx_ret.dtype)
+        if retstep:
+            assert_almost_equal(mx_ret[0].asnumpy(), np_ret[0], atol=1e-3, rtol=1e-5)
+            assert_almost_equal(mx_ret[1].asnumpy(), np_ret[1], atol=1e-3, rtol=1e-5)
+        else:
+            assert_almost_equal(mx_ret.asnumpy(), np_ret, atol=1e-3, rtol=1e-5)
 
 
 @use_np
@@ -1798,6 +2126,12 @@ def test_npx_batch_dot():
                                                                transpose_a=transpose_a,
                                                                transpose_b=transpose_b))
 
+    for dtype in ['bool', 'int16', 'uint16', 'uint32']:
+        lhs_val = mx.np.array(onp.ones((2, 2, 2)), dtype=dtype)
+        rhs_val = mx.np.array(onp.ones((2, 2, 2)), dtype=dtype)
+        with pytest.raises((ValueError, MXNetError), match="batch_dot only supports"):
+            mx.npx.batch_dot(lhs_val, rhs_val).asnumpy()
+
 
 @use_np
 @pytest.mark.parametrize('shape', [(4, 2), (4, 3, 4),
@@ -2192,6 +2526,32 @@ def test_np_reshape():
             np_out = onp.reshape(x.asnumpy(), shape2)
             assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5, use_broadcast=False)
 
+    x = np.arange(6).reshape(2, 3)
+    with pytest.raises(NotImplementedError):
+        np.reshape(x, (3, 2), order='F')
+    with pytest.raises(NotImplementedError):
+        mx.sym.np.reshape(mx.sym.var('reshape_x').as_np_ndarray(), (3, 2), order='F')
+
+
+@use_np
+def test_np_reshape_shape_validation():
+    data = np.arange(6).reshape((2, 3))
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    invalid_shapes = [
+        ((2.0, 3), TypeError),
+        (('2', 3), TypeError),
+        ((-2, 3), ValueError),
+        ((-4,), ValueError),
+        ((-5,), ValueError),
+        ((2, -2), ValueError),
+        ((-1, -1), ValueError),
+    ]
+    for shape, error_type in invalid_shapes:
+        with pytest.raises(error_type):
+            np.reshape(data, shape)
+        with pytest.raises(error_type):
+            mx.sym.np.reshape(sym_data, shape)
+
 
 @use_np
 @pytest.mark.parametrize('descending', [True, False])
@@ -2286,8 +2646,26 @@ def test_np_sort(shape, dtype, hybridize, descending):
 
 
 @use_np
+def test_np_sort_and_topk_bool():
+    data = np.array([True, False, True], dtype='bool')
+
+    sorted_data = np.sort(data)
+    assert same(sorted_data.asnumpy(), onp.array([False, True, True]))
+
+    topk_ascending = npx.topk(data, ret_typ='value', k=2, is_ascend=True)
+    assert same(topk_ascending.asnumpy(), onp.array([False, True]))
+
+    topk_descending = npx.topk(data, ret_typ='value', k=2, is_ascend=False)
+    assert same(topk_descending.asnumpy(), onp.array([True, True]))
+
+    topk_indices = npx.topk(data, ret_typ='indices', k=2, is_ascend=True)
+    assert same(topk_indices.asnumpy(), onp.array([1, 0], dtype=onp.float32))
+
+
+@use_np
 def test_np_squeeze():
     config = [((), None),
+              ((), ()),
               ((), -1),
               ((), 0),
               ((4, 1, 2), None),
@@ -2322,6 +2700,9 @@ def test_np_squeeze():
             assert_almost_equal(data_mx.grad.asnumpy(), onp.ones_like(data_np),
                                 rtol=1e-5, atol=1e-6, use_broadcast=False)
 
+    with pytest.raises(MXNetError, match="duplicate"):
+        np.squeeze(np.zeros((1, 2, 1, 1)), axis=(0, 0)).asnumpy()
+
 
 @xfail_when_nonstandard_decimal_separator
 @use_np
@@ -2355,6 +2736,40 @@ def test_np_tri():
 
         mx_out = np.tri(N, M, k, dtype)
         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-5, atol=1e-6, use_broadcast=False)
+
+
+@use_np
+def test_np_tri_extended_dtypes():
+    for dtype in ['bool', 'int16', 'uint16', 'uint32']:
+        mx_out = np.tri(3, 4, 1, dtype=dtype)
+        np_out = onp.tri(3, 4, 1, dtype=dtype)
+        assert mx_out.dtype == np_out.dtype
+        onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
+def test_np_tri_negative_dimensions():
+    class TestTri(HybridBlock):
+        def __init__(self, N, M=None, k=0, dtype=None):
+            super(TestTri, self).__init__()
+            self._N = N
+            self._M = M
+            self._k = k
+            self._dtype = dtype
+
+        def forward(self, x):
+            return x + np.tri(self._N, self._M, self._k, self._dtype)
+
+    for N, M in [(-2, None), (2, -2), (0, -2), (-2, 3), (-2, -3)]:
+        for dtype in ['float32', 'int64']:
+            expected = onp.tri(N, M, dtype=dtype)
+            assert_almost_equal(np.tri(N, M, dtype=dtype).asnumpy(), expected)
+            for hybridize in [False, True]:
+                test_tri = TestTri(N, M, dtype=dtype)
+                if hybridize:
+                    test_tri.hybridize()
+                out = test_tri(np.zeros(shape=(), dtype=dtype))
+                assert_almost_equal(out.asnumpy(), expected)
 
 
 @use_np
@@ -2406,6 +2821,29 @@ def test_np_prod():
                         mx_out = np.prod(x, axis=axis, dtype=dtype, keepdims=keepdims)
                         np_out = onp.prod(x.asnumpy(), axis=axis, keepdims=keepdims).astype(dtype)
                         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5, use_broadcast=False)
+
+
+@use_np
+def test_np_prod_default_integer_dtype():
+    data = np.array([100, 30, 2], dtype='int8')
+    mx_out = np.prod(data)
+    np_out = onp.prod(data.asnumpy())
+    assert mx_out.dtype == np_out.dtype
+    assert_almost_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
+@pytest.mark.parametrize('op_name', ['sum', 'prod'])
+@pytest.mark.parametrize('dtype', ['int16', 'uint16', 'uint32'])
+def test_np_sum_prod_additional_integer_output_dtypes(op_name, dtype):
+    data_np = onp.array([1, 0, 2], dtype='int32')
+    data = np.array(data_np)
+    mx_op = getattr(np, op_name)
+    np_op = getattr(onp, op_name)
+    mx_out = mx_op(data, dtype=dtype)
+    np_out = np_op(data_np, dtype=dtype)
+    assert mx_out.dtype == np_out.dtype
+    onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
 
 
 @use_np
@@ -2483,6 +2921,56 @@ def test_np_broadcast_to(src_shape, dst_shape, hybridize):
         # `np.empty(())` serves as a dummpy input
         ret = test_scalar_broadcast_to(np.empty(()))
     assert_almost_equal(ret.asnumpy(), expected_ret, rtol=1e-5, atol=1e-6, use_broadcast=False)
+
+
+@use_np
+def test_np_broadcast_to_shape_validation():
+    data = np.ones((1,))
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    for shape, error_type in [((2.5,), TypeError), ((-1,), ValueError)]:
+        with pytest.raises(error_type):
+            np.broadcast_to(data, shape)
+        with pytest.raises(error_type):
+            mx.sym.np.broadcast_to(sym_data, shape)
+
+
+@use_np
+def test_np_more_array_like_wrappers():
+    checks = [
+        (onp.broadcast_to, np.broadcast_to, ([1, 2], (2, 2))),
+        (onp.take, np.take, ([10, 20, 30], [0, 2])),
+        (onp.stack, np.stack, ([1, 2],)),
+        (onp.inner, np.inner, ([1, 2], [3, 4])),
+        (onp.outer, np.outer, ([1, 2], [3, 4])),
+        (onp.zeros_like, np.zeros_like, ([1, 2],)),
+        (onp.ones_like, np.ones_like, ([1, 2],)),
+    ]
+    for np_func, mx_func, args in checks:
+        expected = np_func(*args)
+        actual = mx_func(*args)
+        assert same(actual.asnumpy(), expected)
+
+    assert np.empty_like([1, 2]).shape == onp.empty_like([1, 2]).shape
+
+    expected = onp.where([True, False], [1, 2], [3, 4])
+    actual = np.where([True, False], [1, 2], [3, 4])
+    assert same(actual.asnumpy(), expected)
+
+    expected = onp.where([[0, 1], [2, 0]])
+    actual = np.where([[0, 1], [2, 0]])
+    for actual_elem, expected_elem in zip(actual, expected):
+        assert same(actual_elem.asnumpy(), expected_elem)
+
+    expected = onp.nonzero([0, 2, 0, 3])
+    actual = np.nonzero([0, 2, 0, 3])
+    for actual_elem, expected_elem in zip(actual, expected):
+        assert same(actual_elem.asnumpy(), expected_elem)
+
+    expected = onp.unique([2, 1, 2], return_index=True, return_inverse=True, return_counts=True)
+    actual = np.unique([2, 1, 2], return_index=True, return_inverse=True, return_counts=True)
+    for actual_elem, expected_elem in zip(actual, expected):
+        assert same(actual_elem.asnumpy(), expected_elem)
+
 
 @use_np
 @pytest.mark.parametrize('src_shape,npx_dst_shape,np_dst_shape', [
@@ -2603,6 +3091,12 @@ def test_np_transpose_error():
     dat = np.random.normal(0, 1, (3, 4, 5), dtype=np.float32)
     pytest.raises(ValueError, lambda: dat.transpose((0, 0, 1)))
     pytest.raises(MXNetError, lambda: dat.transpose((0, 1, 3)))
+    sym_dat = mx.sym.var('data').as_np_ndarray()
+    for axes in [(1.0, 0), ('1', 0)]:
+        with pytest.raises(TypeError):
+            np.transpose(dat, axes)
+        with pytest.raises(TypeError):
+            mx.sym.np.transpose(sym_dat, axes)
 
 
 @use_np
@@ -2694,6 +3188,42 @@ def test_np_broadcast_arrays(shapes):
 
 
 @use_np
+def test_np_broadcast_arrays_array_like_inputs():
+    configs = [
+        (onp.array([1, 2]), 3),
+        (onp.array([1, 2]), [3, 4]),
+        (1, onp.array([[2], [3]])),
+    ]
+    for args in configs:
+        expected_rets = onp.broadcast_arrays(*args)
+        rets = np.broadcast_arrays(*[np.array(arg) if isinstance(arg, onp.ndarray) else arg for arg in args])
+        for expected_ret, ret in zip(expected_rets, rets):
+            assert same(expected_ret, ret.asnumpy())
+
+
+@use_np
+def test_np_array_like_shape_wrappers():
+    configs = [
+        (onp.ravel, np.ravel, ([1, 2, 3],)),
+        (onp.reshape, np.reshape, ([1, 2, 3, 4], (2, 2))),
+        (onp.squeeze, np.squeeze, ([[1], [2]],), {'axis': 1}),
+        (onp.repeat, np.repeat, ([1, 2], 2)),
+        (onp.tile, np.tile, ([1, 2], 2)),
+        (onp.diag, np.diag, ([1, 2],)),
+        (onp.diagonal, np.diagonal, ([[1, 2], [3, 4]],)),
+        (onp.trace, np.trace, ([[1, 2], [3, 4]],)),
+        (onp.transpose, np.transpose, ([[1, 2], [3, 4]],)),
+        (onp.flip, np.flip, ([[1, 2], [3, 4]],), {'axis': 0}),
+    ]
+    for config in configs:
+        np_func, mx_func, args = config[:3]
+        kwargs = config[3] if len(config) == 4 else {}
+        expected = np_func(*args, **kwargs)
+        actual = mx_func(*args, **kwargs)
+        assert same(actual.asnumpy(), expected)
+
+
+@use_np
 def test_np_tile():
     config = [
         ((), ()),
@@ -2731,6 +3261,17 @@ def test_np_tile():
                 net.hybridize()
             ret_mx = net(data_mx)
             assert same(ret_mx.asnumpy(), ret_np)
+
+
+@use_np
+def test_np_tile_reps_validation():
+    data = np.ones((2,))
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    for reps, error_type in [((2.5,), TypeError), ((-1,), ValueError)]:
+        with pytest.raises(error_type):
+            np.tile(data, reps)
+        with pytest.raises(error_type):
+            mx.sym.np.tile(sym_data, reps)
 
 
 @use_np
@@ -3763,6 +4304,23 @@ def test_np_atleast_nd():
 
 
 @use_np
+def test_np_atleast_nd_backward():
+    funcs = [np.atleast_1d, np.atleast_2d, np.atleast_3d]
+    for func in funcs:
+        scalar = np.array(2.0, dtype='float32')
+        vector = np.array([1.0, 2.0], dtype='float32')
+        scalar.attach_grad()
+        vector.attach_grad()
+        with mx.autograd.record():
+            scalar_out, vector_out = func(scalar, vector)
+            loss = scalar_out.sum() + vector_out.sum()
+        loss.backward()
+
+        assert_almost_equal(scalar.grad.asnumpy(), onp.array(1.0, dtype='float32'))
+        assert_almost_equal(vector.grad.asnumpy(), onp.ones((2,), dtype='float32'))
+
+
+@use_np
 def test_np_arange():
     configs = [
         (1, 10, 2),
@@ -3937,6 +4495,92 @@ def test_np_insert():
 
 
 @use_np
+def test_np_insert_tensor_index_validation():
+    data = np.arange(3)
+    assert_almost_equal(np.insert(data, np.array([3], dtype='int64'), 9).asnumpy(),
+                        onp.array([0, 1, 2, 9]))
+    assert_almost_equal(np.insert(data, np.array([-3], dtype='int64'), 9).asnumpy(),
+                        onp.array([9, 0, 1, 2]))
+    with pytest.raises(IndexError, match="out of bounds"):
+        np.insert(data, np.array([4], dtype='int64'), 9).asnumpy()
+    with pytest.raises(IndexError, match="out of bounds"):
+        np.insert(data, np.array([-4], dtype='int64'), 9).asnumpy()
+
+    matrix = np.arange(6).reshape((2, 3))
+    assert_almost_equal(np.insert(matrix, np.array([-1], dtype='int64'), 9, axis=1).asnumpy(),
+                        onp.insert(matrix.asnumpy(), onp.array([-1]), 9, axis=1))
+    with pytest.raises(IndexError, match="out of bounds"):
+        np.insert(matrix, np.array([4], dtype='int64'), 9, axis=1).asnumpy()
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        np.insert(data, slice(0, 2, 0), 9)
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        np.insert(data, slice(0, 2, 0), np.array([9]))
+    sym_data = mx.sym.var('insert_data').as_np_ndarray()
+    sym_values = mx.sym.var('insert_values').as_np_ndarray()
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        mx.sym.np.insert(sym_data, slice(0, 2, 0), 9)
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        mx.sym.np.insert(sym_data, slice(0, 2, 0), sym_values)
+
+    invalid_values = [
+        (1, np.arange(3), 1),
+        (1, np.arange(2), 0),
+        (np.array([1], dtype='int64'), np.arange(3).reshape((3, 1)), 1),
+        (slice(1, 2), np.arange(3).reshape((3, 1)), 1),
+    ]
+    for obj, values, axis in invalid_values:
+        with pytest.raises((ValueError, mx.MXNetError), match="could not broadcast input array"):
+            np.insert(matrix, obj, values, axis=axis).asnumpy()
+
+    assert_almost_equal(np.insert(matrix, 1, np.arange(2), axis=1).asnumpy(),
+                        onp.insert(matrix.asnumpy(), 1, onp.arange(2), axis=1))
+
+
+@use_np
+def test_np_advanced_assignment_index_validation():
+    data = np.zeros((3,), dtype='float32')
+    data[np.array([-1], dtype='int32')] = 7
+    assert_almost_equal(data.asnumpy(), onp.array([0, 0, 7], dtype='float32'))
+
+    data = np.zeros((3,), dtype='float32')
+    with pytest.raises(IndexError, match="out of bounds"):
+        data[np.array([3], dtype='int32')] = 7
+    assert_almost_equal(data.asnumpy(), onp.zeros((3,), dtype='float32'))
+
+    data = np.zeros((3,), dtype='float32')
+    with pytest.raises(IndexError, match="integer type"):
+        data[np.array([1.9], dtype='float32')] = 7
+
+
+@use_np
+@pytest.mark.parametrize('obj', [1, slice(1, 2), np.array([1], dtype='int64')])
+@pytest.mark.parametrize('axis', [1, -1])
+def test_np_insert_python_scalar_value(obj, axis):
+    data = np.arange(6, dtype='float32').reshape((2, 3))
+    obj_np = obj.asnumpy() if isinstance(obj, np.ndarray) else obj
+    mx_out = np.insert(data, obj, 9, axis=axis)
+    np_out = onp.insert(data.asnumpy(), obj_np, 9, axis=axis)
+    assert mx_out.shape == np_out.shape
+    assert_almost_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
+def test_np_insert_array_like_inputs():
+    configs = [
+        ([1, 2, 3], 1, 9, None),
+        (np.arange(4), [1, 3], 9, None),
+        ([[1, 2], [3, 4]], [1], [[9], [8]], 1),
+    ]
+    for arr, obj, values, axis in configs:
+        mx_out = np.insert(arr, obj, values, axis=axis)
+        np_arr = arr.asnumpy() if isinstance(arr, np.ndarray) else arr
+        np_obj = obj.asnumpy() if isinstance(obj, np.ndarray) else obj
+        np_values = values.asnumpy() if isinstance(values, np.ndarray) else values
+        np_out = onp.insert(np_arr, np_obj, np_values, axis=axis)
+        assert same(mx_out.asnumpy(), np_out)
+
+
+@use_np
 def test_np_split():
     class TestSplit(HybridBlock):
         def __init__(self, indices_or_sections, axis=None):
@@ -4042,6 +4686,156 @@ def test_np_array_split():
                 np_outs = onp.array_split(x.asnumpy(), indices_or_sections=indices_or_sections, axis=axis)
                 for mx_out, np_out in zip(mx_outs, np_outs):
                     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
+
+
+@use_np
+def test_np_split_index_list_normalization():
+    class TestSplit(HybridBlock):
+        def __init__(self, op_name, indices_or_sections, axis=0):
+            super(TestSplit, self).__init__()
+            self._op_name = op_name
+            self._indices_or_sections = indices_or_sections
+            self._axis = axis
+
+        def forward(self, a):
+            op = getattr(np, self._op_name)
+            if self._op_name in ('hsplit', 'vsplit', 'dsplit'):
+                return op(a, self._indices_or_sections)
+            return op(a, self._indices_or_sections, axis=self._axis)
+
+    configs = [
+        ('split', np.arange(5, dtype='float32'), [-1], 0),
+        ('split', np.arange(5, dtype='float32'), [-6], 0),
+        ('split', np.arange(5, dtype='float32'), [0, -1, 6], 0),
+        ('array_split', np.arange(12, dtype='float32').reshape((3, 4)), [-1], 1),
+        ('array_split', np.arange(12, dtype='float32').reshape((3, 4)), [0, 5], 0),
+        ('hsplit', np.arange(12, dtype='float32').reshape((3, 4)), [-1], None),
+        ('vsplit', np.arange(12, dtype='float32').reshape((3, 4)), [-4], None),
+        ('dsplit', np.arange(24, dtype='float32').reshape((2, 3, 4)), [0, -1, 6], None),
+    ]
+
+    for op_name, data, indices_or_sections, axis in configs:
+        onp_data = data.asnumpy()
+        onp_op = getattr(onp, op_name)
+        expected = (onp_op(onp_data, indices_or_sections) if axis is None
+                    else onp_op(onp_data, indices_or_sections, axis=axis))
+        for hybridize in [False, True]:
+            test_split = TestSplit(op_name, indices_or_sections, axis=0 if axis is None else axis)
+            if hybridize:
+                test_split.hybridize()
+            data.attach_grad()
+            with mx.autograd.record():
+                mx_outs = test_split(data)
+            assert len(mx_outs) == len(expected)
+            for mx_out, np_out in zip(mx_outs, expected):
+                assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+            mx.autograd.backward(mx_outs)
+            assert_almost_equal(data.grad.asnumpy(), onp.ones(data.shape), rtol=1e-3, atol=1e-5)
+
+        mx_outs = (getattr(np, op_name)(data, indices_or_sections) if axis is None
+                   else getattr(np, op_name)(data, indices_or_sections, axis=axis))
+        for mx_out, np_out in zip(mx_outs, expected):
+            assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_np_split_ndarray_indices():
+    configs = [
+        ('split', np.arange(3, dtype='float32'), np.array([], dtype='int64'), 0),
+        ('split', np.arange(4, dtype='float32'), np.array([1, 3], dtype='int64'), 0),
+        ('split', np.arange(4, dtype='float32'), onp.array(2), 0),
+        ('array_split', np.arange(12, dtype='float32').reshape((3, 4)),
+         np.array([1, 3], dtype='int64'), 1),
+        ('array_split', np.arange(5, dtype='float32'), onp.array(3), 0),
+        ('hsplit', np.arange(12, dtype='float32').reshape((3, 4)),
+         np.array([1, 3], dtype='int64'), None),
+        ('vsplit', np.arange(12, dtype='float32').reshape((3, 4)),
+         onp.array([1, 2]), None),
+        ('dsplit', np.arange(24, dtype='float32').reshape((2, 3, 4)),
+         np.array([1, 3], dtype='int64'), None),
+    ]
+
+    for op_name, data, indices_or_sections, axis in configs:
+        onp_data = data.asnumpy()
+        onp_indices = (indices_or_sections.asnumpy()
+                       if isinstance(indices_or_sections, np.ndarray) else indices_or_sections)
+        onp_op = getattr(onp, op_name)
+        expected = (onp_op(onp_data, onp_indices) if axis is None
+                    else onp_op(onp_data, onp_indices, axis=axis))
+        mx_outs = (getattr(np, op_name)(data, indices_or_sections) if axis is None
+                   else getattr(np, op_name)(data, indices_or_sections, axis=axis))
+        assert len(mx_outs) == len(expected)
+        for mx_out, np_out in zip(mx_outs, expected):
+            assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_sym_np_split_sequence_indices():
+    def check_split(op, shape, indices_or_sections):
+        data = onp.arange(onp.prod(shape), dtype=onp.float32).reshape(shape)
+        data_sym = mx.sym.var('data').as_np_ndarray()
+        outs = op(data_sym, indices_or_sections)
+        expected = getattr(onp, op.__name__)(data, indices_or_sections)
+        exe = mx.sym.Group([out.as_nd_ndarray() for out in outs])._bind(
+            mx.cpu(), {'data': mx.nd.array(data)})
+        exe.forward()
+        for mx_out, np_out in zip(exe.outputs, expected):
+            assert_almost_equal(mx_out.asnumpy(), np_out)
+
+    check_split(mx.sym.np.split, (4,), [2])
+    check_split(mx.sym.np.array_split, (4,), [2])
+    check_split(mx.sym.np.hsplit, (2, 4), [2])
+    check_split(mx.sym.np.vsplit, (4, 2), [2])
+    check_split(mx.sym.np.dsplit, (2, 3, 4), [2])
+
+
+@use_np
+def test_np_split_float_ndarray_indices_rejected():
+    configs = [
+        ('split', np.arange(5, dtype='float32'), np.array([2, 4], dtype='float32'), 0),
+        ('array_split', np.arange(5, dtype='float32'), np.array([2, 4], dtype='float32'), 0),
+        ('hsplit', np.arange(12, dtype='float32').reshape((3, 4)),
+         np.array([1, 3], dtype='float32'), None),
+        ('vsplit', np.arange(12, dtype='float32').reshape((3, 4)),
+         np.array([1, 2], dtype='float32'), None),
+        ('dsplit', np.arange(24, dtype='float32').reshape((2, 3, 4)),
+         np.array([1, 3], dtype='float32'), None),
+    ]
+    for op_name, data, indices_or_sections, axis in configs:
+        with pytest.raises(TypeError, match="sequence of integers"):
+            if axis is None:
+                getattr(np, op_name)(data, indices_or_sections)
+            else:
+                getattr(np, op_name)(data, indices_or_sections, axis=axis)
+
+
+@use_np
+def test_np_split_zero_sections_rejected():
+    configs = [
+        ('split', np.arange(4, dtype='float32'), 0),
+        ('array_split', np.arange(4, dtype='float32'), 0),
+        ('hsplit', np.arange(4, dtype='float32'), 0),
+        ('vsplit', np.arange(4, dtype='float32').reshape((2, 2)), 0),
+        ('dsplit', np.arange(8, dtype='float32').reshape((1, 2, 4)), 0),
+    ]
+    for op_name, data, sections in configs:
+        with pytest.raises(ValueError, match="number sections"):
+            getattr(np, op_name)(data, sections)
+
+
+@use_np
+def test_symbol_np_split_zero_sections_rejected():
+    data = mx.sym.var('data').as_np_ndarray()
+    configs = [
+        (mx.sym.np.split, (data, 0), {'axis': 0}),
+        (mx.sym.np.array_split, (data, 0), {'axis': 0}),
+        (mx.sym.np.hsplit, (data, 0), {}),
+        (mx.sym.np.vsplit, (data, 0), {}),
+        (mx.sym.np.dsplit, (data, 0), {}),
+    ]
+    for op, args, kwargs in configs:
+        with pytest.raises(ValueError, match="number sections"):
+            op(*args, **kwargs)
 
 
 @use_np
@@ -4167,6 +4961,40 @@ def test_np_concat():
         np_out = onp.concatenate([a.asnumpy(), b.asnumpy(), c.asnumpy(), d.asnumpy()], axis=axis)
         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
 
+    with pytest.raises(ValueError):
+        np.concatenate([])
+    with pytest.raises(ValueError):
+        mx.sym.np.concatenate([])
+
+
+@use_np
+def test_sym_np_concatenate_append_direct_use():
+    a = mx.sym.var('a').as_np_ndarray()
+    b = mx.sym.var('b').as_np_ndarray()
+
+    concatenated = mx.sym.np.concatenate((a, b), axis=0)
+    assert concatenated.infer_shape(a=(2, 3), b=(1, 3))[1] == [(3, 3)]
+
+    flattened = mx.sym.np.concatenate((a, b), axis=None)
+    assert flattened.infer_shape(a=(2, 3), b=(1, 3))[1] == [(9,)]
+
+    appended = mx.sym.np.append(a, b, axis=0)
+    assert appended.infer_shape(a=(2, 3), b=(1, 3))[1] == [(3, 3)]
+
+
+@use_np
+def test_np_concatenate_array_like_inputs():
+    configs = [
+        (([1, 2], [3, 4]), 0),
+        (([[1, 2]], np.array([[3, 4]], dtype='int64')), 0),
+        (([[1, 2]], [[3, 4]]), None),
+    ]
+    for seq, axis in configs:
+        np_seq = [arr.asnumpy() if isinstance(arr, np.ndarray) else arr for arr in seq]
+        mx_out = np.concatenate(seq, axis=axis)
+        np_out = onp.concatenate(np_seq, axis=axis)
+        assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
 
 @use_np
 def test_np_append():
@@ -4222,6 +5050,27 @@ def test_np_append():
                     np_out = onp.append(a.asnumpy(), b.asnumpy(), axis=axis)
                     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
 
+    configs = [
+        ([1, 2], [3, 4], None),
+        (np.array([1, 2]), 3, None),
+        ([[1, 2]], [[3, 4]], 0),
+    ]
+    for arr, values, axis in configs:
+        mx_out = np.append(arr, values, axis=axis)
+        np_arr = arr.asnumpy() if isinstance(arr, np.ndarray) else arr
+        np_values = values.asnumpy() if isinstance(values, np.ndarray) else values
+        np_out = onp.append(np_arr, np_values, axis=axis)
+        assert same(mx_out.asnumpy(), np_out)
+
+    class TestAppendArrayLikeConstant(HybridBlock):
+        def forward(self, a):
+            return np.append(a, [9, 10])
+
+    test_append_constant = TestAppendArrayLikeConstant()
+    test_append_constant.hybridize()
+    with pytest.raises(TypeError, match='array-like constants are not supported'):
+        test_append_constant(np.array([1, 2]))
+
 
 @use_np
 def test_np_stack():
@@ -4270,6 +5119,25 @@ def test_np_stack():
                 np_out = onp.stack([np_a, np_b, np_c, np_d], axis=axis)
                 mx_out = np.stack([mx_a, mx_b, mx_c, mx_d], axis=axis)
                 assert same(mx_out.asnumpy(), np_out)
+
+    with pytest.raises(ValueError):
+        np.stack([])
+    with pytest.raises(ValueError):
+        mx.sym.np.stack([])
+
+    mismatched = [
+        ((2, 3), (2, 4)),
+        ((2, 3), (3, 3)),
+        ((2, 3), (2, 3, 1)),
+    ]
+    sym_a = mx.sym.var('a').as_np_ndarray()
+    sym_b = mx.sym.var('b').as_np_ndarray()
+    sym_stack = mx.sym.np.stack([sym_a, sym_b], axis=0)
+    for shape_a, shape_b in mismatched:
+        with pytest.raises(MXNetError, match="all input arrays must have the same shape"):
+            np.stack([np.ones(shape_a), np.zeros(shape_b)], axis=0)
+        with pytest.raises(MXNetError, match="all input arrays must have the same shape"):
+            sym_stack.infer_shape(a=shape_a, b=shape_b)
 
 
 @use_np
@@ -4333,6 +5201,32 @@ def test_np_hstack():
             mx_out = np.hstack((a, b, c, d))
             np_out = onp.hstack((a.asnumpy(),b.asnumpy(), c.asnumpy(), d.asnumpy()))
             assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_np_stack_helpers_array_like_inputs():
+    configs = [
+        (onp.hstack, np.hstack, (([1, 2], [3, 4]),)),
+        (onp.vstack, np.vstack, (([1, 2], [3, 4]),)),
+        (onp.dstack, np.dstack, (([1, 2], [3, 4]),)),
+        (onp.column_stack, np.column_stack, (([1, 2], [3, 4]),)),
+        (onp.column_stack, np.column_stack, ((1, 2),)),
+    ]
+    for np_func, mx_func, args in configs:
+        expected = np_func(*args)
+        actual = mx_func(*args)
+        assert same(expected, actual.asnumpy())
+
+
+@use_np
+def test_sym_np_hstack_dstack_direct_shape_inference():
+    a = mx.sym.var('a').as_np_ndarray()
+    b = mx.sym.var('b').as_np_ndarray()
+
+    assert mx.sym.np.hstack((a, b)).infer_shape(a=(2, 3), b=(2, 1))[1] == [(2, 4)]
+    assert mx.sym.np.hstack((a, b)).infer_shape(a=(3,), b=(1,))[1] == [(4,)]
+    assert mx.sym.np.dstack((a, b)).infer_shape(a=(3,), b=(3,))[1] == [(1, 3, 2)]
+    assert mx.sym.np.dstack((a, b)).infer_shape(a=(2, 3), b=(2, 3))[1] == [(2, 3, 2)]
 
 
 @use_np
@@ -4425,6 +5319,14 @@ def test_np_ravel():
                 mx_out = np.ravel(x)
                 np_out = onp.ravel(x.asnumpy())
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+    x = np.arange(6).reshape((2, 3))
+    sym_x = mx.sym.var('ravel_data').as_np_ndarray()
+    for order in ['F', 'A', 'K', 'c']:
+        with pytest.raises(NotImplementedError):
+            np.ravel(x, order=order)
+        with pytest.raises(NotImplementedError):
+            mx.sym.np.ravel(sym_x, order=order)
 
 
 @use_np
@@ -4546,7 +5448,9 @@ def test_np_delete():
             for idx in range(-1 * GetDimSize(shp, ax), GetDimSize(shp, ax)):
                 config.append(tuple([shp, idx, ax]))
             #test ndarray indices
-            idx =  onp.random.randint(-1 * shp[ax], shp[ax] + 1, size = (4)).tolist()
+            dim_size = GetDimSize(shp, ax)
+            idx = ([] if dim_size == 0 else
+                   onp.random.randint(-1 * dim_size, dim_size, size=(4)).tolist())
             config.append(tuple([shp, idx, ax]))
 
     for arr_shape, obj, axis in config:
@@ -4554,12 +5458,6 @@ def test_np_delete():
             if type(obj) == list:
                 obj_mxnp = np.array(obj, dtype=objtype)
                 obj_onp = onp.array(obj, dtype=objtype)
-                # To match mxnet.numpy's behavior of ignoring out-of-bounds indices,
-                # we may need to filter out indices that this numpy would not ignore.
-                onp_ignores_oob_indices = parse(onp.version.version) < parse('1.19')
-                if not onp_ignores_oob_indices:
-                    dim_size = GetDimSize(arr_shape,axis)
-                    obj_onp = obj_onp[((obj_onp>=0) & (obj_onp<dim_size))]
             elif type(obj) == slice:
                 obj_mxnp = obj
                 obj_onp = obj
@@ -4583,6 +5481,37 @@ def test_np_delete():
             np_out = onp.delete(a.asnumpy(), obj_onp, axis=axis)
 
             assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_np_delete_tensor_index_validation():
+    data = np.arange(5)
+    assert_almost_equal(np.delete(data, np.array([-1], dtype='int64')).asnumpy(),
+                        onp.array([0, 1, 2, 3]))
+    with pytest.raises(IndexError, match="out of bounds"):
+        np.delete(data, np.array([5], dtype='int64')).asnumpy()
+    with pytest.raises(IndexError, match="integer type"):
+        np.delete(data, np.array([1.5], dtype='float32')).asnumpy()
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        np.delete(data, slice(0, 2, 0))
+    sym_data = mx.sym.var('delete_data').as_np_ndarray()
+    with pytest.raises(ValueError, match="slice step cannot be zero"):
+        mx.sym.np.delete(sym_data, slice(0, 2, 0))
+
+
+@use_np
+def test_np_delete_array_like_inputs():
+    configs = [
+        ([1, 2, 3], 1, None),
+        (np.arange(5), [1, 3], None),
+        (np.arange(5), [False, True, False, True, False], None),
+    ]
+    for arr, obj, axis in configs:
+        mx_out = np.delete(arr, obj, axis=axis)
+        np_arr = arr.asnumpy() if isinstance(arr, np.ndarray) else arr
+        np_obj = obj.asnumpy() if isinstance(obj, np.ndarray) else obj
+        np_out = onp.delete(np_arr, np_obj, axis=axis)
+        assert same(mx_out.asnumpy(), np_out)
 
 
 @use_np
@@ -4735,6 +5664,14 @@ def test_np_clip():
                 else:
                     mx_ret = net(a)
                     assert_almost_equal(mx_ret.asnumpy(), np_ret, atol=1e-4, rtol=1e-3, use_broadcast=False)
+
+    x = np.array([1.0, 2.0, 3.0], dtype='float32')
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        out = np.clip(x, 1.5, 2.5).sum()
+    out.backward()
+    assert_almost_equal(x.grad.asnumpy(), onp.array([5.0, 6.0, 5.0], dtype=onp.float32))
 
 
 @use_np
@@ -5052,6 +5989,42 @@ def test_np_random():
                     expected_shape = () if shape is None else (shape,)
                 assert out.shape == expected_shape
 
+    for op_name in op_names:
+        op = getattr(np.random, op_name)
+        if op_name == 'gamma':
+            with pytest.raises(TypeError):
+                op(1, size=(2.0, 3))
+            with pytest.raises(ValueError):
+                op(1, size=(-1, 3))
+        else:
+            with pytest.raises(TypeError):
+                op(size=(2.0, 3))
+            with pytest.raises(ValueError):
+                op(size=(-1, 3))
+
+    assert np.random.randint(0, size=0).shape == (0,)
+    assert np.random.randint(1, 1, size=0).shape == (0,)
+    with pytest.raises(ValueError):
+        np.random.randint(0, size=3)
+    with pytest.raises(ValueError):
+        np.random.randint(1, 1, size=3)
+
+    assert np.random.choice(0, size=0).shape == (0,)
+    with pytest.raises(ValueError):
+        np.random.choice(0, size=1)
+    with pytest.raises(ValueError):
+        np.random.choice(2, size=3, replace=False)
+    for prob in ([0.2, 0.2], [0.8, 0.8], [-0.5, 1.5], [1.0]):
+        with pytest.raises(ValueError):
+            np.random.choice(2, size=4, p=prob)
+    with pytest.raises(ValueError):
+        np.random.multinomial(-1, [0.5, 0.5])
+
+    with pytest.raises(TypeError):
+        mx.sym.np.random.uniform(size=(2.0, 3))
+    with pytest.raises(ValueError):
+        mx.sym.np.random.randint(0, size=3)
+
 
 @use_np
 def test_gamma_exception():
@@ -5262,6 +6235,15 @@ def test_np_random_rayleigh():
     def _test_rayleigh_exception(scale):
         output = np.random.rayleigh(scale=scale).asnumpy()
     assertRaises(ValueError, _test_rayleigh_exception, -1)
+
+
+@use_np
+def test_np_symbol_random_rayleigh_default_scale():
+    mx.random.seed(123)
+    mx_out = np.random.rayleigh(size=5)
+    mx.random.seed(123)
+    sym_out = mx.sym.np.random.rayleigh(size=5).eval()[0]
+    assert_almost_equal(sym_out.asnumpy(), mx_out.asnumpy(), rtol=1e-5, atol=1e-6)
 
 
 @use_np
@@ -5618,13 +6600,37 @@ def test_np_cumsum():
 
     for shape in shapes:
         for axis in [None] + [i for i in range(0, len(shape))]:
-            for otype in [None, onp.int32, onp.int64]:
-                for itype in [onp.bool_, onp.int8, onp.int32, onp.int64]:
+            for otype in [None, onp.bool_, onp.int16, onp.uint16, onp.int32, onp.uint32, onp.int64]:
+                for itype in [onp.bool_, onp.int8, onp.int16, onp.uint16, onp.int32, onp.uint32, onp.int64]:
                     x = rand_ndarray(shape).astype(itype).as_np_ndarray()
                     np_out = onp.cumsum(x.asnumpy(), axis=axis, dtype=otype)
                     mx_out = np.cumsum(x, axis=axis, dtype=otype)
                     assert mx_out.shape == np_out.shape
                     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+    data = np.array([100, 30, 2], dtype='int8')
+    mx_out = np.cumsum(data)
+    np_out = onp.cumsum(data.asnumpy())
+    assert mx_out.dtype == np_out.dtype
+    assert_almost_equal(mx_out.asnumpy(), np_out)
+
+    data = np.arange(6, dtype='float32').reshape((2, 3))
+    data.attach_grad()
+    with mx.autograd.record():
+        mx_out = np.cumsum(data, axis=-1)
+    np_out = onp.cumsum(data.asnumpy(), axis=-1)
+    assert_almost_equal(mx_out.asnumpy(), np_out)
+    mx_out.backward()
+    assert_almost_equal(data.grad.asnumpy(),
+                        onp.array([[3.0, 2.0, 1.0], [3.0, 2.0, 1.0]], dtype=onp.float32))
+
+    data = np.array([1.0, 2.0, 3.0], dtype='float32')
+    data.attach_grad('add')
+    data.grad[:] = 5
+    with mx.autograd.record():
+        out = np.cumsum(data).sum()
+    out.backward()
+    assert_almost_equal(data.grad.asnumpy(), onp.array([8.0, 7.0, 6.0], dtype=onp.float32))
 
 
 @use_np
@@ -5660,9 +6666,57 @@ def test_np_histogram_cpu_edge_and_invalid_bins():
     assert_almost_equal(mx_bins.asnumpy(), onp.array([0.0, 1.0, 2.0, 3.0]),
                         rtol=1e-3, atol=1e-5)
 
+    mx_cnts, mx_bins = np.histogram(mx_a, bins=3, range=(0, 3))
+    assert_almost_equal(mx_cnts.asnumpy(), onp.array([1, 1, 2]), rtol=1e-3, atol=1e-5)
+    assert_almost_equal(mx_bins.asnumpy(), onp.array([0.0, 1.0, 2.0, 3.0]),
+                        rtol=1e-3, atol=1e-5)
+
+    int_data = np.array([0, 1, 2], device=mx.cpu(), dtype='int32')
+    mx_cnts, mx_bins = np.histogram(int_data, bins=2, range=(0, 2))
+    np_cnts, np_bins = onp.histogram(int_data.asnumpy(), bins=2, range=(0, 2))
+    assert mx_bins.dtype == np_bins.dtype
+    assert_almost_equal(mx_cnts.asnumpy(), np_cnts, rtol=1e-3, atol=1e-5)
+    assert_almost_equal(mx_bins.asnumpy(), np_bins, rtol=1e-3, atol=1e-5)
+
+    bool_data = np.array([True, False], device=mx.cpu(), dtype='bool')
+    with pytest.raises(MXNetError, match="histogram does not support bool"):
+        np.histogram(bool_data, bins=2, range=(0, 1))[0].asnumpy()
+
     for bin_cnt in (0, -1):
         with pytest.raises(MXNetError, match="bin_cnt"):
             np.histogram(mx_a, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
+
+    dtype_cases = [
+        (onp.float32, onp.float64),
+        (onp.float64, onp.float32),
+        (onp.int32, onp.float64),
+    ]
+    for data_dtype, bins_dtype in dtype_cases:
+        data = np.array([0.0, 1.0, 2.0, 3.0], device=mx.cpu(), dtype=data_dtype)
+        bins = np.array([0.0, 1.0, 2.0, 3.0], device=mx.cpu(), dtype=bins_dtype)
+        mx_cnts, mx_bins = np.histogram(data, bins=bins)
+        np_cnts, np_bins = onp.histogram(data.asnumpy(), bins=bins.asnumpy())
+        assert mx_bins.dtype == bins_dtype
+        assert_almost_equal(mx_cnts.asnumpy(), np_cnts, rtol=1e-3, atol=1e-5)
+        assert_almost_equal(mx_bins.asnumpy(), np_bins, rtol=1e-3, atol=1e-5)
+
+    mx_cnts, mx_bins = np.histogram(
+        mx_a, bins=np.array([0.0, 1.0, 1.0, 3.0], device=mx.cpu(), dtype=onp.float64))
+    np_cnts, np_bins = onp.histogram(mx_a.asnumpy(), bins=onp.array([0.0, 1.0, 1.0, 3.0]))
+    assert_almost_equal(mx_cnts.asnumpy(), np_cnts, rtol=1e-3, atol=1e-5)
+    assert_almost_equal(mx_bins.asnumpy(), np_bins, rtol=1e-3, atol=1e-5)
+
+    with pytest.raises(MXNetError, match="must increase monotonically"):
+        np.histogram(
+            mx_a,
+            bins=np.array([0.0, 2.0, 1.0, 3.0], device=mx.cpu(), dtype=onp.float64))[0].asnumpy()
+    if mx.device.num_gpus() > 0:
+        gpu_a = mx_a.to_device(mx.gpu(0))
+        with pytest.raises(MXNetError, match="must increase monotonically"):
+            np.histogram(
+                gpu_a,
+                bins=np.array([0.0, 2.0, 1.0, 3.0], device=mx.gpu(0),
+                              dtype=onp.float64))[0].asnumpy()
 
 
 @use_np
@@ -5765,6 +6819,41 @@ def test_np_choice():
 
 
 @use_np
+def test_np_random_choice_array_like_a():
+    samples = np.random.choice([10, 20, 30], 2)
+    assert samples.shape == (2,)
+    assert set(samples.asnumpy().tolist()).issubset({10, 20, 30})
+    with pytest.raises(ValueError, match="1-dimensional"):
+        np.random.choice([[1, 2]], 1)
+
+
+@use_np
+def test_np_random_array_like_distribution_parameters():
+    configs = [
+        (lambda: np.random.uniform([0, 1], [1, 2]), (2,)),
+        (lambda: np.random.normal([0, 1], 1), (2,)),
+        (lambda: np.random.logistic([0, 1], [1, 1]), (2,)),
+        (lambda: np.random.gumbel([0, 1], [1, 1]), (2,)),
+        (lambda: np.random.exponential([1, 2]), (2,)),
+        (lambda: np.random.weibull([1, 2]), (2,)),
+        (lambda: np.random.pareto([1, 2]), (2,)),
+        (lambda: np.random.power([1, 2]), (2,)),
+        (lambda: np.random.rayleigh([1, 2]), (2,)),
+        (lambda: np.random.laplace([0, 1], [1, 1]), (2,)),
+        (lambda: np.random.gamma([1, 2], [1, 1]), (2,)),
+        (lambda: np.random.beta([1, 2], [2, 3]), (2,)),
+        (lambda: np.random.chisquare([1, 2]), (2,)),
+        (lambda: np.random.f([1, 2], [3, 4]), (2,)),
+        (lambda: np.random.multinomial(3, onp.array([0.5, 0.5])), (2,)),
+    ]
+    for sampler, expected_shape in configs:
+        assert sampler().shape == expected_shape
+
+    with pytest.raises(TypeError, match="array-like constants are not supported"):
+        mx.sym.np.random.uniform([0, 1], [1, 2])
+
+
+@use_np
 def test_np_eye():
     configs = [
         4,
@@ -5800,9 +6889,29 @@ def test_np_eye():
     # check for exception input
     for config in exception_configs:
         if isinstance(config, tuple):
-            assertRaises(MXNetError, np.eye, *config)
+            assertRaises(ValueError, np.eye, *config)
         else:
-            assertRaises(MXNetError, np.eye, config)
+            assertRaises(ValueError, np.eye, config)
+
+    assert same(np.identity(onp.int64(2)).asnumpy(), onp.identity(onp.int64(2)))
+    with pytest.raises(TypeError):
+        np.eye(2.5)
+    with pytest.raises(TypeError):
+        np.eye(2, M=3.5)
+    with pytest.raises(TypeError):
+        np.eye(3, k=1.5)
+    with pytest.raises(TypeError):
+        np.eye(3, k=onp.float64(1))
+    with pytest.raises(TypeError):
+        mx.sym.np.eye(2.5)
+    with pytest.raises(TypeError):
+        mx.sym.np.eye(2, M=3.5)
+    with pytest.raises(ValueError):
+        mx.sym.np.eye(-1)
+    with pytest.raises(ValueError):
+        mx.sym.np.eye(2, M=-1)
+    with pytest.raises(TypeError):
+        mx.sym.np.eye(3, k=1.5)
 
     class TestEye(HybridBlock):
         def __init__(self, N, M=None, k=0, dtype=None):
@@ -5829,6 +6938,17 @@ def test_np_eye():
                     net.hybridize()
                 mx_out = net(x)
                 assert same(mx_out.asnumpy(), np_out)
+
+    mx_ret = np.eye(4, 3, 1, dtype='bool')
+    np_ret = onp.eye(4, 3, 1, dtype='bool')
+    assert mx_ret.dtype == np_ret.dtype
+    onp.testing.assert_array_equal(mx_ret.asnumpy(), np_ret)
+
+    for dtype in ['int16', 'uint16', 'uint32', 'uint64']:
+        mx_ret = np.identity(3, dtype=dtype)
+        np_ret = onp.identity(3, dtype=dtype)
+        assert mx_ret.dtype == np_ret.dtype
+        onp.testing.assert_array_equal(mx_ret.asnumpy(), np_ret)
 
 
 @use_np
@@ -5874,16 +6994,52 @@ def test_np_indices():
                 assert same(mx_out.asnumpy(), np_out)
                 assert mx_out.shape == np_out.shape
 
+    for hybridize in [False, True]:
+        net = TestIndices(dimensions=(2, 3), dtype=None)
+        if hybridize:
+            net.hybridize()
+        mx_out = net(np.zeros(shape=(), dtype='int64'))
+        np_out = onp.indices(dimensions=(2, 3))
+        assert mx_out.dtype == np_out.dtype
+        assert same(mx_out.asnumpy(), np_out)
+        assert mx_out.shape == np_out.shape
+
+    mx_out = np.indices((2,), dtype='bool')
+    np_out = onp.indices((2,), dtype='bool')
+    assert mx_out.dtype == np_out.dtype
+    onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+    for dtype in ['int16', 'uint16', 'uint32', 'uint64']:
+        mx_out = np.indices((2, 3), dtype=dtype)
+        np_out = onp.indices((2, 3), dtype=dtype)
+        assert mx_out.dtype == np_out.dtype
+        onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+    for bad_dimensions in [(2.0, 3), [onp.float64(2), 3]]:
+        with pytest.raises(TypeError):
+            np.indices(bad_dimensions)
+        with pytest.raises(TypeError):
+            mx.sym.np.indices(bad_dimensions)
+    for bad_dimensions in [(-1, 2), [-1, 2]]:
+        with pytest.raises(ValueError):
+            np.indices(bad_dimensions)
+        with pytest.raises(ValueError):
+            mx.sym.np.indices(bad_dimensions)
+
 
 @use_np
 def test_np_repeat():
     config = [
         ((), 2, None),
         ((), 0, None),
+        ((), 2, 0),
+        ((), 2, -1),
         ((4, 2), 2, None),
         ((4, 2), 2, 0),
         ((4, 2), 2, 1),
         ((4, 2), 2, -1),
+        ((4, 2), onp.array(2), None),
+        ((4, 2), onp.bool_(True), None),
         ((4, 2), [2,3] * 4, None),
         ((4, 2), [1,2], 1),
     ]
@@ -5910,6 +7066,106 @@ def test_np_repeat():
                 net.hybridize()
             ret_mx = net(data_mx)
             assert same(ret_mx.asnumpy(), ret_np)
+
+
+@use_np
+def test_np_matrix_selection_extended_dtypes():
+    for dtype in ['bool', 'int16', 'uint16', 'uint32']:
+        data_np = onp.array([[1, 0], [3, 4]], dtype=dtype)
+        data = np.array(data_np, dtype=dtype)
+        for mx_op, np_op in [(np.diag, onp.diag), (np.tril, onp.tril), (np.triu, onp.triu)]:
+            mx_out = mx_op(data)
+            np_out = np_op(data_np)
+            assert mx_out.dtype == np_out.dtype
+            onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+        mx_out = np.repeat(data, 2)
+        np_out = onp.repeat(data_np, 2)
+        assert mx_out.dtype == np_out.dtype
+        onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
+def test_np_repeat_repeats_validation():
+    data = np.ones((2, 3))
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    invalid_repeats = [
+        (2.0, TypeError),
+        ('2', TypeError),
+        ([1.0, 2], TypeError),
+        (-1, ValueError),
+        ([1, -1], ValueError),
+    ]
+    for repeats, error_type in invalid_repeats:
+        with pytest.raises(error_type):
+            np.repeat(data, repeats, axis=0)
+        with pytest.raises(error_type):
+            mx.sym.np.repeat(sym_data, repeats, axis=0)
+
+
+@use_np
+def test_np_repeat_zero_repeats_axis_shape():
+    class TestRepeat(HybridBlock):
+        def __init__(self, repeats, axis=None):
+            super(TestRepeat, self).__init__()
+            self._repeats = repeats
+            self._axis = axis
+
+        def forward(self, x):
+            return x.repeat(self._repeats, self._axis)
+
+    configs = [
+        ((2, 3), 0, 1),
+        ((2, 3), [0, 0, 0], 1),
+        ((1, 3, 2), [0], 0),
+        ((2, 0, 3), [], 1),
+    ]
+    for shape, repeats, axis in configs:
+        data_np = onp.arange(onp.prod(shape)).reshape(shape)
+        data_mx = np.array(data_np, dtype=data_np.dtype)
+        expected = data_np.repeat(repeats, axis)
+        assert same(data_mx.repeat(repeats, axis).asnumpy(), expected)
+
+        for hybridize in [False, True]:
+            test_repeat = TestRepeat(repeats, axis)
+            if hybridize:
+                test_repeat.hybridize()
+            assert same(test_repeat(data_mx).asnumpy(), expected)
+
+    with pytest.raises(ValueError, match="broadcast"):
+        np.arange(6).reshape((2, 3)).repeat([0, 0], axis=1).asnumpy()
+
+
+@use_np
+def test_np_repeat_backward():
+    configs = [
+        ((3,), 2, None),
+        ((3,), 0, None),
+        ((2, 2), 3, 1),
+        ((2, 2), [1, 2], 0),
+        ((2, 2), [1, 2], 1),
+        ((2, 2), [1, 0], 1),
+    ]
+
+    for shape, repeats, axis in configs:
+        data = np.arange(onp.prod(shape), dtype='float32').reshape(shape)
+        data.attach_grad()
+        with mx.autograd.record():
+            out = data.repeat(repeats, axis)
+            loss = out.sum()
+        loss.backward()
+
+        expected = onp.ones(shape, dtype='float32')
+        if isinstance(repeats, list):
+            repeat_array = onp.array(repeats, dtype='float32')
+            expected = onp.broadcast_to(repeat_array, shape).copy()
+            if axis == 0:
+                expected = onp.broadcast_to(repeat_array.reshape((-1, 1)), shape).copy()
+            elif axis == 1:
+                expected = onp.broadcast_to(repeat_array.reshape((1, -1)), shape).copy()
+        else:
+            expected *= repeats
+        assert_almost_equal(data.grad.asnumpy(), expected)
 
 
 @use_np
@@ -6041,6 +7297,112 @@ def test_np_linalg_norm():
             np_ret = onp.linalg.norm(a.asnumpy(), ord=ord, axis=axis, keepdims=keepdims)
         mx_ret = np.linalg.norm(a, ord=ord, axis=axis, keepdims=keepdims)
         assert_almost_equal(mx_ret.asnumpy(), np_ret, rtol=rtol, atol=atol)
+
+
+@use_np
+@pytest.mark.parametrize('ord', [1, -1, 'inf', '-inf'])
+@pytest.mark.parametrize('hybridize', [True, False])
+def test_np_linalg_norm_negative_matrix_axes(ord, hybridize):
+    class TestNorm(HybridBlock):
+        def __init__(self, ord):
+            super(TestNorm, self).__init__()
+            self._ord = ord
+
+        def forward(self, x):
+            return np.linalg.norm(x, ord=self._ord, axis=(-2, -1))
+
+    data = np.arange(24, dtype='float32').reshape((2, 3, 4)) + 1
+    np_ord = onp.inf if ord == 'inf' else -onp.inf if ord == '-inf' else ord
+
+    test_norm = TestNorm(ord)
+    if hybridize:
+        test_norm.hybridize()
+    mx_ret = test_norm(data)
+    np_ret = onp.linalg.norm(data.asnumpy(), ord=np_ord, axis=(-2, -1))
+    assert mx_ret.shape == np_ret.shape
+    assert_almost_equal(mx_ret.asnumpy(), np_ret)
+
+    mx_ret = np.linalg.matrix_norm(data, ord=ord)
+    assert mx_ret.shape == np_ret.shape
+    assert_almost_equal(mx_ret.asnumpy(), np_ret)
+
+
+@use_np
+def test_np_linalg_norm_invalid_orders():
+    invalid_configs = [
+        (np.arange(3), 'fro', None),
+        (np.arange(3), 'bad', None),
+        (np.arange(6).reshape((2, 3)), 3, None),
+        (np.arange(6).reshape((2, 3)), 'bad', (0, 1)),
+        (np.arange(24).reshape((2, 3, 4)), 2, None),
+    ]
+    for data, ord, axis in invalid_configs:
+        with pytest.raises(ValueError):
+            np.linalg.norm(data, ord=ord, axis=axis)
+
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="out of bounds"):
+        mx.sym.np.linalg.norm(a, axis=-3).infer_shape(a=(2, 3))
+    with pytest.raises(ValueError, match="duplicate"):
+        mx.sym.np.linalg.norm(a, axis=(0, 0))
+
+
+@use_np
+def test_np_linalg_norm_integer_promotes_to_float():
+    # PyTorch errors on integer norm; project convention returns float32
+    # (NumPy returns float64).
+    data = np.array([3, 4], dtype='int32')
+    ret = np.linalg.norm(data)
+    assert ret.dtype == onp.dtype('float32')
+    assert_almost_equal(ret.asnumpy(), onp.linalg.norm(data.asnumpy()).astype('float32'))
+
+    sym_data = mx.sym.var('norm_data').as_np_ndarray()
+    sym_ret = mx.sym.np.linalg.norm(sym_data)
+    assert sym_ret.infer_type(norm_data='int32')[1] == [onp.dtype('float32')]
+
+
+@use_np
+def test_np_linalg_trace_diagonal_use_last_axes():
+    data_np = onp.arange(24).reshape((2, 3, 4))
+    data = np.array(data_np)
+
+    trace = np.linalg.trace(data)
+    expected_trace = onp.trace(data_np, axis1=-2, axis2=-1)
+    assert_almost_equal(trace.asnumpy(), expected_trace)
+
+    diag = np.linalg.diagonal(data)
+    expected_diag = onp.diagonal(data_np, axis1=-2, axis2=-1)
+    assert_almost_equal(diag.asnumpy(), expected_diag)
+
+
+@use_np
+def test_np_linalg_vecdot_axis_semantics():
+    a_np = onp.array([[1, 2], [3, 4]], dtype='float32')
+    b_np = onp.array([[10, 20], [30, 40]], dtype='float32')
+    a = np.array(a_np)
+    b = np.array(b_np)
+
+    for axis in [None, -1, 0, 1]:
+        mx_axis = np.linalg.vecdot(a, b, axis=axis)
+        np_axis = onp.sum(a_np * b_np, axis=-1 if axis is None else axis)
+        assert_almost_equal(mx_axis.asnumpy(), np_axis)
+
+
+@use_np
+@pytest.mark.parametrize('hybridize', [True, False])
+def test_np_linalg_vector_norm_negative_tuple_axes(hybridize):
+    class TestVectorNorm(HybridBlock):
+        def forward(self, x):
+            return np.linalg.vector_norm(x, axis=(-2, -1))
+
+    data = np.arange(24, dtype='float32').reshape((2, 3, 4)) + 1
+    test_norm = TestVectorNorm()
+    if hybridize:
+        test_norm.hybridize()
+    mx_ret = test_norm(data)
+    np_ret = onp.linalg.norm(data.asnumpy().reshape((2, 12)), axis=1)
+    assert mx_ret.shape == np_ret.shape
+    assert_almost_equal(mx_ret.asnumpy(), np_ret)
 
 
 @use_np
@@ -6437,6 +7799,32 @@ def test_np_linalg_svdvals(shape, dtype, hybridize):
 
 
 @use_np
+def test_np_linalg_svd_symbol_rank_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="at least two-dimensional"):
+        mx.sym.Group(mx.sym.np.linalg.svd(a)).infer_shape(a=(3,))
+
+
+@use_np
+def test_np_linalg_svd_symbol_type_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    svd = mx.sym.Group(mx.sym.np.linalg.svd(a))
+    assert svd.infer_type(a='float32')[1] == [np.float32, np.float32, np.float32]
+    assert svd.infer_type(a='float64')[1] == [np.float64, np.float64, np.float64]
+    for dtype in ('float16', 'int32'):
+        with pytest.raises(MXNetError, match="32-bit and 64-bit floating point"):
+            svd.infer_type(a=dtype)
+
+
+@use_np
+def test_np_linalg_svd_imperative_type_validation():
+    for dtype in ('float16', 'int32', 'int64', 'bool'):
+        data = np.ones((2, 2), dtype=dtype)
+        with pytest.raises(MXNetError, match="32-bit and 64-bit floating point"):
+            np.linalg.svd(data)
+
+
+@use_np
 @requires_lapack
 def test_np_linalg_qr():
     class TestQR(HybridBlock):
@@ -6580,6 +7968,24 @@ def test_np_linalg_qr():
 
 
 @use_np
+def test_np_linalg_qr_symbol_rank_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="at least two-dimensional"):
+        mx.sym.Group(mx.sym.np.linalg.qr(a)).infer_shape(a=(3,))
+
+
+@use_np
+def test_np_linalg_qr_bool_type_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        mx.sym.Group(mx.sym.np.linalg.qr(a)).infer_type(a='bool')
+
+    data = np.eye(2, dtype='bool')
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        np.linalg.qr(data)
+
+
+@use_np
 @pytest.mark.parametrize('shape', [
     (0, 0),
     (1, 1),
@@ -6707,6 +8113,32 @@ def test_np_linalg_cholesky(shape, dtype, upper, hybridize):
     # check imperative once again
     L = np.linalg.cholesky(data, upper=upper)
     check_cholesky(L, data_np, upper)
+
+
+@use_np
+def test_np_linalg_cholesky_symbol_shape_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="must be square"):
+        mx.sym.np.linalg.cholesky(a).infer_shape(a=(2, 3))
+
+
+@use_np
+def test_np_linalg_cholesky_symbol_type_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    cholesky = mx.sym.np.linalg.cholesky(a)
+    assert cholesky.infer_type(a='float32')[1] == [np.float32]
+    assert cholesky.infer_type(a='float64')[1] == [np.float64]
+    for dtype in ('float16', 'int32'):
+        with pytest.raises(MXNetError, match="32-bit and 64-bit floating point"):
+            cholesky.infer_type(a=dtype)
+
+
+@use_np
+def test_np_linalg_cholesky_imperative_type_validation():
+    for dtype in ('float16', 'int32', 'int64', 'bool'):
+        data = np.eye(2, dtype=dtype)
+        with pytest.raises(MXNetError, match="32-bit and 64-bit floating point"):
+            np.linalg.cholesky(data)
 
 
 @use_np
@@ -6896,6 +8328,36 @@ def test_np_linalg_solve():
         # check imperative once again
         mx_out = np.linalg.solve(a, b)
         check_solve(mx_out, a, b)
+
+
+@use_np
+def test_np_linalg_solve_symbol_shape_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    b = mx.sym.var('b').as_np_ndarray()
+    out = mx.sym.np.linalg.solve(a, b)
+
+    test_cases = [
+        ((2, 2), (2,), (2,)),
+        ((3, 2, 2), (3, 2), (3, 2)),
+        ((3, 2, 2), (3, 2, 1), (3, 2, 1)),
+    ]
+    for a_shape, b_shape, expected_shape in test_cases:
+        assert out.infer_shape(a=a_shape, b=b_shape)[1] == [expected_shape]
+
+    partial_shapes = out.infer_shape_partial(a=(2, 2))
+    assert partial_shapes[0][1] is None
+
+    invalid_cases = [
+        ((1, 2, 2), (3, 2)),
+        ((3, 2, 2), (1, 2)),
+        ((3, 2, 2), (2,)),
+        ((1, 3, 2, 2), (4, 1, 2)),
+        ((1, 2, 2), (3, 2, 1)),
+        ((2, 2, 2), (3, 2)),
+    ]
+    for a_shape, b_shape in invalid_cases:
+        with pytest.raises(MXNetError, match="dimensions don't match"):
+            out.infer_shape(a=a_shape, b=b_shape)
 
 
 @requires_lapack
@@ -7147,6 +8609,21 @@ def test_np_linalg_tensorsolve():
 
 
 @use_np
+def test_np_linalg_tensorsolve_invalid_axes():
+    a = mx.sym.var('a').as_np_ndarray()
+    b = mx.sym.var('b').as_np_ndarray()
+
+    for axes in [(99,), (-5,)]:
+        tensorsolve = mx.sym.np.linalg.tensorsolve(a, b, axes=axes)
+        with pytest.raises(MXNetError, match="out of bounds"):
+            tensorsolve.infer_shape(a=(2, 2, 2, 2), b=(2, 2))
+    for axes in [(1, 1), (0, 1, 2, 3, 0)]:
+        tensorsolve = mx.sym.np.linalg.tensorsolve(a, b, axes=axes)
+        with pytest.raises(MXNetError, match="duplicate"):
+            tensorsolve.infer_shape(a=(2, 2, 2, 2), b=(2, 2))
+
+
+@use_np
 @requires_lapack
 def test_np_linalg_lstsq():
     class TestLstsq(HybridBlock):
@@ -7220,6 +8697,34 @@ def test_np_linalg_lstsq():
                 x, residuals, rank, s = test_lstsq(a, b)
                 # check lstsq validity
                 check_lstsq(a_np, b_np, rcond, x, residuals, rank, s)
+
+
+@use_np
+def test_np_linalg_lstsq_symbol_shape_inference():
+    a = mx.sym.var('a').as_np_ndarray()
+    b = mx.sym.var('b').as_np_ndarray()
+
+    configs = [
+        ((3, 2), (3,), [(2,), (1,), (), (2,)]),
+        ((3, 2), (3, 4), [(2, 4), (4,), (), (2,)]),
+        ((4, 0), (4,), [(0,), (1,), (), (0,)]),
+        ((0, 2), (0,), [(2,), (0,), (), (0,)]),
+        ((4, 2), (4, 0), [(2, 0), (0,), (), (2,)]),
+        ((4, 6), (4, 3), [(6, 3), (0,), (), (4,)]),
+    ]
+    for a_shape, b_shape, expected_shapes in configs:
+        outs = mx.sym.np.linalg.lstsq(a, b)
+        inferred = [out.infer_shape(a=a_shape, b=b_shape)[1][0] for out in outs]
+        assert inferred == expected_shapes
+
+    invalid_configs = [
+        ((3,), (3,)),
+        ((3, 2), (4,)),
+        ((3, 2), (3, 2, 1)),
+    ]
+    for a_shape, b_shape in invalid_configs:
+        with pytest.raises(MXNetError):
+            mx.sym.Group(mx.sym.np.linalg.lstsq(a, b)).infer_shape(a=a_shape, b=b_shape)
 
 
 @use_np
@@ -7559,6 +9064,64 @@ def test_np_linalg_eigvalsh():
             # check imperative once again
             mx_out = test_eigvalsh(a)
             check_eigvalsh(mx_out, a.asnumpy(), upper)
+
+
+@use_np
+def test_np_linalg_symbol_eigh_invalid_uplo():
+    a = mx.sym.var('a').as_np_ndarray()
+    data = np.eye(2)
+    from mxnet.ndarray.numpy import _api_internal
+    from mxnet.symbol.numpy import _internal as _sym_npi
+    with pytest.raises(ValueError, match="UPLO"):
+        np.linalg.eigh(data, UPLO='X')
+    with pytest.raises(ValueError, match="UPLO"):
+        np.linalg.eigvalsh(data, UPLO='X')
+    with pytest.raises(MXNetError, match="UPLO"):
+        _api_internal.eigh(data, 'X')
+    with pytest.raises(MXNetError, match="UPLO"):
+        _api_internal.eigvalsh(data, 'X')
+    with pytest.raises(MXNetError, match="UPLO"):
+        mx.sym.Group(_sym_npi.eigh(a, 'X')).infer_shape(a=(2, 2))
+    with pytest.raises(MXNetError, match="UPLO"):
+        _sym_npi.eigvalsh(a, 'X').infer_shape(a=(2, 2))
+    with pytest.raises(ValueError, match="UPLO"):
+        mx.sym.Group(mx.sym.np.linalg.eigh(a, UPLO='X')).infer_shape(a=(2, 2))
+    with pytest.raises(ValueError, match="UPLO"):
+        mx.sym.np.linalg.eigvalsh(a, UPLO='X').infer_shape(a=(2, 2))
+    with pytest.raises(MXNetError, match="UPLO"):
+        mx.sym.Group(mx.sym.np._internal.eigh(a, UPLO='X')).infer_shape(a=(2, 2))
+    with pytest.raises(MXNetError, match="UPLO"):
+        mx.sym.np._internal.eigvalsh(a, UPLO='X').infer_shape(a=(2, 2))
+
+
+@use_np
+def test_np_linalg_eig_imperative_float16_validation():
+    data = np.eye(2, dtype='float16')
+    with pytest.raises(MXNetError, match="float16 is unsupported"):
+        np.linalg.eig(data)
+
+
+@use_np
+def test_np_linalg_eig_eigh_bool_type_validation():
+    a = mx.sym.var('a').as_np_ndarray()
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        mx.sym.Group(mx.sym.np.linalg.eig(a)).infer_type(a='bool')
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        mx.sym.np.linalg.eigvals(a).infer_type(a='bool')
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        mx.sym.Group(mx.sym.np.linalg.eigh(a)).infer_type(a='bool')
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        mx.sym.np.linalg.eigvalsh(a).infer_type(a='bool')
+
+    data = np.eye(2, dtype='bool')
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        np.linalg.eig(data)
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        np.linalg.eigvals(data)
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        np.linalg.eigh(data)
+    with pytest.raises(MXNetError, match="bool is unsupported in linalg"):
+        np.linalg.eigvalsh(data)
 
 
 @use_np
@@ -7922,6 +9485,8 @@ def test_np_full():
         ((2, 3), np.array([1, 2, 3], dtype=np.int64)),
         ((0, 3), np.array([1, 2, 3], dtype=np.float32)),
         ((0, 3), np.array([1, 2, 3], dtype=np.int64)),
+        ((2,), [7, 8]),
+        ((2, 2), [7, 8]),
     ]
 
     rtol, atol = 1e-3, 1e-5
@@ -7997,6 +9562,13 @@ def test_np_full_like():
         ret = np.full_like(a, fill_value, param_dtype)
         assert_almost_equal(ret.asnumpy(), expected_ret, rtol=1e-3, atol=1e-5)
 
+    for fill_value in ([7, 8], np.array(7)):
+        a = np.arange(2)
+        np_fill_value = fill_value.asnumpy() if isinstance(fill_value, np.ndarray) else fill_value
+        ret = np.full_like(a, fill_value)
+        expected_ret = onp.full_like(a.asnumpy(), fill_value=np_fill_value)
+        assert_almost_equal(ret.asnumpy(), expected_ret, rtol=1e-3, atol=1e-5)
+
 
 @use_np
 def test_np_roll():
@@ -8056,6 +9628,43 @@ def test_np_roll():
 
 
 @use_np
+def test_np_roll_repeated_axes_and_broadcast_shifts():
+    class TestRoll(HybridBlock):
+        def __init__(self, shift, axis=None):
+            super(TestRoll, self).__init__()
+            self._shift = shift
+            self._axis = axis
+
+        def forward(self, x):
+            return np.roll(x, shift=self._shift, axis=self._axis)
+
+    data = np.arange(12, dtype='float32').reshape((3, 4))
+    configs = [
+        ((1, 2), None),
+        ((1, 2, 3), None),
+        ((1, 2), 0),
+        ((1, 2, 3), -1),
+        (1, (0, 0)),
+        ((1, 2), (0, 0)),
+        ((1,), (0, 1)),
+    ]
+    for shift, axis in configs:
+        expected = onp.roll(data.asnumpy(), shift=shift, axis=axis)
+        for hybridize in [False, True]:
+            test_roll = TestRoll(shift, axis)
+            if hybridize:
+                test_roll.hybridize()
+            data.attach_grad()
+            with mx.autograd.record():
+                out = test_roll(data)
+            assert same(out.asnumpy(), expected)
+            out.backward()
+            assert same(data.grad.asnumpy(), onp.ones(data.shape))
+
+        assert same(np.roll(data, shift=shift, axis=axis).asnumpy(), expected)
+
+
+@use_np
 def test_np_trace():
     class TestTrace(HybridBlock):
         def __init__(self, axis1, axis2, offset):
@@ -8085,7 +9694,7 @@ def test_np_trace():
         (2, 0, 2, 3)
     ]
     offsets = range(-5, 5)
-    dtypes = ['int32', 'float16', 'float32', 'float64']
+    dtypes = ['float16', 'float32', 'float64']
     for hybridize in [True, False]:
         for shape in shapes:
             ndim = len(shape)
@@ -8119,6 +9728,21 @@ def test_np_trace():
                                 out_mx = np.trace(data.as_np_ndarray(), axis1=axis1, axis2=axis2, offset=offset)
                                 assert_almost_equal(out_mx.asnumpy(), expected_np, rtol=rtol, atol=atol)
 
+    trace_dtype_cases = [
+        ('bool', [[True, False], [False, True]], 2),
+        ('int8', [[2, 0], [0, 3]], 5),
+        ('uint8', [[250, 0], [0, 250]], 500),
+        ('int16', [[30000, 0], [0, 30000]], 60000),
+        ('uint16', [[60000, 0], [0, 60000]], 120000),
+        ('int32', [[100000, 0], [0, 100000]], 200000),
+        ('uint32', [[4000000000, 0], [0, 4000000000]], 8000000000),
+    ]
+    for dtype, values, expected in trace_dtype_cases:
+        data = np.array(values, dtype=dtype)
+        out = np.trace(data)
+        assert out.dtype == onp.dtype('int64')
+        onp.testing.assert_array_equal(out.asnumpy(), onp.array(expected, dtype='int64'))
+
     # bad params
     params = [
         ([], 0, 1, 0),
@@ -8134,6 +9758,16 @@ def test_np_trace():
         except mx.base.MXNetError:
             continue
         assert False
+
+    data = np.arange(9, dtype='float32').reshape(3, 3)
+    data.attach_grad('add')
+    data.grad[:] = 5
+    with mx.autograd.record():
+        out = np.trace(data)
+    out.backward()
+    expected_grad = onp.full(data.shape, 5.0, dtype=onp.float32)
+    onp.fill_diagonal(expected_grad, 6.0)
+    assert same(data.grad.asnumpy(), expected_grad)
 
 
 @use_np
@@ -8168,6 +9802,15 @@ def test_np_windows():
                     mx_out = getattr(np, func)(M=config)
                     np_out = np_func(M=config).astype(dtype)
                     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+    for func in funcs:
+        np_func = getattr(onp, func)
+        mx_func = getattr(np, func)
+        for dtype in ['bool', 'int16', 'uint16', 'uint32', 'uint64']:
+            mx_out = mx_func(M=6, dtype=dtype)
+            np_out = np_func(M=6).astype(dtype)
+            assert mx_out.dtype == np_out.dtype
+            onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
 
 
 @use_np
@@ -8207,6 +9850,23 @@ def test_np_flip():
                 mx_out = np.flip(x, axis)
                 np_out = onp.flip(x.asnumpy(), axis)
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
+
+    x = np.arange(6, dtype='float32').reshape(2, 3)
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        out = np.flip(x)
+    out.backward()
+    assert same(x.grad.asnumpy(), onp.full(x.shape, 6.0, dtype=onp.float32))
+
+    x = np.arange(24, dtype='float32').reshape(2, 3, 4)
+    for axis in [(1, 1), (1, -2)]:
+        with pytest.raises(ValueError):
+            np.flip(x, axis=axis)
+    with pytest.raises(onp.AxisError):
+        np.flip(x, axis=(3,))
+    with pytest.raises(ValueError):
+        mx.sym.np.flip(mx.sym.var('flip_x').as_np_ndarray(), axis=(1, 1))
 
 
 @use_np
@@ -8387,6 +10047,18 @@ def test_np_nonzero():
                 np_out = onp.transpose(np_out)
                 assert_almost_equal(mx_out.asnumpy(), np_out, rtol, atol)
 
+    for shape in [(1, 1, 1, 1, 1, 1), (0, 1, 1, 1, 1, 1)]:
+        x = np.ones(shape, dtype='int32')
+        mx_out = npx.nonzero(x)
+        np_out = onp.transpose(onp.nonzero(x.asnumpy()))
+        assert mx_out.shape == np_out.shape
+        assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+        mx_np_out = np.nonzero(x)
+        assert len(mx_np_out) == len(shape)
+        for mx_axis, np_axis in zip(mx_np_out, onp.nonzero(x.asnumpy())):
+            assert_almost_equal(mx_axis.asnumpy(), np_axis, rtol=1e-3, atol=1e-5)
+
 
 @use_np
 def test_np_unique():
@@ -8463,6 +10135,142 @@ def test_np_unique_mixed_output_requests():
         values, inverse = test_unique(x)
         assert_almost_equal(values.asnumpy(), expected[0], rtol=1e-3, atol=1e-5)
         assert_almost_equal(inverse.asnumpy(), expected[2], rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_np_unique_bool():
+    data = np.array([True, False, True], dtype='bool')
+    expected = onp.unique(data.asnumpy(), return_index=True, return_inverse=True, return_counts=True)
+    actual = np.unique(data, return_index=True, return_inverse=True, return_counts=True)
+    for mx_out, np_out in zip(actual, expected):
+        assert mx_out.shape == np_out.shape
+        assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+    axis_data = np.array([[True, False], [True, False], [False, True]], dtype='bool')
+    expected = onp.unique(axis_data.asnumpy(), return_index=True,
+                          return_inverse=True, return_counts=True, axis=0)
+    actual = np.unique(axis_data, return_index=True, return_inverse=True,
+                       return_counts=True, axis=0)
+    for mx_out, np_out in zip(actual, expected):
+        assert mx_out.shape == np_out.shape
+        assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_np_unique_float16():
+    # PyTorch and NumPy both support unique on float16; we accept it (it was
+    # previously rejected).
+    data = np.array([1, 1, 2, 3, 2], dtype='float16')
+    mx_u, mx_c = np.unique(data, return_counts=True)
+    np_u, np_c = onp.unique(data.asnumpy(), return_counts=True)
+    assert mx_u.dtype == onp.dtype('float16')
+    onp.testing.assert_array_equal(mx_u.asnumpy(), np_u)
+    onp.testing.assert_array_equal(mx_c.asnumpy(), np_c)
+
+
+@use_np
+def test_np_unique_empty_axis_outputs():
+    class TestUnique(HybridBlock):
+        def __init__(self, axis):
+            super(TestUnique, self).__init__()
+            self._axis = axis
+
+        def forward(self, a):
+            return np.unique(a, True, True, True, axis=self._axis)
+
+    configs = [
+        ((0, 3), 0),
+        ((0, 3), 1),
+        ((2, 0), 0),
+        ((2, 0), 1),
+        ((0, 3, 2), 1),
+        ((2, 0, 3), 2),
+    ]
+    devices = [mx.cpu()]
+    if mx.device.num_gpus() > 0:
+        devices.append(mx.gpu(0))
+    for device in devices:
+        for shape, axis in configs:
+            data_np = onp.empty(shape, dtype='float32')
+            data_mx = np.array(data_np, dtype='float32', device=device)
+            expected = onp.unique(data_np, return_index=True, return_inverse=True,
+                                  return_counts=True, axis=axis)
+            for hybridize in [False, True]:
+                test_unique = TestUnique(axis)
+                if hybridize:
+                    test_unique.hybridize()
+                mx_out = test_unique(data_mx)
+                for mx_arr, np_arr in zip(mx_out, expected):
+                    assert mx_arr.shape == np_arr.shape
+                    assert_almost_equal(mx_arr.asnumpy(), np_arr, rtol=1e-3, atol=1e-5)
+
+            mx_out = np.unique(data_mx, return_index=True, return_inverse=True,
+                               return_counts=True, axis=axis)
+            for mx_arr, np_arr in zip(mx_out, expected):
+                assert mx_arr.shape == np_arr.shape
+                assert_almost_equal(mx_arr.asnumpy(), np_arr, rtol=1e-3, atol=1e-5)
+
+
+@use_np
+def test_np_unique_nan_semantics():
+    class TestUnique(HybridBlock):
+        def __init__(self, return_index=False, return_inverse=False, return_counts=False):
+            super(TestUnique, self).__init__()
+            self._return_index = return_index
+            self._return_inverse = return_inverse
+            self._return_counts = return_counts
+
+        def forward(self, a):
+            return np.unique(a, self._return_index, self._return_inverse, self._return_counts)
+
+    def assert_equal_nan(mx_arr, np_arr):
+        assert mx_arr.shape == np_arr.shape
+        onp.testing.assert_equal(mx_arr.asnumpy(), np_arr)
+
+    data_np = onp.array([onp.nan, onp.nan, 1.0], dtype='float32')
+    data_mx = np.array(data_np, dtype='float32')
+    configs = [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (False, False, True),
+        (True, True, True),
+    ]
+    for config in configs:
+        expected = onp.unique(data_np, return_index=config[0],
+                              return_inverse=config[1], return_counts=config[2])
+        for hybridize in [False, True]:
+            test_unique = TestUnique(*config)
+            if hybridize:
+                test_unique.hybridize()
+            mx_out = test_unique(data_mx)
+            if isinstance(expected, tuple):
+                for mx_arr, np_arr in zip(mx_out, expected):
+                    assert_equal_nan(mx_arr, np_arr)
+            else:
+                assert_equal_nan(mx_out, expected)
+
+        mx_out = np.unique(data_mx, return_index=config[0],
+                           return_inverse=config[1], return_counts=config[2])
+        if isinstance(expected, tuple):
+            for mx_arr, np_arr in zip(mx_out, expected):
+                assert_equal_nan(mx_arr, np_arr)
+        else:
+            assert_equal_nan(mx_out, expected)
+
+    expected_all = onp.unique(data_np, return_index=True, return_inverse=True, return_counts=True)
+    mx_all = np.unique_all(data_mx)
+    assert_equal_nan(mx_all.values, expected_all[0])
+    assert_equal_nan(mx_all.indices, expected_all[1])
+    assert_equal_nan(mx_all.inverse_indices, expected_all[2])
+    assert_equal_nan(mx_all.counts, expected_all[3])
+
+    mx_inverse = np.unique_inverse(data_mx)
+    expected_inverse = onp.unique(data_np, return_inverse=True)
+    assert_equal_nan(mx_inverse.values, expected_inverse[0])
+    assert_equal_nan(mx_inverse.inverse_indices, expected_inverse[1])
+
+    assert_equal_nan(np.unique_values(data_mx), onp.unique(data_np))
 
 
 @use_np
@@ -8657,7 +10465,8 @@ def test_np_take():
         data_real = onp.random.normal(size=data_shape).astype('float32')
         idx_real = onp.random.randint(low=-100, high=100, size=idx_shape)
 
-        assert same(np.take(np.array(data_real), np.array(idx_real), axis=axis, mode=mode).asnumpy(),
+        indices = np.array(idx_real, dtype='int64')
+        assert same(np.take(np.array(data_real), indices, axis=axis, mode=mode).asnumpy(),
              onp.take(data_real, idx_real, axis=axis, mode=mode))
 
         grad_in = onp.zeros(data_shape, dtype='float32')
@@ -8668,7 +10477,7 @@ def test_np_take():
         x = np.array(data_real)
         x.attach_grad()
         with mx.autograd.record():
-            mx_out = test_take(x, np.array(idx_real))
+            mx_out = test_take(x, indices)
         assert same(mx_out.asnumpy(), onp.take(data_real, idx_real, axis=axis, mode=mode))
 
         if axis and axis < 0:
@@ -8697,6 +10506,94 @@ def test_np_take():
 
             for config in configs:
                 check_output_n_grad(config[0], config[1], config[2], mode)
+
+
+@use_np
+def test_np_take_raise_negative_index():
+    data = np.arange(3)
+    assert_almost_equal(np.take(data, np.array([-1], dtype='int64'), mode='raise').asnumpy(),
+                        onp.array([2]))
+    with pytest.raises(IndexError, match="out of bound"):
+        np.take(data, np.array([3], dtype='int64'), mode='raise').asnumpy()
+
+
+@use_np
+def test_np_take_index_validation():
+    data = np.array([[10, 11, 12], [20, 21, 22]], dtype='float32')
+    with pytest.raises(mx.MXNetError, match="take indices must be integers"):
+        np.take(data, np.array([0.0, 2.0], dtype='float32'), axis=1).asnumpy()
+
+    data_sym = mx.sym.var('data').as_np_ndarray()
+    idx_sym = mx.sym.var('idx').as_np_ndarray()
+    with pytest.raises(mx.MXNetError, match="take indices must be integers"):
+        mx.sym.np.take(data_sym, idx_sym, axis=1).as_nd_ndarray().infer_type(
+            data='float32', idx='float32')
+
+    assert_almost_equal(np.take([10, 20, 30], [0, 2]).asnumpy(),
+                        onp.take([10, 20, 30], [0, 2]))
+    assert_almost_equal(np.take([10, 20, 30], onp.array([0, 2], dtype='int64')).asnumpy(),
+                        onp.take([10, 20, 30], onp.array([0, 2], dtype='int64')))
+
+
+@use_np
+@pytest.mark.parametrize('mode', ['clip', 'wrap'])
+def test_np_take_nonempty_from_empty_axis_rejected(mode):
+    with pytest.raises(IndexError, match="non-empty take from an empty axes"):
+        np.take(np.array([], dtype='float32'), np.array([0], dtype='int64'), mode=mode).asnumpy()
+
+
+@use_np
+@pytest.mark.parametrize('op_name', ['choose', 'compress'])
+def test_np_fallback_out_is_written(op_name):
+    if op_name == 'choose':
+        out = np.zeros((3,), dtype='int64')
+        ret = np.choose(np.array([0, 1, 0], dtype='int64'),
+                        [np.array([1, 2, 3], dtype='int64'),
+                         np.array([4, 5, 6], dtype='int64')],
+                        out=out)
+        expected = onp.array([1, 5, 3], dtype='int64')
+    else:
+        out = np.zeros((2,), dtype='int64')
+        ret = np.compress(np.array([1, 0, 1], dtype='bool'),
+                          np.array([7, 8, 9], dtype='int64'),
+                          out=out)
+        expected = onp.array([7, 9], dtype='int64')
+
+    assert ret is out
+    onp.testing.assert_array_equal(out.asnumpy(), expected)
+
+
+@use_np
+@pytest.mark.parametrize('op,args,dtype,expected', [
+    (np.signbit, (np.array([-1.0, 0.0, 2.0]),), 'bool',
+     onp.array([True, False, False])),
+    (np.float_power, (np.array([2.0, 3.0]), 2), 'float64',
+     onp.array([4.0, 9.0])),
+    (np.heaviside, (np.array([-1.0, 0.0, 1.0]), 0.5), 'float64',
+     onp.array([0.0, 0.5, 1.0])),
+])
+def test_np_fallback_ufunc_out_is_written(op, args, dtype, expected):
+    out = np.zeros(expected.shape, dtype=dtype)
+    ret = op(*args, out=out)
+    assert ret is out
+    onp.testing.assert_allclose(out.asnumpy(), expected)
+
+
+@use_np
+@pytest.mark.parametrize('op,args,expected', [
+    (np.modf, (np.array([1.25, -2.5]),),
+     (onp.array([0.25, -0.5]), onp.array([1.0, -2.0]))),
+    (np.frexp, (np.array([1.0, 2.0, 4.0]),),
+     onp.frexp(onp.array([1.0, 2.0, 4.0]))),
+    (np.divmod, (np.array([5, 7], dtype='int64'), 3),
+     onp.divmod(onp.array([5, 7]), 3)),
+])
+def test_np_multi_output_fallback_ufunc_out_is_written(op, args, expected):
+    outs = tuple(np.zeros(e.shape, dtype=e.dtype) for e in expected)
+    ret = op(*args, out=outs)
+    assert ret is outs
+    for got, exp in zip(outs, expected):
+        onp.testing.assert_array_equal(got.asnumpy(), exp)
 
 
 def test_np_builtin_op_signature():
@@ -8754,6 +10651,11 @@ def test_np_tril_indices_partial_outputs():
     row, col = mx.sym.np.tril_indices(4, k=0, m=4)
     expected = onp.tril_indices(4, k=0, m=4)
 
+    group_exe = mx.sym.Group([row, col])._simple_bind(ctx=mx.cpu())
+    group_exe.forward(is_train=False)
+    assert same(group_exe.outputs[0], expected[0])
+    assert same(group_exe.outputs[1], expected[1])
+
     row_exe = row._simple_bind(ctx=mx.cpu())
     row_exe.forward(is_train=False)
     assert same(row_exe.outputs[0], expected[0])
@@ -8761,6 +10663,57 @@ def test_np_tril_indices_partial_outputs():
     col_exe = col._simple_bind(ctx=mx.cpu())
     col_exe.forward(is_train=False)
     assert same(col_exe.outputs[0], expected[1])
+
+
+@use_np
+def test_np_symbol_triu_indices():
+    for n, k, m in [(4, 0, 4), (4, 2, 5), (4, -1, 3), (-2, 0, 3), (2, 0, -3)]:
+        row, col = mx.sym.np.triu_indices(n, k=k, m=m)
+        expected = onp.triu_indices(n, k=k, m=m)
+
+        group_exe = mx.sym.Group([row, col])._simple_bind(ctx=mx.cpu())
+        group_exe.forward(is_train=False)
+        assert same(group_exe.outputs[0], expected[0])
+        assert same(group_exe.outputs[1], expected[1])
+
+        row_exe = row._simple_bind(ctx=mx.cpu())
+        row_exe.forward(is_train=False)
+        assert same(row_exe.outputs[0], expected[0])
+
+        col_exe = col._simple_bind(ctx=mx.cpu())
+        col_exe.forward(is_train=False)
+        assert same(col_exe.outputs[0], expected[1])
+
+
+@use_np
+def test_np_symbol_triangle_indices_from():
+    for upper, k in [(False, 0), (False, -1), (True, 0), (True, 1)]:
+        x = mx.sym.var('x').as_np_ndarray()
+        mx_out = mx.sym.np.triu_indices_from(x, k=k) if upper else mx.sym.np.tril_indices_from(x, k=k)
+        expected = onp.triu_indices_from(onp.ones((4, 5)), k=k) if upper else \
+            onp.tril_indices_from(onp.ones((4, 5)), k=k)
+
+        exe = mx.sym.Group(mx_out)._simple_bind(ctx=mx.cpu(), x=(4, 5))
+        exe.forward(is_train=False, x=mx.nd.ones((4, 5)))
+        assert len(mx_out) == 2
+        assert same(exe.outputs[0], expected[0])
+        assert same(exe.outputs[1], expected[1])
+
+    x = mx.sym.var('x').as_np_ndarray()
+    for func in [mx.sym.np.tril_indices_from, mx.sym.np.triu_indices_from]:
+        out = mx.sym.Group(func(x))
+        with pytest.raises(MXNetError, match="input array must be 2-d"):
+            out.infer_shape(x=(2, 2, 2))
+
+
+@use_np
+def test_np_triu_indices_negative_dimensions():
+    for n, m in [(-2, None), (2, -2), (-2, 3), (-2, -3), (0, -3)]:
+        mx_out = np.triu_indices(n, m=m)
+        np_out = onp.triu_indices(n, m=m)
+        assert len(mx_out) == 2
+        assert same(mx_out[0], np_out[0])
+        assert same(mx_out[1], np_out[1])
 
 
 @use_np
@@ -8849,6 +10802,21 @@ def test_np_moveaxis():
                     assert np_out.dtype == mx_out.dtype
                     assert same(mx_out.asnumpy(), np_out)
 
+    x = np.arange(24, dtype='float32').reshape(2, 3, 4)
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        out = np.moveaxis(x, source=0, destination=2)
+    out.backward()
+    assert same(x.grad.asnumpy(), onp.full(x.shape, 6.0, dtype=onp.float32))
+
+    data = np.ones((2, 3))
+    with pytest.raises(MXNetError, match="source axis out of range"):
+        np.moveaxis(data, -3, 1)
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    with pytest.raises(MXNetError, match="source axis out of range"):
+        mx.sym.np.moveaxis(sym_data, -3, 1).infer_shape(data=(2, 3))
+
 
 @use_np
 def test_np_rot90():
@@ -8901,6 +10869,14 @@ def test_np_rot90():
                 mx_out = np.rot90(x, k=k, axes=axes)
                 assert same(mx_out.asnumpy(), np_out)
 
+    x = np.arange(6, dtype='float32').reshape(2, 3)
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        out = np.rot90(x)
+    out.backward()
+    assert same(x.grad.asnumpy(), onp.full(x.shape, 6.0, dtype=onp.float32))
+
 
 @use_np
 def test_np_hsplit():
@@ -8924,6 +10900,7 @@ def test_np_hsplit():
         (3, 3),
         (3,),
         (1,),
+        1,
         2,
     ]
     for hybridize in [True, False]:
@@ -8972,6 +10949,7 @@ def test_np_dsplit():
         (3, 3),
         (3,),
         (1,),
+        1,
         2,
     ]
     for hybridize in [True, False]:
@@ -9201,6 +11179,37 @@ def test_np_diagflat():
 
 
 @use_np
+def test_np_diagflat_scalar_and_empty_inputs():
+    class TestDiagflat(HybridBlock):
+        def __init__(self, k=0):
+            super(TestDiagflat, self).__init__()
+            self._k = k
+
+        def forward(self, a):
+            return np.diagflat(a, k=self._k)
+
+    configs = [
+        ((), 0),
+        ((), 2),
+        ((1, 0), 0),
+        ((1, 0), 2),
+        ((2, 0), -2),
+        ((1, 0, 3), 2),
+    ]
+    for shape, k in configs:
+        data_np = onp.arange(onp.prod(shape), dtype='float32').reshape(shape)
+        data_mx = np.array(data_np, dtype='float32')
+        expected = onp.diagflat(data_np, k=k)
+        assert_almost_equal(np.diagflat(data_mx, k=k).asnumpy(), expected)
+
+        for hybridize in [False, True]:
+            test_diagflat = TestDiagflat(k)
+            if hybridize:
+                test_diagflat.hybridize()
+            assert_almost_equal(test_diagflat(data_mx).asnumpy(), expected)
+
+
+@use_np
 def test_np_pad():
     class TestPad(HybridBlock):
         def __init__(self, pad_width, mode='constant'):
@@ -9264,6 +11273,50 @@ def test_np_pad():
                         assert_almost_equal(mx.np.pad(mx_grad - init_grad, pad_width=pw, mode="constant"), gt_in_grad.asnumpy(), rtol=rtol, atol=atol)
                     else:
                         assert_almost_equal(mx.np.pad(mx_grad, pad_width=pw, mode="constant"), gt_in_grad.asnumpy(), rtol=rtol, atol=atol)
+
+    pad_width_configs = [1, [1, 2], [[1, 2], [3, 4]], ((1, 2), (3, 4))]
+    x_np = onp.arange(4, dtype='float32').reshape(2, 2)
+    x = np.array(x_np)
+    for pad_width in pad_width_configs:
+        expected = onp.pad(x_np, pad_width, mode='constant')
+        assert_almost_equal(np.pad(x, pad_width, mode='constant').asnumpy(), expected)
+        for hybridize in [False, True]:
+            test_pad = TestPad(pad_width, 'constant')
+            if hybridize:
+                test_pad.hybridize()
+            assert_almost_equal(test_pad(x).asnumpy(), expected)
+
+    sym_x = mx.sym.var('pad_data').as_np_ndarray()
+    for shape, pad_width in itertools.product([(3,), (2, 3), (2, 3, 4)],
+                                              [1, (1,), (1, 2), ((1, 2),)]):
+        expected_shape = onp.pad(onp.ones(shape), pad_width, mode='constant').shape
+        sym_out = mx.sym.np.pad(sym_x, pad_width, mode='constant')
+        assert sym_out.infer_shape(pad_data=shape)[1][0] == expected_shape
+
+    with pytest.raises(ValueError):
+        np.pad(x, -1)
+    with pytest.raises(ValueError):
+        np.pad(x, (1,), mode='bad')
+
+    constant_value_configs = [
+        ((1,), (5, 6)),
+        ([1, 2], [5, 6]),
+        (((1, 2), (3, 4)), ((5, 6), (7, 8))),
+    ]
+    for pad_width, constant_values in constant_value_configs:
+        expected = onp.pad(x_np, pad_width, mode='constant', constant_values=constant_values)
+        mx_out = np.pad(x, pad_width, mode='constant', constant_values=constant_values)
+        assert_almost_equal(mx_out.asnumpy(), expected)
+
+    grad_x = np.array(x_np)
+    grad_x.attach_grad()
+    with mx.autograd.record():
+        grad_out = np.pad(grad_x, (1,), mode='constant', constant_values=(5, 6)).sum()
+    grad_out.backward()
+    assert_almost_equal(grad_x.grad.asnumpy(), onp.ones_like(x_np))
+
+    with pytest.raises(NotImplementedError):
+        mx.sym.np.pad(mx.sym.var('pad_x').as_np_ndarray(), (1,), constant_values=(5, 6))
 
 
 @use_np
@@ -9678,6 +11731,39 @@ def test_np_percentile():
 
 
 @use_np
+def test_np_percentile_backward():
+    data = np.array([1.0, 3.0, 5.0], dtype='float64')
+    q = np.array(50.0, dtype='float64')
+    data.attach_grad()
+    q.attach_grad()
+    with mx.autograd.record():
+        out = np.percentile(data, q)
+        loss = out * 2.0
+    loss.backward()
+    assert_almost_equal(data.grad.asnumpy(), onp.array([0.0, 2.0, 0.0]))
+    assert_almost_equal(q.grad.asnumpy(), onp.array(0.08))
+
+    data = np.array([[1.0, 4.0, 7.0], [2.0, 6.0, 10.0]], dtype='float64')
+    q = np.array([25.0, 50.0], dtype='float64')
+    data.attach_grad()
+    q.attach_grad()
+    with mx.autograd.record():
+        out = np.percentile(data, q, axis=1)
+        loss = out.sum()
+    loss.backward()
+    assert_almost_equal(data.grad.asnumpy(), onp.array([[0.5, 1.5, 0.0], [0.5, 1.5, 0.0]]))
+    assert_almost_equal(q.grad.asnumpy(), onp.array([0.14, 0.14]))
+
+    data = np.array([3.0, 1.0, 5.0], dtype='float64')
+    data.attach_grad()
+    with mx.autograd.record():
+        out = np.percentile(data, 25.0, interpolation='lower')
+        loss = out * 3.0
+    loss.backward()
+    assert_almost_equal(data.grad.asnumpy(), onp.array([0.0, 3.0, 0.0]))
+
+
+@use_np
 def test_np_diff():
     def np_diff_backward(ograd, n, axis):
         res = ograd
@@ -9726,6 +11812,29 @@ def test_np_diff():
                         mx_out = np.diff(x, n=n, axis=axis)
                         np_out = onp.diff(x.asnumpy(), n=n, axis=axis)
                         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
+
+    x = np.arange(12, dtype='float32').reshape(3, 4)
+    x.attach_grad('add')
+    x.grad[:] = 5
+    with mx.autograd.record():
+        mx_out = np.diff(x, n=1, axis=1).sum()
+    mx_out.backward()
+    np_backward = onp.full(x.shape, 5.0, dtype=onp.float32)
+    np_backward += onp.tile(onp.array([[-1.0, 0.0, 0.0, 1.0]], dtype=onp.float32), (3, 1))
+    assert_almost_equal(x.grad.asnumpy(), np_backward)
+
+    for kwargs in [{'prepend': 0}, {'append': 0}, {'prepend': np.array([0])}]:
+        with pytest.raises(NotImplementedError, match="prepend and append options are not supported"):
+            np.diff(np.array([1, 2, 4]), **kwargs)
+
+    for dtype in ['bool', 'int16', 'uint16', 'uint32']:
+        data_np = onp.array([1, 0, 1, 1, 0], dtype=dtype)
+        data = np.array(data_np, dtype=dtype)
+        for n in [1, 2, 3]:
+            mx_out = np.diff(data, n=n)
+            np_out = onp.diff(data_np, n=n)
+            assert mx_out.dtype == np_out.dtype
+            onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
 
 
 @use_np
@@ -9840,6 +11949,32 @@ def test_np_ediff1d():
                 else:
                     assert_almost_equal(arg.grad.asnumpy(), np.ones_like(arg), atol=atol, rtol=rtol)
 
+    ary = np.array([1.0, 3.0, 6.0], dtype=np.float32)
+    to_begin = np.array([10.0, 11.0], dtype=np.float32)
+    to_end = np.array([20.0, 21.0], dtype=np.float32)
+    for arg in [ary, to_begin, to_end]:
+        arg.attach_grad('add')
+        arg.grad[:] = 5
+
+    with mx.autograd.record():
+        out = np.ediff1d(ary, to_begin=to_begin, to_end=to_end)
+    out.backward()
+
+    assert_almost_equal(ary.grad.asnumpy(), onp.array([4.0, 5.0, 6.0], dtype=onp.float32))
+    assert_almost_equal(to_begin.grad.asnumpy(), onp.array([6.0, 6.0], dtype=onp.float32))
+    assert_almost_equal(to_end.grad.asnumpy(), onp.array([6.0, 6.0], dtype=onp.float32))
+
+    for dtype in ['int16', 'uint16', 'uint32']:
+        data_np = onp.array([1, 0, 2, 2], dtype=dtype)
+        data = np.array(data_np, dtype=dtype)
+        mx_out = np.ediff1d(data)
+        np_out = onp.ediff1d(data_np)
+        assert mx_out.dtype == np_out.dtype
+        onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+    with pytest.raises(mx.MXNetError, match="ediff1d does not support bool input"):
+        np.ediff1d(np.array([False, True, True], dtype='bool')).asnumpy()
+
 
 @use_np
 def test_np_column_stack():
@@ -9928,6 +12063,17 @@ def test_np_resize():
         # check imperative again
         ret = np.resize(a, shape_pair[1])
         assert_almost_equal(ret.asnumpy(), expected_ret, atol=1e-5, rtol=1e-5, use_broadcast=False)
+
+
+@use_np
+def test_np_resize_shape_validation():
+    data = np.ones((2,))
+    sym_data = mx.sym.var('data').as_np_ndarray()
+    for shape, error_type in [((2.5,), TypeError), ((-1,), ValueError)]:
+        with pytest.raises(error_type):
+            np.resize(data, shape)
+        with pytest.raises(error_type):
+            mx.sym.np.resize(sym_data, shape)
 
 
 @use_np
@@ -10068,6 +12214,16 @@ def test_np_diagonal(config, k, dtype, hybridize, call_by_instance):
     mx_out = np.diagonal(x, k, axis1, axis2)
     np_out = onp.diagonal(x.asnumpy(), offset=k, axis1=axis1, axis2=axis2)
     assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
+
+
+@use_np
+def test_np_diagonal_repeated_axes():
+    x = np.ones((2, 3))
+    with pytest.raises(ValueError, match="axis1 and axis2 cannot be the same"):
+        np.diagonal(x, axis1=0, axis2=0)
+    sym_x = mx.sym.var('diagonal_data').as_np_ndarray()
+    with pytest.raises(ValueError, match="axis1 and axis2 cannot be the same"):
+        mx.sym.np.diagonal(sym_x, axis1=0, axis2=0)
 
 
 @use_np
@@ -10424,6 +12580,32 @@ def test_np_where():
         np_out = onp.where(cond, x, y)
         assert same(mx_out, np_out)
 
+    cond = np.array([True, False])
+    values = np.array([1, 2])
+    for x, y in [(None, values), (values, None)]:
+        with pytest.raises(ValueError):
+            np.where(cond, x, y)
+    sym_cond = mx.sym.var('sym_cond').as_np_ndarray()
+    sym_values = mx.sym.var('sym_values').as_np_ndarray()
+    for x, y in [(None, sym_values), (sym_values, None)]:
+        with pytest.raises(ValueError):
+            mx.sym.np.where(sym_cond, x, y)
+
+
+@use_np
+def test_np_where_extended_integer_dtypes():
+    cond_np = onp.array([[True, False], [False, True]])
+    cond = np.array(cond_np, dtype='bool')
+    for dtype in ['int16', 'uint16', 'uint32']:
+        x_np = onp.array([[1, 2], [3, 4]], dtype=dtype)
+        y_np = onp.array([[5, 6], [7, 8]], dtype=dtype)
+        x = np.array(x_np, dtype=dtype)
+        y = np.array(y_np, dtype=dtype)
+        mx_out = np.where(cond, x, y)
+        np_out = onp.where(cond_np, x_np, y_np)
+        assert mx_out.dtype == np_out.dtype
+        onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
 
 @use_np
 def test_np_expand_dims():
@@ -10477,6 +12659,30 @@ def test_np_expand_dims():
                 y = np.expand_dims(x, axis)
                 assert_almost_equal(y.asnumpy(), expected, use_broadcast=False)
 
+    tuple_axis_configs = [
+        ((2, 3), (0,)),
+        ((2, 3), (0, 2)),
+        ((2, 3), (2, 0)),
+        ((2, 3), (-1, 0)),
+        ((2, 3), [1, 2]),
+    ]
+    for shape, axis in tuple_axis_configs:
+        x_np = onp.random.uniform(0, 100, size=shape).astype('float32')
+        expected = onp.expand_dims(x_np, axis)
+        x = np.array(x_np)
+        assert_almost_equal(np.expand_dims(x, axis).asnumpy(), expected, use_broadcast=False)
+        for hybridize in [False, True]:
+            test_expand_dims = TestExpandDims(axis)
+            if hybridize:
+                test_expand_dims.hybridize()
+            assert_almost_equal(test_expand_dims(x).asnumpy(), expected, use_broadcast=False)
+
+    x = np.ones((2, 3))
+    with pytest.raises(ValueError):
+        np.expand_dims(x, (0, 0))
+    with pytest.raises(onp.AxisError):
+        np.expand_dims(x, (4,))
+
 
 @use_np
 @pytest.mark.parametrize('ishape', [
@@ -10529,6 +12735,71 @@ def test_np_unravel_index(ishape, rshape, dtype, hybridize):
     for elem_mx, elem_np in zip(mx_out, np_out):
         assert elem_mx.asnumpy().shape == elem_np.shape
         assert_almost_equal(elem_mx.asnumpy(), elem_np, rtol=rtol, atol=atol)
+
+
+@use_np
+def test_np_unravel_index_bounds():
+    for indices in [np.array([-1], dtype='int64'), np.array([6], dtype='int64')]:
+        with pytest.raises(IndexError, match="out of bounds"):
+            np.unravel_index(indices, (2, 3))[0].asnumpy()
+    with pytest.raises(TypeError, match="only int indices permitted"):
+        np.unravel_index(np.array([1.5], dtype='float32'), (2, 3))[0].asnumpy()
+
+
+@use_np
+@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
+def test_np_unravel_index_extended_index_dtypes(dtype):
+    raw = [True, False] if dtype == 'bool' else [0, 5]
+    indices = np.array(raw, dtype=dtype)
+    mx_out = np.unravel_index(indices, (2, 3))
+    np_out = onp.unravel_index(onp.array(raw, dtype=dtype), (2, 3))
+    assert len(mx_out) == len(np_out)
+    for elem_mx, elem_np in zip(mx_out, np_out):
+        assert elem_mx.dtype == elem_np.dtype
+        onp.testing.assert_array_equal(elem_mx.asnumpy(), elem_np)
+
+    sym_indices = mx.sym.var('indices').as_np_ndarray()
+    inferred = mx.sym.np.unravel_index(sym_indices, (2, 3)).as_nd_ndarray().infer_type(
+        indices=dtype)
+    assert inferred[1] == [onp.int64]
+
+
+@use_np
+def test_np_unravel_index_array_like_indices():
+    for indices in ([0, 5], (0, 5), onp.array([0, 5], dtype='int64')):
+        mx_out = np.unravel_index(indices, (2, 3))
+        np_out = onp.unravel_index(indices, (2, 3))
+        assert len(mx_out) == len(np_out)
+        for elem_mx, elem_np in zip(mx_out, np_out):
+            assert elem_mx.dtype == elem_np.dtype
+            onp.testing.assert_array_equal(elem_mx.asnumpy(), elem_np)
+
+
+@use_np
+def test_np_unravel_index_symbol_rejects_float_indices():
+    sym_indices = mx.sym.var('indices').as_np_ndarray()
+    with pytest.raises(mx.MXNetError):
+        mx.sym.np.unravel_index(sym_indices, (2, 3)).as_nd_ndarray().infer_type(
+            indices='float32')
+
+
+@use_np
+def test_np_unravel_index_shape_validation():
+    indices = np.array([1], dtype='int64')
+    sym_indices = mx.sym.var('indices').as_np_ndarray()
+    invalid_shapes = [
+        ((2.0, 3), TypeError),
+        ((2, '3'), TypeError),
+        ((-2, 3), ValueError),
+        ((2, 0), ValueError),
+        (0, ValueError),
+        ((), ValueError),
+    ]
+    for shape, error_type in invalid_shapes:
+        with pytest.raises(error_type):
+            np.unravel_index(indices, shape)
+        with pytest.raises(error_type):
+            mx.sym.np.unravel_index(sym_indices, shape)
 
 
 @use_np
@@ -10634,6 +12905,47 @@ def test_np_interp():
 
 
 @use_np
+def test_np_interp_backward():
+    xp = np.array([0.0, 1.0, 3.0], dtype='float64')
+    fp = np.array([0.0, 2.0, 6.0], dtype='float64')
+    x = np.array([-1.0, 0.5, 2.0, 4.0], dtype='float64')
+    upstream = np.array([5.0, 7.0, 11.0, 13.0], dtype='float64')
+
+    xp.attach_grad()
+    fp.attach_grad()
+    x.attach_grad()
+    with mx.autograd.record():
+        out = np.interp(x, xp, fp)
+        loss = (out * upstream).sum()
+    loss.backward()
+
+    assert_almost_equal(x.grad.asnumpy(), onp.array([0.0, 14.0, 22.0, 0.0]))
+    assert_almost_equal(fp.grad.asnumpy(), onp.array([8.5, 9.0, 18.5]))
+    assert_almost_equal(xp.grad.asnumpy(), onp.array([-7.0, -18.0, -11.0]))
+
+    xp = np.array([0.0, 1.0], dtype='float64')
+    fp = np.array([2.0, 4.0], dtype='float64')
+    x = np.array([-1.0, 0.25, 2.0], dtype='float64')
+    fp.attach_grad()
+    with mx.autograd.record():
+        out = np.interp(x, xp, fp, left=-3.0, right=9.0)
+        loss = out.sum()
+    loss.backward()
+    assert_almost_equal(fp.grad.asnumpy(), onp.array([0.75, 0.25]))
+
+    xp = np.array([0.0, 1.0], dtype='float64')
+    fp = np.array([2.0, 4.0], dtype='float64')
+    xp.attach_grad()
+    fp.attach_grad()
+    with mx.autograd.record():
+        out = np.interp(0.25, xp, fp)
+        loss = out * 3.0
+    loss.backward()
+    assert_almost_equal(fp.grad.asnumpy(), onp.array([2.25, 0.75]))
+    assert_almost_equal(xp.grad.asnumpy(), onp.array([-4.5, -1.5]))
+
+
+@use_np
 def test_np_bincount():
     class TestBincount(HybridBlock):
         def __init__(self, minlength=0):
@@ -10680,6 +12992,38 @@ def test_np_bincount():
         mx_out = np.bincount(data, weights, minlength)
         np_out = onp.bincount(data.asnumpy(), weights_np, minlength)
         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=rtol, atol=atol)
+
+    data = np.zeros((130,), dtype=np.int8)
+    mx_out = np.bincount(data)
+    np_out = onp.bincount(data.asnumpy())
+    assert mx_out.dtype == np.int64
+    assert_almost_equal(mx_out.asnumpy(), np_out)
+
+    for dtype in ['bool', 'int16', 'uint16', 'uint32']:
+        data = np.array([0, 1, 1], dtype=dtype)
+        mx_out = np.bincount(data)
+        np_out = onp.bincount(data.asnumpy())
+        assert mx_out.dtype == np.int64
+        assert_almost_equal(mx_out.asnumpy(), np_out)
+
+    x = mx.sym.var('x').as_np_ndarray()
+    with pytest.raises(MXNetError, match="Input data should be int type"):
+        mx.sym.np.bincount(x).infer_type(x='float32')
+
+
+@use_np
+def test_np_bincount_weight_backward():
+    data = np.array([0, 2, 1, 2], dtype='int32')
+    weights = np.array([1.0, 2.0, 3.0, 4.0], dtype='float32')
+    out_grad = np.array([10.0, 20.0, 30.0, 40.0], dtype='float32')
+    weights.attach_grad()
+
+    with mx.autograd.record():
+        out = np.bincount(data, weights, minlength=4)
+        loss = (out * out_grad).sum()
+    loss.backward()
+
+    assert_almost_equal(weights.grad.asnumpy(), onp.array([10.0, 30.0, 20.0, 30.0]))
 
 
 @use_np
@@ -10878,12 +13222,23 @@ def test_np_cross(a_shape, b_shape, axes, dtype, hybridize):
 
     # get reduced axis index
     def get_reduce_axis(shape, broad_shape):
-        axis = list()
-        length = len(broad_shape) if len(shape) == len(broad_shape) + 1 else len(broad_shape) - 1
-        for i in range(length):
-            if shape[i] != broad_shape[i]:
-                axis.append(i)
-        return tuple(axis) if len(axis) > 0 else None
+        shape_core = shape[:-1]
+        broad_core = broad_shape if len(shape) == len(broad_shape) + 1 else broad_shape[:-1]
+        axis = []
+        if len(shape_core) <= len(broad_core):
+            offset = len(broad_core) - len(shape_core)
+            axis.extend(range(offset))
+            for i, dim in enumerate(shape_core):
+                broad_axis = offset + i
+                if dim == 1 and broad_core[broad_axis] != 1:
+                    axis.append(broad_axis)
+        else:
+            offset = len(shape_core) - len(broad_core)
+            for i in range(offset, len(shape_core)):
+                broad_axis = i - offset
+                if shape_core[i] != broad_core[broad_axis]:
+                    axis.append(i)
+        return tuple(axis) if axis else None
 
     # get grad_a and grad_b
     def get_cross_backward(a, b, axises):
@@ -10997,6 +13352,66 @@ def test_np_cross(a_shape, b_shape, axes, dtype, hybridize):
 
 
 @use_np
+def test_np_cross_backward_second_input_only_req():
+    a = np.array([1., 2., 3.], dtype='float32')
+    b = np.array([4., 5.], dtype='float32')
+    a.attach_grad('null')
+    b.attach_grad('write')
+
+    with mx.autograd.record():
+        loss = np.cross(a, b).sum()
+    loss.backward()
+
+    assert_almost_equal(b.grad.asnumpy(), onp.array([1., -2.], dtype='float32'))
+
+
+@use_np
+def test_np_cross_backward_lower_rank_broadcast_grad():
+    a = np.array([[1., 2., 3.], [2., 3., 4.]], dtype='float32')
+    b = np.array([4., 5.], dtype='float32')
+    a.attach_grad('write')
+    b.attach_grad('write')
+
+    with mx.autograd.record():
+        loss = np.cross(a, b).sum()
+    loss.backward()
+
+    assert_almost_equal(
+        a.grad.asnumpy(),
+        onp.array([[5., -4., -1.], [5., -4., -1.]], dtype='float32'))
+    assert_almost_equal(b.grad.asnumpy(), onp.array([2., -4.], dtype='float32'))
+
+
+@use_np
+@pytest.mark.parametrize('dtype', ['int8', 'int32', 'int64'])
+def test_np_cross_integer_supported(dtype):
+    # PyTorch and NumPy both compute integer cross products (purely elementwise
+    # mul/sub); we accept the dtypes covered by MSHADOW_TYPE_SWITCH.
+    a = np.array([1, 2, 3], dtype=dtype)
+    b = np.array([4, 5, 6], dtype=dtype)
+    mx_out = np.cross(a, b)
+    np_out = onp.cross(a.asnumpy(), b.asnumpy())
+    assert mx_out.dtype == onp.dtype(dtype)
+    onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
+@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
+def test_np_cross_unsupported_dtypes_rejected(dtype):
+    # bool and the extended integer widths are not covered by the kernel's type
+    # switch and are rejected at type inference.
+    a = np.array([1, 2, 3], dtype=dtype)
+    b = np.array([1, 2, 3], dtype=dtype)
+    with pytest.raises((ValueError, mx.MXNetError)):
+        np.cross(a, b).asnumpy()
+
+    a_sym = mx.sym.var('a').as_np_ndarray()
+    b_sym = mx.sym.var('b').as_np_ndarray()
+    with pytest.raises(mx.MXNetError):
+        mx.sym.np.cross(a_sym, b_sym).as_nd_ndarray().infer_type(a=dtype, b=dtype)
+
+
+@use_np
 def test_np_rollaxis():
     class TestRollaxis(HybridBlock):
         def __init__(self, axis=0, start=0):
@@ -11033,6 +13448,31 @@ def test_np_rollaxis():
                         mx_out = np.rollaxis(mx_data, axis=axis, start=start)
                         assert np_out.dtype == mx_out.dtype
                         assert same(mx_out.asnumpy(), np_out)
+
+
+@use_np
+def test_np_manipulation_array_like_inputs():
+    configs = [
+        (lambda x: np.expand_dims(x, 0),
+         lambda x: onp.expand_dims(x, 0),
+         [1, 2]),
+        (lambda x: np.roll(x, 1),
+         lambda x: onp.roll(x, 1),
+         [1, 2, 3]),
+        (lambda x: np.moveaxis(x, 0, -1),
+         lambda x: onp.moveaxis(x, 0, -1),
+         [[[1]], [[2]]]),
+        (lambda x: np.copy(x),
+         lambda x: onp.copy(x),
+         [1, 2]),
+        (lambda x: np.diagflat(x),
+         lambda x: onp.diagflat(x),
+         [[1, 2], [3, 4]]),
+    ]
+    for mx_func, np_func, data in configs:
+        mx_out = mx_func(data)
+        np_out = np_func(data)
+        assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
 
 
 @use_np
@@ -11724,6 +14164,38 @@ def test_np_floor_divide_mixed_int_float16_boundary():
 
 
 @use_np
+@pytest.mark.parametrize('lhs_dtype,rhs_dtype', [
+    ('int16', 'float16'),
+    ('uint16', 'float16'),
+    ('int32', 'float16'),
+    ('uint32', 'float32'),
+])
+def test_np_mixed_int_float_promotion_matches_pytorch(lhs_dtype, rhs_dtype):
+    # PyTorch convention: mixing an integer with a floating dtype keeps the
+    # floating operand's width (int32 x float16 -> float16), unlike NumPy which
+    # promotes to a float wide enough to hold the integer (-> float64).
+    def pytorch_promote(d1, d2):
+        f1 = onp.issubdtype(d1, onp.floating)
+        f2 = onp.issubdtype(d2, onp.floating)
+        if f1 and f2:
+            return onp.promote_types(d1, d2)  # both float: wider wins
+        return d1 if f1 else d2               # exactly one float: it wins
+    lhs_np = onp.array([3], dtype=lhs_dtype)
+    rhs_np = onp.array([2], dtype=rhs_dtype)
+    expected_dtype = onp.dtype(pytorch_promote(onp.dtype(lhs_dtype), onp.dtype(rhs_dtype)))
+
+    assert np.result_type(np.array(lhs_np, dtype=lhs_np.dtype),
+                          np.array(rhs_np, dtype=rhs_np.dtype)) == expected_dtype
+    for mx_op, np_op in [(np.add, onp.add), (np.multiply, onp.multiply),
+                         (np.floor_divide, onp.floor_divide)]:
+        mx_out = mx_op(np.array(lhs_np, dtype=lhs_np.dtype), np.array(rhs_np, dtype=rhs_np.dtype))
+        np_out = np_op(lhs_np, rhs_np)
+        assert mx_out.dtype == expected_dtype
+        assert_almost_equal(mx_out.asnumpy(), np_out.astype(expected_dtype),
+                            rtol=1e-3, atol=1e-5, use_broadcast=False)
+
+
+@use_np
 @pytest.mark.parametrize('nums', [1, 2, 3, 4, 10, 100])
 def test_np_result_type(nums):
     PICK_LIST = np.numeric_dtypes + np.boolean_dtypes + [np.ones((1,), dtype=d) for d in np.numeric_dtypes + np.boolean_dtypes]
@@ -11735,6 +14207,23 @@ def test_np_result_type(nums):
     except Exception as e:
         with pytest.raises(TypeError):
             promoted = np.result_type(*inputs)
+
+
+@use_np
+def test_np_result_type_scalars():
+    # PyTorch convention: Python scalars are "weak" -- they contribute only their
+    # category, not a width. A weak float scalar combined with an integer array
+    # (or with another scalar) yields the default float dtype (float32), whereas
+    # NumPy would promote an int32 array + python float to float64.
+    configs = [
+        ((1, 2.0), onp.dtype('float32')),                          # weak int + weak float
+        ((onp.int8(1), onp.float32(1)), onp.dtype('float32')),     # int8 + float32 (strong)
+        ((np.array([1], dtype='int32'), 1.5), onp.dtype('float32')),  # int32 array + weak float
+        ((np.dtype('int32'), 1.5), onp.dtype('float32')),          # int32 dtype + weak float
+    ]
+    for inputs, expected in configs:
+        assert np.result_type(*inputs) == expected, \
+            "result_type{} -> {}, expected {}".format(inputs, np.result_type(*inputs), expected)
 
 
 @use_np
@@ -11956,3 +14445,21 @@ def test_np_standard_binary_funcs(func, func2, promoted, dtypes, ref_grad_a, ref
                     assert mx_out.dtype == np.bool_
                 assert_almost_equal(mx_out.asnumpy(), np_out.astype(mx_out.dtype), rtol=rtol, atol=atol,
                                     use_broadcast=False, equal_nan=True)
+
+
+@use_np
+def test_np_floor_divide_mixed_float16_promotes_before_division():
+    left_np = onp.array([8.31], dtype='float16')
+    right_np = onp.array([2.771545], dtype='float32')
+    left = np.array(left_np, dtype='float16')
+    right = np.array(right_np, dtype='float32')
+
+    out = np.floor_divide(left, right)
+    expected = onp.floor_divide(left_np, right_np).astype(out.dtype)
+    assert out.dtype == onp.dtype('float32')
+    assert_almost_equal(out.asnumpy(), expected)
+
+    out = np.floor_divide(right, left)
+    expected = onp.floor_divide(right_np, left_np).astype(out.dtype)
+    assert out.dtype == onp.dtype('float32')
+    assert_almost_equal(out.asnumpy(), expected)

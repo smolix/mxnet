@@ -130,6 +130,18 @@ inline static bool NumpyDotStorageType(const nnvm::NodeAttrs& attrs,
 }
 #endif
 
+inline bool NumpyDotType(const nnvm::NodeAttrs& attrs,
+                         std::vector<int>* in_attrs,
+                         std::vector<int>* out_attrs) {
+  if (!ElemwiseType<2, 1>(attrs, in_attrs, out_attrs)) {
+    return false;
+  }
+  const int dtype = out_attrs->at(0);
+  CHECK(dtype == mshadow::kFloat16 || dtype == mshadow::kFloat32 || dtype == mshadow::kFloat64)
+      << "dot only supports floating point input types";
+  return true;
+}
+
 NNVM_REGISTER_OP(_npi_dot)
     .describe(R"doc(Dot product of two arrays. Specifically,
 
@@ -153,9 +165,9 @@ NNVM_REGISTER_OP(_npi_dot)
     .set_attr<nnvm::FListInputNames>("FListInputNames",
                                      [](const NodeAttrs& attrs) {
                                        return std::vector<std::string>{"a", "b"};
-                                     })
+    })
     .set_attr<mxnet::FInferShape>("FInferShape", NumpyDotShape)
-    .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<2, 1>)
+    .set_attr<nnvm::FInferType>("FInferType", NumpyDotType)
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& attrs) {
                                   return std::vector<ResourceRequest>(1,

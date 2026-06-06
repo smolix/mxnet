@@ -387,17 +387,23 @@ void TakeOpForward<cpu>(const nnvm::NodeAttrs& attrs,
 
   Stream<cpu>* s        = ctx.get_stream<cpu>();
   const int actual_axis = param.axis + ((param.axis < 0) ? arrshape.ndim() : 0);
+  CHECK(!(arrshape[actual_axis] == 0 && idxshape.Size() > 0))
+      << "IndexError: cannot do a non-empty take from an empty axes";
 
   MSHADOW_TYPE_SWITCH_WITH_BOOL(outputs[take_::kOut].type_flag_, DType, {   // output data type
     MSHADOW_TYPE_SWITCH_WITH_BOOL(inputs[take_::kIdx].type_flag_, IType, {  // index data type
       if (param.mode == take_::kRaise) {
-        IType min = 0;
+        IType min = common::is_float(inputs[take_::kIdx].type_flag_) ?
+                        static_cast<IType>(0) :
+                        static_cast<IType>(-arrshape[actual_axis]);
         IType max = static_cast<IType>(arrshape[actual_axis] - 1);
         // check with single thread is faster since data is small
         IType* idx_ptr  = inputs[take_::kIdx].dptr<IType>();
         size_t idx_size = idxshape.Size();
         bool is_valid   = CheckIndexOutOfBound(idx_ptr, idx_size, min, max);
-        CHECK(is_valid) << "take operator contains indices out of bound";
+        if (!is_valid) {
+          LOG(FATAL) << "IndexError: take operator contains indices out of bound";
+        }
       }
       if (actual_axis == 0) {
         if (param.mode == take_::kClip) {
@@ -563,6 +569,21 @@ void GatherNDCheckBoundCPU(mshadow::Stream<cpu>* s,
   }
 }
 
+template <typename IType>
+struct ScatterNDIndexChecker<cpu, IType> {
+  static void Check(mshadow::Stream<cpu>* s,
+                    const OpContext& ctx,
+                    const IType* idx_ptr,
+                    index_t N,
+                    index_t M,
+                    const mshadow::Shape<10> mshape) {
+    mshadow::Tensor<cpu, 1, IType> workspace =
+        ctx.requested[0].get_space_typed<cpu, 1, IType>(mshadow::Shape1(M), s);
+    IType* is_valid_dim_ptr = reinterpret_cast<IType*>(workspace.dptr_);
+    GatherNDCheckBoundCPU(s, idx_ptr, N, M, mshape, is_valid_dim_ptr);
+  }
+};
+
 void GatherNDForwardCPU(const nnvm::NodeAttrs& attrs,
                         const OpContext& ctx,
                         const std::vector<TBlob>& inputs,
@@ -615,6 +636,7 @@ GatherNDBackwardImpl(index_t N,
                      index_t M,
                      index_t K,
                      const mshadow::Shape<10> strides,
+                     const mshadow::Shape<10> mshape,
                      DType* out,
                      const DType* data,
                      const IType* indices,
@@ -623,7 +645,8 @@ GatherNDBackwardImpl(index_t N,
   for (index_t i = 0; i < N; i++) {
     index_t offset = 0;
     for (index_t j = 0; j < M; ++j) {
-      offset += strides[j] * static_cast<index_t>(indices[j * N + i]);
+      offset +=
+          strides[j] * (static_cast<index_t>(indices[j * N + i] + mshape[j]) % mshape[j]);
     }
     for (index_t j = 0; j < K; ++j) {
 #pragma omp atomic
@@ -638,6 +661,7 @@ GatherNDBackwardImpl(index_t N,
                      index_t M,
                      index_t K,
                      const mshadow::Shape<10> strides,
+                     const mshadow::Shape<10> mshape,
                      DType* out,
                      const DType* data,
                      const IType* indices,
@@ -645,7 +669,8 @@ GatherNDBackwardImpl(index_t N,
   for (index_t i = 0; i < N; i++) {
     index_t offset = 0;
     for (index_t j = 0; j < M; ++j) {
-      offset += strides[j] * static_cast<index_t>(indices[j * N + i]);
+      offset +=
+          strides[j] * (static_cast<index_t>(indices[j * N + i] + mshape[j]) % mshape[j]);
     }
     for (index_t j = 0; j < K; ++j) {
       out[offset + j] += data[i * K + j];
@@ -752,7 +777,6 @@ NNVM_REGISTER_OP(_backward_Embedding)
     .set_attr<FComputeEx>("FComputeEx<cpu>", EmbeddingOpBackwardEx<cpu>);
 
 NNVM_REGISTER_OP(take)
-    .add_alias("_npi_take")
     .describe(R"code(Takes elements from an input array along the given axis.
 
 This function slices the input array along a particular axis with the provided indices.
@@ -811,7 +835,39 @@ The storage type of ``take`` output depends upon the input storage type:
                                        return std::vector<std::string>{"a", "indices"};
                                      })
     .set_attr<mxnet::FInferShape>("FInferShape", TakeOpShape)
-    .set_attr<nnvm::FInferType>("FInferType", TakeOpType)
+    .set_attr<nnvm::FInferType>("FInferType", TakeOpType<false>)
+    .set_attr<FInferStorageType>("FInferStorageType", TakeOpForwardStorageType)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& attrs) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
+    .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
+    .set_attr<FCompute>("FCompute<cpu>", TakeOpForward<cpu>)
+    .set_attr<FComputeEx>("FComputeEx<cpu>", TakeOpForwardEx<cpu>)
+    .set_attr<nnvm::FGradient>("FGradient",
+                               [](const nnvm::ObjectPtr& n,
+                                  const std::vector<nnvm::NodeEntry>& ograds) {
+                                 return MakeNonlossGradNode(
+                                     "_backward_take", n, ograds, {n->inputs[1]}, n->attrs.dict);
+                               })
+    .add_argument("a", "NDArray-or-Symbol", "The input array.")
+    .add_argument("indices", "NDArray-or-Symbol", "The indices of the values to be extracted.")
+    .add_arguments(TakeParam::__FIELDS__());
+
+// NumPy frontend take (mx.np / mx.sym.np). Same kernel as the legacy `take`
+// op, but enforces NumPy/PyTorch integer-index semantics via TakeOpType<true>.
+// (Previously `_npi_take` was an alias of `take`; it is split out so the legacy
+//  op can remain permissive about float indices for backward compatibility.)
+NNVM_REGISTER_OP(_npi_take)
+    .set_num_inputs(2)
+    .set_num_outputs(1)
+    .set_attr_parser(ParamParser<TakeParam>)
+    .set_attr<nnvm::FListInputNames>("FListInputNames",
+                                     [](const NodeAttrs& attrs) {
+                                       return std::vector<std::string>{"a", "indices"};
+                                     })
+    .set_attr<mxnet::FInferShape>("FInferShape", TakeOpShape)
+    .set_attr<nnvm::FInferType>("FInferType", TakeOpType<true>)
     .set_attr<FInferStorageType>("FInferStorageType", TakeOpForwardStorageType)
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& attrs) {
@@ -1039,6 +1095,10 @@ Examples::
                                      })
     .set_attr<mxnet::FInferShape>("FInferShape", ScatterNDShape)
     .set_attr<nnvm::FInferType>("FInferType", ScatterNDType)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& attrs) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
     .set_attr<FCompute>("FCompute<cpu>", ScatterNDForward<cpu>)
     .set_attr<nnvm::FGradient>(
         "FGradient",
@@ -1185,6 +1245,10 @@ Examples::
           return true;
         })
     .set_attr<FCompute>("FCompute<cpu>", ScatterSetNDForward<cpu>)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& attrs) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
     .set_attr<nnvm::FInplaceOption>("FInplaceOption",
                                     [](const NodeAttrs& attrs) {
                                       return std::vector<std::pair<int, int> >{{0, 0}};

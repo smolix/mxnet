@@ -54,7 +54,7 @@ struct NumpyWindowsParam : public dmlc::Parameter<NumpyWindowsParam> {
         "Context of output, in format [cpu|gpu|cpu_pinned](n)."
         "Only used for imperative calls.");
     DMLC_DECLARE_FIELD(dtype).set_default(-1).add_enum("None", -1)
-        MXNET_ADD_ALL_TYPES.describe("Data-type of the returned array.");
+        MXNET_ADD_ALL_TYPES_EXT_WITH_BOOL.describe("Data-type of the returned array.");
   }
   void SetAttrDict(std::unordered_map<std::string, std::string>* dict) {
     std::ostringstream M_s, dtype_s;
@@ -71,7 +71,7 @@ struct hanning_fwd {
     if (M == 1) {
       KERNEL_ASSIGN(out[i], req, static_cast<int64_t>(1));
     } else {
-      KERNEL_ASSIGN(out[i], req, DType(0.5) - DType(0.5) * math::cos(DType(2 * PI * i / (M - 1))));
+      KERNEL_ASSIGN(out[i], req, static_cast<DType>(0.5 - 0.5 * math::cos(2 * PI * i / (M - 1))));
     }
   }
 };
@@ -83,7 +83,7 @@ struct hamming_fwd {
       KERNEL_ASSIGN(out[i], req, static_cast<int64_t>(1));
     } else {
       KERNEL_ASSIGN(
-          out[i], req, DType(0.54) - DType(0.46) * math::cos(DType(2 * PI * i / (M - 1))));
+          out[i], req, static_cast<DType>(0.54 - 0.46 * math::cos(2 * PI * i / (M - 1))));
     }
   }
 };
@@ -96,8 +96,8 @@ struct blackman_fwd {
     } else {
       KERNEL_ASSIGN(out[i],
                     req,
-                    DType(0.42) - DType(0.5) * math::cos(DType(2 * PI * i / (M - 1))) +
-                        DType(0.08) * math::cos(DType(4 * PI * i / (M - 1))));
+                    static_cast<DType>(0.42 - 0.5 * math::cos(2 * PI * i / (M - 1)) +
+                                       0.08 * math::cos(4 * PI * i / (M - 1))));
     }
   }
 };
@@ -113,7 +113,7 @@ void NumpyWindowCompute(const nnvm::NodeAttrs& attrs,
   const NumpyWindowsParam& param = nnvm::get<NumpyWindowsParam>(attrs.parsed);
   if (param.M.has_value() && param.M.value() <= 0)
     return;
-  MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(outputs[0].type_flag_, DType, {
     if (window_select == 0) {
       Kernel<hanning_fwd, xpu>::Launch(s,
                                        outputs[0].Size(),

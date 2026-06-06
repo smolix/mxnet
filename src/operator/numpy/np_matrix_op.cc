@@ -400,6 +400,10 @@ bool NumpySqueezeShape(const nnvm::NodeAttrs& attrs,
   if (dshape.ndim() == 0) {
     if (param.axis.has_value()) {
       mxnet::Tuple<int> axes = param.axis.value();
+      if (axes.ndim() == 0) {
+        SHAPE_ASSIGN_CHECK(*out_attrs, 0, mxnet::TShape(0, -1));
+        return true;
+      }
       CHECK_EQ(axes.ndim(), 1) << "cannot specify more than one axis for a scalar tensor";
       CHECK(axes[0] == 0 || axes[0] == -1)
           << "axis " << axes[0] << " is out of bounds of array of dimension 0";
@@ -421,7 +425,7 @@ bool NumpySqueezeShape(const nnvm::NodeAttrs& attrs,
       CHECK_EQ(dshape[axes[i]], 1)
           << "cannot select an axis to squeeze out which has size=" << dshape[axes[i]]
           << " not equal to one";
-      CHECK_NE(oshape[axes[i]], 0) << "duplicate value in axis";
+      CHECK_NE(oshape[axes[i]], -1) << "duplicate value in axis";
       oshape[axes[i]] = -1;
     }
   } else {
@@ -462,11 +466,11 @@ bool HStackShape(const nnvm::NodeAttrs& attrs,
   int axis                  = (*in_shape)[0].ndim() > 1 ? 1 : 0;
   param_.dim                = axis;
   for (int i = 0; i < param_.num_args; ++i) {
+    mxnet::TShape tmp = (*in_shape)[i];
     // scalor tensor is treated as one dimensional vector
-    if ((*in_shape)[i].ndim() == 0) {
-      (*in_shape)[i] = mxnet::TShape(1, 1);
+    if (tmp.ndim() == 0) {
+      tmp = mxnet::TShape(1, 1);
     }
-    mxnet::TShape& tmp = (*in_shape)[i];
     if (tmp.ndim() > 0) {
       CheckAxis(axis, tmp.ndim());
       if (!mxnet::dim_size_is_known(tmp, axis)) {
@@ -490,13 +494,20 @@ bool HStackShape(const nnvm::NodeAttrs& attrs,
     return false;
   CHECK_NE(dshape.ndim(), 0) << "zero-dimensional arrays cannot be concatenated";
 
-  for (int i = 0; i < param_.num_args; ++i) {
-    CHECK(shape_assign(&(*in_shape)[i], dshape))
-        << "Incompatible input shape: expected " << dshape << ", got " << (*in_shape)[i];
-  }
-
   if (!has_unknown_dim_size) {
     dshape[axis] = size;
+  }
+  for (int i = 0; i < param_.num_args; ++i) {
+    mxnet::TShape tmp = (*in_shape)[i];
+    if (tmp.ndim() == 0) {
+      tmp = mxnet::TShape(1, 1);
+    }
+    for (int j = 0; j < tmp.ndim(); ++j) {
+      if (j != axis && mxnet::dim_size_is_known(tmp, j) && mxnet::dim_size_is_known(dshape, j)) {
+        CHECK_EQ(tmp[j], dshape[j])
+            << "Incompatible input shape: expected " << dshape << ", got " << (*in_shape)[i];
+      }
+    }
   }
   CHECK(shape_assign(&(*out_shape)[0], dshape))
       << "Incompatible output shape: expected " << dshape << ", got " << (*out_shape)[0];
@@ -516,19 +527,19 @@ bool DStackShape(const nnvm::NodeAttrs& attrs,
   int axis                  = 2;
   param_.dim                = axis;
   for (int i = 0; i < param_.num_args; ++i) {
-    if ((*in_shape)[i].ndim() == 0) {
-      (*in_shape)[i] = mxnet::TShape(3, 1);
-    } else if ((*in_shape)[i].ndim() == 1) {
+    mxnet::TShape tmp = (*in_shape)[i];
+    if (tmp.ndim() == 0) {
+      tmp = mxnet::TShape(3, 1);
+    } else if (tmp.ndim() == 1) {
       mxnet::TShape t = mxnet::TShape(3, 1);
-      t[1]            = (*in_shape)[i][0];
-      (*in_shape)[i]  = t;
-    } else if ((*in_shape)[i].ndim() == 2) {
+      t[1]            = tmp[0];
+      tmp             = t;
+    } else if (tmp.ndim() == 2) {
       mxnet::TShape t = mxnet::TShape(3, 1);
-      t[0]            = (*in_shape)[i][0];
-      t[1]            = (*in_shape)[i][1];
-      (*in_shape)[i]  = t;
+      t[0]            = tmp[0];
+      t[1]            = tmp[1];
+      tmp             = t;
     }
-    mxnet::TShape& tmp = (*in_shape)[i];
     if (tmp.ndim() > 0) {
       CheckAxis(axis, tmp.ndim());
       if (!mxnet::dim_size_is_known(tmp, axis)) {
@@ -552,13 +563,29 @@ bool DStackShape(const nnvm::NodeAttrs& attrs,
     return false;
   CHECK_NE(dshape.ndim(), 0) << "zero-dimensional arrays cannot be concatenated";
 
-  for (int i = 0; i < param_.num_args; ++i) {
-    CHECK(shape_assign(&(*in_shape)[i], dshape))
-        << "Incompatible input shape: expected " << dshape << ", got " << (*in_shape)[i];
-  }
-
   if (!has_unknown_dim_size) {
     dshape[axis] = size;
+  }
+  for (int i = 0; i < param_.num_args; ++i) {
+    mxnet::TShape tmp = (*in_shape)[i];
+    if (tmp.ndim() == 0) {
+      tmp = mxnet::TShape(3, 1);
+    } else if (tmp.ndim() == 1) {
+      mxnet::TShape t = mxnet::TShape(3, 1);
+      t[1]            = tmp[0];
+      tmp             = t;
+    } else if (tmp.ndim() == 2) {
+      mxnet::TShape t = mxnet::TShape(3, 1);
+      t[0]            = tmp[0];
+      t[1]            = tmp[1];
+      tmp             = t;
+    }
+    for (int j = 0; j < tmp.ndim(); ++j) {
+      if (j != axis && mxnet::dim_size_is_known(tmp, j) && mxnet::dim_size_is_known(dshape, j)) {
+        CHECK_EQ(tmp[j], dshape[j])
+            << "Incompatible input shape: expected " << dshape << ", got " << (*in_shape)[i];
+      }
+    }
   }
   CHECK(shape_assign(&(*out_shape)[0], dshape))
       << "Incompatible output shape: expected " << dshape << ", got " << (*out_shape)[0];
@@ -951,6 +978,7 @@ NNVM_REGISTER_OP(_backward_np_dstack)
     .set_attr<FCompute>("FCompute<cpu>", DStackGradCompute<cpu>);
 
 DMLC_REGISTER_PARAMETER(NumpyTrilindicesParam);
+DMLC_REGISTER_PARAMETER(NumpyTriangleIndicesFromParam);
 
 inline bool TrilindicesOpType(const nnvm::NodeAttrs& attrs,
                               std::vector<int>* in_attrs,
@@ -993,6 +1021,42 @@ inline bool TrilindicesOpShape(const nnvm::NodeAttrs& attrs,
   return shape_is_known(out_attrs->at(0)) && shape_is_known(out_attrs->at(1));
 }
 
+inline bool TriangleIndicesFromOpType(const nnvm::NodeAttrs& attrs,
+                                      std::vector<int>* in_attrs,
+                                      std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 1U);
+  CHECK_EQ(out_attrs->size(), 2U);
+
+  TYPE_ASSIGN_CHECK(*out_attrs, 0, mshadow::kInt64);
+  TYPE_ASSIGN_CHECK(*out_attrs, 1, mshadow::kInt64);
+
+  return true;
+}
+
+template <bool upper>
+inline bool TriangleIndicesFromOpShape(const nnvm::NodeAttrs& attrs,
+                                       mxnet::ShapeVector* in_attrs,
+                                       mxnet::ShapeVector* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 1U);
+  CHECK_EQ(out_attrs->size(), 2U);
+
+  const mxnet::TShape& ishape = (*in_attrs)[0];
+  if (!mxnet::shape_is_known(ishape)) {
+    return false;
+  }
+  CHECK_EQ(ishape.ndim(), 2) << "ValueError: input array must be 2-d";
+
+  const NumpyTriangleIndicesFromParam& param =
+      nnvm::get<NumpyTriangleIndicesFromParam>(attrs.parsed);
+  index_t length = TriangleIndicesLength(ishape[0], ishape[1], param.k, upper);
+  mxnet::TShape oshape(1, length);
+
+  SHAPE_ASSIGN_CHECK(*out_attrs, 0, oshape);
+  SHAPE_ASSIGN_CHECK(*out_attrs, 1, oshape);
+
+  return shape_is_known(out_attrs->at(0)) && shape_is_known(out_attrs->at(1));
+}
+
 NNVM_REGISTER_OP(_npi_tril_indices)
     .set_attr_parser(ParamParser<NumpyTrilindicesParam>)
     .set_num_inputs(0)
@@ -1006,6 +1070,42 @@ NNVM_REGISTER_OP(_npi_tril_indices)
                                 })
     .add_arguments(NumpyTrilindicesParam::__FIELDS__());
 
+NNVM_REGISTER_OP(_npi_tril_indices_from)
+    .set_attr_parser(ParamParser<NumpyTriangleIndicesFromParam>)
+    .set_num_inputs(1)
+    .set_num_outputs(2)
+    .set_attr<nnvm::FListInputNames>("FListInputNames",
+                                     [](const NodeAttrs& attrs) {
+                                       return std::vector<std::string>{"data"};
+                                     })
+    .set_attr<mxnet::FInferShape>("FInferShape", TriangleIndicesFromOpShape<false>)
+    .set_attr<nnvm::FInferType>("FInferType", TriangleIndicesFromOpType)
+    .set_attr<FCompute>("FCompute<cpu>", TriangleIndicesFromOpForward<cpu, false>)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& n) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
+    .add_argument("data", "NDArray-or-Symbol", "Input ndarray")
+    .add_arguments(NumpyTriangleIndicesFromParam::__FIELDS__());
+
+NNVM_REGISTER_OP(_npi_triu_indices_from)
+    .set_attr_parser(ParamParser<NumpyTriangleIndicesFromParam>)
+    .set_num_inputs(1)
+    .set_num_outputs(2)
+    .set_attr<nnvm::FListInputNames>("FListInputNames",
+                                     [](const NodeAttrs& attrs) {
+                                       return std::vector<std::string>{"data"};
+                                     })
+    .set_attr<mxnet::FInferShape>("FInferShape", TriangleIndicesFromOpShape<true>)
+    .set_attr<nnvm::FInferType>("FInferType", TriangleIndicesFromOpType)
+    .set_attr<FCompute>("FCompute<cpu>", TriangleIndicesFromOpForward<cpu, true>)
+    .set_attr<FResourceRequest>("FResourceRequest",
+                                [](const NodeAttrs& n) {
+                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+                                })
+    .add_argument("data", "NDArray-or-Symbol", "Input ndarray")
+    .add_arguments(NumpyTriangleIndicesFromParam::__FIELDS__());
+
 inline bool NumpyRollShape(const nnvm::NodeAttrs& attrs,
                            mxnet::ShapeVector* in_attrs,
                            mxnet::ShapeVector* out_attrs) {
@@ -1015,12 +1115,9 @@ inline bool NumpyRollShape(const nnvm::NodeAttrs& attrs,
   if (!param.shift.has_value()) {
     LOG(FATAL) << "roll missing 1 required positional argument: 'shift'.";
   }
-  if (param.shift.value().ndim() > 1 && param.axis.has_value() &&
-      param.axis.value().ndim() != param.shift.value().ndim()) {
+  if (param.axis.has_value() && param.shift.value().ndim() > 1 &&
+      param.axis.value().ndim() > 1 && param.axis.value().ndim() != param.shift.value().ndim()) {
     LOG(FATAL) << "shift and `axis` must be a tuple of the same size.";
-  }
-  if (!param.axis.has_value() && param.shift.has_value() && param.shift.value().ndim() > 1) {
-    LOG(FATAL) << "shift must be an int.";
   }
   if (param.axis.has_value()) {
     mxnet::TShape axes(param.axis.value());
@@ -1029,10 +1126,6 @@ inline bool NumpyRollShape(const nnvm::NodeAttrs& attrs,
       if (axes[i] < 0) {
         axes[i] += ndim;
       }
-    }
-    std::sort(axes.begin(), axes.end());
-    for (index_t i = 1; i < axes.ndim(); i++) {
-      CHECK_LT(axes[i - 1], axes[i]) << "axes have duplicates " << axes;
     }
     CHECK_LT(axes[axes.ndim() - 1], ndim)
         << "axis " << axes[axes.ndim() - 1] << " Exceeds input dimensions " << (*in_attrs)[0];
@@ -1146,19 +1239,22 @@ NNVM_REGISTER_OP(_npi_rollaxis_backward)
 template <>
 void NumpyFlipForwardImpl<cpu>(const OpContext& ctx,
                                const std::vector<TBlob>& inputs,
+                               const std::vector<OpReqType>& req,
                                const std::vector<TBlob>& outputs,
                                const std::vector<index_t>& stride_,
                                const std::vector<index_t>& trailing_,
                                const index_t& flip_index) {
   mshadow::Stream<cpu>* s = ctx.get_stream<cpu>();
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
-    mxnet_op::Kernel<reverse, cpu>::Launch(s,
-                                           inputs[0].Size(),
-                                           flip_index,
-                                           inputs[0].dptr<DType>(),
-                                           outputs[0].dptr<DType>(),
-                                           stride_.data(),
-                                           trailing_.data());
+    MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+      mxnet_op::Kernel<numpy_reverse_req<req_type>, cpu>::Launch(s,
+                                                                 inputs[0].Size(),
+                                                                 flip_index,
+                                                                 inputs[0].dptr<DType>(),
+                                                                 outputs[0].dptr<DType>(),
+                                                                 stride_.data(),
+                                                                 trailing_.data());
+    });
   });
 }
 

@@ -69,6 +69,10 @@ struct eigh_eigvalsh_helper {
   }
 };
 
+inline void ValidateEighEigvalshUPLO(const char UPLO) {
+  CHECK(UPLO == 'L' || UPLO == 'U') << "UPLO must be 'L' or 'U'";
+}
+
 template <typename xpu, typename DType>
 void linalg_geev(char jobvl,
                  char jobvr,
@@ -457,6 +461,7 @@ void EigvalshOpForward(const nnvm::NodeAttrs& attrs,
   const TBlob& a = inputs[0];
   const TBlob& w = outputs[0];
   char UPLO      = nnvm::get<EigvalshParam>(attrs.parsed).UPLO;
+  ValidateEighEigvalshUPLO(UPLO);
 
   if (kNullOp == req[0]) {
     return;

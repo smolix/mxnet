@@ -44,7 +44,7 @@ NNVM_REGISTER_OP(_npi_prod)
                                        return std::vector<std::string>{"a"};
                                      })
     .add_argument("a", "NDArray-or-Symbol", "The input")
-    .set_attr<FCompute>("FCompute<cpu>", NumpyReduceAxesCompute<cpu, mshadow_op::product, true>)
+    .set_attr<FCompute>("FCompute<cpu>", NumpyReduceAxesComputeExt<cpu, mshadow_op::product, true>)
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& attrs) {
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};

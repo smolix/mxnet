@@ -178,8 +178,8 @@ inline void NumpyWhereOpForward(const nnvm::NodeAttrs& attrs,
     expanded_oshape[j + ndim_delta] = (out.shape_)[j];
   }
   Shape<broadcast::MAX_DIM> oshape = expanded_oshape.get<broadcast::MAX_DIM>();
-  MSHADOW_TYPE_SWITCH_WITH_BOOL(out.type_flag_, DType, {
-    MSHADOW_TYPE_SWITCH_WITH_BOOL(cond.type_flag_, CType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out.type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(cond.type_flag_, CType, {
       mxnet_op::Kernel<numpy_where_kernel<broadcast::MAX_DIM>, xpu>::Launch(s,
                                                                             out.Size(),
                                                                             req[0],
@@ -383,8 +383,8 @@ inline void NumpyWhereScalarOpForward(const nnvm::NodeAttrs& attrs,
     expanded_oshape[j + ndim_delta] = (out.shape_)[j];
   }
   Shape<broadcast::MAX_DIM> oshape = expanded_oshape.get<broadcast::MAX_DIM>();
-  MSHADOW_TYPE_SWITCH_WITH_BOOL(out.type_flag_, DType, {
-    MSHADOW_TYPE_SWITCH_WITH_BOOL(cond.type_flag_, CType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out.type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(cond.type_flag_, CType, {
       mxnet_op::Kernel<numpy_where_scalar_kernel<broadcast::MAX_DIM, is_left>, xpu>::Launch(
           s,
           out.Size(),
@@ -510,8 +510,8 @@ inline void NumpyWhereScalar2OpForward(const nnvm::NodeAttrs& attrs,
   const NumpyWhereScalar2Param& param = nnvm::get<NumpyWhereScalar2Param>(attrs.parsed);
   const TBlob& cond                   = inputs[0];
   const TBlob& out                    = outputs[0];
-  MSHADOW_TYPE_SWITCH_WITH_BOOL(out.type_flag_, DType, {
-    MSHADOW_TYPE_SWITCH_WITH_BOOL(cond.type_flag_, CType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out.type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(cond.type_flag_, CType, {
       Kernel<numpy_where_scalar2_kernel, xpu>::Launch(s,
                                                       out.Size(),
                                                       req[0],

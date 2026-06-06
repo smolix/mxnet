@@ -51,6 +51,33 @@ inline bool NumpyTraceOpShape(const nnvm::NodeAttrs& attrs,
   return true;
 }
 
+inline int NumpyTraceAccumulatorType(const int dtype) {
+  switch (dtype) {
+    case mshadow::kBool:
+    case mshadow::kInt8:
+    case mshadow::kInt16:
+    case mshadow::kInt32:
+    case mshadow::kUint8:
+    case mshadow::kUint16:
+    case mshadow::kUint32:
+      return mshadow::kInt64;
+    default:
+      return dtype;
+  }
+}
+
+inline bool NumpyTraceOpType(const nnvm::NodeAttrs& attrs,
+                             std::vector<int>* in_attrs,
+                             std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 1U);
+  CHECK_EQ(out_attrs->size(), 1U);
+  if (in_attrs->at(0) == -1) {
+    return false;
+  }
+  TYPE_ASSIGN_CHECK(*out_attrs, 0, NumpyTraceAccumulatorType(in_attrs->at(0)));
+  return out_attrs->at(0) != -1;
+}
+
 DMLC_REGISTER_PARAMETER(NumpyTraceParam);
 
 NNVM_REGISTER_OP(_npi_trace)
@@ -78,9 +105,9 @@ Examples::
     .set_attr<nnvm::FListInputNames>("FListInputNames",
                                      [](const NodeAttrs& attrs) {
                                        return std::vector<std::string>{"data"};
-                                     })
+    })
     .set_attr<mxnet::FInferShape>("FInferShape", NumpyTraceOpShape)
-    .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<1, 1>)
+    .set_attr<nnvm::FInferType>("FInferType", NumpyTraceOpType)
     .set_attr<FCompute>("FCompute<cpu>", NumpyTraceOpForward<cpu>)
     .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseNone{"_backward_npi_trace"})
     .add_argument("data", "NDArray-or-Symbol", "Input ndarray")

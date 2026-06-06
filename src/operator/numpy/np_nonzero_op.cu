@@ -37,7 +37,7 @@ struct PrefixSumInit {
   }
 };
 
-#define MAXDIM 5
+#define MAXDIM 10
 
 void NonzeroForwardGPU(const nnvm::NodeAttrs& attrs,
                        const OpContext& ctx,
@@ -103,7 +103,7 @@ void NonzeroForwardGPU(const nnvm::NodeAttrs& attrs,
   s[0] = valid_num;
   const_cast<NDArray&>(out).Init(s);
   // get the shape from the input
-  MXNET_NDIM_SWITCH(in.shape().ndim(), ndim, {
+  MXNET_NDIM_SWITCH_EX(in.shape().ndim(), ndim, {
     mshadow::Shape<ndim> shape = in.shape().get<ndim>();
     mxnet_op::Kernel<NonzeroForwardKernelGPU, gpu>::Launch(
         stream, in_size, out.data().dptr<int64_t>(), prefix_sum, shape);

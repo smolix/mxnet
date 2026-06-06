@@ -31,10 +31,26 @@
 #include "../nn/moments-inl.h"
 #include "../tensor/broadcast_reduce_op.h"
 #include "../tensor/elemwise_binary_broadcast_op.h"
+#include "../tensor/elemwise_unary_op.h"
 #include "../../api/operator/op_utils.h"
 
 namespace mxnet {
 namespace op {
+
+inline int NumpyDefaultAccumulatorType(const int dtype) {
+  switch (dtype) {
+    case mshadow::kBool:
+    case mshadow::kInt8:
+    case mshadow::kInt16:
+    case mshadow::kInt32:
+    case mshadow::kUint8:
+    case mshadow::kUint16:
+    case mshadow::kUint32:
+      return mshadow::kInt64;
+    default:
+      return dtype;
+  }
+}
 
 struct NumpyReduceAxesParam : public dmlc::Parameter<NumpyReduceAxesParam> {
   dmlc::optional<mxnet::Tuple<int>> axis;
@@ -302,6 +318,22 @@ void TVMOpReduce(const OpContext& ctx,
                  const OpReqType req,
                  const std::string& reducer_name);
 
+#ifndef __CUDACC__
+// Flat, OpenMP-parallel global sum with a double accumulator. Used by the
+// fast global-reduction path in NumpyReduceAxesCompute. The OpenMP pragma must
+// live in a real function (not inside a type-switch macro argument).
+template <typename DType, typename OP>
+inline double FlatGlobalSum(const DType* in, index_t total) {
+  const int nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  double acc         = 0.0;
+#pragma omp parallel for num_threads(nthreads) reduction(+ : acc)
+  for (index_t i = 0; i < total; ++i) {
+    acc += static_cast<double>(OP::Map(in[i]));
+  }
+  return acc;
+}
+#endif  // __CUDACC__
+
 template <typename xpu,
           typename reducer,
           bool safe_acc_hint = false,
@@ -385,10 +417,113 @@ void NumpyReduceAxesCompute(const nnvm::NodeAttrs& attrs,
     small = NumpyReduceAxesShapeImpl(inputs[0].shape_, param.axis, true);
   }
 
+#ifndef __CUDACC__
+  // Fast CPU path for a global (scalar-output) sum/mean over a contiguous
+  // floating tensor. The generic reduce computes per-element coordinates via
+  // unravel(), which dominates a contiguous global reduce (oneDNN's global
+  // reduction is also single-threaded here). A flat OpenMP reduction with a
+  // double accumulator parallelizes the reduced dimension and is ~5x faster
+  // while at least as accurate. Other reducers/axes/dtypes fall through.
+  if (std::is_same<xpu, cpu>::value && std::is_same<reducer, mshadow_op::sum>::value &&
+      small.Size() == 1 && outputs[0].shape_.Size() == 1 &&
+      common::is_float(inputs[0].type_flag_) &&
+      inputs[0].type_flag_ == outputs[0].type_flag_) {
+    const index_t total = static_cast<index_t>(inputs[0].shape_.Size());
+    MSHADOW_REAL_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+      double acc = FlatGlobalSum<DType, OP>(inputs[0].dptr<DType>(), total);
+      if (normalize && total > 0) {
+        acc /= static_cast<double>(total);
+      }
+      DType* out = outputs[0].dptr<DType>();
+      if (req[0] == kAddTo) {
+        out[0] += static_cast<DType>(acc);
+      } else {
+        out[0] = static_cast<DType>(acc);
+      }
+    });
+    return;
+  }
+#endif  // __CUDACC__
+
   if (NeedSafeAcc<safe_acc_hint>(inputs[0].type_flag_, outputs[0].type_flag_)) {
     ReduceAxesComputeImpl<xpu, reducer, true, normalize, OP>(ctx, inputs, req, outputs, small);
   } else {
     ReduceAxesComputeImpl<xpu, reducer, false, normalize, OP>(ctx, inputs, req, outputs, small);
+  }
+}
+
+template <typename xpu,
+          typename reducer,
+          bool safe_acc_hint = false,
+          bool normalize     = false,
+          typename OP        = op::mshadow_op::identity>
+void NumpyReduceAxesComputeExt(const nnvm::NodeAttrs& attrs,
+                               const OpContext& ctx,
+                               const std::vector<TBlob>& inputs,
+                               const std::vector<OpReqType>& req,
+                               const std::vector<TBlob>& outputs) {
+  using namespace mshadow;
+  if (req[0] == kNullOp)
+    return;
+  const auto& param = nnvm::get<NumpyReduceAxesParam>(attrs.parsed);
+  if (param.initial.has_value()) {
+    LOG(FATAL) << "initial is not supported yet";
+  }
+  Stream<xpu>* s = ctx.get_stream<xpu>();
+  CHECK_NE(req[0], kWriteInplace) << "Reduce does not support write in-place";
+  if (outputs[0].shape_.Size() == 0)
+    return;
+  if (inputs[0].shape_.Size() == 0 && outputs[0].shape_.Size() != 0) {
+    using namespace mxnet_op;
+    MXNET_ASSIGN_REQ_SWITCH(req[0], Req, {
+    if (normalize) {
+      LOG(WARNING) << "WARNING: Mean of empty slice.";
+      if (mxnet::common::is_float(outputs[0].type_flag_)) {
+        MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
+          Kernel<op_with_req<set_to_nan, Req>, xpu>::Launch(
+              s, outputs[0].shape_.Size(), outputs[0].dptr<DType>());
+        });
+      } else {
+        LOG(WARNING) << "WARNING: nan is outside the range of"
+                     << "representable values of type 'int'";
+        MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(outputs[0].type_flag_, DType, {
+          Kernel<op_with_req<set_zero, Req>, xpu>::Launch(
+              s, outputs[0].shape_.Size(), outputs[0].dptr<DType>());
+        });
+      }
+    } else if (std::is_same<reducer, mshadow_op::sum>::value) {
+      MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(outputs[0].type_flag_, DType, {
+        Kernel<op_with_req<set_zero, Req>, xpu>::Launch(
+            s, outputs[0].shape_.Size(), outputs[0].dptr<DType>());
+      });
+    } else {
+      MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(outputs[0].type_flag_, DType, {
+        Kernel<op_with_req<set_one, Req>, xpu>::Launch(
+            s, outputs[0].shape_.Size(), outputs[0].dptr<DType>());
+      });
+    }
+    });
+    return;
+  }
+  if (param.axis.has_value() && param.axis.value().ndim() == 0) {
+    if (inputs[0].type_flag_ == outputs[0].type_flag_) {
+      UnaryOp::IdentityCompute<xpu>(attrs, ctx, inputs, req, outputs);
+    } else {
+      CastCompute<xpu>(attrs, ctx, inputs, req, outputs);
+    }
+    return;
+  }
+  TShape small;
+  if (param.keepdims) {
+    small = outputs[0].shape_;
+  } else {
+    small = NumpyReduceAxesShapeImpl(inputs[0].shape_, param.axis, true);
+  }
+
+  if (NeedSafeAcc<safe_acc_hint>(inputs[0].type_flag_, outputs[0].type_flag_)) {
+    ReduceAxesComputeImplExt<xpu, reducer, true, normalize, OP>(ctx, inputs, req, outputs, small);
+  } else {
+    ReduceAxesComputeImplExt<xpu, reducer, false, normalize, OP>(ctx, inputs, req, outputs, small);
   }
 }
 
@@ -648,6 +783,14 @@ inline void NumpyReduceAxesBackwardUseNone(const nnvm::NodeAttrs& attrs,
     small = NumpyReduceAxesShapeImpl(outputs[0].shape_, param.axis, true);
   }
 
+  if (normalize && req[0] == kAddTo) {
+    Stream<xpu>* s = ctx.get_stream<xpu>();
+    MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, IType, {
+      Tensor<xpu, 1, IType> igrad = outputs[0].FlatTo1D<xpu, IType>(s);
+      igrad *= scalar<IType>(outputs[0].Size() / inputs[0].Size());
+    });
+  }
+
   BroadcastComputeImpl<xpu>(attrs, ctx, inputs, req, outputs, small);
 
   if (normalize) {
@@ -783,10 +926,7 @@ inline bool NumpyWeightedAverageShape(const nnvm::NodeAttrs& attrs,
       int red_axis = axes[0] < 0 ? axes[0] + a_shape.ndim() : axes[0];
       CHECK_EQ(a_shape[red_axis], w_shape[0])
           << "Length of weights not compatible with specified axis.";
-      SHAPE_ASSIGN_CHECK(
-          *out_attrs,
-          1,
-          NumpyReduceAxesShapeImpl(w_shape, dmlc::optional<mxnet::Tuple<int>>(), false));
+      SHAPE_ASSIGN_CHECK(*out_attrs, 1, out_attrs->at(0));
     } else {
       for (int i = 0; i < w_shape.ndim(); i++) {
         CHECK_EQ(w_shape[i], a_shape[i]);
@@ -794,7 +934,7 @@ inline bool NumpyWeightedAverageShape(const nnvm::NodeAttrs& attrs,
       SHAPE_ASSIGN_CHECK(*out_attrs, 1, NumpyReduceAxesShapeImpl(w_shape, param.axis, false));
     }
   } else {
-    SHAPE_ASSIGN_CHECK(*out_attrs, 1, TShape(0, -1));
+    SHAPE_ASSIGN_CHECK(*out_attrs, 1, out_attrs->at(0));
   }
 
   return shape_is_known(out_attrs->at(0)) && shape_is_known(out_attrs->at(1));
@@ -948,21 +1088,41 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
   TBlob wa;
   TBlob sum_of_wa;
   Tensor<xpu, 1, char> workspace;
-  MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+  TBlob compute_data    = data;
+  TBlob compute_weights = weights;
+  const int compute_type = (!back && outputs[0].type_flag_ != -1) ? outputs[0].type_flag_ :
+                                                                    data.type_flag_;
+  MSHADOW_TYPE_SWITCH(compute_type, DType, {
     // Get temp space
-    size_t temp_data_size = data.shape_.Size() * sizeof(DType);
-    size_t temp_sum_size  = small1.Size() * sizeof(DType);
-    size_t temp_scl_size  = small2.Size() * sizeof(DType);
+    const size_t cast_data_size =
+        (!back && data.type_flag_ != compute_type) ? data.shape_.Size() * sizeof(DType) : 0;
+    const size_t cast_weight_size =
+        (!back && weights.type_flag_ != compute_type) ? weights.shape_.Size() * sizeof(DType) : 0;
+    const size_t temp_data_size = data.shape_.Size() * sizeof(DType);
+    const size_t temp_sum_size  = small1.Size() * sizeof(DType);
+    const size_t temp_scl_size  = small2.Size() * sizeof(DType);
     TShape src_shape, dst_shape;
     BroadcastReduceShapeCompact(data.shape_, small1, &src_shape, &dst_shape);
     size_t workspace_size = 0;
     workspace_size        = broadcast::ReduceWorkspaceSize(s, dst_shape, {kWriteTo}, src_shape);
-    size_t temp_mem_size  = temp_data_size + temp_sum_size + temp_scl_size + workspace_size;
+    const size_t temp_mem_size = cast_data_size + cast_weight_size + temp_data_size +
+                                 temp_sum_size + temp_scl_size + workspace_size;
     Tensor<xpu, 1, char> temp_mem =
         ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(temp_mem_size), s);
-    auto* temp_data_ptr = reinterpret_cast<DType*>(temp_mem.dptr_);
-    auto* temp_sum_ptr  = reinterpret_cast<DType*>(temp_mem.dptr_ + temp_data_size);
-    char* workspace_ptr = temp_mem.dptr_ + temp_data_size + temp_sum_size + temp_scl_size;
+    char* offset = temp_mem.dptr_;
+    if (cast_data_size != 0) {
+      compute_data = TBlob(reinterpret_cast<DType*>(offset), data.shape_, xpu::kDevMask);
+      CastCompute<xpu>(attrs, ctx, {data}, {kWriteTo}, {compute_data});
+      offset += cast_data_size;
+    }
+    if (cast_weight_size != 0) {
+      compute_weights = TBlob(reinterpret_cast<DType*>(offset), weights.shape_, xpu::kDevMask);
+      CastCompute<xpu>(attrs, ctx, {weights}, {kWriteTo}, {compute_weights});
+      offset += cast_weight_size;
+    }
+    auto* temp_data_ptr = reinterpret_cast<DType*>(offset);
+    auto* temp_sum_ptr  = reinterpret_cast<DType*>(offset + temp_data_size);
+    char* workspace_ptr = offset + temp_data_size + temp_sum_size + temp_scl_size;
     workspace           = Tensor<xpu, 1, char>(workspace_ptr, Shape1(workspace_size), s);
 
     // Compute weighted data
@@ -970,13 +1130,15 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
     sum_of_wa = TBlob(temp_sum_ptr, small1, xpu::kDevMask);
   });
 #if !defined(__CUDACC__)
-  BinaryBroadcastCompute<xpu, mshadow_op::mul>(attrs, ctx, {data, weights}, {kWriteTo}, {wa});
+  BinaryBroadcastCompute<xpu, mshadow_op::mul>(
+      attrs, ctx, {compute_data, compute_weights}, {kWriteTo}, {wa});
 
   // Compute sum of weighted data
   ReduceAxesComputeImpl<xpu, mshadow_op::sum, true>(
       ctx, {wa}, {kWriteTo}, {sum_of_wa}, small1, &workspace);
 #else
-  BinaryBroadcastRTCCompute{"mul"}(attrs, ctx, {data, weights}, {kWriteTo}, {wa});  // NOLINT
+  BinaryBroadcastRTCCompute{"mul"}(  // NOLINT
+      attrs, ctx, {compute_data, compute_weights}, {kWriteTo}, {wa});
 
   // Compute sum of weighted data
   ReduceAxesRTCComputeImpl(
@@ -987,8 +1149,8 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
     const TBlob& sum_of_weights = outputs[1];
     // Compute sum of weight
     TBlob scl;
-    MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
-      if (req[1] == kWriteTo) {
+    MSHADOW_TYPE_SWITCH(compute_type, DType, {
+      if (!one_dim && req[1] == kWriteTo) {
         scl = sum_of_weights.reshape(small2);
       } else {
         auto* temp_scl_ptr = reinterpret_cast<DType*>(
@@ -998,9 +1160,12 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
     });
 #if !defined(__CUDACC__)
     ReduceAxesComputeImpl<xpu, mshadow_op::sum, true>(
-        ctx, {weights}, {kWriteTo}, {scl}, small2, &workspace);
-    if (req[1] != kNullOp && req[1] != kWriteTo) {
-      MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+        ctx, {compute_weights}, {kWriteTo}, {scl}, small2, &workspace);
+    if (one_dim && req[1] != kNullOp) {
+      BroadcastComputeImpl<xpu>(attrs, ctx, {scl}, {req[1]}, {sum_of_weights.reshape(small1)}, small2);
+    }
+    if (!one_dim && req[1] != kNullOp && req[1] != kWriteTo) {
+      MSHADOW_TYPE_SWITCH(compute_type, DType, {
         MXNET_ASSIGN_REQ_SWITCH(req[1], req_1, {
           mxnet_op::Kernel<weighted_average_assign<req_1>, xpu>::Launch(
               s, sum_of_weights.Size(), scl.dptr<DType>(), sum_of_weights.dptr<DType>());
@@ -1012,9 +1177,12 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
         attrs, ctx, {sum_of_wa, scl}, req, {avg.reshape(small1)});
 #else
     ReduceAxesRTCComputeImpl(
-        ctx, {weights}, {kWriteTo}, {scl}, small2, "red::sum{}", &workspace, false, "identity");
-    if (req[1] != kNullOp && req[1] != kWriteTo) {
-      MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+        ctx, {compute_weights}, {kWriteTo}, {scl}, small2, "red::sum{}", &workspace, false, "identity");
+    if (one_dim && req[1] != kNullOp) {
+      BroadcastComputeImpl<xpu>(attrs, ctx, {scl}, {req[1]}, {sum_of_weights.reshape(small1)}, small2);
+    }
+    if (!one_dim && req[1] != kNullOp && req[1] != kWriteTo) {
+      MSHADOW_TYPE_SWITCH(compute_type, DType, {
         MXNET_ASSIGN_REQ_SWITCH(req[1], req_1, {
           mxnet_op::Kernel<weighted_average_assign<req_1>, xpu>::Launch(
               s, sum_of_weights.Size(), scl.dptr<DType>(), sum_of_weights.dptr<DType>());
@@ -1088,6 +1256,25 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
 }
 
 template <typename xpu>
+TBlob NumpyAverageCastInput(const nnvm::NodeAttrs& attrs,
+                            const OpContext& ctx,
+                            const TBlob& input,
+                            const int output_type) {
+  if (input.type_flag_ == output_type) {
+    return input;
+  }
+  mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
+  TBlob cast_input;
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(output_type, OType, {
+    mshadow::Tensor<xpu, 1, OType> cast_tensor =
+        ctx.requested[0].get_space_typed<xpu, 1, OType>(mshadow::Shape1(input.Size()), s);
+    cast_input = TBlob(cast_tensor).reshape(input.shape_);
+  });
+  CastCompute<xpu>(attrs, ctx, {input}, {kWriteTo}, {cast_input});
+  return cast_input;
+}
+
+template <typename xpu>
 void NumpyWeightedAverageForward(const nnvm::NodeAttrs& attrs,
                                  const OpContext& ctx,
                                  const std::vector<TBlob>& inputs,
@@ -1101,8 +1288,9 @@ void NumpyWeightedAverageForward(const nnvm::NodeAttrs& attrs,
   CHECK_NE(req[1], kWriteInplace) << "Average does not support write in-place";
   const auto& param = nnvm::get<NumpyWeightedAverageParam>(attrs.parsed);
   const TBlob& data = inputs[0];
+  const int output_type = outputs[0].type_flag_;
   TShape small;
-  MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH(output_type, DType, {
     if (!param.weighted) {
       small = NumpyReduceAxesShapeImpl(data.shape_, param.axis, true);
       // Compute sum of weights which equals to the product of sizes of reduced axes
@@ -1116,11 +1304,13 @@ void NumpyWeightedAverageForward(const nnvm::NodeAttrs& attrs,
     }
   });
   if (!param.weighted) {
+    TBlob compute_data = NumpyAverageCastInput<xpu>(attrs, ctx, data, output_type);
     // Compute mean
 #if !defined(__CUDACC__)
-    ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(ctx, inputs, req, {outputs[0]}, small);
+    ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(
+        ctx, {compute_data}, req, {outputs[0]}, small);
 #else
-    ReduceAxesRTCComputeImpl(ctx, inputs, req, {outputs[0]}, small, "red::sum{}", nullptr, true);
+    ReduceAxesRTCComputeImpl(ctx, {compute_data}, req, {outputs[0]}, small, "red::sum{}", nullptr, true);
 #endif
   } else {
     NumpyWeightedAverageComputeImpl<xpu>(attrs, ctx, inputs, req, outputs, param.axis);
@@ -1192,20 +1382,37 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
   BroadcastReduceShapeCompact(data.shape_, small, &src_shape, &dst_shape);
 
   // Get workspace and temp space for data - mean
-  size_t workspace_size = broadcast::ReduceWorkspaceSize(s, dst_shape, req[0], src_shape);
-  size_t temp_data_size = data.shape_.Size() * common::mshadow_type_info(inputs[0].type_flag_).size;
-  size_t temp_mem_size  = temp_data_size + workspace_size;
-  Tensor<xpu, 1, char> temp_mem =
-      ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(temp_mem_size), s);
-  char* workspace_ptr = temp_mem.dptr_ + temp_data_size;
-  Tensor<xpu, 1, char> workspace(workspace_ptr, Shape1(workspace_size), s);
+  size_t workspace_size = broadcast::ReduceWorkspaceSize(s, dst_shape, {kWriteTo}, src_shape);
+  TBlob compute_data    = data;
+  Tensor<xpu, 1, char> workspace;
+  TBlob temp_data_blob;
+  const int compute_type = mean.type_flag_;
+  MSHADOW_TYPE_SWITCH(compute_type, DType, {
+    const size_t cast_data_size =
+        data.type_flag_ != compute_type ? data.shape_.Size() * sizeof(DType) : 0;
+    const size_t temp_data_size = data.shape_.Size() * sizeof(DType);
+    const size_t temp_mem_size  = cast_data_size + temp_data_size + workspace_size;
+    Tensor<xpu, 1, char> temp_mem =
+        ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(temp_mem_size), s);
+    char* offset = temp_mem.dptr_;
+    if (cast_data_size != 0) {
+      compute_data = TBlob(reinterpret_cast<DType*>(offset), data.shape_, xpu::kDevMask);
+      CastCompute<xpu>(attrs, ctx, {data}, {kWriteTo}, {compute_data});
+      offset += cast_data_size;
+    }
+    Tensor<xpu, 1, DType> temp_data_tensor(
+        reinterpret_cast<DType*>(offset), Shape1(data.shape_.Size()), s);
+    temp_data_blob = TBlob(temp_data_tensor).reshape(data.shape_);
+    char* workspace_ptr = offset + temp_data_size;
+    workspace           = Tensor<xpu, 1, char>(workspace_ptr, Shape1(workspace_size), s);
+  });
   // Compute mean
 #if !defined(__CUDACC__)
   ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(
-      ctx, inputs, {kWriteTo}, {mean}, small, &workspace);
+      ctx, {compute_data}, {kWriteTo}, {mean}, small, &workspace);
 #else
   ReduceAxesRTCComputeImpl(
-      ctx, inputs, {kWriteTo}, {mean}, small, "red::sum{}", &workspace, true, "identity");
+      ctx, {compute_data}, {kWriteTo}, {mean}, small, "red::sum{}", &workspace, true, "identity");
 #endif
   // Compute data - mean
   Shape<6> data_shape, mean_shape;
@@ -1214,18 +1421,15 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
     mean_shape[i] = (i < small.ndim()) ? small[i] : 1;
   }
 #if !defined(__CUDACC__)
-  MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH(compute_type, DType, {
     MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, OType, {
-      DType* temp_data_ptr = reinterpret_cast<DType*>(temp_mem.dptr_);
       Kernel<VarBroadcastKernel, xpu>::Launch(s,
                                               data_shape.Size(),
-                                              temp_data_ptr,
-                                              data.dptr<DType>(),
+                                              temp_data_blob.dptr<DType>(),
+                                              compute_data.dptr<DType>(),
                                               mean.dptr<DType>(),
                                               data_shape,
                                               mean_shape);
-      Tensor<xpu, 1, DType> temp_data_tensor(temp_data_ptr, Shape1(data.shape_.Size()), s);
-      TBlob temp_data_blob = TBlob(temp_data_tensor).reshape(data.shape_);
       ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(
           ctx, {temp_data_blob}, {req[0]}, {moment}, small, &workspace, param.ddof);
       if (sqrt && req[0] != kNullOp) {
@@ -1235,17 +1439,14 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
     });
   });
 #else
-  MSHADOW_TYPE_SWITCH(inputs[0].type_flag_, DType, {
-    DType* temp_data_ptr = reinterpret_cast<DType*>(temp_mem.dptr_);
+  MSHADOW_TYPE_SWITCH(compute_type, DType, {
     Kernel<VarBroadcastKernel, xpu>::Launch(s,
                                             data_shape.Size(),
-                                            temp_data_ptr,
-                                            data.dptr<DType>(),
+                                            temp_data_blob.dptr<DType>(),
+                                            compute_data.dptr<DType>(),
                                             mean.dptr<DType>(),
                                             data_shape,
                                             mean_shape);
-    Tensor<xpu, 1, DType> temp_data_tensor(temp_data_ptr, Shape1(data.shape_.Size()), s);
-    TBlob temp_data_blob = TBlob(temp_data_tensor).reshape(data.shape_);
     ReduceAxesRTCComputeImpl(ctx,
                              {temp_data_blob},
                              {req[0]},
@@ -1261,6 +1462,86 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
     }
   });
 #endif
+}
+
+template <int req, bool sqrt, int ndim>
+struct NumpyMomentsBackwardKernel {
+  template <typename DType, typename OType>
+  MSHADOW_XINLINE static void Map(index_t i,
+                                  DType* grad,
+                                  const DType* data,
+                                  const OType* mean,
+                                  const OType* moment,
+                                  const OType* ograd,
+                                  const mshadow::Shape<ndim> data_shape,
+                                  const mshadow::Shape<ndim> small_shape,
+                                  const double denom) {
+    using namespace mxnet_op;
+    mshadow::Shape<ndim> coord = unravel(i, data_shape);
+    for (int axis = 0; axis < ndim; ++axis) {
+      if (small_shape[axis] == 1) {
+        coord[axis] = 0;
+      }
+    }
+    const index_t j = ravel(coord, small_shape);
+    const OType centered = static_cast<OType>(data[i]) - mean[j];
+    OType value          = centered * ograd[j] / static_cast<OType>(denom);
+    if (sqrt) {
+      value = moment[j] == OType(0) ? OType(0) : value / moment[j];
+    } else {
+      value *= OType(2);
+    }
+    KERNEL_ASSIGN(grad[i], req, static_cast<DType>(value));
+  }
+};
+
+template <typename xpu, bool sqrt>
+void NumpyMomentsBackward(const nnvm::NodeAttrs& attrs,
+                          const OpContext& ctx,
+                          const std::vector<TBlob>& inputs,
+                          const std::vector<OpReqType>& req,
+                          const std::vector<TBlob>& outputs) {
+  if (req[0] == kNullOp || outputs[0].Size() == 0U) {
+    return;
+  }
+  CHECK_EQ(inputs.size(), 5U);
+  CHECK_EQ(outputs.size(), 1U);
+
+  const NumpyMomentsParam& param = nnvm::get<NumpyMomentsParam>(attrs.parsed);
+  const TBlob& ograd            = inputs[0];
+  const TBlob& data             = inputs[2];
+  const TBlob& moment           = inputs[3];
+  const TBlob& mean             = inputs[4];
+  const TBlob& grad             = outputs[0];
+  mxnet::TShape small           = param.keepdims ?
+                                      moment.shape_ :
+                                      NumpyReduceAxesShapeImpl(data.shape_, param.axis, true);
+  const double denom            = static_cast<double>(data.Size() / small.Size()) - param.ddof;
+  CHECK_GT(denom, 0.0) << "ddof must be smaller than the reduction size";
+  TBlob ograd_small             = ograd.reshape(small);
+  TBlob moment_small            = moment.reshape(small);
+  TBlob mean_small              = mean.reshape(small);
+
+  mshadow::Stream<xpu>* s = ctx.get_stream<xpu>();
+  MSHADOW_TYPE_SWITCH(data.type_flag_, DType, {
+    MSHADOW_REAL_TYPE_SWITCH(moment.type_flag_, OType, {
+      MXNET_NDIM_SWITCH(data.ndim(), NDim, {
+        MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+          mxnet_op::Kernel<NumpyMomentsBackwardKernel<req_type, sqrt, NDim>, xpu>::Launch(
+              s,
+              grad.Size(),
+              grad.dptr<DType>(),
+              data.dptr<DType>(),
+              mean_small.dptr<OType>(),
+              moment_small.dptr<OType>(),
+              ograd_small.dptr<OType>(),
+              data.shape_.get<NDim>(),
+              small.get<NDim>(),
+              denom);
+        });
+      });
+    });
+  });
 }
 
 template <typename xpu>

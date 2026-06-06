@@ -56,6 +56,8 @@ bool TensordotOpShape(const nnvm::NodeAttrs& attrs,
     Tuple<int> b_axes_summed    = param.b_axes_summed;
     ShiftAxes(&a_axes_summed, a_shape.ndim());
     ShiftAxes(&b_axes_summed, b_shape.ndim());
+    CheckTensordotAxes(a_axes_summed, a_shape.ndim());
+    CheckTensordotAxes(b_axes_summed, b_shape.ndim());
 
     Tuple<int> a_axes_remained;
     Tuple<int> b_axes_remained;
@@ -105,6 +107,18 @@ bool TensordotOpShape(const nnvm::NodeAttrs& attrs,
 
 DMLC_REGISTER_PARAMETER(TensordotParam);
 
+inline bool TensordotType(const nnvm::NodeAttrs& attrs,
+                          std::vector<int>* in_attrs,
+                          std::vector<int>* out_attrs) {
+  if (!mxnet::op::ElemwiseType<2, 1>(attrs, in_attrs, out_attrs)) {
+    return false;
+  }
+  const int dtype = out_attrs->at(0);
+  CHECK(dtype == mshadow::kFloat16 || dtype == mshadow::kFloat32 || dtype == mshadow::kFloat64)
+      << "tensordot only supports floating point input types";
+  return true;
+}
+
 NNVM_REGISTER_OP(_npi_tensordot)
     .set_attr_parser(mxnet::op::ParamParser<TensordotParam>)
     .set_num_inputs(2)
@@ -114,7 +128,7 @@ NNVM_REGISTER_OP(_npi_tensordot)
                                        return std::vector<std::string>{"a", "b"};
                                      })
     .set_attr<mxnet::FInferShape>("FInferShape", TensordotOpShape)
-    .set_attr<nnvm::FInferType>("FInferType", mxnet::op::ElemwiseType<2, 1>)
+    .set_attr<nnvm::FInferType>("FInferType", TensordotType)
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& attrs) {
                                   return std::vector<ResourceRequest>(1,
@@ -165,6 +179,8 @@ bool TensordotIntAxesOpShape(const nnvm::NodeAttrs& attrs,
     Tuple<int> a_axes_summed;
     Tuple<int> b_axes_summed;
     GetSummedAxes(&a_axes_summed, &b_axes_summed, axes, a_shape);
+    CheckTensordotAxes(a_axes_summed, a_shape.ndim());
+    CheckTensordotAxes(b_axes_summed, b_shape.ndim());
 
     Tuple<int> a_axes_remained;
     Tuple<int> b_axes_remained;
@@ -223,7 +239,7 @@ NNVM_REGISTER_OP(_npi_tensordot_int_axes)
                                        return std::vector<std::string>{"a", "b"};
                                      })
     .set_attr<mxnet::FInferShape>("FInferShape", TensordotIntAxesOpShape)
-    .set_attr<nnvm::FInferType>("FInferType", mxnet::op::ElemwiseType<2, 1>)
+    .set_attr<nnvm::FInferType>("FInferType", TensordotType)
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& attrs) {
                                   return std::vector<ResourceRequest>(1,

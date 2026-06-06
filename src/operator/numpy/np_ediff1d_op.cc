@@ -34,6 +34,7 @@ inline bool EDiff1DType(const nnvm::NodeAttrs& attrs,
   CHECK_LE(in_attrs->size(), 3U);
   CHECK_EQ(out_attrs->size(), 1U);
   TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
+  CHECK_NE(out_attrs->at(0), mshadow::kBool) << "ediff1d does not support bool input";
 
   const EDiff1DParam& param = nnvm::get<EDiff1DParam>(attrs.parsed);
   if (param.to_begin_arr_given && param.to_end_arr_given) {

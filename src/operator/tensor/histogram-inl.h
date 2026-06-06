@@ -123,7 +123,11 @@ inline bool HistogramOpType(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(out_attrs->size(), 2U);
 
   TYPE_ASSIGN_CHECK(*out_attrs, 0, mshadow::kInt64);
-  TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(0));
+  const HistogramParam& param = nnvm::get<HistogramParam>(attrs.parsed);
+  if (in_attrs->at(0) == mshadow::kBool) {
+    LOG(FATAL) << "histogram does not support bool input";
+  }
+  TYPE_ASSIGN_CHECK(*out_attrs, 1, param.bin_cnt.has_value() ? mshadow::kFloat64 : in_attrs->at(1));
   return !type_is_none(out_attrs->at(0)) && !type_is_none(out_attrs->at(1));
 }
 

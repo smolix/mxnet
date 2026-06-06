@@ -4542,8 +4542,11 @@ def test_take(mode, out_of_range, data_ndim, idx_ndim):
             idx = mx.sym.Variable('indices')
             idx = mx.sym.BlockGrad(idx)
             result = mx.sym.take(a=data, indices=idx, axis=axis, mode=mode)
+            # take requires integer indices (PyTorch convention); bind the
+            # indices input as int64 rather than the default float32.
             exe = result._simple_bind(default_device(), a=data_shape,
-                                    indices=idx_shape)
+                                    indices=idx_shape,
+                                    type_dict={'a': 'float32', 'indices': 'int64'})
             data_real = np.random.normal(size=data_shape).astype('float32')
             if out_of_range:
                 idx_real = np.random.randint(low=-data_shape[axis], high=data_shape[axis], size=idx_shape)
@@ -4559,7 +4562,7 @@ def test_take(mode, out_of_range, data_ndim, idx_ndim):
             grad_in = np.zeros(data_shape, dtype='float32')
 
             exe.arg_dict['a'][:] = mx.nd.array(data_real)
-            exe.arg_dict['indices'][:] = mx.nd.array(idx_real)
+            exe.arg_dict['indices'][:] = mx.nd.array(idx_real, dtype='int64')
             exe.forward(is_train=True)
             if out_of_range and mode == 'raise':
                 try:
@@ -5026,6 +5029,9 @@ def test_one_hot():
     test_normal_case(index_type=np.float64)
     test_normal_case(index_type=np.float32)
     test_normal_case(index_type=np.float16)
+    assert same(mx.nd.one_hot(mx.nd.array([False, True], dtype=np.bool_),
+                              depth=3, dtype=np.int32).asnumpy(),
+                np.array([[1, 0, 0], [0, 1, 0]], dtype=np.int32))
     with mx.np_shape():
         test_empty_indices()
     test_zero_depth()
@@ -6702,6 +6708,31 @@ def test_gemm():
             _gemm_test_helper(np.float32, True)
 
 
+def test_gemm_grad_req_add():
+    def check_add_matches_write(op, inputs):
+        write_inputs = [x.copy() for x in inputs]
+        add_inputs = [x.copy() for x in inputs]
+        for x in write_inputs:
+            x.attach_grad(grad_req='write')
+        for x in add_inputs:
+            x.attach_grad(grad_req='add')
+            x.grad[:] = 10
+        with mx.autograd.record():
+            write_loss = op(*write_inputs).sum()
+        write_loss.backward()
+        with mx.autograd.record():
+            add_loss = op(*add_inputs).sum()
+        add_loss.backward()
+        for write_arg, add_arg in zip(write_inputs, add_inputs):
+            assert_almost_equal(add_arg.grad.asnumpy(), write_arg.grad.asnumpy() + 10)
+
+    a = mx.nd.array([[1., 2., 3.], [4., 5., 6.]])
+    b = mx.nd.array([[1., 2.], [3., 4.], [5., 6.]])
+    c = mx.nd.array([[0.5, 1.0], [1.5, 2.0]])
+    check_add_matches_write(lambda a, b, c: mx.nd.linalg.gemm(a, b, c), [a, b, c])
+    check_add_matches_write(lambda a, b: mx.nd.linalg.gemm2(a, b), [a, b])
+
+
 # Helper functions for test_laop
 
 def _make_symm_symbol(a, ndims):
@@ -7473,19 +7504,62 @@ def test_gather_nd_check_bound():
         output = mx.nd.gather_nd(data, indices).asnumpy()
     # check if indices is out of bound
     data = mx.nd.array([[0, 1, 2], [3, 4, 5]])
-    indices1 = mx.nd.array([[0, 1, 0], [0, 1, 3]])
-    indices2 = mx.nd.array([[0, 1, 0], [0, 1, -5]])
+    indices1 = mx.nd.array([[0, 1, 0], [0, 1, 3]], dtype='int32')
+    indices2 = mx.nd.array([[0, 1, 0], [0, 1, -5]], dtype='int32')
     assertRaises(IndexError, _test_gather_nd_exception, data, indices1)
     # IndexError: index 3 is out of bounds for axis 1 with size 3
     assertRaises(IndexError, _test_gather_nd_exception, data, indices2)
     # IndexError: index -5 is out of bounds for axis 1 with size 3
 
     # check if the negative indices are wrapped correctly
-    indices1 = mx.nd.array([[0, 1, -1], [0, 1, -2]])
-    indices2 = mx.nd.array([[0, 1, 1], [0, 1, 1]])
+    indices1 = mx.nd.array([[0, 1, -1], [0, 1, -2]], dtype='int32')
+    indices2 = mx.nd.array([[0, 1, 1], [0, 1, 1]], dtype='int32')
     data1 = mx.nd.gather_nd(data, indices1)
     data2 = mx.nd.gather_nd(data, indices2)
     assert_almost_equal(data1, data2, rtol=1e-5, atol=1e-5)
+
+
+def test_gather_scatter_nd_index_validation():
+    data = mx.nd.arange(6).reshape((2, 3))
+    zero_index_dim = mx.nd.empty((0, 4), dtype='int32')
+    with pytest.raises(MXNetError, match="at least one index dimension"):
+        mx.nd.gather_nd(data, zero_index_dim).asnumpy()
+
+    scatter_data = mx.nd.ones((4,))
+    with pytest.raises(MXNetError, match="at least one index dimension"):
+        mx.nd.scatter_nd(scatter_data, zero_index_dim, shape=(2, 3)).asnumpy()
+
+    float_indices = mx.nd.array([[0.0, 1.0]], dtype='float32')
+    with pytest.raises(MXNetError, match="indices must be int32 or int64"):
+        mx.nd.gather_nd(data, float_indices).asnumpy()
+    float_indices = mx.nd.array([[0.0, 1.0], [0.0, 1.0]], dtype='float32')
+    with pytest.raises(MXNetError, match="indices must be int32 or int64"):
+        mx.nd.scatter_nd(mx.nd.ones((2,)), float_indices, shape=(2, 3)).asnumpy()
+
+    with pytest.raises(IndexError, match="out of bounds"):
+        mx.nd.scatter_nd(mx.nd.ones((1,)), mx.nd.array([[3]], dtype='int32'), shape=(3,)).asnumpy()
+
+
+def test_scatter_nd_negative_indices():
+    data = mx.nd.array([2, 3, 4], dtype='float32')
+    indices = mx.nd.array([[-1, -2, 0]], dtype='int32')
+    assert_almost_equal(mx.nd.scatter_nd(data, indices, shape=(3,)).asnumpy(),
+                        np.array([4, 3, 2], dtype='float32'))
+
+
+def test_gather_nd_negative_index_backward():
+    data = mx.nd.arange(3, dtype='float32')
+    indices = mx.nd.array([[-1]], dtype='int32')
+    data.attach_grad()
+    with mx.autograd.record():
+        out = mx.nd.gather_nd(data, indices)
+    out.backward()
+    assert_almost_equal(out.asnumpy(), np.array([2], dtype='float32'))
+    assert_almost_equal(data.grad.asnumpy(), np.array([0, 0, 1], dtype='float32'))
+
+    grad = mx.nd._internal._backward_gather_nd(
+        mx.nd.array([1], dtype='float32'), indices, shape=data.shape)
+    assert_almost_equal(grad.asnumpy(), np.array([0, 0, 1], dtype='float32'))
 
 
 def compare_forw_backw_unary_op(
@@ -8428,6 +8502,30 @@ def test_histogram_cpu_edge_and_invalid_bins():
         with pytest.raises(MXNetError, match="bin_cnt"):
             mx.nd.histogram(x, bins=bin_cnt, range=(0.0, 3.0))[0].asnumpy()
 
+    dtype_cases = [
+        (np.float32, np.float64),
+        (np.float64, np.float32),
+        (np.int32, np.float64),
+    ]
+    for data_dtype, bins_dtype in dtype_cases:
+        data = mx.nd.array([0.0, 1.0, 2.0, 3.0], ctx=mx.cpu(), dtype=data_dtype)
+        bin_bounds = mx.nd.array([0.0, 1.0, 2.0, 3.0], ctx=mx.cpu(), dtype=bins_dtype)
+        histo, bins = mx.nd.histogram(data, bins=bin_bounds)
+        np_histo, np_bins = np.histogram(data.asnumpy(), bins=bin_bounds.asnumpy())
+        assert bins.dtype == bins_dtype
+        assert_almost_equal(histo.asnumpy(), np_histo)
+        assert_almost_equal(bins.asnumpy(), np_bins)
+
+    histo, bins = mx.nd.histogram(
+        x, bins=mx.nd.array([0.0, 1.0, 1.0, 3.0], ctx=mx.cpu(), dtype=np.float64))
+    np_histo, np_bins = np.histogram(x.asnumpy(), bins=np.array([0.0, 1.0, 1.0, 3.0]))
+    assert_almost_equal(histo.asnumpy(), np_histo)
+    assert_almost_equal(bins.asnumpy(), np_bins)
+
+    with pytest.raises(MXNetError, match="must increase monotonically"):
+        mx.nd.histogram(
+            x, bins=mx.nd.array([0.0, 2.0, 1.0, 3.0], ctx=mx.cpu(), dtype=np.float64))[0].asnumpy()
+
 
 def test_histogram_symbol_partial_outputs():
     data = mx.sym.Variable("data")
@@ -8505,16 +8603,16 @@ def test_ravel():
       a = mx.sym.Variable('a')
       ravel_npy = np.ravel_multi_index(data, shape)
       b = mx.sym.ravel_multi_index(a, shape=shape)
-      check_symbolic_forward(b, location={'a': data}, expected=[ravel_npy])
+      check_symbolic_forward(b, location={'a': data}, expected=[ravel_npy], dtype="asnumpy")
       c = mx.sym.unravel_index(a, shape=shape)
-      check_symbolic_forward(c, location={'a': ravel_npy}, expected=[data])
+      check_symbolic_forward(c, location={'a': ravel_npy}, expected=[data], dtype="asnumpy")
       # Test with leading dimension set to -1.
       shape2 = shape
       shape2 = (-1,)+shape[1:]
       b = mx.sym.ravel_multi_index(a, shape=shape2)
-      check_symbolic_forward(b, location={'a': data}, expected=[ravel_npy])
+      check_symbolic_forward(b, location={'a': data}, expected=[ravel_npy], dtype="asnumpy")
       c = mx.sym.unravel_index(a, shape=shape2)
-      check_symbolic_forward(c, location={'a': ravel_npy}, expected=[data])
+      check_symbolic_forward(c, location={'a': ravel_npy}, expected=[data], dtype="asnumpy")
 
 
 def test_unravel_index():
@@ -8523,7 +8621,8 @@ def test_unravel_index():
     for shape in [(10,), (2, 10), (3, 4, 5)]:
         a = np.random.randint(0, unravel_size, size=shape)
         b = np.stack(np.unravel_index(a, shape=unravel_shape), 0)
-        a_mx = mx.nd.array(a)
+        # unravel_index requires integer indices (PyTorch convention).
+        a_mx = mx.nd.array(a, dtype='int64')
         b_mx = mx.nd.unravel_index(a_mx, shape=unravel_shape)
         assert_array_equal(b, b_mx.asnumpy())
 
@@ -10313,7 +10412,7 @@ def test_take_grads():
             X1 = self.den(X)
             print(X1.shape)
             if self.use_take:
-                X2 = mx_np.take(X1, mx_np.array([0]), axis=axis)
+                X2 = mx_np.take(X1, mx_np.array([0], dtype='int64'), axis=axis)
             else:
                 X2 = mx_npx.slice(X1.T, begin=0, end=1).T
             return X2

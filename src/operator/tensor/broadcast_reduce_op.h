@@ -717,6 +717,47 @@ template <typename xpu,
           typename reducer,
           bool safe_acc,
           bool normalize = false,
+          typename OP    = op::mshadow_op::identity>
+void ReduceAxesComputeImplExt(const OpContext& ctx,
+                              const std::vector<TBlob>& inputs,
+                              const std::vector<OpReqType>& req,
+                              const std::vector<TBlob>& outputs,
+                              const mxnet::TShape& small,
+                              const mshadow::Tensor<xpu, 1, char>* workspace = nullptr,
+                              const int ddof                                 = 0) {
+  using namespace mshadow;
+  using namespace mshadow::expr;
+
+  mxnet::TShape src_shape, dst_shape;
+  BroadcastReduceShapeCompact(inputs[0].shape_, small, &src_shape, &dst_shape);
+  Stream<xpu>* s = ctx.get_stream<xpu>();
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(inputs[0].type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(outputs[0].type_flag_, OType, {
+      const TBlob in_data  = inputs[0].reshape(src_shape);
+      const TBlob out_data = outputs[0].reshape(dst_shape);
+      BROADCAST_NDIM_SWITCH(dst_shape.ndim(), NDim, {
+        Tensor<xpu, 1, char> w;
+        if (workspace == nullptr) {
+          size_t workspace_size =
+              broadcast::ReduceWorkspaceSize(s, out_data.shape_, req[0], in_data.shape_);
+          w         = ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(workspace_size), s);
+          workspace = &w;
+        }
+        broadcast::Reduce<reducer, NDim, DType, OP, safe_acc>(
+            s, out_data, req[0], *workspace, in_data);
+        if (normalize) {
+          auto out = out_data.FlatTo2D<xpu, OType>(s);
+          out /= scalar<OType>(src_shape.Size() / dst_shape.Size() - ddof);
+        }
+      });
+    });
+  });
+}
+
+template <typename xpu,
+          typename reducer,
+          bool safe_acc,
+          bool normalize = false,
           typename OP    = op::mshadow_op::NonZero>
 void ReduceAxesComputeBoolImpl(const OpContext& ctx,
                                const std::vector<TBlob>& inputs,
@@ -794,6 +835,17 @@ void ReduceAxesRTCComputeImpl(const OpContext& ctx,
                               const bool normalize  = false,
                               const std::string& OP = "identity",
                               const int ddof        = 0);
+
+// Fast global (scalar-output) sum/mean reduction via cub::DeviceReduce.
+// Defined in reduce_cub.cu; accumulates in double. ``count`` is the divisor for
+// the mean case (number of reduced elements minus ddof).
+template <typename DType>
+void CubGlobalSumReduce(const OpContext& ctx,
+                        const TBlob& in,
+                        const TBlob& out,
+                        const bool mean,
+                        const double count,
+                        const bool addto);
 
 #endif
 

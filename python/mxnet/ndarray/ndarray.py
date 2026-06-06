@@ -1149,10 +1149,22 @@ fixed-size items.
         else:
             idx_dtype = 'int32'
         if isinstance(idx, NDArray):
+            if np.dtype(idx.dtype).kind == 'b':
+                # Boolean mask: expand to integer positions (NumPy semantics).
+                idx = np.flatnonzero(idx.asnumpy())
+                return array(idx, ctx, idx_dtype)
+            if np.dtype(idx.dtype).kind not in ('i', 'u'):
+                raise IndexError('arrays used as indices must be of integer type')
             if idx.dtype != idx_dtype:
                 idx = idx.astype(idx_dtype)
             return idx.to_device(ctx) if hasattr(idx, 'to_device') else idx.as_in_context(ctx)
         elif isinstance(idx, (np.ndarray, list, tuple)):
+            idx_kind = np.asarray(idx).dtype.kind
+            if idx_kind == 'b':
+                # Boolean mask: expand to integer positions (NumPy semantics).
+                return array(np.flatnonzero(np.asarray(idx)), ctx, idx_dtype)
+            if idx_kind not in ('i', 'u'):
+                raise IndexError('arrays used as indices must be of integer type')
             return array(idx, ctx, idx_dtype)
         elif isinstance(idx, integer_types):
             return array([idx], ctx, idx_dtype)
@@ -1328,6 +1340,7 @@ fixed-size items.
         indices, new_axes = self._get_index_nd(key)
         vshape = get_oshape_of_gather_nd_op(self.shape, indices.shape)
         value_nd = self._prepare_value_nd(value, bcast_shape=vshape, squeeze_axes=new_axes)
+        op.gather_nd(self, indices).wait_to_read()
         self._scatter_set_nd(value_nd, indices)
 
     def _get_nd_advanced_indexing(self, key):

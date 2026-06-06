@@ -101,8 +101,11 @@ void AdvancedIndexingMultipleBackward(const nnvm::NodeAttrs& attrs,
     dim_t N                     = ishape.Size() / M;
     dim_t K                     = oshape.ProdShape(M, oshape.ndim());
     mshadow::Shape<10> strides;
-    for (dim_t i = M - 1, stride = K; i >= 0; stride *= oshape[i], --i)
+    mshadow::Shape<10> mshape;
+    for (dim_t i = M - 1, stride = K; i >= 0; stride *= oshape[i], --i) {
       strides[i] = stride;
+      mshape[i]  = oshape[i];
+    }
     if (kWriteTo == req[0]) {
       Fill<true>(s, outputs[0], req[0], 0);
     }
@@ -112,6 +115,7 @@ void AdvancedIndexingMultipleBackward(const nnvm::NodeAttrs& attrs,
                              M,
                              K,
                              strides,
+                             mshape,
                              outputs[0].dptr<DType>(),
                              inputs[0].dptr<DType>(),
                              inputs[1].dptr<IType>(),

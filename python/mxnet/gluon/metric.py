@@ -1665,7 +1665,9 @@ class PCC(EvalMetric):
         if cov_xx == 0 or cov_yy == 0:
             return float('nan')
         # i = cmat.diagonal() # mxnet.numpy.ndarray.diagonal() is currently not available.
-        i = cmat[numpy.arange(self.k), numpy.arange(self.k)]
+        # arange defaults to float; advanced indices must be integer.
+        diag_idx = numpy.arange(self.k, dtype='int64')
+        i = cmat[diag_idx, diag_idx]
         cov_xy = numpy.sum(i * n - x * y)
         return cov_xy / (cov_xx * cov_yy) ** 0.5
 

@@ -106,8 +106,12 @@ bool NumpyInsertTensorShape(const nnvm::NodeAttrs& attrs,
   }
   valshape.assign(val_newshape.begin(), val_newshape.end());
 
-  if (seq_cnt == 1) {
+  if (objShape.ndim() == 0) {
+    numnew = valshape[0];
+    CheckInsertSingleValueBroadcast(arrshape, valshape, axis, numnew, true);
+  } else if (seq_cnt == 1) {
     numnew = valshape[axis];
+    CheckInsertSingleValueBroadcast(arrshape, valshape, axis, numnew, false);
   } else {
     numnew = seq_cnt;
   }

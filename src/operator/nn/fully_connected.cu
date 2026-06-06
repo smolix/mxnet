@@ -37,8 +37,14 @@ void FullyConnectedCompute<gpu>(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(outputs.size(), 1U);
   int dtype = inputs[0].type_flag_;
 
-  MSHADOW_REAL_TYPE_SWITCH(
-      dtype, DType, { FCForward<gpu, DType>(ctx, param, inputs, req, outputs); });
+  // bfloat16 reaches the bf16 linalg_gemm specialization. The NVCC variant of
+  // MSHADOW_REAL_TYPE_SWITCH(_EX) omits bf16, so dispatch it explicitly.
+  if (dtype == mshadow::kBfloat16) {
+    FCForward<gpu, mshadow::bfloat::bf16_t>(ctx, param, inputs, req, outputs);
+  } else {
+    MSHADOW_REAL_TYPE_SWITCH(
+        dtype, DType, { FCForward<gpu, DType>(ctx, param, inputs, req, outputs); });
+  }
 }
 
 template <>
@@ -57,8 +63,12 @@ void FullyConnectedGradCompute<gpu>(const nnvm::NodeAttrs& attrs,
   std::vector<TBlob> in_data(inputs.begin() + 1, inputs.end());
   int dtype = inputs[0].type_flag_;
 
-  MSHADOW_REAL_TYPE_SWITCH(
-      dtype, DType, { FCBackward<gpu, DType>(ctx, param, out_grad, in_data, req, outputs); });
+  if (dtype == mshadow::kBfloat16) {
+    FCBackward<gpu, mshadow::bfloat::bf16_t>(ctx, param, out_grad, in_data, req, outputs);
+  } else {
+    MSHADOW_REAL_TYPE_SWITCH(
+        dtype, DType, { FCBackward<gpu, DType>(ctx, param, out_grad, in_data, req, outputs); });
+  }
 }
 
 NNVM_REGISTER_OP(FullyConnected).set_attr<FCompute>("FCompute<gpu>", FullyConnectedCompute<gpu>);

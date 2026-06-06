@@ -94,6 +94,7 @@ bool NumpyInsertScalarShape(const nnvm::NodeAttrs& attrs,
 
   // because of moveaxis(values, 0, axis)
   numnew = valshape[0];
+  CheckInsertSingleValueBroadcast(arrshape, valshape, axis, numnew, true);
 
   newshape[axis] += numnew;
   out_shape->push_back(newshape);

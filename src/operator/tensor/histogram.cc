@@ -50,13 +50,13 @@ struct ComputeBinKernel {
     bin_indices[i] = target;
   }
 
-  template <typename DType>
+  template <typename DType, typename BType>
   MSHADOW_XINLINE static void Map(index_t i,
                                   const DType* in_data,
                                   int* bin_indices,
-                                  const DType* bin_bounds,
+                                  const BType* bin_bounds,
                                   int num_bins) {
-    DType data = in_data[i];
+    const double data = static_cast<double>(in_data[i]);
     int target = -1;
     if (data >= bin_bounds[0] && data <= bin_bounds[num_bins]) {
       target = 0;
@@ -67,6 +67,14 @@ struct ComputeBinKernel {
     bin_indices[i] = target;
   }
 };
+
+template <typename BType>
+void CheckBinBoundsMonotonic(const BType* bin_bounds, size_t size) {
+  for (size_t i = 1; i < size; ++i) {
+    CHECK_GE(bin_bounds[i], bin_bounds[i - 1])
+        << "`bins` must increase monotonically, when an array";
+  }
+}
 
 template <typename CType>
 void ComputeHistogram(const int* bin_indices, CType* out_data, size_t input_size) {
@@ -92,14 +100,17 @@ void HistogramForwardImpl<cpu>(const OpContext& ctx,
   const int bin_cnt = out_data.Size();
 
   MSHADOW_TYPE_SWITCH(in_data.type_flag_, DType, {
-    Kernel<ComputeBinKernel, cpu>::Launch(s,
-                                          in_data.Size(),
-                                          in_data.dptr<DType>(),
-                                          bin_indices.dptr_,
-                                          bin_bounds.dptr<DType>(),
-                                          bin_cnt);
-    Kernel<op_with_req<mshadow_op::identity, kWriteTo>, cpu>::Launch(
-        s, bin_bounds.Size(), out_bins.dptr<DType>(), bin_bounds.dptr<DType>());
+    MSHADOW_TYPE_SWITCH(bin_bounds.type_flag_, BType, {
+      CheckBinBoundsMonotonic(bin_bounds.dptr<BType>(), bin_bounds.Size());
+      Kernel<ComputeBinKernel, cpu>::Launch(s,
+                                            in_data.Size(),
+                                            in_data.dptr<DType>(),
+                                            bin_indices.dptr_,
+                                            bin_bounds.dptr<BType>(),
+                                            bin_cnt);
+      Kernel<op_with_req<mshadow_op::identity, kWriteTo>, cpu>::Launch(
+          s, bin_bounds.Size(), out_bins.dptr<BType>(), bin_bounds.dptr<BType>());
+    });
   });
   MSHADOW_TYPE_SWITCH(out_data.type_flag_, CType, {
     Kernel<set_zero, cpu>::Launch(s, bin_cnt, out_data.dptr<CType>());
@@ -122,16 +133,16 @@ void HistogramForwardImpl<cpu>(const OpContext& ctx,
       ctx.requested[0].get_space_typed<cpu, 1, int>(Shape1(in_data.Size()), s);
 
   MSHADOW_TYPE_SWITCH(in_data.type_flag_, DType, {
-    Kernel<FillBinBoundsKernel, cpu>::Launch(
-        s, bin_cnt + 1, out_bins.dptr<DType>(), bin_cnt, min, max);
-    Kernel<ComputeBinKernel, cpu>::Launch(s,
-                                          in_data.Size(),
-                                          in_data.dptr<DType>(),
-                                          out_bins.dptr<DType>(),
-                                          bin_indices.dptr_,
-                                          bin_cnt,
-                                          min,
-                                          max);
+    MSHADOW_TYPE_SWITCH(out_bins.type_flag_, BType, {
+      Kernel<FillBinBoundsKernel, cpu>::Launch(
+          s, bin_cnt + 1, out_bins.dptr<BType>(), bin_cnt, min, max);
+      Kernel<ComputeBinKernel, cpu>::Launch(s,
+                                            in_data.Size(),
+                                            in_data.dptr<DType>(),
+                                            bin_indices.dptr_,
+                                            out_bins.dptr<BType>(),
+                                            bin_cnt);
+    });
   });
   MSHADOW_TYPE_SWITCH(out_data.type_flag_, CType, {
     Kernel<set_zero, cpu>::Launch(s, bin_cnt, out_data.dptr<CType>());

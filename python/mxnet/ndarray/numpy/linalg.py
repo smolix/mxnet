@@ -25,6 +25,43 @@ __all__ = ['norm', 'svd', 'cholesky', 'qr', 'inv', 'det', 'slogdet', 'solve', 't
            'pinv', 'eigvals', 'eig', 'eigvalsh', 'eigh', 'lstsq', 'matrix_rank']
 
 
+def _normalize_axis_tuple(axis, ndim):
+    axis = tuple(i + ndim if i < 0 else i for i in axis)
+    if any(i < 0 or i >= ndim for i in axis):
+        raise ValueError("axis out of range")
+    if len(set(axis)) != len(axis):
+        raise ValueError("duplicate value in axis")
+    return axis
+
+
+def _validate_norm_ord(x, ord, axis):
+    if ord is None:
+        return
+    matrix_ords = ['fro', 'f', 'nuc', 'inf', '-inf', 1, -1, 2, -2]
+    vector_string_ords = ['inf', '-inf']
+    if axis is None:
+        if x.ndim == 1:
+            if isinstance(ord, str) and ord not in vector_string_ords:
+                raise ValueError("Invalid norm order '{}' for vectors".format(ord))
+        elif x.ndim == 2:
+            if ord not in matrix_ords:
+                raise ValueError("Invalid norm order for matrices.")
+        else:
+            raise ValueError("Improper number of dimensions to norm.")
+    elif isinstance(axis, int):
+        if isinstance(ord, str) and ord not in vector_string_ords:
+            raise ValueError("Invalid norm order '{}' for vectors".format(ord))
+    elif isinstance(axis, tuple):
+        if len(axis) == 1:
+            if isinstance(ord, str) and ord not in vector_string_ords:
+                raise ValueError("Invalid norm order '{}' for vectors".format(ord))
+        elif len(axis) == 2:
+            if ord not in matrix_ords:
+                raise ValueError("Invalid norm order for matrices.")
+        else:
+            raise ValueError("Improper number of dimensions to norm.")
+
+
 def matrix_rank(M, tol=None, hermitian=False):
     """
     Return matrix rank of array using SVD method
@@ -328,6 +365,7 @@ def norm(x, ord=None, axis=None, keepdims=False):
     >>> np.linalg.norm(m[0, :, :]), np.linalg.norm(m[1, :, :])
     (array(3.7416573), array(11.224973))
     """
+    _validate_norm_ord(x, ord, axis)
     if axis is None and ord is None:
         return _api_internal.norm(x, 2, None, keepdims, -2)
     if axis is None or isinstance(axis, (int, tuple)):  # pylint: disable=too-many-nested-blocks
@@ -335,6 +373,7 @@ def norm(x, ord=None, axis=None, keepdims=False):
             if isinstance(axis, int):
                 axis = (axis, )
             if len(axis) == 2:
+                axis = _normalize_axis_tuple(axis, x.ndim)
                 if ord in ['inf', '-inf']:
                     row_axis, col_axis = axis
                     if not keepdims:
@@ -1011,6 +1050,8 @@ def eigvalsh(a, UPLO='L'):
     >>> LA.eigvalsh(a, UPLO='L')
     array([-2.87381886,  5.10144682,  6.38623114]) # in ascending order
     """
+    if UPLO not in ('L', 'U'):
+        raise ValueError("UPLO must be 'L' or 'U'")
     return _api_internal.eigvalsh(a, UPLO)
 
 
@@ -1147,5 +1188,7 @@ def eigh(a, UPLO='L'):
            [ 0.8242942 ,  0.56326365, -0.05721384],
            [-0.53661287,  0.80949366,  0.23825769]])
     """
+    if UPLO not in ('L', 'U'):
+        raise ValueError("UPLO must be 'L' or 'U'")
     w, v = _api_internal.eigh(a, UPLO)
     return (w, v)

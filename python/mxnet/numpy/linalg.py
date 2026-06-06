@@ -31,6 +31,15 @@ __all__ = ['norm', 'svd', 'cholesky', 'qr', 'inv', 'det', 'slogdet', 'solve', 't
 __all__ += fallback_linalg.__all__
 
 
+def _normalize_axis_tuple(axis, ndim):
+    axis = tuple(i + ndim if i < 0 else i for i in axis)
+    if any(i < 0 or i >= ndim for i in axis):
+        raise ValueError("axis out of range")
+    if len(set(axis)) != len(axis):
+        raise ValueError("duplicate value in axis")
+    return axis
+
+
 @wrap_data_api_linalg_func
 def matrix_rank(M, rtol=None, hermitian=False):
     r"""
@@ -169,8 +178,7 @@ def trace(a, offset=0):
     array([[18., 20., 22.],
         [24., 26., 28.]])
     """
-    # axis1, axis2: defaults are the first two axes of `a`.
-    return _mx_nd_np.trace(a, offset=offset, axis1=0, axis2=1, out=None)
+    return _mx_nd_np.trace(a, offset=offset, axis1=-2, axis2=-1, out=None)
 
 
 def tensordot(a, b, axes=2):
@@ -269,7 +277,7 @@ def diagonal(a, offset=0):
     >>> np.linalg.diagonal(x, offset=-1)
     array([3., 7.])
     """
-    return _mx_nd_np.diag(a, k=offset)
+    return _mx_nd_np.diagonal(a, offset=offset, axis1=-2, axis2=-1)
 
 
 def cross(a, b, axis=-1):
@@ -432,7 +440,8 @@ def vecdot(a, b, axis=None):
     >>> 1*4 + 4*1 + 5*2 + 6*2
     30
     """
-    return _mx_nd_np.tensordot(a.flatten(), b.flatten(), axis)
+    axis = -1 if axis is None else axis
+    return _mx_nd_np.sum(a * b, axis=axis)
 
 
 def lstsq(a, b, rcond='warn'):
@@ -682,6 +691,7 @@ def vector_norm(x, ord=None, axis=None, keepdims=False):
         x = x.flatten()
         axis = 0
     elif isinstance(axis, tuple):
+        axis = _normalize_axis_tuple(axis, x.ndim)
         rest = tuple(i for i in range(x.ndim) if i not in axis)
         newshape = axis + rest
         x = _mx_nd_np.transpose(x, newshape).\

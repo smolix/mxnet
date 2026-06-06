@@ -65,10 +65,10 @@ struct NumpyTraceParam : public dmlc::Parameter<NumpyTraceParam> {
 
 template <int ndim, int req, bool back>
 struct numpy_trace {
-  template <typename DType>
+  template <typename IType, typename OType>
   MSHADOW_XINLINE static void Map(index_t i,
-                                  DType* out,
-                                  const DType* a,
+                                  OType* out,
+                                  const IType* a,
                                   mshadow::Shape<ndim> oshape,
                                   mshadow::Shape<ndim> ishape,
                                   index_t stride,
@@ -86,12 +86,12 @@ struct numpy_trace {
       if (req == kWriteTo) {
         out[i] = 0;
         for (index_t k = 0; k < dlength; ++k) {
-          out[i] += a[j];
+          out[i] += static_cast<OType>(a[j]);
           j += stride;
         }
       } else if (req == kAddTo) {
         for (index_t k = 0; k < dlength; ++k) {
-          out[i] += a[j];
+          out[i] += static_cast<OType>(a[j]);
           j += stride;
         }
       }
@@ -113,7 +113,7 @@ void NumpyTraceOpProcess(const TBlob& in_data,
   if (dsize == 0) {
     if (back) {
       if (out_data.Size() != 0) {
-        MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
+        MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
           MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
             if (req_type == kWriteTo) {
               out_data.FlatTo1D<xpu, DType>(s) = 0;
@@ -125,7 +125,7 @@ void NumpyTraceOpProcess(const TBlob& in_data,
     return;
   } else if (ishape.Size() == 0) {
     if (!back) {
-      MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
+      MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
         MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
           if (req_type == kWriteTo) {
             out_data.FlatTo1D<xpu, DType>(s) = 0;
@@ -196,20 +196,22 @@ void NumpyTraceOpProcess(const TBlob& in_data,
     dlength = std::min(ishape[x1], ishape[x2]);
   }
 
-  MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
-    MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
-      if (back) {
-        out_data.FlatTo1D<xpu, DType>(s) = 0;
-      }
-      Kernel<numpy_trace<3, req_type, back>, xpu>::Launch(s,
-                                                          dsize,
-                                                          out_data.dptr<DType>(),
-                                                          in_data.dptr<DType>(),
-                                                          Shape3(oleading, obody, otrailing),
-                                                          Shape3(ileading, ibody, itrailing),
-                                                          stride1 + stride2,
-                                                          offset,
-                                                          dlength);
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(in_data.type_flag_, IType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, OType, {
+      MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+        if (back && req_type != kAddTo && req_type != kNullOp) {
+          out_data.FlatTo1D<xpu, OType>(s) = 0;
+        }
+        Kernel<numpy_trace<3, req_type, back>, xpu>::Launch(s,
+                                                            dsize,
+                                                            out_data.dptr<OType>(),
+                                                            in_data.dptr<IType>(),
+                                                            Shape3(oleading, obody, otrailing),
+                                                            Shape3(ileading, ibody, itrailing),
+                                                            stride1 + stride2,
+                                                            offset,
+                                                            dlength);
+      });
     });
   });
 }

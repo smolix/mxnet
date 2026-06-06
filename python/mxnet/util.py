@@ -696,10 +696,9 @@ def wrap_data_api_linalg_func(func):
             rcond = kwargs.pop('rcond', None)
             tol = kwargs.pop('tol', None)
             if upper is not None:
-                if upper == 'U':
-                    kwargs['upper'] = True
-                else:
-                    kwargs['upper'] = False
+                if upper not in ('L', 'U'):
+                    raise ValueError("UPLO must be 'L' or 'U'")
+                kwargs['upper'] = (upper == 'U')
             if rcond is not None:
                 kwargs['rtol'] = rcond
             if tol is not None:

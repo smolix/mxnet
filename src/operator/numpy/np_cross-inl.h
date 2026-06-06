@@ -109,7 +109,11 @@ struct CrossOutAssign {
                                   const index_t index,
                                   const size_t msize) {
     if (index < stride && i * stride + index < msize) {
-      KERNEL_ASSIGN(out_ptr[i * stride + index], req, positive == 1 ? in_ptr[i] : -in_ptr[i]);
+      // Cast keeps the ternary type-stable for low-precision floats (half/bf16),
+      // where unary minus would otherwise promote to float and mismatch.
+      KERNEL_ASSIGN(out_ptr[i * stride + index],
+                    req,
+                    positive == 1 ? in_ptr[i] : static_cast<DType>(-in_ptr[i]));
     }
   }
 };
@@ -311,7 +315,7 @@ struct NumpyCrossForwardImpl {
     const mxnet::TShape& c_moveaxis_shape = moveaxis_shape_vec[2];
     const int a_ndim                      = a_moveaxis_shape.ndim();
     const int b_ndim                      = b_moveaxis_shape.ndim();
-    const int c_ndim                      = b_moveaxis_shape.ndim();
+    const int c_ndim                      = c_moveaxis_shape.ndim();
     CHECK_EQ(c_moveaxis_shape[c_ndim - 1], 3)
         << "no specialized NumpyCrossOp defined for template parameters.";
 
@@ -635,7 +639,7 @@ void NumpyCrossForward(const nnvm::NodeAttrs& attrs,
       {a_moveaxis_shape, b_moveaxis_shape, c_moveaxis_shape});
   const std::vector<Tuple<int> > index_vec({a_moveaxis_index, b_moveaxis_index, c_moveaxis_index});
 
-  MSHADOW_SGL_DBL_TYPE_SWITCH(c.type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH(c.type_flag_, DType, {
     // Calculate workspace.
     size_t workspace_size = NumpyCrossWorkspaceSize<xpu, DType>(
         a_moveaxis_shape, b_moveaxis_shape, c_moveaxis_shape, a_axis, b_axis, ctx, req);
@@ -679,15 +683,56 @@ inline mxnet::TShape GetOriShape(const mxnet::TShape& move_shape, const int axis
 inline std::vector<int> GetReduceAxis(const mxnet::TShape& move_shape,
                                       const mxnet::TShape& broad_move_shape) {
   std::vector<int> axis_idx;
-  if (move_shape.ndim() == broad_move_shape.ndim() ||
-      move_shape.ndim() == broad_move_shape.ndim() + 1) {
-    for (int i = 0; i < move_shape.ndim() - 1; ++i) {
-      if (move_shape[i] != broad_move_shape[i]) {
+  const int move_core_ndim  = move_shape.ndim() - 1;
+  const bool broad_has_vector_axis = move_shape.ndim() != broad_move_shape.ndim() + 1;
+  const int broad_core_ndim = broad_move_shape.ndim() - (broad_has_vector_axis ? 1 : 0);
+  if (move_core_ndim <= broad_core_ndim) {
+    const int offset = broad_core_ndim - move_core_ndim;
+    for (int i = 0; i < offset; ++i) {
+      axis_idx.push_back(i);
+    }
+    for (int i = 0; i < move_core_ndim; ++i) {
+      const int broad_axis = offset + i;
+      if (move_shape[i] == 1 && broad_move_shape[broad_axis] != 1) {
+        axis_idx.push_back(broad_axis);
+      }
+    }
+  } else {
+    const int offset = move_core_ndim - broad_core_ndim;
+    for (int i = offset; i < move_core_ndim; ++i) {
+      const int broad_axis = i - offset;
+      if (move_shape[i] != broad_move_shape[broad_axis]) {
         axis_idx.push_back(i);
       }
     }
   }
   return axis_idx;
+}
+
+inline mxnet::TShape GetReduceShape(const mxnet::TShape& in_shape,
+                                    const std::vector<int>& reduce_axis) {
+  mxnet::TShape out_shape = in_shape;
+  for (const int axis : reduce_axis) {
+    out_shape[axis] = 1;
+  }
+  return out_shape;
+}
+
+inline std::vector<int> GetOriReduceAxis(const std::vector<int>& reduce_axis,
+                                         const mxnet::TShape& move_shape,
+                                         const int axis) {
+  Tuple<int> origin_index = GetMoveaxisIndex(-1, axis, move_shape);
+  std::vector<int> ori_reduce_axis;
+  for (const int red_axis : reduce_axis) {
+    for (int i = 0; i < origin_index.ndim(); ++i) {
+      if (origin_index[i] == red_axis) {
+        ori_reduce_axis.push_back(i);
+        break;
+      }
+    }
+  }
+  std::sort(ori_reduce_axis.begin(), ori_reduce_axis.end());
+  return ori_reduce_axis;
 }
 
 template <typename xpu, typename DType, int a_dim, int b_dim>
@@ -948,6 +993,13 @@ struct NumpyCrossBackwardImpl {
           });
         } else {
           // Need Reduce w1_data to w2_data and Copy w2_data to grad_a.
+          std::vector<int> reduce_axis =
+              a_axis == grad_a.ndim() - 1 ? a_reduce_axis :
+                                            GetOriReduceAxis(a_reduce_axis, c_move_dshp, a_axis);
+          w2_data = TBlob(w2_data.dptr<DType>(),
+                          GetReduceShape(w1_data.shape_, reduce_axis),
+                          grad_c.dev_mask(),
+                          grad_c.dev_id());
           ReduceImplWrap<xpu, DType>::op(w1_data, w2_data, grad_a, ctx, req[0], w3_tensor);
         }
         // Calculate grad_b = cross(grad_c, a).
@@ -961,8 +1013,12 @@ struct NumpyCrossBackwardImpl {
                                           w0_data.get<xpu, 1, DType>(s));
         } else {
           mxnet::TShape c_shp = GetOriShape(c_move_shp, b_axis);
+          std::vector<int> reduce_axis = GetOriReduceAxis(b_reduce_axis, c_move_shp, b_axis);
           w1_data             = TBlob(w1_ptr, c_shp, grad_c.dev_mask(), grad_c.dev_id());
-          w2_data             = TBlob(w2_ptr, grad_b.shape_, grad_c.dev_mask(), grad_c.dev_id());
+          w2_data             = TBlob(w2_ptr,
+                                      GetReduceShape(w1_data.shape_, reduce_axis),
+                                      grad_c.dev_mask(),
+                                      grad_c.dev_id());
           CrossImplWrap<xpu, DType, 3, 2>({grad_c, a},
                                           {w1_data},
                                           {c_axis, a_axis, b_axis},
@@ -1014,6 +1070,13 @@ struct NumpyCrossBackwardImpl {
           });
         } else {
           // Need Reduce w1_data to w2_data and Copy w2_data to grad_a.
+          std::vector<int> reduce_axis =
+              b_axis == grad_b.ndim() - 1 ? b_reduce_axis :
+                                            GetOriReduceAxis(b_reduce_axis, c_move_dshp, b_axis);
+          w2_data = TBlob(w2_data.dptr<DType>(),
+                          GetReduceShape(w1_data.shape_, reduce_axis),
+                          grad_c.dev_mask(),
+                          grad_c.dev_id());
           ReduceImplWrap<xpu, DType>::op(w1_data, w2_data, grad_b, ctx, req[1], w3_tensor);
         }
         // Calculate grad_a = cross(b, grad_c).
@@ -1022,8 +1085,12 @@ struct NumpyCrossBackwardImpl {
               {b, grad_c}, {grad_a}, {b_axis, c_axis, a_axis}, attrs, ctx, req[0], workspace);
         } else {
           mxnet::TShape c_shp = GetOriShape(c_move_shp, a_axis);
+          std::vector<int> reduce_axis = GetOriReduceAxis(a_reduce_axis, c_move_shp, a_axis);
           w1_data             = TBlob(w1_ptr, c_shp, grad_c.dev_mask(), grad_c.dev_id());
-          w2_data             = TBlob(w2_ptr, grad_a.shape_, grad_c.dev_mask(), grad_c.dev_id());
+          w2_data             = TBlob(w2_ptr,
+                                      GetReduceShape(w1_data.shape_, reduce_axis),
+                                      grad_c.dev_mask(),
+                                      grad_c.dev_id());
           CrossImplWrap<xpu, DType, 2, 3>({b, grad_c},
                                           {w1_data},
                                           {b_axis, c_axis, a_axis},
@@ -1122,7 +1189,7 @@ struct NumpyCrossBackwardImpl {
           res_ptr = w1_data.dptr<DType>();
         }
         // Copy w1_data to grad_b.
-        MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+        MXNET_ASSIGN_REQ_SWITCH(req[1], req_type, {
           mxnet_op::Kernel<ResAssign<req_type>, xpu>::Launch(
               s, grad_b.Size(), res_ptr, grad_b.dptr<DType>());
         });
@@ -1227,10 +1294,12 @@ struct NumpyCrossBackwardImpl<xpu, DType, 3, 3> {
                                         w0_data.get<xpu, 1, DType>(s));
       } else {
         mxnet::TShape c_shp = GetOriShape(c_move_shp, a_axis);
+        std::vector<int> reduce_axis = GetOriReduceAxis(a_reduce_axis, c_move_shp, a_axis);
         DType* w2_ptr       = w0_ptr + wk_size[0] + wk_size[1];
         DType* w3_ptr       = w2_ptr + c_move_shp.Size();
         TBlob w2_data(w2_ptr, c_shp, grad_c.dev_mask(), grad_c.dev_id());
-        TBlob w3_data(w3_ptr, grad_a.shape_, grad_c.dev_mask(), grad_c.dev_id());
+        TBlob w3_data(
+            w3_ptr, GetReduceShape(w2_data.shape_, reduce_axis), grad_c.dev_mask(), grad_c.dev_id());
         // Calculate w2_data = cross(b, grad_c).
         CrossImplWrap<xpu, DType, 3, 3>({b, grad_c},
                                         {w2_data},
@@ -1253,10 +1322,12 @@ struct NumpyCrossBackwardImpl<xpu, DType, 3, 3> {
                                         w0_data.get<xpu, 1, DType>(s));
       } else {
         mxnet::TShape c_shp = GetOriShape(c_move_shp, b_axis);
+        std::vector<int> reduce_axis = GetOriReduceAxis(b_reduce_axis, c_move_shp, b_axis);
         DType* w2_ptr       = w0_ptr + wk_size[0] + wk_size[1];
         DType* w3_ptr       = w2_ptr + c_move_shp.Size();
         TBlob w2_data(w2_ptr, c_shp, grad_c.dev_mask(), grad_c.dev_id());
-        TBlob w3_data(w3_ptr, grad_b.shape_, grad_c.dev_mask(), grad_c.dev_id());
+        TBlob w3_data(
+            w3_ptr, GetReduceShape(w2_data.shape_, reduce_axis), grad_c.dev_mask(), grad_c.dev_id());
         // Calculate w2_data = cross(grad_c, a).
         CrossImplWrap<xpu, DType, 3, 3>({grad_c, a},
                                         {w2_data},
@@ -1490,7 +1561,13 @@ struct NumpyCrossBackwardImpl<xpu, DType, 2, 2> {
       size_t interval        = std::max(grad_a.Size(), grad_b.Size());
       DType* grad_delete_ptr = workspace.dptr_ + wk_size[0] + wk_size[1];
       char* dw_ptr           = reinterpret_cast<char*>(grad_delete_ptr + interval);
-      TBlob grad_delete_data(grad_delete_ptr, grad_a.shape_, grad_c.dev_mask(), grad_c.dev_id());
+      std::vector<int> reduce_axis =
+          a_axis == a_ndim - 1 ? a_reduce_axis :
+                                 GetOriReduceAxis(a_reduce_axis, grad_move_shp, a_axis);
+      TBlob grad_delete_data(grad_delete_ptr,
+                             GetReduceShape(grad_data.shape_, reduce_axis),
+                             grad_c.dev_mask(),
+                             grad_c.dev_id());
       Tensor<xpu, 1, char> dw_tensor(dw_ptr, Shape1((wk_size[2] - interval) * sizeof(DType)), s);
       // Reduce grad_data to grad_delete_data and copy to grad_a.
       ReduceImplWrap<xpu, DType>::op(grad_data, grad_delete_data, grad_a, ctx, req[0], dw_tensor);
@@ -1579,12 +1656,18 @@ struct NumpyCrossBackwardImpl<xpu, DType, 2, 2> {
       size_t interval        = std::max(grad_a.Size(), grad_b.Size());
       DType* grad_delete_ptr = workspace.dptr_ + wk_size[0] + wk_size[1];
       char* dw_ptr           = reinterpret_cast<char*>(grad_delete_ptr + interval);
-      TBlob grad_delete_data(grad_delete_ptr, grad_b.shape_, grad_c.dev_mask(), grad_c.dev_id());
+      std::vector<int> reduce_axis =
+          b_axis == b_ndim - 1 ? b_reduce_axis :
+                                 GetOriReduceAxis(b_reduce_axis, grad_move_shp, b_axis);
+      TBlob grad_delete_data(grad_delete_ptr,
+                             GetReduceShape(grad_data.shape_, reduce_axis),
+                             grad_c.dev_mask(),
+                             grad_c.dev_id());
       Tensor<xpu, 1, char> dw_tensor(dw_ptr, Shape1((wk_size[2] - interval) * sizeof(DType)), s);
       // Reduce grad_data to grad_delete_data and copy to grad_a.
       ReduceImplWrap<xpu, DType>::op(grad_data, grad_delete_data, grad_b, ctx, req[1], dw_tensor);
     } else {
-      MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
+      MXNET_ASSIGN_REQ_SWITCH(req[1], req_type, {
         mxnet_op::Kernel<ResAssign<req_type>, xpu>::Launch(
             s, grad_b.Size(), grad_data.dptr<DType>(), grad_b.dptr<DType>());
       });
@@ -1634,7 +1717,7 @@ void NumpyCrossBackward(const nnvm::NodeAttrs& attrs,
   const int c_axis               = CheckAxis(param.axisc, c_ndim);
   std::vector<mxnet::TShape> move_shp_vec({a_moveaxis_shape, b_moveaxis_shape, c_moveaxis_shape});
 
-  MSHADOW_SGL_DBL_TYPE_SWITCH(grad_c.type_flag_, DType, {
+  MSHADOW_SGL_DBL_TYPE_SWITCH(a.type_flag_, DType, {
     bool use_broadcast = CheckUseBroadcast(a_moveaxis_shape, b_moveaxis_shape);
     if (a_moveaxis_shape[a_ndim - 1] == 2) {
       if (b_moveaxis_shape[b_ndim - 1] == 2) {

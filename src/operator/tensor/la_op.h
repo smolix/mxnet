@@ -685,10 +685,21 @@ void LaOpBackward(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(outputs.size(), onum);
   MSHADOW_SGL_DBL_TYPE_SWITCH(outputs[0].type_flag_, OType, {
     std::vector<TBlob> tspace(outputs);
+    size_t temp_size = 0;
     for (int i = 0; i < onum; ++i) {
       if (req[i] == kAddTo) {
-        tspace[i].dptr_ =
-            ctx.requested[0].get_space_typed<xpu, 1, OType>(Shape1(outputs[i].Size()), s).dptr_;
+        temp_size += outputs[i].Size();
+      }
+    }
+    if (temp_size != 0) {
+      Tensor<xpu, 1, OType> temp =
+          ctx.requested[0].get_space_typed<xpu, 1, OType>(Shape1(temp_size), s);
+      size_t offset = 0;
+      for (int i = 0; i < onum; ++i) {
+        if (req[i] == kAddTo) {
+          tspace[i].dptr_ = temp.dptr_ + offset;
+          offset += outputs[i].Size();
+        }
       }
     }
     LaOpCaller<xpu, OType, idim, odim, inum, onum, laop>::op(inputs, tspace, attrs, ctx);
@@ -736,17 +747,28 @@ void LaOpGemmBackward(const nnvm::NodeAttrs& attrs,
                                       nnvm::get<LaMatrixMacParam>(attrs.parsed).axis);
   MSHADOW_SGL_DBL_TYPE_SWITCH(outputs[0].type_flag_, OType, {
     std::vector<TBlob> tspace(outputs);
+    size_t temp_size = 0;
     for (int i = 0; i < onum; ++i) {
       if (req[i] == kAddTo) {
-        tspace[i].dptr_ =
-            ctx.requested[0].get_space_typed<xpu, 1, OType>(Shape1(outputs[i].Size()), s).dptr_;
+        temp_size += outputs[i].Size();
+      }
+    }
+    if (temp_size != 0) {
+      Tensor<xpu, 1, OType> temp =
+          ctx.requested[0].get_space_typed<xpu, 1, OType>(Shape1(temp_size), s);
+      size_t offset = 0;
+      for (int i = 0; i < onum; ++i) {
+        if (req[i] == kAddTo) {
+          tspace[i].dptr_ = temp.dptr_ + offset;
+          offset += outputs[i].Size();
+        }
       }
     }
     if (axis == -2 || axis == inputs[0].ndim() - 2) {
-      LaOpCaller<xpu, OType, idim, odim, inum, onum, laop>::op(inputs, outputs, attrs, ctx);
+      LaOpCaller<xpu, OType, idim, odim, inum, onum, laop>::op(inputs, tspace, attrs, ctx);
     } else {
       LaOpCaller<xpu, OType, idim + 1, odim + 1, inum, onum, laop>::op(
-          inputs, outputs, attrs, ctx, axis);
+          inputs, tspace, attrs, ctx, axis);
     }
     for (int i = 0; i < onum; ++i) {
       if (req[i] == kAddTo) {

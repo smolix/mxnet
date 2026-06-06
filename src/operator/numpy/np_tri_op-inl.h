@@ -56,7 +56,7 @@ struct TriParam : public dmlc::Parameter<TriParam> {
         "k = 0 is the main diagonal, while k < 0 is below it, "
         "and k > 0 is above. The default is 0.");
     DMLC_DECLARE_FIELD(dtype)
-    MXNET_ADD_ALL_TYPES_WITH_BOOL.set_default(mshadow::kFloat32);
+    MXNET_ADD_ALL_TYPES_EXT_WITH_BOOL.set_default(mshadow::kFloat32);
     DMLC_DECLARE_FIELD(ctx).set_default("").describe(
         "Context of output, in format [cpu|gpu|cpu_pinned](n)."
         " Only used for imperative calls.");
@@ -106,7 +106,7 @@ void TriOpForward(const nnvm::NodeAttrs& attrs,
   const TriParam& param       = nnvm::get<TriParam>(attrs.parsed);
   const mxnet::TShape& oshape = out_data.shape_;
 
-  MSHADOW_TYPE_SWITCH_WITH_BOOL(out_data.type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
     Kernel<tri_fwd, xpu>::Launch(
         s, out_data.Size(), out_data.dptr<DType>(), Shape2(oshape[0], oshape[1]), param.k);
   });

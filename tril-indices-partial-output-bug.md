@@ -1,6 +1,6 @@
 # Bug: single-output symbolic bind of a multi-output op leaves the consumed output unwritten
 
-**Status:** open, deferred to a dedicated session.
+**Status:** root-caused; fix is in `src/operator/numpy/np_matrix_op-inl.h`.
 **Severity:** correctness; **no d2l impact** (d2l uses imperative `np` and full-group
 binds, both correct). Affects symbolic `_simple_bind` of *one* output of a
 multi-output op.
@@ -68,12 +68,22 @@ print("row-only out0:", r.outputs[0].asnumpy())        # GARBAGE  <-- bug
 
 ## Where the bug actually is
 
-In **`cached_op`'s execution / memory-planning of a multi-output node when only a
-subset of its outputs is consumed**. The consumed output's buffer never receives
-the kernel's write — i.e. at execution time its effective `req` is `kNullOp`, or
-its storage is aliased to a buffer that is never the one exposed as
-`exe.outputs[0]`, or the op is pruned/skipped. This is graph-executor
-infrastructure shared by **every** multi-output op.
+The symbolic/cached-op path is doing the right thing: for a single bound output
+of `_npi_tril_indices`, it invokes the op with one output at `kWriteTo` and the
+unused sibling at `kNullOp`.
+
+The actual defect is the op's req-dispatch code in
+`src/operator/numpy/np_matrix_op-inl.h`. `TrilindicesOpForward` used nested
+`MXNET_ASSIGN_REQ_SWITCH(req[0], ...)` / `MXNET_ASSIGN_REQ_SWITCH(req[1], ...)`
+around the single kernel launch. `MXNET_ASSIGN_REQ_SWITCH` intentionally skips
+its body for `kNullOp`, so a partial-output invocation skipped the whole launch
+whenever either sibling output was unused. Full-group symbolic bind and
+imperative calls passed because both outputs were requested.
+
+The correct pattern for a multi-output kernel whose launch can honor `kNullOp`
+per output is `MXNET_REQ_TYPE_SWITCH` for each req, then `KERNEL_ASSIGN` inside
+the kernel map. That switch preserves `kNullOp` as a compile-time req value
+instead of suppressing the launch body.
 
 Execution path for the repro:
 `Symbol._simple_bind` (python/mxnet/symbol/symbol.py) →
@@ -84,40 +94,27 @@ GraphExecutor in this 2.0 tree.
 
 ## Suggested investigation plan
 
-1. **Instrument** the cached_op forward loop and `TrilindicesOpForward` to print,
-   for both the full-group bind and the single-output bind:
-   - the `req` vector actually passed to FCompute,
-   - `outputs[i].dptr_` and `outputs[i].shape_` for i in {0,1},
-   - whether FCompute is even invoked for the node.
-   Compare the two binds; the divergence pinpoints the layer.
-2. **Reduce** to a minimal custom 2-output op (no temp-space, trivial kernel) to
-   confirm the bug is generic to multi-output partial bind, not tril-specific.
-3. **Inspect the memory plan**: how storage and `ref_count`/`kNullOp` are assigned
-   to the consumed vs unconsumed output entries when the sibling output is unused.
-   Likely-fruitful hypothesis: the consumed output entry's `req` is forced to
-   `kNullOp` (or its storage id collides/aliases) because the node's *other*
-   output being unused mis-marks the whole node's outputs.
-4. Once root-caused, fix in `cached_op.cc` (likely a few lines in req/storage
-   assignment), then **verify against every multi-output op** — `split`,
-   `topk`/`sort`, `SVD`/`qr`/`eig` (`linalg`), `unique`, `tril_indices`/
-   `triu_indices`, RNN state outputs — under single-output symbolic bind, plus the
-   `716370508` regression tests.
+1. Keep the runtime regression in
+   `tests/python/unittest/test_numpy_op.py::test_np_tril_indices_partial_outputs`.
+   It covers full-group bind plus single-output binds for both output slots.
+2. Audit other multi-output operators for nested `MXNET_ASSIGN_REQ_SWITCH`
+   around a shared launch. That pattern is only correct when the whole launch
+   should be skipped if the switched req is `kNullOp`; it is wrong for kernels
+   that can independently honor `kNullOp` per output.
+3. If another multi-output partial-bind failure appears, first inspect req-switch
+   structure before changing cached-op ref counts or memory planning.
 
 ## Effort & risk
 
-- **~half a day.** The fix itself is probably small (a handful of lines in the
-  req/storage assignment), but root-causing needs an instrument → rebuild → read
-  loop, and **each rebuild is a full ~30-min recompile on 64 cores** because the
-  embedded git commit hash lives in a widely-included header, so any commit
-  invalidates almost every object. For debug iterations, consider pinning a dummy
-  commit hash (or instrumenting via a `.cc` rather than a header) to keep the
-  recompile scope small.
-- **Risk: medium-high.** The fix touches core graph-executor infrastructure shared
-  by all multi-output ops; a wrong change can silently corrupt other ops. Gate it
-  behind the broad multi-output test sweep above.
+- **Fix size:** small. The code change is the req-switch selection in
+  `TrilindicesOpForward`, not cached-op memory planning.
+- **Risk:** low-to-medium. The runtime behavior changes only for partial-output
+  invocations where at least one req is `kNullOp`; full-output binds still launch
+  the same kernel with write reqs for both outputs.
 
-## Affected ops (single-output symbolic bind)
+## Affected pattern
 
-Any op with `set_num_outputs > 1`: `split`, `topk`/`sort` (when both value+index
-are defined but one is bound), `linalg` decompositions (`qr`, `svd`, `eig`,
-`slogdet`), `unique`, `tril_indices`/`triu_indices`, RNN (state outputs), etc.
+Any multi-output op that wraps a shared launch in nested
+`MXNET_ASSIGN_REQ_SWITCH` blocks can have the same failure mode. Multi-output ops
+that dispatch each output independently, or use `MXNET_REQ_TYPE_SWITCH` and
+`KERNEL_ASSIGN`, are not implicated by this specific bug.

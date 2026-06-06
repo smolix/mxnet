@@ -87,7 +87,7 @@ above patterns, ``dot`` will fallback and generate output with default storage.
                                        return std::vector<std::string>{"lhs", "rhs"};
                                      })
     .set_attr<mxnet::FInferShape>("FInferShape", DotShape)
-    .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<2, 1>)
+    .set_attr<nnvm::FInferType>("FInferType", DotOpType)
     .set_attr<FInferStorageType>("FInferStorageType", DotForwardInferStorageType)
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& attrs) {
@@ -160,6 +160,18 @@ static bool BatchDotStorageType(const nnvm::NodeAttrs& attrs,
 }
 #endif
 
+inline bool BatchDotType(const nnvm::NodeAttrs& attrs,
+                         std::vector<int>* in_attrs,
+                         std::vector<int>* out_attrs) {
+  if (!ElemwiseType<2, 1>(attrs, in_attrs, out_attrs)) {
+    return false;
+  }
+  const int dtype = out_attrs->at(0);
+  CHECK(dtype == mshadow::kFloat16 || dtype == mshadow::kFloat32 || dtype == mshadow::kFloat64)
+      << "batch_dot only supports float16, float32, and float64 input types";
+  return true;
+}
+
 NNVM_REGISTER_OP(batch_dot)
     .add_alias("_npx_batch_dot")
     .describe(R"doc(Batchwise dot product.
@@ -180,9 +192,9 @@ which is computed by::
     .set_attr<nnvm::FListInputNames>("FListInputNames",
                                      [](const NodeAttrs& attrs) {
                                        return std::vector<std::string>{"lhs", "rhs"};
-                                     })
+    })
     .set_attr<mxnet::FInferShape>("FInferShape", BatchDotShape<DotParam>)
-    .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<2, 1>)
+    .set_attr<nnvm::FInferType>("FInferType", BatchDotType)
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& attrs) {
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};

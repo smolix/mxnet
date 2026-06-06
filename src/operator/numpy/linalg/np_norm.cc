@@ -122,11 +122,9 @@ bool NumpyNormType(const nnvm::NodeAttrs& attrs,
   int in_type = in_attrs->at(0);
   int out_type;
   if (!common::is_float(in_type)) {
-    out_type = in_type;
-    LOG(WARNING) << "WARNING: Integer input to norm. This will result in integer "
-                    "output which is different from standard NumPy behavior and "
-                    "breaks gradient compute in backward. Please cast the input "
-                    "to floating point types first.";
+    // PyTorch errors on integer norm; project convention returns float32
+    // (NumPy returns float64).
+    out_type = mshadow::kFloat32;
   } else {
     out_type = in_type;
   }
@@ -167,6 +165,17 @@ bool NumpyNormShape(const nnvm::NodeAttrs& attrs,
     for (int i = 0; i < param.axis.value().ndim(); ++i) {
       axis[i] = param.axis.value()[i] < 0 ? (*in_attrs)[0].ndim() + param.axis.value()[i] :
                                             param.axis.value()[i];
+      CHECK_GE(axis[i], 0) << "axis " << param.axis.value()[i]
+                           << " is out of bounds for array of dimension "
+                           << (*in_attrs)[0].ndim();
+      CHECK_LT(axis[i], (*in_attrs)[0].ndim())
+          << "axis " << param.axis.value()[i] << " is out of bounds for array of dimension "
+          << (*in_attrs)[0].ndim();
+    }
+    for (int i = 0; i < axis.ndim(); ++i) {
+      for (int j = i + 1; j < axis.ndim(); ++j) {
+        CHECK_NE(axis[i], axis[j]) << "duplicate value in 'axis'";
+      }
     }
     const_cast<NumpyNormParam&>(param).axis = axis;
     if (param.axis.value().ndim() == 2) {

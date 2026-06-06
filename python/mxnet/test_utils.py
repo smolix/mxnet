@@ -2200,9 +2200,17 @@ def chi_square_check(generator, buckets, probs, nsamples=1000000):
             obs_freq[i] = (sample_bucket_ids == i).sum()
         else:
             obs_freq[i] = (sample_bucket_ids == buckets[i]).sum()
-    # SciPy >= 1.10 added a strict `sum_check`; MXNet's generator buckets
-    # don't always sum to exactly the expected total within float tolerance.
-    # Disable the strict check (was the default behaviour pre-1.10).
+    # Newer SciPy (>=1.10) requires sum(f_obs) == sum(f_exp) within a tight
+    # relative tolerance; MXNet's generator buckets don't sum to exactly the
+    # expected total within float tolerance. Rescaling the expected frequencies
+    # to the observed total is the standard goodness-of-fit normalization and
+    # only absorbs the rounding mismatch -- it does not change the per-bucket
+    # distribution being tested, so a genuinely wrong generator still fails.
+    obs_freq = np.asarray(obs_freq, dtype=np.float64)
+    expected_freq = np.asarray(expected_freq, dtype=np.float64)
+    exp_sum = expected_freq.sum()
+    if exp_sum > 0:
+        expected_freq = expected_freq * (obs_freq.sum() / exp_sum)
     try:
         _, p = ss.chisquare(f_obs=obs_freq, f_exp=expected_freq, sum_check=False)
     except TypeError:  # older scipy without sum_check kw

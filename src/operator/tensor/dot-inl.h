@@ -102,6 +102,23 @@ struct DotParam : public dmlc::Parameter<DotParam> {
   }
 };
 
+// Type inference for `dot`/`batch_dot`. The compute kernels only implement
+// float16/float32/float64 (MSHADOW_REAL_TYPE_SWITCH). Reject other dtypes here,
+// at graph-build time, so unsupported inputs (e.g. bfloat16, which otherwise
+// dispatches into a storage/DNNL path that crashes) fail with a clean error
+// instead of aborting in an execution path.
+inline bool DotOpType(const nnvm::NodeAttrs& attrs,
+                      std::vector<int>* in_attrs,
+                      std::vector<int>* out_attrs) {
+  if (!ElemwiseType<2, 1>(attrs, in_attrs, out_attrs)) {
+    return false;
+  }
+  const int dtype = out_attrs->at(0);
+  CHECK(dtype == mshadow::kFloat16 || dtype == mshadow::kFloat32 || dtype == mshadow::kFloat64)
+      << "dot only supports float16/float32/float64 input types, got type flag " << dtype;
+  return true;
+}
+
 inline void AssignCPUHalfDotValue(mshadow::half::half_t* out, index_t idx, OpReqType req, float val) {
   if (req == kWriteTo || req == kWriteInplace) {
     out[idx] = static_cast<mshadow::half::half_t>(val);

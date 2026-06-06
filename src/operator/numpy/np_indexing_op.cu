@@ -437,12 +437,13 @@ struct backward_gather_nd_gpu {
                                   index_t M,
                                   index_t K,
                                   const mshadow::Shape<10> strides,
+                                  const mshadow::Shape<10> mshape,
                                   DType* out,
                                   const DType* data,
                                   const IType* indices) {
     index_t offset = 0;
     for (index_t j = 0; j < M; ++j) {
-      offset += strides[j] * static_cast<int>(indices[j * N + i]);
+      offset += strides[j] * (static_cast<int>(indices[j * N + i] + mshape[j]) % mshape[j]);
     }
     for (index_t j = 0; j < K; ++j) {
       atomicAdd(out + (offset + j), data[i * K + j]);
@@ -455,11 +456,13 @@ inline void GatherNDBackwardImpl(index_t N,
                                  index_t M,
                                  index_t K,
                                  const mshadow::Shape<10> strides,
+                                 const mshadow::Shape<10> mshape,
                                  DType* out,
                                  const DType* data,
                                  const IType* indices,
                                  mshadow::Stream<gpu>* s) {
-  mxnet_op::Kernel<backward_gather_nd_gpu, gpu>::Launch(s, N, N, M, K, strides, out, data, indices);
+  mxnet_op::Kernel<backward_gather_nd_gpu, gpu>::Launch(
+      s, N, N, M, K, strides, mshape, out, data, indices);
 }
 
 NNVM_REGISTER_OP(_npi_advanced_indexing)

@@ -124,12 +124,78 @@ def iinfo(dtype):
 
 def _get_dtype(array_or_dtype):
     """Utility function for result_type"""
-    if isinstance(array_or_dtype, (ndarray, onp.ndarray)):
-        return array_or_dtype.dtype
+    if isinstance(array_or_dtype, (ndarray, onp.ndarray, onp.generic)):
+        # ndarrays and NumPy scalars (e.g. np.int8(1)) carry a concrete dtype.
+        return onp.dtype(array_or_dtype.dtype)
     elif isinstance(array_or_dtype, onp.dtype):
         return array_or_dtype
     else:
-        raise ValueError("Inputs of result_type must be ndarrays or dtypes")
+        try:
+            return onp.dtype(array_or_dtype)
+        except TypeError as err:
+            raise ValueError("Inputs of result_type must be ndarrays or dtypes") from err
+
+
+def _is_scalar(array_or_dtype):
+    return onp.isscalar(array_or_dtype)
+
+
+def _is_weak_scalar(array_or_dtype):
+    """A Python builtin number is a "weak" scalar (PyTorch wrapped number): it
+    contributes only its category (bool < int < float < complex), not a width.
+    NumPy scalars carry a concrete dtype and are treated as strong operands."""
+    return isinstance(array_or_dtype, (bool, int, float, complex)) \
+        and not isinstance(array_or_dtype, onp.generic)
+
+
+def _weak_category(value):
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return 1
+    if isinstance(value, float):
+        return 2
+    return 3
+
+
+def _category_of_dtype(dt):
+    dt = onp.dtype(dt)
+    if dt == onp.dtype(bool):
+        return 0
+    if onp.issubdtype(dt, onp.integer):
+        return 1
+    if onp.issubdtype(dt, onp.floating):
+        return 2
+    return 3
+
+
+def _default_dtype_for_category(cat):
+    # Default per-category dtype used when a weak scalar bumps the category.
+    return (onp.dtype(bool), onp.dtype('int64'),
+            onp.dtype('float32'), onp.dtype('complex64'))[cat]
+
+
+def _result_type_with_weak_scalars(arrays_and_dtypes):
+    """PyTorch-style promotion when Python scalars are present: weak scalars only
+    raise the result category; the width comes from the array/dtype operands (or
+    the default dtype of the category when every operand is a weak scalar)."""
+    strong = [a for a in arrays_and_dtypes if not _is_weak_scalar(a)]
+    weak_cat = max((_weak_category(a) for a in arrays_and_dtypes
+                    if _is_weak_scalar(a)), default=-1)
+    if strong:
+        ret = onp.dtype(result_type(*strong)) if len(strong) > 1 \
+            else _get_dtype(strong[0])
+        ret = onp.dtype(ret)
+        if weak_cat > _category_of_dtype(ret):
+            return _default_dtype_for_category(weak_cat)
+        return ret
+    return _default_dtype_for_category(weak_cat)
+
+
+def _to_numpy_result_type_arg(array_or_dtype):
+    if isinstance(array_or_dtype, ndarray):
+        return onp.empty((), dtype=array_or_dtype.dtype)
+    return array_or_dtype
 
 
 def result_type(*arrays_and_dtypes):
@@ -150,6 +216,8 @@ def result_type(*arrays_and_dtypes):
         the dtype resulting from an operation involving the input arrays and dtypes.
     """
     if len(arrays_and_dtypes) > 0:
+        if any(_is_weak_scalar(arg) for arg in arrays_and_dtypes):
+            return _result_type_with_weak_scalars(arrays_and_dtypes)
         ret = _get_dtype(arrays_and_dtypes[0])
         for d in arrays_and_dtypes[1:]:
             dd = _get_dtype(d)

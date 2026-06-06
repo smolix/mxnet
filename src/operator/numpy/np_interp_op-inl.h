@@ -178,6 +178,148 @@ struct interp_period {
   }
 };
 
+inline bool NumpyInterpBackwardShape(const nnvm::NodeAttrs& attrs,
+                                     std::vector<TShape>* in_attrs,
+                                     std::vector<TShape>* out_attrs) {
+  const NumpyInterpParam& param = nnvm::get<NumpyInterpParam>(attrs.parsed);
+  CHECK_EQ(in_attrs->size(), param.x_is_scalar ? 3U : 4U);
+  CHECK_EQ(out_attrs->size(), param.x_is_scalar ? 2U : 3U);
+  SHAPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(1));
+  SHAPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(2));
+  if (!param.x_is_scalar) {
+    SHAPE_ASSIGN_CHECK(*out_attrs, 2, in_attrs->at(3));
+  }
+  return shape_is_known(out_attrs->at(0)) && shape_is_known(out_attrs->at(1)) &&
+         (param.x_is_scalar || shape_is_known(out_attrs->at(2)));
+}
+
+inline bool NumpyInterpBackwardType(const nnvm::NodeAttrs& attrs,
+                                    std::vector<int>* in_attrs,
+                                    std::vector<int>* out_attrs) {
+  const NumpyInterpParam& param = nnvm::get<NumpyInterpParam>(attrs.parsed);
+  CHECK_EQ(in_attrs->size(), param.x_is_scalar ? 3U : 4U);
+  CHECK_EQ(out_attrs->size(), param.x_is_scalar ? 2U : 3U);
+  TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(1));
+  TYPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(2));
+  if (!param.x_is_scalar) {
+    TYPE_ASSIGN_CHECK(*out_attrs, 2, in_attrs->at(3));
+  }
+  return out_attrs->at(0) != -1 && out_attrs->at(1) != -1 &&
+         (param.x_is_scalar || out_attrs->at(2) != -1);
+}
+
+inline void NumpyInterpSetZero(const TBlob& out, const OpReqType req) {
+  if (req != kWriteTo && req != kWriteInplace)
+    return;
+  double* out_ptr = out.dptr<double>();
+  for (size_t i = 0; i < out.Size(); ++i) {
+    out_ptr[i] = 0.0;
+  }
+}
+
+inline void NumpyInterpAssign(double* out, const OpReqType req, const size_t i, const double val) {
+  if (req == kWriteTo || req == kWriteInplace) {
+    out[i] = val;
+  } else if (req == kAddTo) {
+    out[i] += val;
+  }
+}
+
+template <typename xpu>
+void NumpyInterpBackward(const nnvm::NodeAttrs& attrs,
+                         const OpContext& ctx,
+                         const std::vector<TBlob>& inputs,
+                         const std::vector<OpReqType>& req,
+                         const std::vector<TBlob>& outputs) {
+  const NumpyInterpParam& param = nnvm::get<NumpyInterpParam>(attrs.parsed);
+  CHECK(!param.period.has_value()) << "np.interp backward does not support period";
+  CHECK_EQ(inputs.size(), param.x_is_scalar ? 3U : 4U);
+  CHECK_EQ(outputs.size(), param.x_is_scalar ? 2U : 3U);
+
+  const TBlob& ograd = inputs[0];
+  const TBlob& xp    = inputs[1];
+  const TBlob& fp    = inputs[2];
+  const TBlob& x     = param.x_is_scalar ? inputs[0] : inputs[3];
+  const size_t x_size = param.x_is_scalar ? 1 : x.Size();
+  CHECK_EQ(ograd.Size(), x_size);
+  CHECK_EQ(xp.Size(), fp.Size());
+  CHECK_GE(xp.Size(), 1U) << "ValueError: array of sample points is empty";
+
+  if (req[0] != kNullOp)
+    NumpyInterpSetZero(outputs[0], req[0]);
+  if (req[1] != kNullOp)
+    NumpyInterpSetZero(outputs[1], req[1]);
+  if (!param.x_is_scalar && req[2] != kNullOp)
+    NumpyInterpSetZero(outputs[2], req[2]);
+
+  const double* ograd_ptr = ograd.dptr<double>();
+  const double* xp_ptr    = xp.dptr<double>();
+  const double* fp_ptr    = fp.dptr<double>();
+  const double* x_ptr     = param.x_is_scalar ? nullptr : x.dptr<double>();
+  double* xp_grad         = req[0] == kNullOp ? nullptr : outputs[0].dptr<double>();
+  double* fp_grad         = req[1] == kNullOp ? nullptr : outputs[1].dptr<double>();
+  double* x_grad = param.x_is_scalar || req[2] == kNullOp ? nullptr : outputs[2].dptr<double>();
+  const bool has_left     = param.left.has_value();
+  const bool has_right    = param.right.has_value();
+  const size_t dsize      = xp.Size();
+
+  for (size_t i = 0; i < x_size; ++i) {
+    const double x_value = param.x_is_scalar ? param.x_scalar : x_ptr[i];
+    const double grad    = ograd_ptr[i];
+    if (x_value > xp_ptr[dsize - 1]) {
+      if (!has_right && fp_grad) {
+        fp_grad[dsize - 1] += grad;
+      }
+    } else if (x_value < xp_ptr[0]) {
+      if (!has_left && fp_grad) {
+        fp_grad[0] += grad;
+      }
+    } else {
+      index_t imin = 0;
+      index_t imax = static_cast<index_t>(dsize);
+      while (imin < imax) {
+        index_t imid = static_cast<index_t>((imax + imin) / 2);
+        if (x_value >= xp_ptr[imid]) {
+          imin = imid + 1;
+        } else {
+          imax = imid;
+        }
+      }
+
+      const index_t j = imin;
+      if (j == static_cast<index_t>(dsize)) {
+        if (fp_grad) {
+          fp_grad[dsize - 1] += grad;
+        }
+      } else if (x_value == xp_ptr[j - 1]) {
+        if (fp_grad) {
+          fp_grad[j - 1] += grad;
+        }
+      } else {
+        const double xp_below     = xp_ptr[j - 1];
+        const double xp_above     = xp_ptr[j];
+        const double fp_below     = fp_ptr[j - 1];
+        const double fp_above     = fp_ptr[j];
+        const double denom        = xp_above - xp_below;
+        const double weight_above = (x_value - xp_below) / denom;
+        const double weight_below = 1.0 - weight_above;
+        if (fp_grad) {
+          fp_grad[j - 1] += grad * weight_below;
+          fp_grad[j] += grad * weight_above;
+        }
+        if (x_grad) {
+          NumpyInterpAssign(x_grad, req[2], i, grad * (fp_above - fp_below) / denom);
+        }
+        if (xp_grad) {
+          const double scale = grad * (fp_above - fp_below) / (denom * denom);
+          xp_grad[j - 1] += scale * (x_value - xp_above);
+          xp_grad[j] -= scale * (x_value - xp_below);
+        }
+      }
+    }
+  }
+}
+
 template <typename xpu, typename OP>
 void NumpyInterpForward(const nnvm::NodeAttrs& attrs,
                         const OpContext& ctx,

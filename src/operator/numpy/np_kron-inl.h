@@ -53,7 +53,7 @@ struct kron {
     auto idx_a = ravel(ia, ashape);
     auto idx_b = ravel(jb, bshape);
 
-    KERNEL_ASSIGN(out[i], req, a[idx_a] * b[idx_b]);
+    KERNEL_ASSIGN(out[i], req, NumpyCompatibleMul(a[idx_a], b[idx_b]));
   }
 };
 
@@ -135,7 +135,7 @@ void KronOpForwardImpl(const OpContext& ctx,
 
   // TensordotIntAxesImpl<xpu>(0, ctx, a, b, out, req[0]);
   Stream<xpu>* s = ctx.get_stream<xpu>();
-  MSHADOW_TYPE_SWITCH(out.type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out.type_flag_, DType, {
     if (ashape.Size() == 0U || bshape.Size() == 0U) {
       // 0-size input
       if (req != kAddTo) {
@@ -145,10 +145,10 @@ void KronOpForwardImpl(const OpContext& ctx,
       }
     } else if (ashape.ndim() == 0 && bshape.ndim() == 0) {
       // Both 0-D scalars, equivalent to multiply
-      Tensor<xpu, 1, DType> a_data   = a.get_with_shape<xpu, 1, DType>(Shape1(1), s);
-      Tensor<xpu, 1, DType> b_data   = b.get_with_shape<xpu, 1, DType>(Shape1(1), s);
-      Tensor<xpu, 1, DType> out_data = out.get_with_shape<xpu, 1, DType>(Shape1(1), s);
-      ASSIGN_DISPATCH(out_data, req, a_data * b_data);
+      MXNET_ASSIGN_REQ_SWITCH(req, Req, {
+        mxnet_op::Kernel<scalar_mul_kernel<Req>, xpu>::Launch(
+            s, 1, out.dptr<DType>(), a.dptr<DType>(), b.dptr<DType>());
+      });
     } else if (ashape.ndim() == 0 || bshape.ndim() == 0) {
       // Either of them is a scalar, just scale by one of them
       const DType* tensor = (ashape.ndim() == 0) ? b.dptr<DType>() : a.dptr<DType>();

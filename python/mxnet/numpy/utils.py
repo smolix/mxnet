@@ -124,7 +124,10 @@ _type_promotion_table = {
     (float64, float64): float64,
     # bool type promotion
     (bool, bool): bool,
-    # mixed integer and float16 type promotion
+    # mixed integer and float type promotion.
+    # PyTorch convention: the floating operand keeps its width regardless of the
+    # integer operand (int64 x float16 -> float16). NumPy would promote to a
+    # float wide enough to hold the integer (-> float64); we deliberately do not.
     (int8, float16): float16,
     (int16, float16): float16,
     (int32, float16): float16,
@@ -133,7 +136,6 @@ _type_promotion_table = {
     (uint16, float16): float16,
     (uint32, float16): float16,
     (uint64, float16): float16,
-    # mixed integer and float16 type promotion
     (int8, float32): float32,
     (int16, float32): float32,
     (int32, float32): float32,
@@ -142,16 +144,6 @@ _type_promotion_table = {
     (uint16, float32): float32,
     (uint32, float32): float32,
     (uint64, float32): float32,
-    # mixed integer and float32 type promotion
-    (int8, float32): float32,
-    (int16, float32): float32,
-    (int32, float32): float32,
-    (int64, float32): float32,
-    (uint8, float32): float32,
-    (uint16, float32): float32,
-    (uint32, float32): float32,
-    (uint64, float32): float32,
-    # mixed integer and float64 type promotion
     (int8, float64): float64,
     (int16, float64): float64,
     (int32, float64): float64,

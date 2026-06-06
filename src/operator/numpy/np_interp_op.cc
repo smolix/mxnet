@@ -55,6 +55,16 @@ inline bool NumpyInterpType(const nnvm::NodeAttrs& attrs,
 
 DMLC_REGISTER_PARAMETER(NumpyInterpParam);
 
+std::vector<nnvm::NodeEntry> NumpyInterpGradient(
+    const nnvm::ObjectPtr& n,
+    const std::vector<nnvm::NodeEntry>& ograds) {
+  const NumpyInterpParam& param = nnvm::get<NumpyInterpParam>(n->attrs.parsed);
+  if (param.period.has_value()) {
+    return MakeZeroGradNodes(n, ograds);
+  }
+  return MakeNonlossGradNode("_backward_npi_interp", n, ograds, n->inputs, n->attrs.dict);
+}
+
 NNVM_REGISTER_OP(_npi_interp)
     .set_num_inputs([](const NodeAttrs& attrs) {
       const NumpyInterpParam& param = nnvm::get<NumpyInterpParam>(attrs.parsed);
@@ -78,11 +88,26 @@ NNVM_REGISTER_OP(_npi_interp)
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
                                 })
     .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
-    .set_attr<nnvm::FGradient>("FGradient", MakeZeroGradNodes)
+    .set_attr<nnvm::FGradient>("FGradient", NumpyInterpGradient)
     .add_argument("xp", "NDArray-or-Symbol", "Input x-coordinates")
     .add_argument("fp", "NDArray-or-Symbol", "Input y-coordinates")
     .add_argument("x", "NDArray-or-Symbol", "Input data")
     .add_arguments(NumpyInterpParam::__FIELDS__());
+
+NNVM_REGISTER_OP(_backward_npi_interp)
+    .set_num_inputs([](const NodeAttrs& attrs) {
+      const NumpyInterpParam& param = nnvm::get<NumpyInterpParam>(attrs.parsed);
+      return param.x_is_scalar ? 3 : 4;
+    })
+    .set_num_outputs([](const NodeAttrs& attrs) {
+      const NumpyInterpParam& param = nnvm::get<NumpyInterpParam>(attrs.parsed);
+      return param.x_is_scalar ? 2 : 3;
+    })
+    .set_attr_parser(ParamParser<NumpyInterpParam>)
+    .set_attr<nnvm::TIsBackward>("TIsBackward", true)
+    .set_attr<mxnet::FInferShape>("FInferShape", NumpyInterpBackwardShape)
+    .set_attr<nnvm::FInferType>("FInferType", NumpyInterpBackwardType)
+    .set_attr<FCompute>("FCompute<cpu>", NumpyInterpBackward<cpu>);
 
 }  // namespace op
 }  // namespace mxnet

@@ -508,6 +508,21 @@ void GatherNDCheckBoundGPU(mshadow::Stream<gpu>* s,
   }
 }
 
+template <typename IType>
+struct ScatterNDIndexChecker<gpu, IType> {
+  static void Check(mshadow::Stream<gpu>* s,
+                    const OpContext& ctx,
+                    const IType* idx_ptr,
+                    index_t N,
+                    index_t M,
+                    const mshadow::Shape<10> mshape) {
+    mshadow::Tensor<gpu, 1, IType> workspace =
+        ctx.requested[0].get_space_typed<gpu, 1, IType>(mshadow::Shape1(M), s);
+    IType* is_valid_dim_ptr = reinterpret_cast<IType*>(workspace.dptr_);
+    GatherNDCheckBoundGPU(s, idx_ptr, N, M, mshape, is_valid_dim_ptr);
+  }
+};
+
 void GatherNDForwardGPU(const nnvm::NodeAttrs& attrs,
                         const OpContext& ctx,
                         const std::vector<TBlob>& inputs,
@@ -561,12 +576,13 @@ struct backward_gather_nd_gpu {
                                   index_t M,
                                   index_t K,
                                   const mshadow::Shape<10> strides,
+                                  const mshadow::Shape<10> mshape,
                                   DType* out,
                                   const DType* data,
                                   const IType* indices) {
     index_t offset = 0;
     for (index_t j = 0; j < M; ++j) {
-      offset += strides[j] * static_cast<int>(indices[j * N + i]);
+      offset += strides[j] * (static_cast<int>(indices[j * N + i] + mshape[j]) % mshape[j]);
     }
     for (index_t j = 0; j < K; ++j) {
       atomicAdd(out + (offset + j), data[i * K + j]);
@@ -579,11 +595,13 @@ inline void GatherNDBackwardImpl(index_t N,
                                  index_t M,
                                  index_t K,
                                  const mshadow::Shape<10> strides,
+                                 const mshadow::Shape<10> mshape,
                                  DType* out,
                                  const DType* data,
                                  const IType* indices,
                                  mshadow::Stream<gpu>* s) {
-  mxnet_op::Kernel<backward_gather_nd_gpu, gpu>::Launch(s, N, N, M, K, strides, out, data, indices);
+  mxnet_op::Kernel<backward_gather_nd_gpu, gpu>::Launch(
+      s, N, N, M, K, strides, mshape, out, data, indices);
 }
 
 template <>
@@ -614,7 +632,9 @@ void TakeOpForward<gpu>(const nnvm::NodeAttrs& attrs,
     MSHADOW_TYPE_SWITCH_WITH_BOOL(inputs[take_::kIdx].type_flag_, IType, {  // index data type
       if (param.mode == take_::kRaise) {
         // check out-of-bound indices
-        IType min       = 0;
+        IType min = common::is_float(inputs[take_::kIdx].type_flag_) ?
+                        static_cast<IType>(0) :
+                        static_cast<IType>(-arrshape[actual_axis]);
         IType max       = static_cast<IType>(arrshape[actual_axis] - 1);
         IType* idx_ptr  = inputs[take_::kIdx].dptr<IType>();
         size_t idx_size = idxshape.Size();
@@ -622,7 +642,9 @@ void TakeOpForward<gpu>(const nnvm::NodeAttrs& attrs,
             ctx.requested[0].get_space_typed<gpu, 1, char>(Shape1(1), s);
         char* is_valid_ptr = reinterpret_cast<char*>(workspace.dptr_);
         bool is_valid      = CheckIndexOutOfBound(s, idx_ptr, idx_size, min, max, is_valid_ptr);
-        CHECK(is_valid) << "Take indices contains indices out of bound";
+        if (!is_valid) {
+          LOG(FATAL) << "IndexError: Take indices contains indices out of bound";
+        }
       }
       if (actual_axis == 0) {
         if (param.mode == take_::kClip) {
@@ -950,6 +972,8 @@ NNVM_REGISTER_OP(_backward_Embedding)
     .set_attr<FComputeEx>("FComputeEx<gpu>", EmbeddingOpBackwardEx<gpu>);
 
 NNVM_REGISTER_OP(take).set_attr<FCompute>("FCompute<gpu>", TakeOpForward<gpu>);
+
+NNVM_REGISTER_OP(_npi_take).set_attr<FCompute>("FCompute<gpu>", TakeOpForward<gpu>);
 
 NNVM_REGISTER_OP(_backward_take).set_attr<FCompute>("FCompute<gpu>", TakeOpBackward<gpu>);
 

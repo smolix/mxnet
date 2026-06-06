@@ -331,6 +331,7 @@ void EighOpForward(const nnvm::NodeAttrs& attrs,
   const TBlob& w  = outputs[0];
   const TBlob& v  = outputs[1];
   const char UPLO = nnvm::get<EighParam>(attrs.parsed).UPLO;
+  ValidateEighEigvalshUPLO(UPLO);
 
   if (kNullOp == req[0]) {
     return;

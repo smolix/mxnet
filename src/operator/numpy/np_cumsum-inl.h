@@ -91,6 +91,20 @@ struct cumsum_forward {
   }
 };
 
+inline int CumsumRealAxis(const dmlc::optional<int>& axis, const int ndim) {
+  if (!axis.has_value()) {
+    return -1;
+  }
+  if (ndim == 0) {
+    CHECK(axis.value() == 0 || axis.value() == -1)
+        << "axis " << axis.value() << " is out of bounds for 0-dimension tensor";
+    return 0;
+  }
+  CHECK(axis.value() >= -ndim && axis.value() < ndim)
+      << "axis value " << axis.value() << " out of range";
+  return axis.value() < 0 ? axis.value() + ndim : axis.value();
+}
+
 template <typename xpu>
 void CumsumForwardImpl(const OpContext& ctx,
                        const TBlob& in,
@@ -99,23 +113,20 @@ void CumsumForwardImpl(const OpContext& ctx,
   using namespace mshadow;
   using namespace mxnet_op;
 
-  CHECK(!axis.has_value() ||
-        ((axis.value() >= -out.shape_.ndim()) && axis.value() < out.shape_.ndim()))
-      << "axis value " << axis.value() << " out of range";
-
-  size_t middle = axis.has_value() ? out.shape_[axis.value()] : out.Size();
+  const int real_axis = CumsumRealAxis(axis, out.shape_.ndim());
+  size_t middle       = axis.has_value() ? out.shape_[real_axis] : out.Size();
   if (middle == 0 || out.Size() == 0)
     return;
   size_t trailing = 1;
   if (axis.has_value()) {
-    for (index_t i = axis.value() + 1; i < out.shape_.ndim(); ++i) {
+    for (index_t i = real_axis + 1; i < out.shape_.ndim(); ++i) {
       trailing *= out.shape_[i];
     }
   }
 
   Stream<xpu>* s = ctx.get_stream<xpu>();
-  MSHADOW_TYPE_SWITCH_WITH_BOOL(in.type_flag_, IType, {
-    MSHADOW_TYPE_SWITCH(out.type_flag_, OType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(in.type_flag_, IType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out.type_flag_, OType, {
       Kernel<cumsum_forward, xpu>::Launch(
           s, out.Size() / middle, out.dptr<OType>(), in.dptr<IType>(), middle, trailing);
     });
@@ -138,6 +149,7 @@ void CumsumForward(const nnvm::NodeAttrs& attrs,
   CumsumForwardImpl<xpu>(ctx, inputs[0], outputs[0], param.axis);
 }
 
+template <int req>
 struct cumsum_backward {
   template <typename IType, typename OType>
   MSHADOW_XINLINE static void Map(index_t i,
@@ -149,9 +161,11 @@ struct cumsum_backward {
     index_t offset                      = left * middle * trailing + right;
     const OType* lane_ograd             = ograd + offset;
     IType* lane_igrad                   = igrad + offset;
-    lane_igrad[(middle - 1) * trailing] = IType(lane_ograd[(middle - 1) * trailing]);
+    IType grad                          = IType(lane_ograd[(middle - 1) * trailing]);
+    KERNEL_ASSIGN(lane_igrad[(middle - 1) * trailing], req, grad);
     for (index_t j = middle - 2; j >= 0; --j) {
-      lane_igrad[j * trailing] = lane_igrad[(j + 1) * trailing] + IType(lane_ograd[j * trailing]);
+      grad += IType(lane_ograd[j * trailing]);
+      KERNEL_ASSIGN(lane_igrad[j * trailing], req, grad);
     }
   }
 };
@@ -160,23 +174,27 @@ template <typename xpu>
 void CumsumBackwardImpl(const OpContext& ctx,
                         const TBlob& ograd,
                         const TBlob& igrad,
+                        const OpReqType req,
                         const dmlc::optional<int>& axis) {
   using namespace mshadow;
   using namespace mxnet_op;
-  size_t middle = axis.has_value() ? igrad.shape_[axis.value()] : igrad.Size();
+  const int real_axis = CumsumRealAxis(axis, igrad.shape_.ndim());
+  size_t middle       = axis.has_value() ? igrad.shape_[real_axis] : igrad.Size();
   if (middle == 0 || igrad.Size() == 0)
     return;
   size_t trailing = 1;
   if (axis.has_value()) {
-    for (index_t i = axis.value() + 1; i < igrad.shape_.ndim(); ++i) {
+    for (index_t i = real_axis + 1; i < igrad.shape_.ndim(); ++i) {
       trailing *= igrad.shape_[i];
     }
   }
   Stream<xpu>* s = ctx.get_stream<xpu>();
   MSHADOW_TYPE_SWITCH_WITH_BOOL(igrad.type_flag_, IType, {
     MSHADOW_TYPE_SWITCH(ograd.type_flag_, OType, {
-      Kernel<cumsum_backward, xpu>::Launch(
-          s, igrad.Size() / middle, igrad.dptr<IType>(), ograd.dptr<OType>(), middle, trailing);
+      MXNET_ASSIGN_REQ_SWITCH(req, req_type, {
+        Kernel<cumsum_backward<req_type>, xpu>::Launch(
+            s, igrad.Size() / middle, igrad.dptr<IType>(), ograd.dptr<OType>(), middle, trailing);
+      });
     });
   });
 }
@@ -193,8 +211,10 @@ void CumsumBackward(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(req.size(), 1U);
   CHECK_EQ(outputs.size(), 1U);
   const CumsumParam& param = nnvm::get<CumsumParam>(attrs.parsed);
+  if (req[0] == kNullOp)
+    return;
 
-  CumsumBackwardImpl<xpu>(ctx, inputs[0], outputs[0], param.axis);
+  CumsumBackwardImpl<xpu>(ctx, inputs[0], outputs[0], req[0], param.axis);
 }
 
 }  // namespace op

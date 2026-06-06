@@ -83,6 +83,21 @@ struct NumpyInsertParam : public dmlc::Parameter<NumpyInsertParam> {
   }
 };
 
+inline void CheckInsertSingleValueBroadcast(const mxnet::TShape& arrshape,
+                                            const mxnet::TShape& valshape,
+                                            const int axis,
+                                            const index_t numnew,
+                                            const bool moveaxis) {
+  for (int i = arrshape.ndim() - 1; i >= 0; --i) {
+    const int val_axis = moveaxis ? (i < axis ? i + 1 : (i == axis ? 0 : i)) : i;
+    const index_t val_dim = valshape[val_axis];
+    const index_t target_dim = (i == axis) ? numnew : arrshape[i];
+    CHECK(val_dim == 1 || val_dim == target_dim)
+        << "ValueError: could not broadcast input array from shape " << valshape
+        << " into inserted shape";
+  }
+}
+
 /*!
  * \brief insert when obj is 'scaler' or a 'slice' with only one element.
  * \tparam ndim - both 'in_arr', 'in_val' and 'out_data' have same ndim before call this.
@@ -277,11 +292,23 @@ struct InsertSeqIndicesKernel {
   }
 };
 
+struct CheckInsertIndexBounds {
+  MSHADOW_XINLINE static void Map(index_t i, index_t N, const int64_t* obj, char* invalid) {
+    const int64_t index = obj[i];
+    if (index < -static_cast<int64_t>(N) || index > static_cast<int64_t>(N)) {
+      *invalid = 1;
+    }
+  }
+};
+
 struct ObjToIndices {
-  MSHADOW_XINLINE static void Map(index_t i, int64_t* indices, int N, const int64_t* obj) {
+  MSHADOW_XINLINE static void Map(
+      index_t i, int64_t* indices, index_t N, const int64_t* obj, char* invalid) {
     indices[i] = obj[i];
-    if (indices[i] < 0) {
-      indices[i] += static_cast<index_t>(N);
+    if (indices[i] < -static_cast<int64_t>(N) || indices[i] > static_cast<int64_t>(N)) {
+      *invalid = 1;
+    } else if (indices[i] < 0) {
+      indices[i] += static_cast<int64_t>(N);
     }
   }
 };

@@ -37,7 +37,21 @@ inline bool NumpyLaCholeskyShape(const nnvm::NodeAttrs& attrs,
                                  mxnet::ShapeVector* out_attrs) {
   const mxnet::TShape& in_shape = (*in_attrs)[0];
   CHECK_GE(in_shape.ndim(), 2) << "Array must be at least two-dimensional";
+  CHECK_EQ(in_shape[in_shape.ndim() - 2], in_shape[in_shape.ndim() - 1])
+      << "Last 2 dimensions of the array must be square";
   return ElemwiseShape<1, 1>(attrs, in_attrs, out_attrs);
+}
+
+inline bool NumpyLaCholeskyType(const nnvm::NodeAttrs& attrs,
+                                std::vector<int>* in_attrs,
+                                std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 1U);
+  CHECK_EQ(out_attrs->size(), 1U);
+  const int a_type = in_attrs->at(0);
+  CHECK(a_type == mshadow::kFloat32 || a_type == mshadow::kFloat64)
+      << "cholesky operation only supports 32-bit and 64-bit floating point";
+  TYPE_ASSIGN_CHECK(*out_attrs, 0, a_type);
+  return out_attrs->at(0) != -1;
 }
 
 // calls forward and backward implemented in la_op
@@ -51,7 +65,7 @@ NNVM_REGISTER_OP(_npi_cholesky)
                                        return std::vector<std::string>{"A"};
                                      })
     .set_attr<mxnet::FInferShape>("FInferShape", NumpyLaCholeskyShape)
-    .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<1, 1>)
+    .set_attr<nnvm::FInferType>("FInferType", NumpyLaCholeskyType)
     .set_attr<nnvm::FInplaceOption>("FInplaceOption",
                                     [](const NodeAttrs& attrs) {
                                       return std::vector<std::pair<int, int>>{{0, 0}};

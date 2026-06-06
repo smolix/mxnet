@@ -54,6 +54,182 @@ __all__ = ['shape', 'zeros', 'zeros_like', 'ones', 'ones_like', 'full', 'full_li
            'positive', 'logaddexp', 'floor_divide', 'bitwise_left_shift', 'bitwise_right_shift']
 
 
+def _as_np_ndarray(obj):
+    if isinstance(obj, NDArray):
+        return obj
+    from ... import _deferred_compute as dc  # pylint: disable=import-outside-toplevel
+    if dc.is_deferred_compute():
+        raise TypeError("array-like constants are not supported in deferred compute graphs")
+    dtype = None
+    if isinstance(obj, numeric_types):
+        dtype = dtype_from_number(obj)
+    obj = _np.array(obj, dtype=dtype)
+    ret = zeros(obj.shape, dtype=obj.dtype)
+    if len(obj.shape) == 0:
+        ret[()] = obj
+    else:
+        ret[:] = obj
+    return ret
+
+
+def _normalize_shape(shape):
+    if isinstance(shape, (integer_types, _np.integer)):
+        if shape < 0:
+            raise ValueError("negative dimensions are not allowed")
+        return int(shape)
+    if isinstance(shape, (tuple, list)):
+        dims = []
+        for dim in shape:
+            if not isinstance(dim, (integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(dim).__name__))
+            if dim < 0:
+                raise ValueError("negative dimensions are not allowed")
+            dims.append(int(dim))
+        return tuple(dims)
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(shape).__name__))
+
+
+def _normalize_unravel_shape(shape):
+    if isinstance(shape, (integer_types, _np.integer)):
+        if shape <= 0:
+            raise ValueError("shape dimensions must be positive")
+        return int(shape)
+    if isinstance(shape, (tuple, list)):
+        if len(shape) == 0:
+            raise ValueError("shape must be non-empty")
+        dims = []
+        for dim in shape:
+            if not isinstance(dim, (integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(dim).__name__))
+            if dim <= 0:
+                raise ValueError("shape dimensions must be positive")
+            dims.append(int(dim))
+        return tuple(dims)
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(shape).__name__))
+
+
+def _normalize_broadcast_shape(shape):
+    if isinstance(shape, (integer_types, _np.integer)):
+        if shape < 0 and shape != -2:
+            raise ValueError("negative dimensions are not allowed")
+        return int(shape)
+    if isinstance(shape, (tuple, list)):
+        dims = []
+        for dim in shape:
+            if not isinstance(dim, (integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(dim).__name__))
+            if dim < 0 and dim != -2:
+                raise ValueError("negative dimensions are not allowed")
+            dims.append(int(dim))
+        return tuple(dims)
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(shape).__name__))
+
+
+def _normalize_nonnegative_int(value):
+    if not isinstance(value, (integer_types, _np.integer)):
+        raise TypeError("'{}' object cannot be interpreted as an integer"
+                        .format(type(value).__name__))
+    if value < 0:
+        raise ValueError("negative dimensions are not allowed")
+    return int(value)
+
+
+def _normalize_reshape_shape(shape):
+    def normalize_dim(dim):
+        if not isinstance(dim, (integer_types, _np.integer)):
+            raise TypeError("'{}' object cannot be interpreted as an integer"
+                            .format(type(dim).__name__))
+        if dim < 0 and dim != -1:
+            raise ValueError("can only specify one unknown dimension")
+        return int(dim)
+
+    if isinstance(shape, (integer_types, _np.integer)):
+        return normalize_dim(shape)
+    if isinstance(shape, (tuple, list)):
+        dims = tuple(normalize_dim(dim) for dim in shape)
+        unknown_dim_count = 0
+        for dim in dims:
+            if dim == -1:
+                unknown_dim_count += 1
+        if unknown_dim_count > 1:
+            raise ValueError("can only specify one unknown dimension")
+        return dims
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(shape).__name__))
+
+
+def _normalize_axes(axes):
+    if axes is None:
+        return None
+    if not isinstance(axes, (tuple, list)):
+        raise TypeError("'{}' object cannot be interpreted as an integer"
+                        .format(type(axes).__name__))
+    normalized = []
+    for axis in axes:
+        if not isinstance(axis, (integer_types, _np.integer)):
+            raise TypeError("'{}' object cannot be interpreted as an integer"
+                            .format(type(axis).__name__))
+        normalized.append(int(axis))
+    return tuple(normalized)
+
+
+def _normalize_repeat_repeats(repeats):
+    if isinstance(repeats, _np.ndarray):
+        repeats = repeats.tolist()
+    if isinstance(repeats, (bool, _np.bool_, integer_types, _np.integer)):
+        if repeats < 0:
+            raise ValueError("repeats may not contain negative values")
+        return [int(repeats)]
+    if isinstance(repeats, (tuple, list)):
+        normalized = []
+        for repeat in repeats:
+            if not isinstance(repeat, (bool, _np.bool_, integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(repeat).__name__))
+            if repeat < 0:
+                raise ValueError("repeats may not contain negative values")
+            normalized.append(int(repeat))
+        return normalized
+    raise TypeError("'{}' object cannot be interpreted as an integer"
+                    .format(type(repeats).__name__))
+
+
+def _normalize_tensordot_axes(axes):
+    def normalize_axis(axis):
+        if not isinstance(axis, (integer_types, _np.integer)):
+            raise TypeError("'{}' object cannot be interpreted as an integer"
+                            .format(type(axis).__name__))
+        return int(axis)
+
+    if isinstance(axes, _np.ndarray):
+        axes = axes.tolist()
+    if isinstance(axes, (integer_types, _np.integer)):
+        return int(axes)
+    if isinstance(axes, (tuple, list)):
+        normalized = []
+        for axis in axes:
+            if isinstance(axis, _np.ndarray):
+                axis = axis.tolist()
+            if isinstance(axis, (integer_types, _np.integer)):
+                normalized.append(int(axis))
+            elif isinstance(axis, (tuple, list)):
+                normalized.append([normalize_axis(dim) for dim in axis])
+            else:
+                raise TypeError("Don't know how to handle type {}".format(type(axis)))
+        return normalized
+    return axes
+
+
+def _default_float_dtype():
+    return _np.float64 if is_np_default_dtype() else _np.float32
+
+
 @set_module('mxnet.ndarray.numpy')
 def shape(a):
     """
@@ -119,6 +295,7 @@ def zeros(shape, dtype=None, order='C', device=None):  # pylint: disable=redefin
     """
     if order != 'C':
         raise NotImplementedError
+    shape = _normalize_shape(shape)
     # If the following code (4 lines) regarding device is removed
     # np.zeros((3, 4)) can be as fast as 4.96 us
     if device is None:
@@ -160,6 +337,7 @@ def ones(shape, dtype=None, order='C', device=None):  # pylint: disable=redefine
     """
     if order != 'C':
         raise NotImplementedError
+    shape = _normalize_shape(shape)
     if device is None:
         device = str(current_device())
     else:
@@ -313,6 +491,7 @@ def broadcast_to(array, shape):
         If the array is not compatible with the new shape according to NumPy's
         broadcasting rules.
     """
+    shape = _normalize_broadcast_shape(shape)
     if _np.isscalar(array):
         return full(shape, array)
     return _api_internal.broadcast_to(array, shape)
@@ -379,6 +558,9 @@ def full(shape, fill_value, dtype=None, order='C', device=None, out=None):  # py
     """
     if order != 'C':
         raise NotImplementedError
+    shape = _normalize_shape(shape)
+    if not isinstance(fill_value, NDArray) and not isinstance(fill_value, (bool,) + numeric_types):
+        fill_value = _as_np_ndarray(fill_value)
     if isinstance(fill_value, NDArray):
         if dtype is None:
             ret = broadcast_to(fill_value, shape)
@@ -456,6 +638,11 @@ def full_like(a, fill_value, dtype=None, order='C', device=None, out=None): # py
     """
     if order != 'C':
         raise NotImplementedError
+    if not isinstance(fill_value, NDArray) and not isinstance(fill_value, (bool,) + numeric_types):
+        fill_value = _as_np_ndarray(fill_value)
+    if isinstance(fill_value, NDArray):
+        dtype = a.dtype if dtype is None else dtype
+        return broadcast_to(fill_value, a.shape).astype(dtype)
     if isinstance(fill_value, bool):
         fill_value = int(fill_value)
     if device is None:
@@ -630,8 +817,9 @@ def identity(n, dtype=None, device=None):
            [0., 1., 0.],
            [0., 0., 1.]])
     """
-    if not isinstance(n, int):
+    if not isinstance(n, (integer_types, _np.integer)):
         raise TypeError("Input 'n' should be an integer")
+    n = int(n)
     if n < 0:
         raise ValueError("Input 'n' cannot be negative")
     if device is None:
@@ -811,25 +999,34 @@ def insert(arr, obj, values, axis=None):
     array([[  0., 999.,   1.,   2., 999.,   3.],
            [  4., 999.,   5.,   6., 999.,   7.]])
     """
+    arr = _as_np_ndarray(arr)
+    if not isinstance(obj, (slice,) + integer_types) and not isinstance(obj, NDArray):
+        obj = _as_np_ndarray(obj).astype('int64')
+
     if isinstance(values, numeric_types):
         if isinstance(obj, slice):
             start = obj.start
             stop = obj.stop
             step = 1 if obj.step is None else obj.step
+            if step == 0:
+                raise ValueError('slice step cannot be zero')
             return _api_internal.insert_slice(arr, values, start, stop, step, axis)
         elif isinstance(obj, integer_types):
             return _api_internal.insert_scalar(arr, values, obj, axis)
         elif isinstance(obj, NDArray):
-            return _api_internal.insert_tensor(arr, obj, values, axis)
+            values = _as_np_ndarray(values)
+            if values.dtype != arr.dtype:
+                values = values.astype(arr.dtype)
+            return _api_internal.insert_tensor(arr, values, obj, axis)
 
-    if not isinstance(arr, NDArray):
-        raise TypeError("'arr' can not support type {}".format(str(type(arr))))
     if not isinstance(values, NDArray):
-        raise TypeError("'values' can not support type {}".format(str(type(values))))
+        values = _as_np_ndarray(values)
     if isinstance(obj, slice):
         start = obj.start
         stop = obj.stop
         step = 1 if obj.step is None else obj.step
+        if step == 0:
+            raise ValueError('slice step cannot be zero')
         return _api_internal.insert_slice(arr, values, start, stop, step, axis)
     elif isinstance(obj, integer_types):
         return _api_internal.insert_scalar(arr, values, obj, axis)
@@ -1325,19 +1522,27 @@ def delete(arr, obj, axis=None):
     >>> np.delete(arr, np.array([1,1,5]), None)
     array([ 1.,  3.,  4.,  5.,  7.,  8.,  9., 10., 11., 12.])
     """
-    if not isinstance(arr, NDArray):
-        raise TypeError("'arr' can not support type {}".format(str(type(arr))))
+    arr = _as_np_ndarray(arr)
     if isinstance(obj, slice):
         start = obj.start
         stop = obj.stop
         step = 1 if obj.step is None else obj.step
+        if step == 0:
+            raise ValueError('slice step cannot be zero')
         return _api_internal.delete(arr, start, stop, step, axis)
     elif isinstance(obj, integer_types):
         return _api_internal.delete(arr, obj, axis)
     elif isinstance(obj, NDArray):
+        if obj.dtype == _np.bool_:
+            obj = flatnonzero(obj)
         return _api_internal.delete(arr, obj, axis)
     else:
-        raise TypeError("'obj' can not support type {}".format(str(type(obj))))
+        obj = _as_np_ndarray(obj)
+        if obj.dtype == _np.bool_:
+            obj = flatnonzero(obj)
+        else:
+            obj = obj.astype('int64')
+        return _api_internal.delete(arr, obj, axis)
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -1846,7 +2051,7 @@ def tensordot(a, b, axes=2):
            [ 4796.,  5162.],
            [ 4928.,  5306.]])
     """
-    return _api_internal.tensordot(a, b, axes)
+    return _api_internal.tensordot(a, b, _normalize_tensordot_axes(axes))
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -1886,6 +2091,7 @@ def histogram(a, bins=10, range=None, normed=None, weights=None, density=None): 
     if isinstance(bins, numeric_types):
         if range is None:
             raise NotImplementedError("automatic range is not supported yet...")
+        range = (float(range[0]), float(range[1]))
         return tuple(_api_internal.histogram(a, None, bins, range))
     if isinstance(bins, (list, tuple)):
         raise NotImplementedError("array_like bins is not supported yet...")
@@ -1933,6 +2139,11 @@ def eye(N, M=None, k=0, dtype=float, **kwargs):
     if dtype is not None and not isinstance(dtype, str):
         dtype = get_dtype_name(dtype)
 
+    if not isinstance(k, (integer_types, _np.integer)):
+        raise TypeError("'{}' object cannot be interpreted as an integer"
+                        .format(type(k).__name__))
+    N = _normalize_nonnegative_int(N)
+    M = None if M is None else _normalize_nonnegative_int(M)
     # To avoid overflow errors, map large positive k values to the just-out-of-range "num_columns" value
     k = minimum(k, M if M is not None else N)
     # Similarly, map large negative k values to the just-out-of-range "-num_rows" value
@@ -2023,11 +2234,6 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None, axis
     - There could be an additional `device` argument to specify the device, e.g. the i-th
       GPU.
     """
-    if isinstance(start, (list, _np.ndarray, NDArray)) or \
-       isinstance(stop, (list, _np.ndarray, NDArray)):
-        raise NotImplementedError('start and stop only support int')
-    if axis != 0:
-        raise NotImplementedError("the function only support axis 0")
     if device is None:
         device = str(current_device())
     else:
@@ -2036,8 +2242,31 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None, axis
         dtype = get_dtype_name(dtype)
     if dtype is None:
         dtype = _np.float64 if is_np_default_dtype() else _np.float32
+    if isinstance(start, (list, tuple, _np.ndarray, NDArray)) or \
+       isinstance(stop, (list, tuple, _np.ndarray, NDArray)):
+        start = _as_np_ndarray(start).astype(dtype)
+        stop = _as_np_ndarray(stop).astype(dtype)
+        delta = stop - start
+        start = start + zeros_like(delta)
+        ndim = delta.ndim + 1
+        if axis < 0:
+            axis += ndim
+        if axis < 0 or axis >= ndim:
+            raise _np.AxisError(axis, ndim=ndim)
+        step = _np.nan if num <= int(endpoint) else delta / (num - int(endpoint))
+        steps_shape = [1] * ndim
+        steps_shape[axis] = num
+        sample_steps = reshape(arange(num, dtype=dtype, device=device), tuple(steps_shape))
+        if endpoint and num == 1:
+            samples = expand_dims(start, axis)
+        else:
+            samples = expand_dims(start, axis) + sample_steps * expand_dims(step, axis)
+        return (samples, step) if retstep else samples
+    if axis not in (0, -1):
+        raise _np.AxisError(axis, ndim=1)
     if retstep:
-        step = (stop - start) / (num - int(endpoint))
+        divisor = num - int(endpoint)
+        step = _np.nan if divisor <= 0 else (stop - start) / divisor
         return _api_internal.linspace(start, stop, num, endpoint, device, dtype), step
     else:
         return _api_internal.linspace(start, stop, num, endpoint, device, dtype)
@@ -2150,7 +2379,76 @@ def expand_dims(a, axis):
         Output array. The number of dimensions is one greater than that of
         the input array.
     """
+    if isinstance(axis, (tuple, list)):
+        result_ndim = a.ndim + len(axis)
+        normalized_axes = []
+        for ax in axis:
+            if not isinstance(ax, (integer_types, _np.integer)):
+                raise TypeError("'{}' object cannot be interpreted as an integer"
+                                .format(type(ax).__name__))
+            if ax < -result_ndim or ax >= result_ndim:
+                raise _np.AxisError(ax, ndim=result_ndim)
+            ax = ax + result_ndim if ax < 0 else ax
+            if ax in normalized_axes:
+                raise ValueError("repeated axis")
+            normalized_axes.append(ax)
+        ret = a
+        for ax in sorted(normalized_axes):
+            ret = _api_internal.expand_dims(ret, ax)
+        return ret
     return _api_internal.expand_dims(a, axis)
+
+
+def _normalize_np_pad_width(pad_width):
+    pad_width_array = _np.asarray(pad_width)
+    if pad_width_array.dtype.kind != 'i':
+        raise TypeError('`pad_width` must be of integral type.')
+    if _np.any(pad_width_array < 0):
+        raise ValueError("index can't contain negative values")
+    if pad_width_array.ndim == 0:
+        return (int(pad_width_array),)
+    if pad_width_array.ndim == 1:
+        return tuple(int(width) for width in pad_width_array.tolist())
+    return tuple(tuple(int(width) for width in axis_width)
+                 for axis_width in pad_width_array.tolist())
+
+
+def _normalize_np_pad_pairs(value, ndim, name, integral=False):
+    value_array = _np.asarray(value)
+    if integral and value_array.dtype.kind != 'i':
+        raise TypeError('{} must be of integral type.'.format(name))
+    if integral and _np.any(value_array < 0):
+        raise ValueError("index can't contain negative values")
+    try:
+        value_array = _np.broadcast_to(value_array, (ndim, 2))
+    except ValueError as err:
+        raise ValueError("{} could not be broadcast to shape ({}, 2)"
+                         .format(name, ndim)) from err
+    if integral:
+        return tuple(tuple(int(width) for width in axis_width)
+                     for axis_width in value_array.tolist())
+    return tuple(tuple(axis_width) for axis_width in value_array.tolist())
+
+
+def _constant_pad_with_values(x, pad_width, constant_values):
+    pad_pairs = _normalize_np_pad_pairs(pad_width, x.ndim, '`pad_width`', integral=True)
+    value_pairs = _normalize_np_pad_pairs(constant_values, x.ndim, '`constant_values`')
+    ret = x
+    for axis, ((pad_before, pad_after), (value_before, value_after)) in enumerate(
+            zip(pad_pairs, value_pairs)):
+        parts = []
+        if pad_before:
+            before_shape = list(ret.shape)
+            before_shape[axis] = pad_before
+            parts.append(full(tuple(before_shape), value_before, dtype=ret.dtype, device=ret.device))
+        parts.append(ret)
+        if pad_after:
+            after_shape = list(ret.shape)
+            after_shape[axis] = pad_after
+            parts.append(full(tuple(after_shape), value_after, dtype=ret.dtype, device=ret.device))
+        if len(parts) > 1:
+            ret = concatenate(parts, axis=axis)
+    return ret
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -2458,6 +2756,11 @@ def triu_indices(n, k=0, m=None, device=None):
            [  8,   9,  -1,  -1],
            [ 12,  13,  14,  -1]])
         """
+    if m is None:
+        m = n
+    if n < 0 or m < 0:
+        empty = zeros((0,), dtype='int64', device=device)
+        return empty, empty
     return nonzero(~tri(N=n, M=m, k=k-1, dtype=bool, device=device))
 
 
@@ -4198,6 +4501,7 @@ def tile(A, reps):
     array([2, 2, 2]) # repeating integer `2`
 
     """
+    reps = _normalize_shape(reps)
     if isinstance(A, numeric_types):
         return _np.tile(A, reps)
     elif isinstance(A, NDArray):
@@ -4246,6 +4550,7 @@ def transpose(a, axes=None):
     >>> np.transpose(x, (1, 0, 2)).shape
     (2, 1, 3)
     """
+    axes = _normalize_axes(axes)
     return _api_internal.transpose(a, axes)
 
 
@@ -4289,9 +4594,30 @@ def repeat(a, repeats, axis=None):
            [3, 4],
            [3, 4]])
     """
-    if isinstance(repeats, numeric_types):
-        repeats = [repeats]
+    repeats = _normalize_repeat_repeats(repeats)
     return _api_internal.repeats(a, repeats, axis)
+
+
+def _normalize_split_indices(indices_or_sections):
+    if isinstance(indices_or_sections, (integer_types, _np.integer)):
+        if indices_or_sections <= 0:
+            raise ValueError("number sections must be larger than 0")
+        return int(indices_or_sections)
+    if isinstance(indices_or_sections, set):
+        return list(indices_or_sections)
+    if isinstance(indices_or_sections, NDArray):
+        indices_or_sections = indices_or_sections.asnumpy()
+    if isinstance(indices_or_sections, _np.ndarray):
+        if not _np.issubdtype(indices_or_sections.dtype, _np.integer):
+            raise TypeError("indices_or_sections must be an integer or a sequence of integers")
+        if indices_or_sections.ndim == 0:
+            return indices_or_sections.item()
+        return indices_or_sections.tolist()
+    if isinstance(indices_or_sections, (list, tuple)):
+        indices = _np.asarray(indices_or_sections)
+        if indices.size != 0 and not _np.issubdtype(indices.dtype, _np.integer):
+            raise TypeError("indices_or_sections must be an integer or a sequence of integers")
+    return indices_or_sections
 
 
 # pylint: disable=redefined-outer-name
@@ -4330,8 +4656,7 @@ def split(ary, indices_or_sections, axis=0):
         If `indices_or_sections` is given as an integer, but
         a split does not result in equal division.
     """
-    if isinstance(indices_or_sections, set):
-        indices_or_sections = list(indices_or_sections)
+    indices_or_sections = _normalize_split_indices(indices_or_sections)
     return list(_api_internal.split(ary, indices_or_sections, axis))
 # pylint: enable=redefined-outer-name
 
@@ -4386,8 +4711,7 @@ def array_split(ary, indices_or_sections, axis=0):
     >>> np.array_split(x, 3)
     [array([0.,  1.,  2.]), array([3.,  4.]), array([5.,  6.])]
     """
-    if isinstance(indices_or_sections, set):
-        indices_or_sections = list(indices_or_sections)
+    indices_or_sections = _normalize_split_indices(indices_or_sections)
     return list(_api_internal.array_split(ary, indices_or_sections, axis))
 # pylint: enable=redefined-outer-name
 
@@ -4485,8 +4809,7 @@ def hsplit(ary, indices_or_sections):
     >>> np.hsplit(x, [2, 2])
     [array([0., 1.]), array([], dtype=float32), array([2., 3.])]
     """
-    if isinstance(indices_or_sections, set):
-        indices_or_sections = list(indices_or_sections)
+    indices_or_sections = _normalize_split_indices(indices_or_sections)
     return list(_api_internal.hsplit(ary, indices_or_sections))
 # pylint: enable=redefined-outer-name
 
@@ -4565,8 +4888,7 @@ def vsplit(ary, indices_or_sections):
             [6., 7.]]])]
 
     """
-    if isinstance(indices_or_sections, set):
-        indices_or_sections = list(indices_or_sections)
+    indices_or_sections = _normalize_split_indices(indices_or_sections)
     return list(_api_internal.vsplit(ary, indices_or_sections))
 
 
@@ -4624,8 +4946,7 @@ def dsplit(ary, indices_or_sections):
             [15.]]]),
     array([], shape=(2, 2, 0), dtype=float64)]
     """
-    if isinstance(indices_or_sections, set):
-        indices_or_sections = list(indices_or_sections)
+    indices_or_sections = _normalize_split_indices(indices_or_sections)
     return list(_api_internal.dsplit(ary, indices_or_sections))
 # pylint: enable=redefined-outer-name
 
@@ -4669,6 +4990,11 @@ def concatenate(seq, axis=0, out=None):
     array([[1., 2., 5.],
            [3., 4., 6.]])
     """
+    # ``seq`` may be any iterable (incl. a generator), so materialize it before
+    # measuring length or iterating twice.
+    seq = [arr if isinstance(arr, NDArray) else _as_np_ndarray(arr) for arr in seq]
+    if len(seq) == 0:
+        raise ValueError("need at least one array to concatenate")
     return _api_internal.concatenate(*seq, axis, out)
 
 
@@ -4710,6 +5036,13 @@ def append(arr, values, axis=None):  # pylint: disable=redefined-outer-name
            [7., 8., 9.]])
     """
     out = None
+    arr = _as_np_ndarray(arr)
+    values = _as_np_ndarray(values)
+    dtype = _np.result_type(arr.dtype, values.dtype)
+    if arr.dtype != dtype:
+        arr = arr.astype(dtype)
+    if values.dtype != dtype:
+        values = values.astype(dtype)
     return _api_internal.concatenate(arr, values, axis, out)
 
 
@@ -4739,6 +5072,8 @@ def stack(arrays, axis=0, out=None):
         return [arr for arr in arrays]
 
     arrays = get_list(arrays)
+    if len(arrays) == 0:
+        raise ValueError("need at least one array to stack")
     return _api_internal.stack(*arrays, axis, out)
 
 
@@ -4789,7 +5124,7 @@ def vstack(arrays, out=None):
             raise ValueError("expected iterable for arrays but got {}".format(type(arrays)))
         return [arr for arr in arrays]
 
-    arrays = get_list(arrays)
+    arrays = [_as_np_ndarray(arr) for arr in get_list(arrays)]
     return _api_internal.vstack(*arrays)
 
 
@@ -4834,7 +5169,7 @@ def row_stack(arrays):
             raise ValueError("expected iterable for arrays but got {}".format(type(arrays)))
         return [arr for arr in arrays]
 
-    arrays = get_list(arrays)
+    arrays = [_as_np_ndarray(arr) for arr in get_list(arrays)]
     return _api_internal.vstack(*arrays)
 
 
@@ -4865,7 +5200,7 @@ def column_stack(tup):
            [2., 3.],
            [3., 4.]])
     """
-    return _api_internal.column_stack(*tup)
+    return _api_internal.column_stack(*[_as_np_ndarray(arr) for arr in tup])
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -4904,7 +5239,7 @@ def hstack(arrays):
            [2., 3.],
            [3., 4.]])
     """
-    return _api_internal.hstack(*arrays)
+    return _api_internal.hstack(*[_as_np_ndarray(arr) for arr in arrays])
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -4946,7 +5281,7 @@ def dstack(arrays):
            [[2, 3]],
            [[3, 4]]])
     """
-    return _api_internal.dstack(*arrays)
+    return _api_internal.dstack(*[_as_np_ndarray(arr) for arr in arrays])
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -5687,11 +6022,16 @@ def average(a, axis=None, weights=None, returned=False, out=None):
     >>> np.average(data, axis=1, weights=weights)
     array([0.75, 2.75, 4.75])
     """
+    if not _np.issubdtype(a.dtype, _np.floating):
+        dtype = _default_float_dtype()
+        a = a.astype(dtype)
+        if weights is not None:
+            weights = weights.astype(dtype)
     out = _api_internal.average(a, weights, axis, returned, weights is not None, out)
     if isinstance(out, NDArray):
         return out
     else:
-        return list(out)
+        return tuple(out)
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -5954,16 +6294,23 @@ def indices(dimensions, dtype=None, device=None):
     Note that it would be more straightforward in the above example to
     extract the required elements directly with ``x[:2, :3]``.
     """
-    if isinstance(dimensions, (tuple, list)):
-        if device is None:
-            device = str(current_device())
-        else:
-            device = str(device)
-        if dtype is not None and not isinstance(dtype, str):
-            dtype = get_dtype_name(dtype)
-        return _api_internal.indices(dimensions, dtype, device)
-    else:
+    if not isinstance(dimensions, (tuple, list)):
         raise ValueError("The dimensions must be sequence of ints")
+    for dim in dimensions:
+        if not isinstance(dim, (integer_types, _np.integer)):
+            raise TypeError("'{}' object cannot be interpreted as an integer"
+                            .format(type(dim).__name__))
+        if dim < 0:
+            raise ValueError("negative dimensions are not allowed")
+    if device is None:
+        device = str(current_device())
+    else:
+        device = str(device)
+    if dtype is None:
+        dtype = 'int64'
+    elif not isinstance(dtype, str):
+        dtype = get_dtype_name(dtype)
+    return _api_internal.indices(tuple(dimensions), dtype, device)
 # pylint: enable=redefined-outer-name
 
 
@@ -6063,7 +6410,7 @@ def ravel(x, order='C'):
     >>> print(np.ravel(x.T))
     [1. 4. 2. 5. 3. 6.]
     """
-    if order == 'F':
+    if order != 'C':
         raise NotImplementedError('order {} is not supported'.format(order))
     if isinstance(x, numeric_types):
         return _np.reshape(x, -1)
@@ -6101,10 +6448,13 @@ def unravel_index(indices, shape, order='C'): # pylint: disable=redefined-outer-
     (3, 1, 4, 1)
     """
     if order == 'C':
+        shape = _normalize_unravel_shape(shape)
         if isinstance(indices, numeric_types):
             return _np.unravel_index(indices, shape)
         if isinstance(indices, NDArray):
             return tuple(_api_internal.unravel_index(indices, shape))
+        if isinstance(indices, (list, tuple, _np.ndarray)):
+            return tuple(_api_internal.unravel_index(_as_np_ndarray(indices), shape))
         raise TypeError('Do not support type {} as indices.'.format(str(type(indices))))
     raise NotImplementedError('Do not support column-major (Fortran-style) order at this moment')
 
@@ -6506,6 +6856,18 @@ def flip(m, axis=None, out=None):
     if isinstance(m, numeric_types):
         return _np.flip(m, axis)
     elif isinstance(m, ndarray):
+        if isinstance(axis, (tuple, list)):
+            normalized_axes = []
+            for ax in axis:
+                if not isinstance(ax, (integer_types, _np.integer)):
+                    raise TypeError("'{}' object cannot be interpreted as an integer"
+                                    .format(type(ax).__name__))
+                if ax < -m.ndim or ax >= m.ndim:
+                    raise _np.AxisError(ax, ndim=m.ndim)
+                ax = ax + m.ndim if ax < 0 else ax
+                if ax in normalized_axes:
+                    raise ValueError("repeated axis")
+                normalized_axes.append(ax)
         return _api_internal.flip(m, axis, out)
     else:
         raise TypeError('type {} not supported'.format(str(type(m))))
@@ -8494,7 +8856,7 @@ def diff(a, n=1, axis=-1, prepend=None, append=None):  # pylint: disable=redefin
     -----
     Optional inputs `prepend` and `append` are not supported yet
     """
-    if (prepend or append):
+    if prepend is not None or append is not None:
         raise NotImplementedError('prepend and append options are not supported yet')
     return _api_internal.diff(a, n, axis)
 
@@ -8588,6 +8950,7 @@ def resize(a, new_shape):
     array([[0., 1., 2., 3.],
            [0., 1., 2., 3.]])
     """
+    new_shape = _normalize_shape(new_shape)
     return _npi.resize_fallback(a, new_shape=new_shape)
 
 
@@ -9270,6 +9633,8 @@ def where(condition, x=None, y=None):  # pylint: disable=too-many-return-stateme
            [ 0.,  2., -1.],
            [ 0.,  3., -1.]])
     """
+    if (x is None) != (y is None):
+        raise ValueError("either both or neither of x and y should be given")
     if x is None and y is None:
         return nonzero(condition)
     else:
@@ -9451,10 +9816,7 @@ def pad(x, pad_width, mode='constant', **kwargs): # pylint: disable=too-many-arg
         according to `pad_width`.
     """
     # pylint: disable = too-many-return-statements, inconsistent-return-statements
-    if not _np.asarray(pad_width).dtype.kind == 'i':
-        raise TypeError('`pad_width` must be of integral type.')
-    if not isinstance(pad_width, tuple):
-        raise TypeError("`pad_width` must be tuple.")
+    pad_width = _normalize_np_pad_width(pad_width)
     if mode == "linear_ramp":
         raise ValueError("mode {'linear_ramp'} is not supported.")
     if mode == "wrap":
@@ -9481,6 +9843,8 @@ def pad(x, pad_width, mode='constant', **kwargs): # pylint: disable=too-many-arg
         'wrap': [],
         }
 
+    if mode not in allowedkwargs:
+        raise ValueError("mode {'" + str(mode) + "'} is not supported.")
     if isinstance(mode, _np.compat.basestring):
         # Make sure have allowed kwargs appropriate for mode
         for key in kwargs:
@@ -9493,8 +9857,8 @@ def pad(x, pad_width, mode='constant', **kwargs): # pylint: disable=too-many-arg
                          .format(mode, unsupported_kwargs))
     if mode == "constant":
         values = kwargs.get("constant_values", 0)
-        if isinstance(values, tuple):
-            raise TypeError("unsupported constant_values type: {'tuple'}.")
+        if isinstance(values, (tuple, list, _np.ndarray)):
+            return _constant_pad_with_values(x, pad_width, values)
         return _api_internal.pad(x, pad_width, 'constant', values, "even")
     elif mode == "symmetric":
         values = kwargs.get("reflect_type", "even")
@@ -9713,6 +10077,9 @@ def reshape(a, newshape, order='C'):
            [3., 4.],
            [5., 6.]])
     """
+    if order != 'C':
+        raise NotImplementedError("reshape currently only supports order='C'")
+    newshape = _normalize_reshape_shape(newshape)
     return _api_internal.reshape(a, newshape, False, order)
 
 @set_module('mxnet.ndarray.numpy')
@@ -9952,6 +10319,8 @@ def diagonal(a, offset=0, axis1=0, axis2=1):
     array([[0, 6],
             [1, 7]])
     """
+    if axis1 == axis2:
+        raise ValueError('axis1 and axis2 cannot be the same')
     return _api_internal.diagonal(a, offset, axis1, axis2)
 
 

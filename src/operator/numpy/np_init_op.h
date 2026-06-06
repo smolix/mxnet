@@ -77,7 +77,7 @@ struct IndicesOpParam : public dmlc::Parameter<IndicesOpParam> {
   DMLC_DECLARE_PARAMETER(IndicesOpParam) {
     DMLC_DECLARE_FIELD(dimensions).describe("The shape of the grid.");
     DMLC_DECLARE_FIELD(dtype).set_default(-1).add_enum("None", -1)
-        MXNET_ADD_ALL_TYPES.describe("Target data type.");
+        MXNET_ADD_ALL_TYPES_EXT_WITH_BOOL.describe("Target data type.");
     DMLC_DECLARE_FIELD(ctx).set_default("").describe(
         "Context of output, in format [cpu|gpu|cpu_pinned](n)."
         "Only used for imperative calls.");
@@ -407,7 +407,7 @@ void IndicesCompute(const nnvm::NodeAttrs& attrs,
   if (out_data.Size() == 0)
     return;
   if (req[0] != kNullOp) {
-    MSHADOW_TYPE_SWITCH(out_data.type_flag_, DType, {
+    MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
       MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
         for (int i = 0; i < indim; ++i) {
           value = param.dimensions[i];
@@ -438,7 +438,7 @@ void IdentityCompute(const nnvm::NodeAttrs& attrs,
   Stream<xpu>* s        = ctx.get_stream<xpu>();
   const TBlob& out_data = outputs[0];
   int n                 = out_data.shape_[0];
-  MSHADOW_TYPE_SWITCH_WITH_BOOL(out_data.type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH_EXT_WITH_BOOL(out_data.type_flag_, DType, {
     MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {
       Kernel<identity<req_type>, xpu>::Launch(s, out_data.Size(), out_data.dptr<DType>(), n);
     });
@@ -539,6 +539,49 @@ void AtleastNDCompute(const nnvm::NodeAttrs& attrs,
   auto& param = nnvm::get<AtleastNDParam>(attrs.parsed);
   CHECK_EQ(inputs.size(), param.num_args);
   CHECK_EQ(outputs.size(), param.num_args);
+  for (int i = 0; i < param.num_args; ++i) {
+    UnaryOp::IdentityCompute<xpu>(attrs, ctx, {inputs[i]}, {req[i]}, {outputs[i]});
+  }
+}
+
+inline bool AtleastNDBackwardShape(const nnvm::NodeAttrs& attrs,
+                                   mxnet::ShapeVector* in_attrs,
+                                   mxnet::ShapeVector* out_attrs) {
+  auto& param = nnvm::get<AtleastNDParam>(attrs.parsed);
+  CHECK_EQ(in_attrs->size(), static_cast<size_t>(param.num_args * 2));
+  CHECK_EQ(out_attrs->size(), static_cast<size_t>(param.num_args));
+  for (int i = 0; i < param.num_args; ++i) {
+    SHAPE_ASSIGN_CHECK(*out_attrs, i, in_attrs->at(param.num_args + i));
+  }
+  return shape_is_known(*out_attrs);
+}
+
+inline bool AtleastNDBackwardType(const nnvm::NodeAttrs& attrs,
+                                  std::vector<int>* in_attrs,
+                                  std::vector<int>* out_attrs) {
+  auto& param = nnvm::get<AtleastNDParam>(attrs.parsed);
+  CHECK_EQ(in_attrs->size(), static_cast<size_t>(param.num_args * 2));
+  CHECK_EQ(out_attrs->size(), static_cast<size_t>(param.num_args));
+  for (int i = 0; i < param.num_args; ++i) {
+    TYPE_ASSIGN_CHECK(*out_attrs, i, in_attrs->at(param.num_args + i));
+  }
+  for (const int& type : *out_attrs) {
+    if (type_is_none(type)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+template <typename xpu>
+void AtleastNDBackwardCompute(const nnvm::NodeAttrs& attrs,
+                              const OpContext& ctx,
+                              const std::vector<TBlob>& inputs,
+                              const std::vector<OpReqType>& req,
+                              const std::vector<TBlob>& outputs) {
+  auto& param = nnvm::get<AtleastNDParam>(attrs.parsed);
+  CHECK_EQ(inputs.size(), static_cast<size_t>(param.num_args * 2));
+  CHECK_EQ(outputs.size(), static_cast<size_t>(param.num_args));
   for (int i = 0; i < param.num_args; ++i) {
     UnaryOp::IdentityCompute<xpu>(attrs, ctx, {inputs[i]}, {req[i]}, {outputs[i]});
   }

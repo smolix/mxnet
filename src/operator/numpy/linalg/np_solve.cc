@@ -42,6 +42,9 @@ inline bool SolveOpShape(const nnvm::NodeAttrs& attrs,
   if (!ndim_is_known(in_a_shape)) {
     return false;
   }
+  if (!ndim_is_known(in_b_shape)) {
+    return false;
+  }
   int in_a_ndim = in_a_shape.ndim(), in_b_ndim = in_b_shape.ndim();
 
   CHECK_GE(in_a_ndim, 2) << "Array must be at least two-dimensional";

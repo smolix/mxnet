@@ -26,9 +26,16 @@
 namespace mxnet {
 namespace op {
 
-NNVM_REGISTER_OP(_npi_matmul).set_attr<FCompute>("FCompute<gpu>", NumpyMatmulForward<gpu>);
+// cuBLAS-backed; not capture-safe (see FullyConnected / CUDA_GRAPHS_PLAN.md).
+NNVM_REGISTER_OP(_npi_matmul)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FCompute>("FCompute<gpu>", NumpyMatmulForward<gpu>);
 
-NNVM_REGISTER_OP(_backward_np_matmul).set_attr<FCompute>("FCompute<gpu>", NumpyMatmulBackward<gpu>);
+NNVM_REGISTER_OP(_backward_np_matmul)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FCompute>("FCompute<gpu>", NumpyMatmulBackward<gpu>);
 
 }  // namespace op
 }  // namespace mxnet

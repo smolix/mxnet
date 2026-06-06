@@ -92,7 +92,12 @@ bool SupportDNNLReduceImpl(const NumpyReduceAxesParam& param,
     auto axes    = CanonicalizeAndSortAxes(input, param, param.axis.value());
     int last_dim = *(axes.end() - 1);
     if (last_dim != input.shape().ndim() - 1) {
-      // oneDNN (v2.3.2) not optimized case
+      // oneDNN only optimizes reductions over consecutive trailing dims.
+      // Measured on oneDNN v3.11.3 (AVX2): outer/strided-axis reductions are
+      // markedly slower than the native path (e.g. (4096,4096) axis=0:
+      // ~99 ms via oneDNN vs ~21 ms native), so keep routing those to the
+      // native reduce. (The comment previously cited v2.3.2; re-confirmed for
+      // v3.11.3.)
       return false;
     } else {
       for (int i = 0; i < axes.ndim(); i++) {

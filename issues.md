@@ -56,6 +56,7 @@ Status labels:
 | Deferred | GH7, GH8, GH9 | Deferred | Horovod KVStore barrier API (GH7); FlexiBLAS / THP / `parallel_for` grain (GH8); TensorRT upgrade (GH9). | Out of scope until specific drivers exist. |
 | P2 | INT1 | Open (needs kernel work) | `mean` over integer input cannot yet honor the project convention `int -> int32 (rounded)`. | Implement a fused integer-mean-with-rounding reduce; see detail below. |
 | P2 | INT2 | Open (needs kernel work) | `matmul` / `dot` / `tensordot` reject integer inputs, but NumPy and PyTorch both compute them. | Add an integer GEMM (or async-safe float64 cast path); see detail below. |
+| P3 | INT3 | Resolved | Index dtype policy: `mx.np`/`mx.sym.np` reject non-integer indices (NumPy/PyTorch); legacy `mx.nd` keeps auto-casting float indices for back-compat. | Done: `take` split from `_npi_take` (templated `TakeOpType<require_int_index>`); legacy permissive, numpy strict. |
 
 ### Integer-dtype Convention Gaps (INT1, INT2)
 

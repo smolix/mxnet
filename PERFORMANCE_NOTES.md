@@ -80,12 +80,24 @@ dims; outer-axis via oneDNN is *worse* than native ((4096,4096) axis=0:
 ~99 ms oneDNN vs ~21 ms native), so the existing `SupportDNNLReduceImpl` gate
 is correct and was kept.
 
-Why not patched here: the remaining fixes are genuine reduce-kernel work in the
-CPU/GPU-shared `broadcast_reduce-inl.h` (two-stage parallel reduction for small
-N; vectorized/blocked strided reduction; GPU grid retune + vectorized loads).
-That code is shared across every reduction shape, dtype and arch; a correct
-change needs per-shape before/after benchmarks and broad validation. It is a
-scoped project, not a safe drop-in — flagged as the top remaining perf item.
+Status / fixes:
+- **CPU global sum/mean: FIXED** (commit "Add fast flat OpenMP path for global
+  sum/mean reduction"). A flat `#pragma omp parallel for reduction(+)` with a
+  double accumulator (`FlatGlobalSum` + a `SupportDNNLReduceImpl` global
+  exclusion) replaced the single-threaded path: float32 17→~48 GB/s (~2.8x,
+  and more accurate: rel_err 5e-9 vs 4.7e-6), float64 sum ~91 GB/s (~5x).
+  2429 reduction tests pass. (float64 *mean* still takes the native path — a
+  perf loose end, not a regression.)
+- **CPU outer/strided-axis** (~3 GB/s): still open — needs a vectorized/blocked
+  strided reduction in the native kernel; oneDNN is worse here (confirmed).
+- **GPU reductions** (~19% BW, ~190 GB/s): still open. The clean fix is to route
+  global sum/mean/max to `cub::DeviceReduce` (CUB is vendored in
+  `3rdparty/nvidia_cub` and already used by `optimizer_op.cu`). It must use a
+  `cub::TransformInputIterator` casting to a double accumulator (to preserve the
+  current `safe_acc` precision and not regress tight numeric tests), a double
+  temp output, and a small cast/normalize kernel honoring `req`. cub
+  DeviceReduce is near-peak (~900 GB/s on this GPU → ~5x). Scoped CUDA work;
+  validate across dtype/shape before landing.
 
 ## Notes / smaller items
 

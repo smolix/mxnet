@@ -136,10 +136,6 @@ def _get_dtype(array_or_dtype):
             raise ValueError("Inputs of result_type must be ndarrays or dtypes") from err
 
 
-def _is_scalar(array_or_dtype):
-    return onp.isscalar(array_or_dtype)
-
-
 def _is_weak_scalar(array_or_dtype):
     """A Python builtin number is a "weak" scalar (PyTorch wrapped number): it
     contributes only its category (bool < int < float < complex), not a width.
@@ -190,12 +186,6 @@ def _result_type_with_weak_scalars(arrays_and_dtypes):
             return _default_dtype_for_category(weak_cat)
         return ret
     return _default_dtype_for_category(weak_cat)
-
-
-def _to_numpy_result_type_arg(array_or_dtype):
-    if isinstance(array_or_dtype, ndarray):
-        return onp.empty((), dtype=array_or_dtype.dtype)
-    return array_or_dtype
 
 
 def result_type(*arrays_and_dtypes):

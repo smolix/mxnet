@@ -43,6 +43,24 @@ void ReduceAxesRTCComputeImpl(const OpContext& ctx,
   mxnet::TShape src_shape, dst_shape;
   BroadcastReduceShapeCompact(inputs[0].shape_, small, &src_shape, &dst_shape);
   Stream<gpu>* s = ctx.get_stream<gpu>();
+
+  // Fast path: global (scalar-output) sum/mean over a floating tensor goes to
+  // cub::DeviceReduce (double accumulation), which is several times faster than
+  // the generic RTC all-reduce. Restricted to fp16/fp32/fp64 (the types the
+  // helper instantiates); bf16/int and all axis reductions keep the RTC path.
+  {
+    const int dt = inputs[0].type_flag_;
+    if (req[0] != kNullOp && reducer == "red::sum{}" && OP == "identity" &&
+        dst_shape.Size() == 1 && inputs[0].type_flag_ == outputs[0].type_flag_ &&
+        (dt == kFloat32 || dt == kFloat64 || dt == kFloat16)) {
+      const double count = static_cast<double>(src_shape.Size()) - static_cast<double>(ddof);
+      MSHADOW_REAL_TYPE_SWITCH(dt, DType, {
+        CubGlobalSumReduce<DType>(ctx, inputs[0], outputs[0], normalize, count, req[0] == kAddTo);
+      });
+      return;
+    }
+  }
+
   Tensor<gpu, 1, char> w;
   if (workspace == nullptr) {
     size_t workspace_size = broadcast::ReduceWorkspaceSize(s, dst_shape, req[0], src_shape);

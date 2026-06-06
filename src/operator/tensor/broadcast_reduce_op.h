@@ -836,6 +836,17 @@ void ReduceAxesRTCComputeImpl(const OpContext& ctx,
                               const std::string& OP = "identity",
                               const int ddof        = 0);
 
+// Fast global (scalar-output) sum/mean reduction via cub::DeviceReduce.
+// Defined in reduce_cub.cu; accumulates in double. ``count`` is the divisor for
+// the mean case (number of reduced elements minus ddof).
+template <typename DType>
+void CubGlobalSumReduce(const OpContext& ctx,
+                        const TBlob& in,
+                        const TBlob& out,
+                        const bool mean,
+                        const double count,
+                        const bool addto);
+
 #endif
 
 template <typename red_op, int req, int axis>

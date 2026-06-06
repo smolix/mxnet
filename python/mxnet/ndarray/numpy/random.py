@@ -35,8 +35,11 @@ __all__ = ['randint', 'uniform', 'normal', "choice", "rand", "multinomial", "mul
 def _normalize_size(size):
     if size is None:
         return None
+    # MXNet uses -2 as a shape-inference placeholder ("take this dimension from
+    # the broadcasted distribution parameters"); gluon.probability relies on it.
+    # All other negative sizes are invalid, matching NumPy/PyTorch.
     if isinstance(size, (integer_types, np.integer)):
-        if size < 0:
+        if size < 0 and size != -2:
             raise ValueError("negative dimensions are not allowed")
         return int(size)
     if isinstance(size, (tuple, list)):
@@ -45,7 +48,7 @@ def _normalize_size(size):
             if not isinstance(dim, (integer_types, np.integer)):
                 raise TypeError("'{}' object cannot be interpreted as an integer"
                                 .format(type(dim).__name__))
-            if dim < 0:
+            if dim < 0 and dim != -2:
                 raise ValueError("negative dimensions are not allowed")
             dims.append(int(dim))
         return tuple(dims)

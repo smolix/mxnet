@@ -4500,6 +4500,9 @@ def concatenate(seq, axis=0, out=None):
     array([[1., 2., 5.],
            [3., 4., 6.]])
     """
+    # ``seq`` may be any iterable (incl. a generator); materialize before
+    # measuring length or expanding it twice.
+    seq = list(seq)
     if len(seq) == 0:
         raise ValueError("need at least one array to concatenate")
     return _npi.concatenate(*seq, dim=axis, out=out)

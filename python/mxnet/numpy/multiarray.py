@@ -923,7 +923,11 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
             if not unsupported:
                 new_shape += (-4,)
                 sliced = _npi.slice(self, begin, end, step)
-                return _mx_nd_np.reshape(sliced, new_shape)
+                # Use the low-level reshape op directly: ``new_shape`` carries
+                # MXNet special codes (-2 copy, -3 merge, -4 split) that the
+                # public np.reshape wrapper rejects (it enforces NumPy/PyTorch
+                # semantics where only -1 is allowed). Mirrors the symbol path.
+                return _npi.reshape(sliced, new_shape)
 
         # Special handling for cases only supported in imperative mode
         if dc.is_deferred_compute():

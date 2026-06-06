@@ -4990,9 +4990,11 @@ def concatenate(seq, axis=0, out=None):
     array([[1., 2., 5.],
            [3., 4., 6.]])
     """
+    # ``seq`` may be any iterable (incl. a generator), so materialize it before
+    # measuring length or iterating twice.
+    seq = [arr if isinstance(arr, NDArray) else _as_np_ndarray(arr) for arr in seq]
     if len(seq) == 0:
         raise ValueError("need at least one array to concatenate")
-    seq = [arr if isinstance(arr, NDArray) else _as_np_ndarray(arr) for arr in seq]
     return _api_internal.concatenate(*seq, axis, out)
 
 

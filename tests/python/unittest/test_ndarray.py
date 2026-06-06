@@ -546,7 +546,8 @@ def test_ndarray_slice():
 
     a = mx.nd.array([[0, 1], [2, 3]])
     assert (a[[1, 1, 0], [0, 1, 0]].asnumpy() == [2, 3, 0]).all()
-    assert (a[mx.nd.array([1, 1, 0]), mx.nd.array([0, 1, 0])].asnumpy() == [2, 3, 0]).all()
+    assert (a[mx.nd.array([1, 1, 0], dtype='int64'),
+              mx.nd.array([0, 1, 0], dtype='int64')].asnumpy() == [2, 3, 0]).all()
 
     shape = (4, 4)
     A = mx.nd.random.uniform(shape=shape)

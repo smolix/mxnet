@@ -318,6 +318,22 @@ void TVMOpReduce(const OpContext& ctx,
                  const OpReqType req,
                  const std::string& reducer_name);
 
+#ifndef __CUDACC__
+// Flat, OpenMP-parallel global sum with a double accumulator. Used by the
+// fast global-reduction path in NumpyReduceAxesCompute. The OpenMP pragma must
+// live in a real function (not inside a type-switch macro argument).
+template <typename DType, typename OP>
+inline double FlatGlobalSum(const DType* in, index_t total) {
+  const int nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  double acc         = 0.0;
+#pragma omp parallel for num_threads(nthreads) reduction(+ : acc)
+  for (index_t i = 0; i < total; ++i) {
+    acc += static_cast<double>(OP::Map(in[i]));
+  }
+  return acc;
+}
+#endif  // __CUDACC__
+
 template <typename xpu,
           typename reducer,
           bool safe_acc_hint = false,
@@ -400,6 +416,34 @@ void NumpyReduceAxesCompute(const nnvm::NodeAttrs& attrs,
   } else {
     small = NumpyReduceAxesShapeImpl(inputs[0].shape_, param.axis, true);
   }
+
+#ifndef __CUDACC__
+  // Fast CPU path for a global (scalar-output) sum/mean over a contiguous
+  // floating tensor. The generic reduce computes per-element coordinates via
+  // unravel(), which dominates a contiguous global reduce (oneDNN's global
+  // reduction is also single-threaded here). A flat OpenMP reduction with a
+  // double accumulator parallelizes the reduced dimension and is ~5x faster
+  // while at least as accurate. Other reducers/axes/dtypes fall through.
+  if (std::is_same<xpu, cpu>::value && std::is_same<reducer, mshadow_op::sum>::value &&
+      small.Size() == 1 && outputs[0].shape_.Size() == 1 &&
+      common::is_float(inputs[0].type_flag_) &&
+      inputs[0].type_flag_ == outputs[0].type_flag_) {
+    const index_t total = static_cast<index_t>(inputs[0].shape_.Size());
+    MSHADOW_REAL_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+      double acc = FlatGlobalSum<DType, OP>(inputs[0].dptr<DType>(), total);
+      if (normalize && total > 0) {
+        acc /= static_cast<double>(total);
+      }
+      DType* out = outputs[0].dptr<DType>();
+      if (req[0] == kAddTo) {
+        out[0] += static_cast<DType>(acc);
+      } else {
+        out[0] = static_cast<DType>(acc);
+      }
+    });
+    return;
+  }
+#endif  // __CUDACC__
 
   if (NeedSafeAcc<safe_acc_hint>(inputs[0].type_flag_, outputs[0].type_flag_)) {
     ReduceAxesComputeImpl<xpu, reducer, true, normalize, OP>(ctx, inputs, req, outputs, small);

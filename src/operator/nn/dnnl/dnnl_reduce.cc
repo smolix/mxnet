@@ -88,6 +88,13 @@ bool SupportDNNLReduceImpl(const NumpyReduceAxesParam& param,
                            const NDArray& input,
                            const NDArray& output) {
   bool param_supported = true;
+  // Global reduction (scalar output): oneDNN's reduction runs single-threaded
+  // here (~17 GB/s). The numpy reduce has a flat OpenMP fast path for the
+  // global sum/mean case (see FlatGlobalSum in np_broadcast_reduce_op.h) that
+  // is several times faster, so route global reductions away from oneDNN.
+  if (output.shape().Size() == 1 && input.shape().Size() > 1) {
+    return false;
+  }
   if (param.axis.has_value()) {
     auto axes    = CanonicalizeAndSortAxes(input, param, param.axis.value());
     int last_dim = *(axes.end() - 1);

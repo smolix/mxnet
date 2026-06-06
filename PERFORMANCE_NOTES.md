@@ -49,26 +49,43 @@ already resolved or never reproduced on Ada:
 
 ## Real, open performance issue
 
-### GPU reductions run at ~30% of memory bandwidth (top opportunity)
+### Reductions are slow on both GPU and CPU (root-caused; needs a kernel project)
 
-`sum`, `max`, `min` (and reduction-backed ops) sustain only **~300 GB/s**
-(~30% of the 1008 GB/s peak) for large inputs, across all output shapes
-(scalar output and axis reductions alike). A bandwidth-bound reduction should
-reach ~80–90% (cf. CUB/thrust); elementwise `add` on the same data already
-reaches ~80%, so this is a ~2.5–3× gap specific to the reduction kernel.
+Measured `sum`/`mean`/`max` reduction throughput:
 
-- Location: `src/operator/tensor/reduce_rtc.cc` (RTC reduce kernels) +
-  `ReduceImplConfig` in `src/operator/tensor/broadcast_reduce-inl.h`
-  (constants `nthread_reduce=512`, `kBaseGridNum=1024`, `maxLoopPerTB=64`).
-- Hypothesis (for the all-reduce N=1 case): `gridDim.x` collapses to 1, so all
-  parallelism is in `gridDim.y=Mnext` (~512 blocks) with a long per-block serial
-  loop (`maxLoopPerTB=64`) and shared-memory tree reduction; loads are not
-  vectorized (no float4). Likely under-occupied and latency-bound.
-- Why it's not patched here: the config is shared by every reduction shape and
-  dtype; a correct fix needs vectorized loads and/or a retuned grid validated
-  across the full (N, M, axis, dtype) space and ideally multiple archs, with
-  before/after benchmarks per shape. That is a scoped optimization project, not
-  a safe one-liner. Tracked for follow-up.
+| case | GPU (RTX 4090) | CPU (EPYC 7502, 16t) |
+|---|---|---|
+| trailing-axis reduce (e.g. (4096,4096) axis=1) | ~30% BW | fast (oneDNN `jit:avx`, 0.5 ms) |
+| global reduce (→ scalar) | ~30% BW (300 GB/s) | **17 GB/s, single-threaded** |
+| outer/strided-axis reduce (axis=0) | ~30% BW | **~3 GB/s** (21 ms) native |
+
+Root causes:
+- **GPU** (`reduce_rtc.cc` + `ReduceImplConfig` in `broadcast_reduce-inl.h`,
+  `nthread_reduce=512`, `kBaseGridNum=1024`, `maxLoopPerTB=64`): for the
+  all-reduce N=1 case `gridDim.x` collapses to 1; parallelism is only in
+  `gridDim.y` (~512 blocks) with a long per-block serial loop and a
+  shared-memory tree reduction; loads are not vectorized (no float4).
+- **CPU global reduce**: the native `seq_reduce_compute` (`broadcast_reduce-inl.h`)
+  parallelizes its `#pragma omp parallel for` over the OUTPUT elements N. A
+  global reduce has N=1, so it runs on a single thread regardless of
+  `OMP_NUM_THREADS` (oneDNN's global reduction is likewise single-threaded).
+  Needs a two-stage reduction (split the reduced dim M across threads → partial
+  sums → combine) when N is small.
+- **CPU outer-axis reduce**: parallel over N but the per-output reduction walks
+  memory with a large stride and is not vectorized → ~3 GB/s.
+
+Investigated and rejected (measured): routing non-trailing-axis reductions to
+oneDNN. oneDNN v3.11.3's reduction is only optimized for consecutive trailing
+dims; outer-axis via oneDNN is *worse* than native ((4096,4096) axis=0:
+~99 ms oneDNN vs ~21 ms native), so the existing `SupportDNNLReduceImpl` gate
+is correct and was kept.
+
+Why not patched here: the remaining fixes are genuine reduce-kernel work in the
+CPU/GPU-shared `broadcast_reduce-inl.h` (two-stage parallel reduction for small
+N; vectorized/blocked strided reduction; GPU grid retune + vectorized loads).
+That code is shared across every reduction shape, dtype and arch; a correct
+change needs per-shape before/after benchmarks and broad validation. It is a
+scoped project, not a safe drop-in — flagged as the top remaining perf item.
 
 ## Notes / smaller items
 

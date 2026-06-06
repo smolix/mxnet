@@ -332,6 +332,148 @@ inline double FlatGlobalSum(const DType* in, index_t total) {
   }
   return acc;
 }
+
+// Cache-friendly outer-axis (leading-axes) sum/mean: out[j] = sum_m in[m*N + j]
+// for j in [0, N). The generic reduce walks this with per-element unravel() and
+// a column stride, which collapses to ~3 GB/s; here each thread streams a
+// contiguous row-range into a private double accumulator vector, then the
+// partials are combined. ``count`` is the divisor for the mean case.
+template <typename DType, typename OP>
+inline void FlatOuterAxisSum(const DType* in,
+                             DType* out,
+                             index_t M,
+                             index_t N,
+                             bool normalize,
+                             double count,
+                             bool addto) {
+  const int nt = std::max(1, engine::OpenMP::Get()->GetRecommendedOMPThreadCount());
+  // Reuse a per-(calling-)thread scratch buffer across calls instead of heap-
+  // allocating nt*N doubles every invocation. The buffer is thread_local to the
+  // engine worker that runs this FCompute, which makes it safe when different
+  // reduction ops run concurrently on different workers. NOTE: the OpenMP
+  // parallel regions below must address it through the plain ``base`` pointer
+  // captured here on the calling thread -- referencing ``partial`` directly
+  // inside an omp region would resolve to each *worker* thread's own (empty)
+  // thread_local instance and write through a null/garbage pointer.
+  static thread_local std::vector<double> partial;
+  const size_t need = static_cast<size_t>(nt) * static_cast<size_t>(N);
+  if (partial.size() < need) {
+    partial.resize(need);
+  }
+  std::fill(partial.begin(), partial.begin() + need, 0.0);
+  double* const base  = partial.data();
+  const index_t chunk = (M + nt - 1) / nt;
+#pragma omp parallel for num_threads(nt) schedule(static)
+  for (int t = 0; t < nt; ++t) {
+    double* loc            = base + static_cast<size_t>(t) * static_cast<size_t>(N);
+    const index_t m0       = static_cast<index_t>(t) * chunk;
+    const index_t m1       = std::min(M, m0 + chunk);
+    for (index_t m = m0; m < m1; ++m) {
+      const DType* row = in + static_cast<size_t>(m) * static_cast<size_t>(N);
+      for (index_t j = 0; j < N; ++j) {
+        loc[j] += static_cast<double>(OP::Map(row[j]));
+      }
+    }
+  }
+#pragma omp parallel for num_threads(nt) schedule(static)
+  for (index_t j = 0; j < N; ++j) {
+    double v = 0.0;
+    for (int t = 0; t < nt; ++t) {
+      v += base[static_cast<size_t>(t) * static_cast<size_t>(N) + j];
+    }
+    if (normalize) {
+      v /= count;
+    }
+    if (addto) {
+      out[j] = static_cast<DType>(static_cast<double>(out[j]) + v);
+    } else {
+      out[j] = static_cast<DType>(v);
+    }
+  }
+}
+
+// Unified fast CPU path for float sum/mean: handles global (scalar output) and
+// leading-axes ("outer") reductions of a contiguous tensor. Returns true if it
+// handled the op. Other reducers/axes/dtypes return false (fall through).
+template <typename xpu, typename reducer, bool normalize, typename OP>
+inline bool TryFastCpuFloatSum(const std::vector<TBlob>& inputs,
+                               const std::vector<OpReqType>& req,
+                               const std::vector<TBlob>& outputs,
+                               const NumpyReduceAxesParam& param,
+                               const mxnet::TShape& small) {
+  if (!std::is_same<xpu, cpu>::value || !std::is_same<reducer, mshadow_op::sum>::value) {
+    return false;
+  }
+  if (!common::is_float(inputs[0].type_flag_) ||
+      inputs[0].type_flag_ != outputs[0].type_flag_ || req[0] == kNullOp) {
+    return false;
+  }
+  const index_t total = static_cast<index_t>(inputs[0].shape_.Size());
+  if (total <= 1) {
+    return false;
+  }
+  const bool addto = (req[0] == kAddTo);
+  // Global (scalar-output) reduction.
+  if (small.Size() == 1 && outputs[0].shape_.Size() == 1) {
+    MSHADOW_REAL_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+      double acc = FlatGlobalSum<DType, OP>(inputs[0].dptr<DType>(), total);
+      if (normalize) {
+        acc /= static_cast<double>(total);
+      }
+      DType* out = outputs[0].dptr<DType>();
+      if (addto) {
+        out[0] += static_cast<DType>(acc);
+      } else {
+        out[0] = static_cast<DType>(acc);
+      }
+    });
+    return true;
+  }
+  // Outer reduction: reduced axes must be a contiguous leading run {0,1,...,k}.
+  if (!param.axis.has_value()) {
+    return false;
+  }
+  const mxnet::Tuple<int>& axv = param.axis.value();
+  const int ndim               = inputs[0].shape_.ndim();
+  if (axv.ndim() == 0 || axv.ndim() >= ndim) {
+    return false;
+  }
+  std::vector<int> ax(axv.begin(), axv.end());
+  for (auto& a : ax) {
+    if (a < 0) {
+      a += ndim;
+    }
+  }
+  std::sort(ax.begin(), ax.end());
+  for (int i = 0; i < static_cast<int>(ax.size()); ++i) {
+    if (ax[i] != i) {
+      return false;  // not a leading-axes reduction
+    }
+  }
+  const int k  = ax.back();
+  index_t outN = 1;
+  for (int d = k + 1; d < ndim; ++d) {
+    outN *= inputs[0].shape_[d];
+  }
+  const index_t outM = total / outN;
+  if (outM < 8) {
+    return false;  // reduced extent too small to be worth it
+  }
+  const int nt = std::max(1, engine::OpenMP::Get()->GetRecommendedOMPThreadCount());
+  if (static_cast<size_t>(nt) * static_cast<size_t>(outN) * sizeof(double) > (static_cast<size_t>(256) << 20)) {
+    return false;  // per-thread scratch too large; let the generic path handle it
+  }
+  MSHADOW_REAL_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+    FlatOuterAxisSum<DType, OP>(inputs[0].dptr<DType>(),
+                                outputs[0].dptr<DType>(),
+                                outM,
+                                outN,
+                                normalize,
+                                static_cast<double>(outM),
+                                addto);
+  });
+  return true;
+}
 #endif  // __CUDACC__
 
 template <typename xpu,
@@ -418,29 +560,8 @@ void NumpyReduceAxesCompute(const nnvm::NodeAttrs& attrs,
   }
 
 #ifndef __CUDACC__
-  // Fast CPU path for a global (scalar-output) sum/mean over a contiguous
-  // floating tensor. The generic reduce computes per-element coordinates via
-  // unravel(), which dominates a contiguous global reduce (oneDNN's global
-  // reduction is also single-threaded here). A flat OpenMP reduction with a
-  // double accumulator parallelizes the reduced dimension and is ~5x faster
-  // while at least as accurate. Other reducers/axes/dtypes fall through.
-  if (std::is_same<xpu, cpu>::value && std::is_same<reducer, mshadow_op::sum>::value &&
-      small.Size() == 1 && outputs[0].shape_.Size() == 1 &&
-      common::is_float(inputs[0].type_flag_) &&
-      inputs[0].type_flag_ == outputs[0].type_flag_) {
-    const index_t total = static_cast<index_t>(inputs[0].shape_.Size());
-    MSHADOW_REAL_TYPE_SWITCH(inputs[0].type_flag_, DType, {
-      double acc = FlatGlobalSum<DType, OP>(inputs[0].dptr<DType>(), total);
-      if (normalize && total > 0) {
-        acc /= static_cast<double>(total);
-      }
-      DType* out = outputs[0].dptr<DType>();
-      if (req[0] == kAddTo) {
-        out[0] += static_cast<DType>(acc);
-      } else {
-        out[0] = static_cast<DType>(acc);
-      }
-    });
+  // Fast CPU path for float sum/mean over global or leading-axes reductions.
+  if (TryFastCpuFloatSum<xpu, reducer, normalize, OP>(inputs, req, outputs, param, small)) {
     return;
   }
 #endif  // __CUDACC__
@@ -519,6 +640,14 @@ void NumpyReduceAxesComputeExt(const nnvm::NodeAttrs& attrs,
   } else {
     small = NumpyReduceAxesShapeImpl(inputs[0].shape_, param.axis, true);
   }
+
+#ifndef __CUDACC__
+  // Fast CPU path for float sum/mean over global or leading-axes reductions
+  // (same-dtype only; differing in/out dtype falls through to the casting Ext path).
+  if (TryFastCpuFloatSum<xpu, reducer, normalize, OP>(inputs, req, outputs, param, small)) {
+    return;
+  }
+#endif  // __CUDACC__
 
   if (NeedSafeAcc<safe_acc_hint>(inputs[0].type_flag_, outputs[0].type_flag_)) {
     ReduceAxesComputeImplExt<xpu, reducer, true, normalize, OP>(ctx, inputs, req, outputs, small);

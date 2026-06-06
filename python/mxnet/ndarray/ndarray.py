@@ -1149,13 +1149,21 @@ fixed-size items.
         else:
             idx_dtype = 'int32'
         if isinstance(idx, NDArray):
+            if np.dtype(idx.dtype).kind == 'b':
+                # Boolean mask: expand to integer positions (NumPy semantics).
+                idx = np.flatnonzero(idx.asnumpy())
+                return array(idx, ctx, idx_dtype)
             if np.dtype(idx.dtype).kind not in ('i', 'u'):
                 raise IndexError('arrays used as indices must be of integer type')
             if idx.dtype != idx_dtype:
                 idx = idx.astype(idx_dtype)
             return idx.to_device(ctx) if hasattr(idx, 'to_device') else idx.as_in_context(ctx)
         elif isinstance(idx, (np.ndarray, list, tuple)):
-            if np.asarray(idx).dtype.kind not in ('i', 'u'):
+            idx_kind = np.asarray(idx).dtype.kind
+            if idx_kind == 'b':
+                # Boolean mask: expand to integer positions (NumPy semantics).
+                return array(np.flatnonzero(np.asarray(idx)), ctx, idx_dtype)
+            if idx_kind not in ('i', 'u'):
                 raise IndexError('arrays used as indices must be of integer type')
             return array(idx, ctx, idx_dtype)
         elif isinstance(idx, integer_types):

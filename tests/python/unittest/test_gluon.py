@@ -1838,7 +1838,7 @@ def test_grad_graph_change():
             row = array.take(index)
             return row, index
     array = mx.np.arange(3)
-    index = mx.np.array([2])
+    index = mx.np.array([2], dtype='int64')
     array.attach_grad()
     model = Model()
     model.hybridize(inline_limit=0)

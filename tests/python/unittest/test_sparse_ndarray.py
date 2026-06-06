@@ -1023,7 +1023,7 @@ def test_sparse_take():
         data_shape = rand_shape_2d()
         idx_shape = (np.random.randint(low=1, high=10),)
         data = rand_ndarray(data_shape, 'csr', density=density).astype('int32')
-        idx = mx.nd.array(np.random.randint(low=-5, high=15, size=idx_shape))
+        idx = mx.nd.array(np.random.randint(low=-5, high=15, size=idx_shape), dtype='int64')
         data_np = data.asnumpy()
         idx_np = idx.asnumpy().astype('int32')
         expected_result = np.take(data_np, idx_np, mode=mode, axis=0)

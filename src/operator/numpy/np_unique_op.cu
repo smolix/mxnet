@@ -36,9 +36,10 @@ namespace op {
       typedef double DType;                                    \
       { __VA_ARGS__ }                                          \
     } break;                                                   \
-    case mshadow::kFloat16:                                    \
-      LOG(FATAL) << "This operation does not support float16"; \
-      break;                                                   \
+    case mshadow::kFloat16: {                                  \
+      typedef mshadow::half::half_t DType;                     \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
     case mshadow::kUint8: {                                    \
       typedef uint8_t DType;                                   \
       { __VA_ARGS__ }                                          \

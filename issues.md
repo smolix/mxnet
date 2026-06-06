@@ -54,6 +54,41 @@ Status labels:
 | Strategic | O8, O9 | Informational / Deferred | Apache MXNet archived 2023-11-17 — all fixes live in this fork (O8). Future oneDNN major releases will require porting (O9). | — |
 | Strategic | P1, P3, P4, P5 | Deferred / Hardware | cuBLASLt default-on / stride-aware / INT8 (P1); topk K-independence (P3); softmax / LayerNorm small-op kernel pipelines (P4); BF16 CPU validation on AVX-512-BF16 hardware (P5). | Defer; benchmark harness driven. |
 | Deferred | GH7, GH8, GH9 | Deferred | Horovod KVStore barrier API (GH7); FlexiBLAS / THP / `parallel_for` grain (GH8); TensorRT upgrade (GH9). | Out of scope until specific drivers exist. |
+| P2 | INT1 | Open (needs kernel work) | `mean` over integer input cannot yet honor the project convention `int -> int32 (rounded)`. | Implement a fused integer-mean-with-rounding reduce; see detail below. |
+| P2 | INT2 | Open (needs kernel work) | `matmul` / `dot` / `tensordot` reject integer inputs, but NumPy and PyTorch both compute them. | Add an integer GEMM (or async-safe float64 cast path); see detail below. |
+
+### Integer-dtype Convention Gaps (INT1, INT2)
+
+Context: the `fix-bf16-dnnl-unittest-bugs` branch aligns numpy-operator return
+types with PyTorch conventions where PyTorch deviates from NumPy. Most of that
+landed (int×float promotion keeps the float width; `result_type` weak scalars;
+`norm`/`var`/`std`/`average` over int → float32; `unique(float16)` and integer
+`cross` accepted). Two items remain because they are **not safe drop-in
+changes** — both hit the same backend constraints:
+
+- **INT1 — `mean(int) → int32` with rounding.** Decided convention: integer
+  `mean` returns `int32` rounded (NumPy returns float64; PyTorch errors). The
+  reduce (`ReduceAxesComputeImpl`) already consumes the `kTempSpace` resource for
+  its own workspace, so a float intermediate taken from that same pool collides;
+  heap `NDArray` temps would be freed at `FCompute` return while async GPU
+  kernels still reference them (use-after-free, since locally-created NDArrays
+  are not tracked as engine vars). Correct fix: a fused integer-mean reduce that
+  accumulates in a wider type and rounds in the normalize step, or an
+  engine-var-tracked scratch buffer.
+
+- **INT2 — integer `matmul` / `dot` / `tensordot`.** These kernels are
+  `MSHADOW_REAL_TYPE_SWITCH` over BLAS GEMM; there is no integer GEMM. Removing
+  the float-only type check alone does not enable integer support. A float64
+  cast-fallback hits the same `kTempSpace` collision / GPU async-lifetime hazard
+  as INT1 (each op already requests `kTempSpace` for transpose workspaces).
+  Correct fix: a dedicated integer matmul kernel (CPU + GPU), or an async-safe
+  cast path using engine-tracked scratch. Interim option (imperative only):
+  cast-to-float in the Python wrappers, but that diverges from the
+  symbolic/hybridized path and is therefore not applied.
+
+`cross` is the contrasting case that *was* fixable in-place: it is purely
+elementwise (no BLAS, no float intermediate), so its forward type switch was
+simply widened to `MSHADOW_TYPE_SWITCH`.
 
 ### Cross-Platform Lifecycle Coverage TODO (T11)
 

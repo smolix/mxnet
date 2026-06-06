@@ -92,8 +92,12 @@ inline bool NumpyCrossType(const nnvm::NodeAttrs& attrs,
     return false;
   }
   const int dtype = out_attrs->at(0);
-  CHECK(dtype == mshadow::kFloat32 || dtype == mshadow::kFloat64)
-      << "cross only supports float32 and float64 input types";
+  // PyTorch/NumPy both accept integer cross products (it is purely elementwise
+  // mul/sub). Support the dtypes covered by MSHADOW_TYPE_SWITCH.
+  CHECK(dtype == mshadow::kFloat16 || dtype == mshadow::kFloat32 || dtype == mshadow::kFloat64 ||
+        dtype == mshadow::kInt8 || dtype == mshadow::kUint8 || dtype == mshadow::kInt32 ||
+        dtype == mshadow::kInt64)
+      << "cross supports float16/32/64 and int8/uint8/int32/int64 input types";
   return true;
 }
 

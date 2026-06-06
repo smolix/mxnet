@@ -122,7 +122,9 @@ bool NumpyNormType(const nnvm::NodeAttrs& attrs,
   int in_type = in_attrs->at(0);
   int out_type;
   if (!common::is_float(in_type)) {
-    out_type = mshadow::kFloat64;
+    // PyTorch errors on integer norm; project convention returns float32
+    // (NumPy returns float64).
+    out_type = mshadow::kFloat32;
   } else {
     out_type = in_type;
   }

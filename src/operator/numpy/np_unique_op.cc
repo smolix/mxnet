@@ -40,9 +40,10 @@ namespace op {
       typedef double DType;                                    \
       { __VA_ARGS__ }                                          \
     } break;                                                   \
-    case mshadow::kFloat16:                                    \
-      LOG(FATAL) << "This operation does not support float16"; \
-      break;                                                   \
+    case mshadow::kFloat16: {                                  \
+      typedef mshadow::half::half_t DType;                     \
+      { __VA_ARGS__ }                                          \
+    } break;                                                   \
     case mshadow::kUint8: {                                    \
       typedef uint8_t DType;                                   \
       { __VA_ARGS__ }                                          \
@@ -91,7 +92,6 @@ inline bool NumpyUniqueType(const nnvm::NodeAttrs& attrs,
                             std::vector<int>* in_attrs,
                             std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 1U);
-  CHECK_NE(in_attrs->at(0), mshadow::kFloat16) << "unique does not support float16";
   TYPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(0));
   TYPE_ASSIGN_CHECK(*in_attrs, 0, out_attrs->at(0));
   for (size_t i = 1; i < out_attrs->size(); ++i) {

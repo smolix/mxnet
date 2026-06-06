@@ -4542,8 +4542,11 @@ def test_take(mode, out_of_range, data_ndim, idx_ndim):
             idx = mx.sym.Variable('indices')
             idx = mx.sym.BlockGrad(idx)
             result = mx.sym.take(a=data, indices=idx, axis=axis, mode=mode)
+            # take requires integer indices (PyTorch convention); bind the
+            # indices input as int64 rather than the default float32.
             exe = result._simple_bind(default_device(), a=data_shape,
-                                    indices=idx_shape)
+                                    indices=idx_shape,
+                                    type_dict={'a': 'float32', 'indices': 'int64'})
             data_real = np.random.normal(size=data_shape).astype('float32')
             if out_of_range:
                 idx_real = np.random.randint(low=-data_shape[axis], high=data_shape[axis], size=idx_shape)
@@ -4559,7 +4562,7 @@ def test_take(mode, out_of_range, data_ndim, idx_ndim):
             grad_in = np.zeros(data_shape, dtype='float32')
 
             exe.arg_dict['a'][:] = mx.nd.array(data_real)
-            exe.arg_dict['indices'][:] = mx.nd.array(idx_real)
+            exe.arg_dict['indices'][:] = mx.nd.array(idx_real, dtype='int64')
             exe.forward(is_train=True)
             if out_of_range and mode == 'raise':
                 try:
@@ -8600,16 +8603,16 @@ def test_ravel():
       a = mx.sym.Variable('a')
       ravel_npy = np.ravel_multi_index(data, shape)
       b = mx.sym.ravel_multi_index(a, shape=shape)
-      check_symbolic_forward(b, location={'a': data}, expected=[ravel_npy])
+      check_symbolic_forward(b, location={'a': data}, expected=[ravel_npy], dtype="asnumpy")
       c = mx.sym.unravel_index(a, shape=shape)
-      check_symbolic_forward(c, location={'a': ravel_npy}, expected=[data])
+      check_symbolic_forward(c, location={'a': ravel_npy}, expected=[data], dtype="asnumpy")
       # Test with leading dimension set to -1.
       shape2 = shape
       shape2 = (-1,)+shape[1:]
       b = mx.sym.ravel_multi_index(a, shape=shape2)
-      check_symbolic_forward(b, location={'a': data}, expected=[ravel_npy])
+      check_symbolic_forward(b, location={'a': data}, expected=[ravel_npy], dtype="asnumpy")
       c = mx.sym.unravel_index(a, shape=shape2)
-      check_symbolic_forward(c, location={'a': ravel_npy}, expected=[data])
+      check_symbolic_forward(c, location={'a': ravel_npy}, expected=[data], dtype="asnumpy")
 
 
 def test_unravel_index():
@@ -8618,7 +8621,8 @@ def test_unravel_index():
     for shape in [(10,), (2, 10), (3, 4, 5)]:
         a = np.random.randint(0, unravel_size, size=shape)
         b = np.stack(np.unravel_index(a, shape=unravel_shape), 0)
-        a_mx = mx.nd.array(a)
+        # unravel_index requires integer indices (PyTorch convention).
+        a_mx = mx.nd.array(a, dtype='int64')
         b_mx = mx.nd.unravel_index(a_mx, shape=unravel_shape)
         assert_array_equal(b, b_mx.asnumpy())
 
@@ -10408,7 +10412,7 @@ def test_take_grads():
             X1 = self.den(X)
             print(X1.shape)
             if self.use_take:
-                X2 = mx_np.take(X1, mx_np.array([0]), axis=axis)
+                X2 = mx_np.take(X1, mx_np.array([0], dtype='int64'), axis=axis)
             else:
                 X2 = mx_npx.slice(X1.T, begin=0, end=1).T
             return X2

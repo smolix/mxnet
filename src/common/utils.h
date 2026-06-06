@@ -992,21 +992,14 @@ inline int type_promotion(const int type1, const int type2) {
     }
     return mshadow::kFloat16;
   } else if (is_float(type1) || is_float(type2)) {
-    const int float_type = is_float(type1) ? type1 : type2;
-    const int other_type = is_float(type1) ? type2 : type1;
-    if (other_type == mshadow::kBool || float_type == mshadow::kFloat64) {
-      return float_type;
-    }
-    if (float_type == mshadow::kFloat32) {
-      return bits_of(other_type) <= 16 ? mshadow::kFloat32 : mshadow::kFloat64;
-    }
-    if (float_type == mshadow::kFloat16) {
-      if (bits_of(other_type) <= 8) {
-        return mshadow::kFloat16;
-      }
-      return bits_of(other_type) <= 16 ? mshadow::kFloat32 : mshadow::kFloat64;
-    }
-    return float_type;
+    // PyTorch convention: mixing a floating type with an integer or boolean
+    // type keeps the floating operand's width (e.g. int64 x float16 -> float16,
+    // int32 x float32 -> float32). This differs from NumPy, which promotes to a
+    // float wide enough to represent the integer operand (-> float64). Keeping
+    // the float width also guarantees the output dtype always equals the float
+    // input, so the mixed-precision compute path never needs to cast both
+    // inputs to a third dtype.
+    return is_float(type1) ? type1 : type2;
   }
   if (is_signed_int(type1) && is_signed_int(type2)) {
     if (type1 == mshadow::kInt64 || type2 == mshadow::kInt64) {

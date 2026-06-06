@@ -109,7 +109,11 @@ struct CrossOutAssign {
                                   const index_t index,
                                   const size_t msize) {
     if (index < stride && i * stride + index < msize) {
-      KERNEL_ASSIGN(out_ptr[i * stride + index], req, positive == 1 ? in_ptr[i] : -in_ptr[i]);
+      // Cast keeps the ternary type-stable for low-precision floats (half/bf16),
+      // where unary minus would otherwise promote to float and mismatch.
+      KERNEL_ASSIGN(out_ptr[i * stride + index],
+                    req,
+                    positive == 1 ? in_ptr[i] : static_cast<DType>(-in_ptr[i]));
     }
   }
 };
@@ -635,7 +639,7 @@ void NumpyCrossForward(const nnvm::NodeAttrs& attrs,
       {a_moveaxis_shape, b_moveaxis_shape, c_moveaxis_shape});
   const std::vector<Tuple<int> > index_vec({a_moveaxis_index, b_moveaxis_index, c_moveaxis_index});
 
-  MSHADOW_SGL_DBL_TYPE_SWITCH(c.type_flag_, DType, {
+  MSHADOW_TYPE_SWITCH(c.type_flag_, DType, {
     // Calculate workspace.
     size_t workspace_size = NumpyCrossWorkspaceSize<xpu, DType>(
         a_moveaxis_shape, b_moveaxis_shape, c_moveaxis_shape, a_axis, b_axis, ctx, req);

@@ -7349,14 +7349,16 @@ def test_np_linalg_norm_invalid_orders():
 
 @use_np
 def test_np_linalg_norm_integer_promotes_to_float():
+    # PyTorch errors on integer norm; project convention returns float32
+    # (NumPy returns float64).
     data = np.array([3, 4], dtype='int32')
     ret = np.linalg.norm(data)
-    assert ret.dtype == onp.dtype('float64')
-    assert_almost_equal(ret.asnumpy(), onp.linalg.norm(data.asnumpy()))
+    assert ret.dtype == onp.dtype('float32')
+    assert_almost_equal(ret.asnumpy(), onp.linalg.norm(data.asnumpy()).astype('float32'))
 
     sym_data = mx.sym.var('norm_data').as_np_ndarray()
     sym_ret = mx.sym.np.linalg.norm(sym_data)
-    assert sym_ret.infer_type(norm_data='int32')[1] == [onp.dtype('float64')]
+    assert sym_ret.infer_type(norm_data='int32')[1] == [onp.dtype('float32')]
 
 
 @use_np
@@ -10155,15 +10157,15 @@ def test_np_unique_bool():
 
 
 @use_np
-def test_np_unique_float16_rejected():
-    data = np.array([1, 1, 2], dtype='float16')
-    with pytest.raises(mx.MXNetError, match="unique does not support float16"):
-        np.unique(data, return_counts=True)
-
-    sym_data = mx.sym.var('data').as_np_ndarray()
-    with pytest.raises(mx.MXNetError, match="unique does not support float16"):
-        sym_out = mx.sym.np.unique(sym_data, return_counts=True)
-        mx.sym.Group([out.as_nd_ndarray() for out in sym_out]).infer_type(data='float16')
+def test_np_unique_float16():
+    # PyTorch and NumPy both support unique on float16; we accept it (it was
+    # previously rejected).
+    data = np.array([1, 1, 2, 3, 2], dtype='float16')
+    mx_u, mx_c = np.unique(data, return_counts=True)
+    np_u, np_c = onp.unique(data.asnumpy(), return_counts=True)
+    assert mx_u.dtype == onp.dtype('float16')
+    onp.testing.assert_array_equal(mx_u.asnumpy(), np_u)
+    onp.testing.assert_array_equal(mx_c.asnumpy(), np_c)
 
 
 @use_np
@@ -13381,16 +13383,31 @@ def test_np_cross_backward_lower_rank_broadcast_grad():
 
 
 @use_np
+@pytest.mark.parametrize('dtype', ['int8', 'int32', 'int64'])
+def test_np_cross_integer_supported(dtype):
+    # PyTorch and NumPy both compute integer cross products (purely elementwise
+    # mul/sub); we accept the dtypes covered by MSHADOW_TYPE_SWITCH.
+    a = np.array([1, 2, 3], dtype=dtype)
+    b = np.array([4, 5, 6], dtype=dtype)
+    mx_out = np.cross(a, b)
+    np_out = onp.cross(a.asnumpy(), b.asnumpy())
+    assert mx_out.dtype == onp.dtype(dtype)
+    onp.testing.assert_array_equal(mx_out.asnumpy(), np_out)
+
+
+@use_np
 @pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
 def test_np_cross_unsupported_dtypes_rejected(dtype):
+    # bool and the extended integer widths are not covered by the kernel's type
+    # switch and are rejected at type inference.
     a = np.array([1, 2, 3], dtype=dtype)
     b = np.array([1, 2, 3], dtype=dtype)
-    with pytest.raises((ValueError, mx.MXNetError), match="float32 and float64"):
+    with pytest.raises((ValueError, mx.MXNetError)):
         np.cross(a, b).asnumpy()
 
     a_sym = mx.sym.var('a').as_np_ndarray()
     b_sym = mx.sym.var('b').as_np_ndarray()
-    with pytest.raises(mx.MXNetError, match="float32 and float64"):
+    with pytest.raises(mx.MXNetError):
         mx.sym.np.cross(a_sym, b_sym).as_nd_ndarray().infer_type(a=dtype, b=dtype)
 
 
@@ -14153,10 +14170,19 @@ def test_np_floor_divide_mixed_int_float16_boundary():
     ('int32', 'float16'),
     ('uint32', 'float32'),
 ])
-def test_np_mixed_int_float_promotion_matches_numpy(lhs_dtype, rhs_dtype):
+def test_np_mixed_int_float_promotion_matches_pytorch(lhs_dtype, rhs_dtype):
+    # PyTorch convention: mixing an integer with a floating dtype keeps the
+    # floating operand's width (int32 x float16 -> float16), unlike NumPy which
+    # promotes to a float wide enough to hold the integer (-> float64).
+    def pytorch_promote(d1, d2):
+        f1 = onp.issubdtype(d1, onp.floating)
+        f2 = onp.issubdtype(d2, onp.floating)
+        if f1 and f2:
+            return onp.promote_types(d1, d2)  # both float: wider wins
+        return d1 if f1 else d2               # exactly one float: it wins
     lhs_np = onp.array([3], dtype=lhs_dtype)
     rhs_np = onp.array([2], dtype=rhs_dtype)
-    expected_dtype = onp.result_type(lhs_np, rhs_np)
+    expected_dtype = onp.dtype(pytorch_promote(onp.dtype(lhs_dtype), onp.dtype(rhs_dtype)))
 
     assert np.result_type(np.array(lhs_np, dtype=lhs_np.dtype),
                           np.array(rhs_np, dtype=rhs_np.dtype)) == expected_dtype
@@ -14165,7 +14191,8 @@ def test_np_mixed_int_float_promotion_matches_numpy(lhs_dtype, rhs_dtype):
         mx_out = mx_op(np.array(lhs_np, dtype=lhs_np.dtype), np.array(rhs_np, dtype=rhs_np.dtype))
         np_out = np_op(lhs_np, rhs_np)
         assert mx_out.dtype == expected_dtype
-        assert_almost_equal(mx_out.asnumpy(), np_out.astype(expected_dtype))
+        assert_almost_equal(mx_out.asnumpy(), np_out.astype(expected_dtype),
+                            rtol=1e-3, atol=1e-5, use_broadcast=False)
 
 
 @use_np
@@ -14184,18 +14211,19 @@ def test_np_result_type(nums):
 
 @use_np
 def test_np_result_type_scalars():
+    # PyTorch convention: Python scalars are "weak" -- they contribute only their
+    # category, not a width. A weak float scalar combined with an integer array
+    # (or with another scalar) yields the default float dtype (float32), whereas
+    # NumPy would promote an int32 array + python float to float64.
     configs = [
-        (1, 2.0),
-        (onp.int8(1), onp.float32(1)),
-        (np.array([1], dtype='int32'), 1.5),
-        (np.dtype('int32'), 1.5),
+        ((1, 2.0), onp.dtype('float32')),                          # weak int + weak float
+        ((onp.int8(1), onp.float32(1)), onp.dtype('float32')),     # int8 + float32 (strong)
+        ((np.array([1], dtype='int32'), 1.5), onp.dtype('float32')),  # int32 array + weak float
+        ((np.dtype('int32'), 1.5), onp.dtype('float32')),          # int32 dtype + weak float
     ]
-    for inputs in configs:
-        expected_inputs = [
-            x.asnumpy() if isinstance(x, np.ndarray) else x
-            for x in inputs
-        ]
-        assert np.result_type(*inputs) == onp.result_type(*expected_inputs)
+    for inputs, expected in configs:
+        assert np.result_type(*inputs) == expected, \
+            "result_type{} -> {}, expected {}".format(inputs, np.result_type(*inputs), expected)
 
 
 @use_np

@@ -98,6 +98,28 @@ def test_bf16_dot_rejected_cleanly_gpu():
         nd.dot(a, a).wait_to_read()
 
 
+def test_bf16_fully_connected_gpu():
+    """bf16 FullyConnected fwd+bwd run on GPU (via the bf16 linalg_gemm path)
+    and match fp32 within bf16 precision."""
+    ctx = _gpu()
+    x = nd.random.uniform(-1, 1, (32, 64), ctx=ctx)
+    w = nd.random.uniform(-1, 1, (48, 64), ctx=ctx)
+    ref = nd.FullyConnected(x, w, no_bias=True, num_hidden=48).asnumpy()
+    got = nd.FullyConnected(x.astype('bfloat16'), w.astype('bfloat16'),
+                            no_bias=True, num_hidden=48).astype('float32').asnumpy()
+    rel = np.abs(got - ref).max() / np.abs(ref).max()
+    assert rel < 5e-2, "bf16 FC rel err {}".format(rel)
+    # backward must run and produce bf16 grads
+    xb = x.astype('bfloat16'); wb = w.astype('bfloat16')
+    xb.attach_grad(); wb.attach_grad()
+    with mx.autograd.record():
+        y = nd.FullyConnected(xb, wb, no_bias=True, num_hidden=48)
+        loss = y.sum()
+    loss.backward()
+    xb.grad.wait_to_read(); wb.grad.wait_to_read()
+    assert xb.grad.dtype == xb.dtype and wb.grad.dtype == wb.dtype
+
+
 def test_supported_dot_dtypes_gpu():
     """fp16/fp32/fp64 dot still work."""
     ctx = _gpu()

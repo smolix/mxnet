@@ -973,6 +973,8 @@ NNVM_REGISTER_OP(_backward_Embedding)
 
 NNVM_REGISTER_OP(take).set_attr<FCompute>("FCompute<gpu>", TakeOpForward<gpu>);
 
+NNVM_REGISTER_OP(_npi_take).set_attr<FCompute>("FCompute<gpu>", TakeOpForward<gpu>);
+
 NNVM_REGISTER_OP(_backward_take).set_attr<FCompute>("FCompute<gpu>", TakeOpBackward<gpu>);
 
 NNVM_REGISTER_OP(batch_take).set_attr<FCompute>("FCompute<gpu>", BatchTakeOpForward<gpu>);

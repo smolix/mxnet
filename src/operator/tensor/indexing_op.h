@@ -622,6 +622,7 @@ inline bool TakeOpShape(const nnvm::NodeAttrs& attrs,
   return shape_is_known(oshape);
 }
 
+template <bool require_int_index = false>
 inline bool TakeOpType(const nnvm::NodeAttrs& attrs,
                        std::vector<int>* in_attrs,
                        std::vector<int>* out_attrs) {
@@ -630,8 +631,13 @@ inline bool TakeOpType(const nnvm::NodeAttrs& attrs,
   if ((*in_attrs)[1] == -1) {
     return false;
   }
-  CHECK(common::is_int((*in_attrs)[1]) || (*in_attrs)[1] == mshadow::kBool)
-      << "TypeError: take indices must be integers";
+  if (require_int_index) {
+    // NumPy and PyTorch both reject non-integer indices. The numpy frontend
+    // (_npi_take) enforces this; the legacy mx.nd `take` op stays permissive
+    // and casts float indices in the forward kernel for backward compatibility.
+    CHECK(common::is_int((*in_attrs)[1]) || (*in_attrs)[1] == mshadow::kBool)
+        << "TypeError: take indices must be integers";
+  }
 
   TYPE_ASSIGN_CHECK(*out_attrs, 0, (*in_attrs)[0]);
   TYPE_ASSIGN_CHECK(*in_attrs, 0, (*out_attrs)[0]);

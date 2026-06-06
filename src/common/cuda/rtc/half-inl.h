@@ -72,6 +72,38 @@ struct AccType<half> {
     return __float2half(val);
   }
 };
+
+/* bfloat16: stores the high 16 bits of an fp32 value. */
+struct __align__(2) __bfloat16 {
+  __host__ __device__ __bfloat16() : __x(0) { }
+  unsigned short __x;
+};
+__device__ inline __bfloat16 __float2bfloat16(const float f) {
+  __bfloat16 val;
+ asm("{  cvt.rn.bf16.f32 %0, %1;}\n" : "=h"(val.__x) : "f"(f));
+  return val;
+}
+__device__ inline float __bfloat162float(const __bfloat16 h) {
+  float val;
+  unsigned int u = static_cast<unsigned int>(h.__x) << 16;
+ asm("{  mov.b32 %0, %1;}\n" : "=f"(val) : "r"(u));
+  return val;
+}
+
+typedef __bfloat16 bfloat16;
+
+template<>
+struct AccType<bfloat16> {
+  using type = float;
+
+  __device__ static inline type from(const bfloat16& val) {
+    return __bfloat162float(val);
+  }
+
+  __device__ static inline bfloat16 to(type val) {
+    return __float2bfloat16(val);
+  }
+};
 )code";
 
 }  // namespace rtc

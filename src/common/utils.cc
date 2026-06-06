@@ -115,6 +115,8 @@ MShadowTypeInfo mshadow_type_info(const int type_flag) {
       return MShadowTypeInfo("float64", sizeof(double));
     case kFloat16:
       return MShadowTypeInfo("float16", 2, sizeof(float));
+    case kBfloat16:
+      return MShadowTypeInfo("bfloat16", 2, sizeof(float));
     case kUint8:
       return MShadowTypeInfo("uint8", sizeof(uint8_t), sizeof(index_t));
     case kUint16:

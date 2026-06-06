@@ -48,6 +48,10 @@ MXNET_OPERATOR_REGISTER_UNARY(_npx_sigmoid)
 
 )code" ADD_FILELINE)
     .set_attr<FCompute>("FCompute<cpu>", UnaryOp::Compute<cpu, mshadow_op::sigmoid>)
+#if MXNET_USE_ONEDNN == 1
+    .set_attr<FComputeEx>("FComputeEx<cpu>", EltwiseComputeExCPU<mshadow_op::sigmoid, true>)
+    .set_attr<FInferStorageType>("FInferStorageType", EltwiseStorageType)
+#endif  // MXNET_USE_ONEDNN
     .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseOut{"_backward_sigmoid"});
 
 NNVM_REGISTER_OP(_npi_copy)

@@ -492,6 +492,10 @@ struct DNNLAlgorithm<op::mshadow_op::tanh> {
   static const dnnl::algorithm value = dnnl::algorithm::eltwise_tanh;
 };
 template <>
+struct DNNLAlgorithm<op::mshadow_op::sigmoid> {
+  static const dnnl::algorithm value = dnnl::algorithm::eltwise_logistic;
+};
+template <>
 struct DNNLAlgorithm<op::mshadow_op::exp> {
   static const dnnl::algorithm value = dnnl::algorithm::eltwise_exp;
 };

@@ -158,6 +158,7 @@ struct Stream<gpu> {
 #if MSHADOW_USE_CUSOLVER == 1
     if (solver_handle_ownership_ == OwnHandle) {
       cusolverStatus_t err = cusolverDnDestroy(solver_handle_);
+      solver_handle_ownership_ = NoHandle;  // mirror Destroy{Blas,Dnn}Handle; avoid double-destroy
       CHECK_EQ(err, CUSOLVER_STATUS_SUCCESS) << "Destory cusolver handle failed";
     }
 #endif

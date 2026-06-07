@@ -127,6 +127,12 @@ class LtPool {
     if (prev_dev != dev_id_) cudaSetDevice(dev_id_);
     void* ws = nullptr;
     cudaError_t err = cudaMalloc(&ws, bytes);
+    if (err != cudaSuccess) {
+      // Clear the sticky error so the next unrelated CUDA call / post-kernel
+      // check does not observe this failed allocation and abort with a
+      // misleading message. We fall back to the legacy cuBLAS path on nullptr.
+      cudaGetLastError();
+    }
     if (prev_dev != -1 && prev_dev != dev_id_) cudaSetDevice(prev_dev);
     return (err == cudaSuccess) ? ws : nullptr;
   }

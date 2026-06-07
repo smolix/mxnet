@@ -36,5 +36,14 @@ NNVM_REGISTER_OP(_npi_std).set_attr<FCompute>("FCompute<gpu>", NumpyMomentsForwa
 
 NNVM_REGISTER_OP(_npi_var).set_attr<FCompute>("FCompute<gpu>", NumpyMomentsForward<gpu, false>);
 
+// var/std gradients were registered for CPU only (np_moments_op.cc); the
+// NumpyMomentsBackward kernel is xpu-templated, so register the GPU FCompute
+// too -- otherwise var/std backward aborts with "not implemented for GPU".
+NNVM_REGISTER_OP(_backward_npi_std)
+    .set_attr<FCompute>("FCompute<gpu>", NumpyMomentsBackward<gpu, true>);
+
+NNVM_REGISTER_OP(_backward_npi_var)
+    .set_attr<FCompute>("FCompute<gpu>", NumpyMomentsBackward<gpu, false>);
+
 }  // namespace op
 }  // namespace mxnet

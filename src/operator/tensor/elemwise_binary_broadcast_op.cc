@@ -395,16 +395,16 @@ void BinaryBroadcastRTCBackwardUseNone::operator()(const nnvm::NodeAttrs& attrs,
       } else {
         using namespace common::cuda::rtc::util;
         if (lhs.shape_.Size() != 0) {
-          cudaMemsetAsync(lhs.dptr_,
+          MSHADOW_CUDA_CALL(cudaMemsetAsync(lhs.dptr_,
                           0,
                           lhs.shape_.Size() * common::mshadow_type_info(lhs.type_flag_).size,
-                          Stream<gpu>::GetStream(s));
+                          Stream<gpu>::GetStream(s)));
         }
         if (rhs.shape_.Size() != 0) {
-          cudaMemsetAsync(rhs.dptr_,
+          MSHADOW_CUDA_CALL(cudaMemsetAsync(rhs.dptr_,
                           0,
                           rhs.shape_.Size() * common::mshadow_type_info(rhs.type_flag_).size,
-                          Stream<gpu>::GetStream(s));
+                          Stream<gpu>::GetStream(s)));
         }
       }
     });

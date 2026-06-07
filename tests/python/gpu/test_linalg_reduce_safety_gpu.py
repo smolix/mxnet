@@ -115,6 +115,41 @@ def test_fp16_mean_large_axis_no_overflow_gpu(shape, axis):
     onp.testing.assert_allclose(got, ref, rtol=3e-2, atol=3e-2)
 
 
+@pytest.mark.parametrize('shape,axis', [((8, 200000), 1), ((200000, 8), 0)])
+@pytest.mark.parametrize('op', ['var', 'std'])
+def test_fp16_var_std_large_axis_no_overflow_gpu(shape, axis, op):
+    """np.var/np.std(fp16) over a large axis must not overflow to inf/nan.
+
+    The moments path reduced the un-normalized sum into the fp16 output before
+    dividing; for a large reduced extent that overflows fp16. The fix reduces the
+    mean and the second moment into fp32 scratch and casts the (O(1)) result down
+    to fp16. NumPy stays finite here, so MXNet must too.
+    """
+    ctx = _gpu()
+    onp.random.seed(5)
+    a_np = onp.random.uniform(0.5, 1.5, shape).astype('float16')
+    a = np.array(a_np, ctx=ctx, dtype='float16')
+    mxf = np.var if op == 'var' else np.std
+    npf = onp.var if op == 'var' else onp.std
+    got = mxf(a, axis=axis).asnumpy().astype('float64')
+    assert not onp.isinf(got).any() and not onp.isnan(got).any(), \
+        "fp16 {} overflowed".format(op)
+    ref = npf(a_np.astype('float64'), axis=axis)
+    onp.testing.assert_allclose(got, ref, rtol=5e-2, atol=5e-2)
+
+
+def test_fp16_mean_cpu_large_axis_no_overflow():
+    """np.mean(fp16) over a large axis on CPU must not overflow (companion to the
+    GPU case; the CPU generic-reduce path also summed into fp16 before dividing)."""
+    onp.random.seed(6)
+    a_np = onp.random.uniform(0.5, 1.5, (8, 200000)).astype('float16')
+    a = np.array(a_np, ctx=mx.cpu(), dtype='float16')
+    got = np.mean(a, axis=1).asnumpy().astype('float64')
+    assert not onp.isinf(got).any() and not onp.isnan(got).any()
+    onp.testing.assert_allclose(got, onp.mean(a_np.astype('float64'), axis=1),
+                                rtol=3e-2, atol=3e-2)
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

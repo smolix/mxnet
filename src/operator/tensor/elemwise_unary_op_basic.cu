@@ -108,11 +108,11 @@ void ShapeComputeGPU(const nnvm::NodeAttrs& attrs,
   const TBlob& in_data    = inputs[0];
   const TBlob& out_data   = outputs[0];
   mshadow::Stream<gpu>* s = ctx.get_stream<gpu>();
-  cudaMemcpyAsync(out_data.dptr_,
+  MSHADOW_CUDA_CALL(cudaMemcpyAsync(out_data.dptr_,
                   in_data.shape_.data(),
                   in_data.ndim() * sizeof(int64_t),
                   cudaMemcpyHostToDevice,
-                  mshadow::Stream<gpu>::GetStream(s));
+                  mshadow::Stream<gpu>::GetStream(s)));
 }
 
 NNVM_REGISTER_OP(shape_array)
@@ -134,11 +134,11 @@ void SizeComputeGPU(const nnvm::NodeAttrs& attrs,
   const TBlob& out_data   = outputs[0];
   mshadow::Stream<gpu>* s = ctx.get_stream<gpu>();
   const index_t size_var  = in_data.Size();
-  cudaMemcpyAsync(out_data.dptr_,
+  MSHADOW_CUDA_CALL(cudaMemcpyAsync(out_data.dptr_,
                   &size_var,
                   1U * sizeof(int64_t),
                   cudaMemcpyHostToDevice,
-                  mshadow::Stream<gpu>::GetStream(s));
+                  mshadow::Stream<gpu>::GetStream(s)));
 }
 
 NNVM_REGISTER_OP(size_array).set_attr<FCompute>("FCompute<gpu>", SizeComputeGPU);

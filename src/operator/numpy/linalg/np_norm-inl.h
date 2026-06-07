@@ -409,11 +409,11 @@ void NumpyLpNormGradCompute(const nnvm::NodeAttrs& attrs,
 #ifdef __CUDACC__
       cudaStream_t copy_stream = mshadow::Stream<gpu>::GetStream(s);
       cudaMalloc(reinterpret_cast<void**>(&mapper_instance), sizeof(mshadow_op::nrmlp_grad));
-      cudaMemcpyAsync(mapper_instance,
+      MSHADOW_CUDA_CALL(cudaMemcpyAsync(mapper_instance,
                       &host_mapper,
                       sizeof(mshadow_op::nrmlp_grad),
                       cudaMemcpyHostToDevice,
-                      copy_stream);
+                      copy_stream));
       cudaStreamSynchronize(copy_stream);
 #else
       mapper_instance = &host_mapper;

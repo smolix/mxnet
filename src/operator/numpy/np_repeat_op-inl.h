@@ -259,11 +259,11 @@ void NumpyRepeatsAxisZeroOpForward(const nnvm::NodeAttrs& attrs,
 
   if (ctx.run_ctx.ctx.dev_mask() == gpu::kDevMask) {
 #if MXNET_USE_CUDA
-    cudaMemcpyAsync(ind,
+    MSHADOW_CUDA_CALL(cudaMemcpyAsync(ind,
                     increasing_repetitions.begin(),
                     increasing_repetitions.ndim() * sizeof(int),
                     cudaMemcpyHostToDevice,
-                    Stream<gpu>::GetStream(ctx.get_stream<gpu>()));
+                    Stream<gpu>::GetStream(ctx.get_stream<gpu>())));
 #else
     LOG(FATAL) << "Illegal attempt to use GPU in a CPU-only build";
 #endif
@@ -419,11 +419,11 @@ void NumpyRepeatsOpBackward(const nnvm::NodeAttrs& attrs,
   int* repeat_tmp_dptr = reinterpret_cast<int*>(temp_space.dptr_);
   if (ctx.run_ctx.ctx.dev_mask() == gpu::kDevMask) {
 #if MXNET_USE_CUDA
-    cudaMemcpyAsync(repeat_tmp_dptr,
+    MSHADOW_CUDA_CALL(cudaMemcpyAsync(repeat_tmp_dptr,
                     tuple_with_repetitions.begin(),
                     tuple_with_repetitions.ndim() * sizeof(int),
                     cudaMemcpyHostToDevice,
-                    Stream<gpu>::GetStream(ctx.get_stream<gpu>()));
+                    Stream<gpu>::GetStream(ctx.get_stream<gpu>())));
 #else
     LOG(FATAL) << "Illegal attempt to use GPU in a CPU-only build";
 #endif

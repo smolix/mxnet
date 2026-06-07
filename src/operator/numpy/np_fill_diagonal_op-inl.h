@@ -131,11 +131,11 @@ void NumpyFillDiagonalForward(const nnvm::NodeAttrs& attrs,
   // filling in
   if (ctx.run_ctx.ctx.dev_mask() == gpu::kDevMask) {
 #if MXNET_USE_CUDA
-    cudaMemcpyAsync(val,
+    MSHADOW_CUDA_CALL(cudaMemcpyAsync(val,
                     val_data.begin(),
                     val_data.ndim() * sizeof(double),
                     cudaMemcpyHostToDevice,
-                    Stream<gpu>::GetStream(ctx.get_stream<gpu>()));
+                    Stream<gpu>::GetStream(ctx.get_stream<gpu>())));
 #else
     LOG(FATAL) << "Illegal attempt to use GPU in a CPU-only build";
 #endif

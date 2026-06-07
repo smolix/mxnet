@@ -34,16 +34,16 @@ def test_bf16_falls_back_when_onednn_isa_lacks_bf16():
     if not mx.runtime.Features().is_enabled("ONEDNN"):
         pytest.skip("oneDNN is not enabled")
 
+    # Ops below have a graceful BF16->FP32 fallback when the oneDNN ISA lacks
+    # native BF16 (conv/activation/pooling/softmax). dot/batch_dot are
+    # intentionally NOT probed here: they have no native BF16 CPU kernel and no
+    # FP32 fallback wrapper, so on a non-BF16 ISA they raise a clear error
+    # rather than falling back. That behavior is gated in the BF16 op tests via
+    # has_native_onednn_bf16(); this test only asserts the genuine fallbacks.
     code = r"""
 import mxnet as mx
 
 a = mx.nd.ones((2, 3), dtype='bfloat16')
-b = mx.nd.ones((3, 2), dtype='bfloat16')
-mx.nd.dot(a, b).wait_to_read()
-
-x = mx.nd.ones((2, 2, 3), dtype='bfloat16')
-y = mx.nd.ones((2, 3, 2), dtype='bfloat16')
-mx.nd.batch_dot(x, y).wait_to_read()
 
 data = mx.sym.Variable('data', dtype='bfloat16')
 weight = mx.sym.Variable('weight', dtype='bfloat16')

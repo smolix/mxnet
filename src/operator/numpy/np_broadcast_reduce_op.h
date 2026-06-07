@@ -564,6 +564,33 @@ void NumpyReduceAxesCompute(const nnvm::NodeAttrs& attrs,
   if (TryFastCpuFloatSum<xpu, reducer, normalize, OP>(inputs, req, outputs, param, small)) {
     return;
   }
+  // fp16 mean over a (generic-axis) reduction: the reduce writes the
+  // un-normalized sum to the fp16 output before dividing, and that sum overflows
+  // fp16's ~65504 range for a large reduced extent (np.mean(fp16) -> nan/inf,
+  // diverging from NumPy). Reduce the sum into an fp32 scratch (with a disjoint
+  // workspace carved from the same kTempSpace arena so the inner reduce does not
+  // re-request and alias it), divide in fp32, then cast down to fp16.
+  if (normalize && outputs[0].type_flag_ == mshadow::kFloat16) {
+    using namespace mshadow;
+    using namespace mshadow::expr;
+    const size_t ws_size  = broadcast::ReduceWorkspaceSize(s, small, kWriteTo, inputs[0].shape_);
+    const size_t f32_off  = ((ws_size + sizeof(float) - 1) / sizeof(float)) * sizeof(float);
+    const size_t acc_size = small.Size() * sizeof(float);
+    Tensor<xpu, 1, char> buf =
+        ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(f32_off + acc_size), s);
+    Tensor<xpu, 1, char> ws(buf.dptr_, Shape1(ws_size), s);
+    TBlob acc(reinterpret_cast<float*>(buf.dptr_ + f32_off),
+              small,
+              xpu::kDevMask,
+              mshadow::kFloat32,
+              ctx.run_ctx.ctx.dev_id);
+    // sum (no normalize) into fp32 scratch, accumulating safely
+    ReduceAxesComputeImpl<xpu, reducer, true, false, OP>(ctx, inputs, {kWriteTo}, {acc}, small, &ws);
+    auto out2d = acc.FlatTo2D<xpu, float>(s);
+    out2d /= scalar<float>(inputs[0].shape_.Size() / outputs[0].shape_.Size());
+    CastCompute<xpu>(attrs, ctx, {acc}, req, outputs);
+    return;
+  }
 #endif  // __CUDACC__
 
   if (NeedSafeAcc<safe_acc_hint>(inputs[0].type_flag_, outputs[0].type_flag_)) {

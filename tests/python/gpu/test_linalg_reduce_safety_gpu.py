@@ -138,6 +138,18 @@ def test_fp16_var_std_large_axis_no_overflow_gpu(shape, axis, op):
     onp.testing.assert_allclose(got, ref, rtol=5e-2, atol=5e-2)
 
 
+def test_fp16_mean_cpu_large_axis_no_overflow():
+    """np.mean(fp16) over a large axis on CPU must not overflow (companion to the
+    GPU case; the CPU generic-reduce path also summed into fp16 before dividing)."""
+    onp.random.seed(6)
+    a_np = onp.random.uniform(0.5, 1.5, (8, 200000)).astype('float16')
+    a = np.array(a_np, ctx=mx.cpu(), dtype='float16')
+    got = np.mean(a, axis=1).asnumpy().astype('float64')
+    assert not onp.isinf(got).any() and not onp.isnan(got).any()
+    onp.testing.assert_allclose(got, onp.mean(a_np.astype('float64'), axis=1),
+                                rtol=3e-2, atol=3e-2)
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

@@ -69,6 +69,12 @@ __global__ void FinalizeGlobalReduceKernel(const double* total_sum,
 
 }  // namespace
 
+// CUB's DeviceReduce temp storage and the double result must be suitably
+// aligned (256 B matches what kTempSpace/cudaMalloc returns and satisfies CUB's
+// vectorized loads). A caller-supplied workspace may only be DType-aligned, so
+// we align the base inside CubGlobalSumReduce and reserve up to this much slack.
+static constexpr size_t kCubGlobalReduceAlign = 256;
+
 size_t CubGlobalSumReduceWorkspaceBytes(size_t n) {
   // CUB's DeviceReduce::Sum temp storage depends on the element count and the
   // (double) accumulator, not the input iterator's value type, so a plain
@@ -81,7 +87,9 @@ size_t CubGlobalSumReduceWorkspaceBytes(size_t n) {
                          static_cast<index_t>(n),
                          /*stream=*/0);
   const size_t result_off = ((temp_bytes + sizeof(double) - 1) / sizeof(double)) * sizeof(double);
-  return result_off + sizeof(double);
+  // Include alignment slack so a DType-aligned caller workspace can be bumped up
+  // to kCubGlobalReduceAlign and still hold temp + result.
+  return result_off + sizeof(double) + kCubGlobalReduceAlign;
 }
 
 template <typename DType>
@@ -118,9 +126,17 @@ void CubGlobalSumReduce(const OpContext& ctx,
     ws   = ctx.requested[0].get_space_typed<gpu, 1, char>(Shape1(needed), s);
     base = ws.dptr_;
   } else {
-    CHECK_GE(ext_workspace_bytes, needed)
+    // A caller workspace may be only DType-aligned; align up for CUB and the
+    // double result (an unaligned base triggers CUDA error 716, misaligned
+    // address). CubGlobalSumReduceWorkspaceBytes reserved the slack for this.
+    const uintptr_t raw = reinterpret_cast<uintptr_t>(base);
+    const uintptr_t aligned =
+        (raw + (kCubGlobalReduceAlign - 1)) & ~(kCubGlobalReduceAlign - 1);
+    const size_t pad = static_cast<size_t>(aligned - raw);
+    CHECK_GE(ext_workspace_bytes, needed + pad)
         << "CubGlobalSumReduce: supplied workspace (" << ext_workspace_bytes
-        << " B) smaller than required (" << needed << " B)";
+        << " B) smaller than required (" << (needed + pad) << " B incl. alignment)";
+    base = reinterpret_cast<char*>(aligned);
   }
   void* d_temp     = base;
   double* d_result = reinterpret_cast<double*>(base + result_off);

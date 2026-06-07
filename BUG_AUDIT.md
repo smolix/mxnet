@@ -68,24 +68,31 @@ cross-stream ordering hole under >64 outstanding deps with the async engine
 (non-default). Needs a runtime stress check to prove wraparound overtakes an in-flight
 dependency before changing — fixing blindly risks regressions. Defer.
 
-### T2. `Stream<gpu>` ctor leaves `prop`/`dev_id` uninitialized  [needs-verify, latent]
+### T2. `Stream<gpu>` ctor leaves `prop`/`dev_id` uninitialized  [FIXED]
 `stream_gpu-inl.h` ctor; `prop` read in `batched_gemm`. Always set via engine
-(`dev_id>=0`) today, so latent. Cheap safe fix: init `dev_id(-1)` + zero `prop`.
+(`dev_id>=0`) today, so latent. Fixed: ctor now zero-inits `prop()` and
+`dev_id(-1)`.
 
 ### T3. Unchecked `cudaMemsetAsync`/`cudaMemcpyAsync` returns  [pre-existing, broad]
 Many sites discard the `cudaError_t` (transformer.cu, softmax.cu, several
 numpy/tensor -inl.h). A failure gets misattributed to a later op. Low-med; broad
 churn — selective wrapping only.
 
-### T5. RTC fp16 reduce overflows for large sums  [needs-verify, pre-existing]
-Surfaced while reverting B1: routing fp16 global var/std through the RTC reduce gave
-`inf` (sum of ~1M squared deviations overflows fp16's ~65504 max). The CUB path
-accumulates in double and is fine, and masks this for scalar-output sum/mean. But
-fp16 large-*axis* reductions (non-scalar) always use RTC — if RTC accumulates in
-fp16 rather than a wider AccType there, `np.sum`/`np.mean`/`np.var` over a large
-fp16 axis would overflow. Verify whether the RTC reduce honors safe-acc
-(MXNET_SAFE_ACCUMULATION) for fp16 by default; if not, large fp16 axis reductions
-are silently wrong. Separate from B1; not chased here.
+### T5. np.mean(fp16) over a large axis overflows to inf  [FIXED]
+Confirmed real and NumPy-divergent: `np.mean(fp16, axis)` over a large reduced
+extent returned `inf` where NumPy returns a finite ~1.0. Root cause: the RTC
+reduce accumulates in fp32 (AccType<half>=float) but writes the *un-normalized*
+sum to the fp16 output (`OType::to(val)`) BEFORE the mean division, so the sum
+(e.g. 200000) overflows fp16's ~65504. (np.sum(fp16) also returns inf, but that
+MATCHES NumPy, so it is left alone. bf16 shares fp32's exponent range and does not
+overflow.) Fix (broadcast_reduce_op.cc): for normalize + fp16 output + the direct
+op path (workspace==nullptr), reduce the sum into an fp32 scratch then
+divide-and-cast to fp16, keeping the sum wide until after division. Verified:
+fp16 mean large-axis now finite & correct; fp16 sum unchanged (inf, =NumPy);
+small fp16 / fp32 / fp64 mean unaffected. Test added.
+NOTE remaining: np.var/std(fp16) over a large axis (the moments path, which passes
+its own workspace) can still overflow the same way — not covered by this scoped
+fix; would need the moments path to compute in fp32. Logged for follow-up.
 
 ### T4. Throwing destructors under LOG_FATAL_THROW  [pre-existing, systemic]
 `CUDAEvent::~CUDAEvent`, `DeviceStore::~DeviceStore`, several cuDNN op dtors use

@@ -54,7 +54,7 @@ Status labels:
 | Strategic | O8, O9 | Informational / Deferred | Apache MXNet archived 2023-11-17 — all fixes live in this fork (O8). Future oneDNN major releases will require porting (O9). | — |
 | Strategic | P1, P3, P4, P5 | Deferred / Hardware | cuBLASLt default-on / stride-aware / INT8 (P1); topk K-independence (P3); softmax / LayerNorm small-op kernel pipelines (P4); BF16 CPU validation on AVX-512-BF16 hardware (P5). | Defer; benchmark harness driven. |
 | Deferred | GH7, GH8, GH9 | Deferred | Horovod KVStore barrier API (GH7); FlexiBLAS / THP / `parallel_for` grain (GH8); TensorRT upgrade (GH9). | Out of scope until specific drivers exist. |
-| P2 | INT1 | Open (needs kernel work) | `mean` over integer input cannot yet honor the project convention `int -> int32 (rounded)`. | Implement a fused integer-mean-with-rounding reduce; see detail below. |
+| P2 | INT1 | Resolved (convention: float32) | `mean`/`var`/`std` over integer input return `float32` (NumPy returns float64; PyTorch errors). Chosen as the cleanest, uniform convention -- no int32-with-rounding variant. | Done: already the behavior; the earlier `int -> int32 (rounded)` idea was dropped. See detail below. |
 | P2 | INT2 | Open (needs kernel work) | `matmul` / `dot` / `tensordot` reject integer inputs, but NumPy and PyTorch both compute them. | Add an integer GEMM (or async-safe float64 cast path); see detail below. |
 | P3 | INT3 | Resolved | Index dtype policy: `mx.np`/`mx.sym.np` reject non-integer indices (NumPy/PyTorch); legacy `mx.nd` keeps auto-casting float indices for back-compat. | Done: `take` split from `_npi_take` (templated `TakeOpType<require_int_index>`); legacy permissive, numpy strict. |
 
@@ -67,15 +67,15 @@ landed (int×float promotion keeps the float width; `result_type` weak scalars;
 `cross` accepted). Two items remain because they are **not safe drop-in
 changes** — both hit the same backend constraints:
 
-- **INT1 — `mean(int) → int32` with rounding.** Decided convention: integer
-  `mean` returns `int32` rounded (NumPy returns float64; PyTorch errors). The
-  reduce (`ReduceAxesComputeImpl`) already consumes the `kTempSpace` resource for
-  its own workspace, so a float intermediate taken from that same pool collides;
-  heap `NDArray` temps would be freed at `FCompute` return while async GPU
-  kernels still reference them (use-after-free, since locally-created NDArrays
-  are not tracked as engine vars). Correct fix: a fused integer-mean reduce that
-  accumulates in a wider type and rounds in the normalize step, or an
-  engine-var-tracked scratch buffer.
+- **INT1 — `mean`/`var`/`std` over integer input → `float32`. RESOLVED.**
+  Final convention: integer `mean`, `var`, and `std` all return `float32` (NumPy
+  returns float64; PyTorch errors on integer input). This is the cleanest uniform
+  rule: `var`/`std` are intrinsically non-integer, and an `int -> int32 (rounded)`
+  `mean` would be a lossy special case, so it was dropped. `float32` is already
+  the behavior (`mean` via the FFI default; `var`/`std` via the moments
+  compute_type), so no kernel work is needed. (Had we wanted int32 mean, the
+  blocker would have been the kTempSpace collision / GPU async-lifetime hazard
+  described for INT2.)
 
 - **INT2 — integer `matmul` / `dot` / `tensordot`.** These kernels are
   `MSHADOW_REAL_TYPE_SWITCH` over BLAS GEMM; there is no integer GEMM. Removing

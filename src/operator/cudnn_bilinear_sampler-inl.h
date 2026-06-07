@@ -45,9 +45,9 @@ class CuDNNBilinearSamplerOp : public Operator {
 
   ~CuDNNBilinearSamplerOp() {
     if (init_cudnn_) {
-      CUDNN_CALL(cudnnDestroySpatialTransformerDescriptor(st_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(in_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(out_desc_));
+      CUDNN_CALL_NONFATAL(cudnnDestroySpatialTransformerDescriptor(st_desc_));
+      CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(in_desc_));
+      CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(out_desc_));
     }
   }
 

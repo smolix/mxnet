@@ -67,9 +67,9 @@ class QuantizedCuDNNPoolingOp {
   }
 
   ~QuantizedCuDNNPoolingOp() {
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(in_desc_));
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(out_desc_));
-    CUDNN_CALL(cudnnDestroyPoolingDescriptor(pool_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(in_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(out_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyPoolingDescriptor(pool_desc_));
   }
 
   void Forward(mshadow::Stream<gpu>* s,

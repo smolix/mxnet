@@ -92,10 +92,10 @@ class QuantizedCuDNNConvOp {
   }
 
   ~QuantizedCuDNNConvOp() {
-    CUDNN_CALL(cudnnDestroyFilterDescriptor(filter_desc_));
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(data_desc_));
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(out_desc_));
-    CUDNN_CALL(cudnnDestroyConvolutionDescriptor(conv_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyFilterDescriptor(filter_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(data_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(out_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyConvolutionDescriptor(conv_desc_));
   }
 
   void Forward(const OpContext& ctx,

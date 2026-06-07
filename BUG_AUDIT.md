@@ -94,10 +94,25 @@ NOTE remaining: np.var/std(fp16) over a large axis (the moments path, which pass
 its own workspace) can still overflow the same way — not covered by this scoped
 fix; would need the moments path to compute in fp32. Logged for follow-up.
 
-### T4. Throwing destructors under LOG_FATAL_THROW  [pre-existing, systemic]
-`CUDAEvent::~CUDAEvent`, `DeviceStore::~DeviceStore`, several cuDNN op dtors use
-`CUDA_CALL`/`CUDNN_CALL` (throw). If run during unwinding → std::terminate. Systemic;
-risky to change broadly. Defer.
+### T4. Throwing destructors under LOG_FATAL_THROW  [FIXED]
+Confirmed real: 16 destructors called throwing macros (CUDA_CALL / CUDNN_CALL /
+CUDA_DRIVER_CALL / NVRTC_CALL). Since C++11 destructors are implicitly
+noexcept(true), a throw from these calls std::terminate *immediately* (not only
+during unwinding). Realistic triggers: `cudaEventSynchronize` in `~CUDAEvent`
+surfacing a latched async error from a prior kernel (terminate masks the real
+error), and destroy calls failing during CUDA/driver shutdown.
+
+Fix: added non-throwing macros CUDA_CALL_NONFATAL / CUDA_DRIVER_CALL_NONFATAL
+(log WARNING instead of CHECK; tolerate cudaErrorCudartUnloading /
+CUDA_ERROR_DEINITIALIZED) -- mirroring the pre-existing CUDNN_CALL_NONFATAL.
+Converted all 16 destructors:
+- core: CUDAEvent (cudaEventSynchronize+Destroy), DeviceStore (cudaSetDevice),
+  CudaModule::Chunk (cuModuleUnload + nvrtcDestroyProgram).
+- 13 cuDNN op dtors (conv/deconv/pool/activation/softmax-act/lrn/bn/bilinear/
+  spatial-transformer/dropout/rnn/quantized conv+pool): CUDNN_CALL ->
+  CUDNN_CALL_NONFATAL (56 calls), scoped to the brace-matched dtor bodies.
+A failed cleanup now logs a warning and leaks at most a small handle, instead of
+crashing the process. Correctness of normal execution is unchanged.
 
 ## Verified CORRECT (no action) — checked and cleared
 - `FlatOuterAxisSum`/`FlatGlobalSum`/`TryFastCpuFloatSum` (this branch) — no race, correct.

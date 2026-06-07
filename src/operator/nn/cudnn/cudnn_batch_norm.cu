@@ -50,8 +50,8 @@ struct Globals {
   }
 
   ~Globals() {
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(io_desc));
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(mean_desc));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(io_desc));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(mean_desc));
   }
 };
 

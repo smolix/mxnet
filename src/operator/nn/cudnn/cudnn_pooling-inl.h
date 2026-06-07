@@ -65,9 +65,9 @@ class CuDNNPoolingOp {
   }
 
   ~CuDNNPoolingOp() {
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(in_desc_));
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(out_desc_));
-    CUDNN_CALL(cudnnDestroyPoolingDescriptor(pooling_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(in_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(out_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyPoolingDescriptor(pooling_desc_));
   }
 
   void Forward(const OpContext& ctx,

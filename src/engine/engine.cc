@@ -77,8 +77,11 @@ CUDAEvent::CUDAEvent(Context const& ctx)
 CUDAEvent::~CUDAEvent() {
   if (event_ && *event_ != nullptr) {
     common::cuda::DeviceStore device_store(dev_id_);
-    CUDA_CALL(cudaEventSynchronize(*event_));
-    CUDA_CALL(cudaEventDestroy(*event_));
+    // Non-throwing: cudaEventSynchronize can surface a latched async error from a
+    // prior kernel, and a destructor is implicitly noexcept -> a throw here would
+    // std::terminate (masking the real error). Log instead.
+    CUDA_CALL_NONFATAL(cudaEventSynchronize(*event_));
+    CUDA_CALL_NONFATAL(cudaEventDestroy(*event_));
   }
 }
 #endif

@@ -111,6 +111,20 @@ inline __device__ bool __is_supported_cuda_architecture() {
   }
 
 /*!
+ * \brief Non-throwing CUDA call: logs a warning instead of throwing on error.
+ * Use inside destructors -- a destructor is implicitly noexcept, so a throwing
+ * CHECK there (e.g. cudaEventSynchronize surfacing a latched async error, or a
+ * destroy failing during CUDA shutdown) calls std::terminate. Logging keeps the
+ * process alive; a failed cleanup at worst leaks a small handle.
+ */
+#define CUDA_CALL_NONFATAL(func)                                              \
+  {                                                                           \
+    cudaError_t e = (func);                                                   \
+    if (e != cudaSuccess && e != cudaErrorCudartUnloading)                    \
+      LOG(WARNING) << "CUDA (non-fatal, in cleanup): " << cudaGetErrorString(e); \
+  }
+
+/*!
  * \brief Protected cuBLAS call.
  * \param func Expression to call.
  *
@@ -177,6 +191,18 @@ inline __device__ bool __is_supported_cuda_architecture() {
       } else {                                                         \
         LOG(FATAL) << "CUDA Driver: " << e << " " << err_msg;          \
       }                                                                \
+    }                                                                  \
+  }
+
+// Non-throwing driver call for use in destructors (see CUDA_CALL_NONFATAL).
+#define CUDA_DRIVER_CALL_NONFATAL(func)                                \
+  {                                                                    \
+    CUresult e = (func);                                               \
+    if (e != CUDA_SUCCESS && e != CUDA_ERROR_DEINITIALIZED) {          \
+      char const* err_msg = nullptr;                                   \
+      cuGetErrorString(e, &err_msg);                                   \
+      LOG(WARNING) << "CUDA Driver (non-fatal, in cleanup): " << e     \
+                   << " " << (err_msg ? err_msg : "unknown");          \
     }                                                                  \
   }
 
@@ -421,9 +447,11 @@ class DeviceStore {
   }
 
   ~DeviceStore() {
+    // Non-throwing: a destructor is implicitly noexcept, so a throwing CHECK here
+    // would std::terminate (e.g. during CUDA shutdown). Log instead.
     if (restore_ && current_device_ != restore_device_ && current_device_ != -1 &&
         restore_device_ != -1)
-      CUDA_CALL(cudaSetDevice(restore_device_));
+      CUDA_CALL_NONFATAL(cudaSetDevice(restore_device_));
   }
 
   void SetDevice(int device) {

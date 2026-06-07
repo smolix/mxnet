@@ -39,6 +39,11 @@ def test_repair_nvidia_cudnn_soname_aliases_creates_versioned_links(tmp_path, mo
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.setenv("MXNET_CUDNN_ALIAS_REPAIR", "1")
     monkeypatch.setattr(cuda_runtime, "_cudnn_package_version", lambda: "9.22.0.52")
+    # Isolate from any real nvidia-cudnn-cu13 install on sys.path (the function
+    # intentionally repairs every cuDNN lib dir it finds, so when the package is
+    # pip-installed it would also alias the real split libs and make this
+    # assertion environment-dependent).  Restrict the search to the fake dir.
+    monkeypatch.setattr(cuda_runtime, "_candidate_cudnn_lib_dirs", lambda: iter([cudnn_lib_dir]))
 
     created = cuda_runtime.repair_nvidia_cudnn_soname_aliases()
 

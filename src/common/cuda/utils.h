@@ -643,6 +643,30 @@ inline cublasMath_t SetCublasMathMode(cublasHandle_t blas_handle, cublasMath_t n
   CUBLAS_CALL(cublasSetMathMode(blas_handle, new_math_type));
   return handle_math_mode;
 }
+
+// RAII guard: set the cuBLAS handle's math mode and restore it on scope exit,
+// including when the GEMM in between throws. cuBLAS calls go through CUBLAS_CALL,
+// which throws (dmlc::Error) on failure under LOG_FATAL_THROW; the threaded
+// engine catches that and keeps running, so a manual restore-at-end is skipped on
+// the throwing path and the long-lived per-stream handle is left in the wrong
+// (TF32 / tensor-op) math mode, silently corrupting every later GEMM on that
+// stream. The destructor restores best-effort and never throws.
+class CublasMathModeGuard {
+ public:
+  CublasMathModeGuard(cublasHandle_t handle, cublasMath_t new_mode) : handle_(handle) {
+    CUBLAS_CALL(cublasGetMathMode(handle_, &saved_mode_));
+    CUBLAS_CALL(cublasSetMathMode(handle_, new_mode));
+  }
+  ~CublasMathModeGuard() {
+    cublasSetMathMode(handle_, saved_mode_);  // best-effort; never throw from a dtor
+  }
+  CublasMathModeGuard(const CublasMathModeGuard&)            = delete;
+  CublasMathModeGuard& operator=(const CublasMathModeGuard&) = delete;
+
+ private:
+  cublasHandle_t handle_;
+  cublasMath_t   saved_mode_ = CUBLAS_DEFAULT_MATH;
+};
 #endif
 
 #endif  // MXNET_USE_CUDA

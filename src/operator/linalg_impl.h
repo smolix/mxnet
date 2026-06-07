@@ -365,7 +365,7 @@ inline void linalg_gemm<gpu, float>(const Tensor<gpu, 2, float>& A,
   cublasDataType_t full_datatype = CUBLAS_DATA_FULL;
 #endif
   auto handle                  = Stream<gpu>::GetBlasHandle(s);
-  cublasMath_t saved_math_mode = SetCublasMathMode(handle, VERSION_ADJUSTED_TF32_MATH);
+  CublasMathModeGuard math_mode_guard(handle, VERSION_ADJUSTED_TF32_MATH);
   const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
   const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
   const int gemm_m             = C.size(1);
@@ -399,7 +399,7 @@ inline void linalg_gemm<gpu, float>(const Tensor<gpu, 2, float>& A,
                               full_datatype,
                               C.stride_));
   }
-  CUBLAS_CALL(cublasSetMathMode(handle, saved_math_mode));
+  // math mode restored by math_mode_guard's destructor (exception-safe)
 }
 
 #else
@@ -476,8 +476,8 @@ inline void linalg_gemm<gpu, double>(const Tensor<gpu, 2, double>& A,
     using mshadow::gpu;                                                                   \
     CHECK_NOTNULL(s);                                                                     \
     linalg_check_batch_size(A.size(1), B.size(1), C.size(1));                             \
-    auto handle                  = Stream<gpu>::GetBlasHandle(s);                         \
-    cublasMath_t saved_math_mode = SetCublasMathMode(handle, VERSION_ADJUSTED_TF32_MATH); \
+    auto handle = Stream<gpu>::GetBlasHandle(s);                                          \
+    CublasMathModeGuard math_mode_guard(handle, VERSION_ADJUSTED_TF32_MATH);              \
     CUBLAS_CALL(cublas##fname(handle,                                                     \
                               (tB ? CUBLAS_OP_T : CUBLAS_OP_N),                           \
                               (tA ? CUBLAS_OP_T : CUBLAS_OP_N),                           \
@@ -496,7 +496,7 @@ inline void linalg_gemm<gpu, double>(const Tensor<gpu, 2, double>& A,
                               C.size(1) * C.stride_,                                      \
                               C.stride_,                                                  \
                               A.size(1)))                                                 \
-    CUBLAS_CALL(cublasSetMathMode(handle, saved_math_mode));                              \
+    /* math mode restored by math_mode_guard dtor (exception-safe) */                     \
   }
 LINALG_GPU_GEMM_AXIS(SgemmStridedBatched, float)
 LINALG_GPU_GEMM_AXIS(DgemmStridedBatched, double)
@@ -521,8 +521,8 @@ inline void linalg_gemm<gpu, mshadow::half::half_t>(const Tensor<gpu, 2, mshadow
 #if CUDA_VERSION >= 7050
   auto blas_handle = Stream<gpu>::GetBlasHandle(s);
 #if CUDA_VERSION >= 9000
-  auto cublas_math_mode   = GetEnvAllowTensorCore() ? CUBLAS_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH;
-  auto previous_math_mode = SetCublasMathMode(blas_handle, cublas_math_mode);
+  auto cublas_math_mode = GetEnvAllowTensorCore() ? CUBLAS_TENSOR_OP_MATH : CUBLAS_DEFAULT_MATH;
+  CublasMathModeGuard math_mode_guard(blas_handle, cublas_math_mode);  // restores on scope exit
 #endif
 
 // As of cuda8, cublas adopted the cuda datatype, rather than maintaining its own datatype.
@@ -619,9 +619,7 @@ inline void linalg_gemm<gpu, mshadow::half::half_t>(const Tensor<gpu, 2, mshadow
                               half_datatype,
                               C.stride_));
   }
-#if CUDA_VERSION >= 9000
-  SetCublasMathMode(blas_handle, previous_math_mode);
-#endif
+  // math mode restored by math_mode_guard's destructor (exception-safe)
 #else
   LOG(FATAL) << "FP16 gemm requires CUDA version >= 7.5!";
 #endif  // CUDA_VERSION >= 7050
@@ -710,8 +708,8 @@ LINALG_XPU_BATCH_GEMM_AXIS(gpu, double)
     linalg_check_batch_size(A.size(0), B.size(0), C.size(0));                             \
     check_gemm(A[0], B[0], C[0], alpha, beta, tA, tB);                                    \
     using namespace mshadow::cuda_impl;                                                        \
-    auto handle                  = Stream<gpu>::GetBlasHandle(s);                         \
-    cublasMath_t saved_math_mode = SetCublasMathMode(handle, VERSION_ADJUSTED_TF32_MATH); \
+    auto handle = Stream<gpu>::GetBlasHandle(s);                                          \
+    CublasMathModeGuard math_mode_guard(handle, VERSION_ADJUSTED_TF32_MATH);              \
     CUBLAS_CALL(cublas##fname(handle,                                                     \
                               (tB ? CUBLAS_OP_T : CUBLAS_OP_N),                           \
                               (tA ? CUBLAS_OP_T : CUBLAS_OP_N),                           \
@@ -730,7 +728,7 @@ LINALG_XPU_BATCH_GEMM_AXIS(gpu, double)
                               C.stride_,                                                  \
                               static_cast<int64_t>(C.size(1) * C.stride_),                \
                               A.size(0)))                                                 \
-    CUBLAS_CALL(cublasSetMathMode(handle, saved_math_mode));                              \
+    /* math mode restored by math_mode_guard dtor (exception-safe) */                     \
   }
 
 // fp64 strided-batched GEMM with optional cuBLASLt fast path (PR-C).
@@ -750,7 +748,7 @@ inline void linalg_batch_gemm<gpu, double>(const Tensor<gpu, 3, double>& A,
   check_gemm(A[0], B[0], C[0], alpha, beta, tA, tB);
   using namespace mshadow::cuda_impl;
   auto handle                  = Stream<gpu>::GetBlasHandle(s);
-  cublasMath_t saved_math_mode = SetCublasMathMode(handle, VERSION_ADJUSTED_TF32_MATH);
+  CublasMathModeGuard math_mode_guard(handle, VERSION_ADJUSTED_TF32_MATH);
   const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
   const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
   const int gemm_m             = C.size(2);
@@ -793,7 +791,7 @@ inline void linalg_batch_gemm<gpu, double>(const Tensor<gpu, 3, double>& A,
                                           stride_c,
                                           batch));
   }
-  CUBLAS_CALL(cublasSetMathMode(handle, saved_math_mode));
+  // math mode restored by math_mode_guard's destructor (exception-safe)
 }
 
 #if CUDA_VERSION < 9010
@@ -817,8 +815,8 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
   bool use_tensor_ops = GetEnvAllowTensorCore() && GetEnvAllowTensorCoreConversion();
 
   using namespace mshadow::cuda_impl;
-  auto cublas_math_mode   = use_tensor_ops ? CUBLAS_TENSOR_OP_MATH : VERSION_ADJUSTED_TF32_MATH;
-  auto previous_math_mode = SetCublasMathMode(blas_handle, cublas_math_mode);
+  auto cublas_math_mode = use_tensor_ops ? CUBLAS_TENSOR_OP_MATH : VERSION_ADJUSTED_TF32_MATH;
+  CublasMathModeGuard math_mode_guard(blas_handle, cublas_math_mode);  // restores on scope exit
 
   // cublasGemmStridedBatchedEx is only supported for GPU with architecture
   // capabilities equal or greater than 5.0. Fall back to
@@ -898,7 +896,7 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
                                           stride_c,
                                           batch));
   }
-  SetCublasMathMode(blas_handle, previous_math_mode);
+  // math mode restored by math_mode_guard's destructor (exception-safe)
 }
 #endif  // CUDA_VERSION < 9010
 
@@ -918,8 +916,8 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
     CHECK_NOTNULL(s);                                                                     \
     linalg_check_batch_size(A.size(0), B.size(0), C.size(0));                             \
     linalg_check_batch_size(A.size(2), B.size(2), C.size(2));                             \
-    auto handle                  = Stream<gpu>::GetBlasHandle(s);                         \
-    cublasMath_t saved_math_mode = SetCublasMathMode(handle, VERSION_ADJUSTED_TF32_MATH); \
+    auto handle = Stream<gpu>::GetBlasHandle(s);                                          \
+    CublasMathModeGuard math_mode_guard(handle, VERSION_ADJUSTED_TF32_MATH);              \
     for (index_t i = 0; i < A.size(2); ++i) {                                             \
       CUBLAS_CALL(cublas##fname(Stream<gpu>::GetBlasHandle(s),                            \
                                 (tB ? CUBLAS_OP_T : CUBLAS_OP_N),                         \
@@ -940,7 +938,7 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
                                 C.size(1) * C.size(2) * C.stride_,                        \
                                 A.size(0)))                                               \
     }                                                                                     \
-    SetCublasMathMode(handle, saved_math_mode);                                           \
+    /* math mode restored by math_mode_guard dtor (exception-safe) */                     \
   }
 
 LINALG_GPU_BATCH_GEMM_AXIS(SgemmStridedBatched, float)

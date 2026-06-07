@@ -80,7 +80,14 @@ struct __align__(2) __bfloat16 {
 };
 __device__ inline __bfloat16 __float2bfloat16(const float f) {
   __bfloat16 val;
- asm("{  cvt.rn.bf16.f32 %0, %1;}\n" : "=h"(val.__x) : "f"(f));
+  unsigned int u;
+  asm("{  mov.b32 %0, %1;}\n" : "=r"(u) : "f"(f));
+  if ((u & 0x7fffffffu) > 0x7f800000u) {     // NaN -> quiet NaN, preserve sign
+    val.__x = static_cast<unsigned short>((u >> 16) | 0x0040u);
+  } else {
+    u += 0x00007fffu + ((u >> 16) & 1u);     // round to nearest even
+    val.__x = static_cast<unsigned short>(u >> 16);
+  }
   return val;
 }
 __device__ inline float __bfloat162float(const __bfloat16 h) {

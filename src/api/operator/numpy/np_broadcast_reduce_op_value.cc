@@ -122,7 +122,10 @@ MXNET_REGISTER_API("_npi.mean").set_body([](runtime::MXNetArgs args, runtime::MX
     param.axis = mxnet::Tuple<int>(args[1].operator ObjectRef());
   }
   if (args[2].type_code() == kNull) {
-    param.dtype = mxnet::common::GetDefaultDtype();
+    // Leave dtype unset so NumpyMeanType preserves the (floating) input dtype,
+    // matching NumPy/PyTorch (mean of float64 stays float64). Forcing the
+    // default float32 here previously truncated float64/float16 means.
+    param.dtype = dmlc::optional<int>();
   } else {
     param.dtype = String2MXNetTypeWithBool(args[2].operator std::string());
   }

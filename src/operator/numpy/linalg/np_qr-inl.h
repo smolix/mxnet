@@ -164,7 +164,10 @@ LINALG_CPU_QR_WORKSPACE_QUERY(d, double)
     const int n  = A.size(0);                                                              \
     const int mn = (m > n ? n : m);                                                        \
     int lwork(work.size(0) - mn);                                                          \
-    Storage::Handle info = Storage::Get()->Alloc(sizeof(int), Context::GPU());             \
+    /* info is written asynchronously by cusolver; the EPHEMERAL handle syncs the   */     \
+    /* stream in its dtor before freeing, so the kernel can't write into a reused   */     \
+    /* block after a CPU-side free (apache/mxnet#19353).                            */     \
+    EPHEMERAL_GPU_STORAGE_ALLOC(linalg_geqrf, info, int, 1);                               \
     CUSOLVER_CALL(cusolver##fname(Stream<gpu>::GetSolverHandle(s),                         \
                                   m,                                                       \
                                   n,                                                       \
@@ -173,8 +176,7 @@ LINALG_CPU_QR_WORKSPACE_QUERY(d, double)
                                   work.dptr_,                                              \
                                   work.dptr_ + mn,                                         \
                                   lwork,                                                   \
-                                  static_cast<int*>(info.dptr)));                          \
-    Storage::Get()->Free(info);                                                            \
+                                  static_cast<int*>(info.dptr())));                        \
   }
 LINALG_GPU_GEQRF(DnSgeqrf, float)
 LINALG_GPU_GEQRF(DnDgeqrf, double)
@@ -194,7 +196,9 @@ LINALG_GPU_GEQRF(DnDgeqrf, double)
     const int n  = A.size(0);                                                              \
     const int mn = (m > n ? n : m);                                                        \
     int lwork(work.size(0) - mn);                                                          \
-    Storage::Handle info = Storage::Get()->Alloc(sizeof(int), Context::GPU());             \
+    /* info is written asynchronously by cusolver; sync-on-free via EPHEMERAL       */     \
+    /* (apache/mxnet#19353).                                                        */     \
+    EPHEMERAL_GPU_STORAGE_ALLOC(linalg_orgqr, info, int, 1);                               \
     CUSOLVER_CALL(cusolver##fname(Stream<gpu>::GetSolverHandle(s),                         \
                                   m,                                                       \
                                   mn,                                                      \
@@ -204,8 +208,7 @@ LINALG_GPU_GEQRF(DnDgeqrf, double)
                                   work.dptr_,                                              \
                                   work.dptr_ + mn,                                         \
                                   lwork,                                                   \
-                                  static_cast<int*>(info.dptr)));                          \
-    Storage::Get()->Free(info);                                                            \
+                                  static_cast<int*>(info.dptr())));                        \
   }
 
 #else

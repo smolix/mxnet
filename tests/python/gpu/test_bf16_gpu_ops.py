@@ -76,7 +76,8 @@ def test_bf16_reduction_gpu():
     s = nd.sum(ab)
     s.wait_to_read()
     # accumulation is in fp32; result close to fp32 sum
-    assert abs(float(s.astype('float32').asnumpy()) - float(nd.sum(af).asnumpy())) < 5.0
+    assert abs(float(s.astype('float32').asnumpy().item())
+               - float(nd.sum(af).asnumpy().item())) < 5.0
 
 
 def test_bf16_broadcast_add_gpu():

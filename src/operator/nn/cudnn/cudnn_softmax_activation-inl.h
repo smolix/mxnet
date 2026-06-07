@@ -43,7 +43,7 @@ class CuDNNSoftmaxActivationOp {
   }
 
   ~CuDNNSoftmaxActivationOp() {
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(shape_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(shape_desc_));
   }
 
   void Forward(const OpContext& ctx,

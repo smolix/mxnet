@@ -61,14 +61,47 @@ void ReduceAxesRTCComputeImpl(const OpContext& ctx,
     }
   }
 
+  const TBlob in_data  = inputs[0].reshape(src_shape);
+  const TBlob out_data = outputs[0].reshape(dst_shape);
+
+  // Mean (normalize) over an fp16 output: the reduce writes the *un-normalized*
+  // sum to the output before the division, and that sum overflows fp16's ~65504
+  // range for a large reduced extent (e.g. np.mean(fp16) over a 200k axis -> inf,
+  // diverging from NumPy which stays finite). Accumulate the sum into an fp32
+  // scratch, then divide-and-cast to the fp16 output. (bf16 shares fp32's
+  // exponent range, so it does not overflow and keeps the in-place path. The
+  // workspace==nullptr guard scopes this to the direct mean op, where we own the
+  // tempspace; workspace-passing callers manage their own buffers.)
+  if (workspace == nullptr && normalize && reducer == "red::sum{}" &&
+      outputs[0].type_flag_ == mshadow::kFloat16) {
+    const size_t workspace_size = broadcast::ReduceWorkspaceSize(s, dst_shape, kWriteTo, src_shape);
+    const size_t temp_off       = ((workspace_size + sizeof(float) - 1) / sizeof(float)) * sizeof(float);
+    const size_t temp_bytes     = dst_shape.Size() * sizeof(float);
+    Tensor<gpu, 1, char> buf =
+        ctx.requested[0].get_space_typed<gpu, 1, char>(Shape1(temp_off + temp_bytes), s);
+    Tensor<gpu, 1, char> ws(buf.dptr_, Shape1(workspace_size), s);
+    const TBlob temp_fp32(reinterpret_cast<float*>(buf.dptr_ + temp_off),
+                          dst_shape,
+                          gpu::kDevMask,
+                          mshadow::kFloat32,
+                          ctx.run_ctx.ctx.dev_id);
+    BROADCAST_NDIM_SWITCH(dst_shape.ndim(), NDim, {
+      broadcast::RTCReduce(ctx, temp_fp32, kWriteTo, ws, in_data, reducer, NDim, OP);
+    });
+    NumpyBinaryScalarParam p{};
+    p.scalar = static_cast<double>(src_shape.Size() / dst_shape.Size() - ddof);
+    NodeAttrs a;
+    a.parsed = p;
+    BinaryScalarRTCCompute{"div"}(a, ctx, {temp_fp32}, {req[0]}, {out_data});  // NOLINT
+    return;
+  }
+
   Tensor<gpu, 1, char> w;
   if (workspace == nullptr) {
     size_t workspace_size = broadcast::ReduceWorkspaceSize(s, dst_shape, req[0], src_shape);
     w         = ctx.requested[0].get_space_typed<gpu, 1, char>(Shape1(workspace_size), s);
     workspace = &w;
   }
-  const TBlob in_data  = inputs[0].reshape(src_shape);
-  const TBlob out_data = outputs[0].reshape(dst_shape);
   BROADCAST_NDIM_SWITCH(dst_shape.ndim(), NDim, {
     broadcast::RTCReduce(ctx, out_data, req[0], *workspace, in_data, reducer, NDim, OP);
   });

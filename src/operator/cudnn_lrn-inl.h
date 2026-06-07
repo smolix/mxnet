@@ -41,8 +41,8 @@ class CuDNNLocalResponseNormOp : public Operator {
 
   ~CuDNNLocalResponseNormOp() {
     if (init_cudnn_) {
-      CUDNN_CALL(cudnnDestroyLRNDescriptor(lrn_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(shape_desc_));
+      CUDNN_CALL_NONFATAL(cudnnDestroyLRNDescriptor(lrn_desc_));
+      CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(shape_desc_));
     }
   }
 

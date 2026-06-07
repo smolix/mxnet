@@ -35,7 +35,13 @@ NNVM_REGISTER_OP(_backward_dot)
     .set_attr<FCompute>("FCompute<gpu>", DotBackward_<gpu>)
     .set_attr<FComputeEx>("FComputeEx<gpu>", DotBackwardEx<gpu>);
 
-NNVM_REGISTER_OP(batch_dot).set_attr<FCompute>("FCompute<gpu>", BatchDotForward_<gpu>);
+// cuBLAS-backed; not capture-safe (see FullyConnected / CUDA_GRAPHS_PLAN.md).
+// dot / _backward_dot are already excluded from capture via their FComputeEx
+// dispatch; batch_dot has only FCompute, so exclude it explicitly.
+NNVM_REGISTER_OP(batch_dot)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FCompute>("FCompute<gpu>", BatchDotForward_<gpu>);
 
 }  // namespace op
 }  // namespace mxnet

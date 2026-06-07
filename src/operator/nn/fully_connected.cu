@@ -71,9 +71,19 @@ void FullyConnectedGradCompute<gpu>(const nnvm::NodeAttrs& attrs,
   }
 }
 
-NNVM_REGISTER_OP(FullyConnected).set_attr<FCompute>("FCompute<gpu>", FullyConnectedCompute<gpu>);
+// cuBLAS gemm is not safe to call while a CUDA stream is capturing (it performs
+// capture-illegal stream/workspace setup -> cudaError 900). Exclude FC from
+// graph capture so it runs conventionally; the surrounding capturable ops still
+// form graphs. This is the conservative path until the cuBLAS handle+workspace
+// are made capture-safe (see CUDA_GRAPHS_PLAN.md, Phase 2).
+NNVM_REGISTER_OP(FullyConnected)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FCompute>("FCompute<gpu>", FullyConnectedCompute<gpu>);
 
 NNVM_REGISTER_OP(_backward_FullyConnected)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
     .set_attr<FCompute>("FCompute<gpu>", FullyConnectedGradCompute<gpu>);
 
 }  // namespace op

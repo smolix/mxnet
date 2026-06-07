@@ -64,8 +64,8 @@ class CuDNNActivationOp {
   }
 
   ~CuDNNActivationOp() {
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(shape_desc_));
-    CUDNN_CALL(cudnnDestroyActivationDescriptor(desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(shape_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyActivationDescriptor(desc_));
   }
 
   void Forward(const OpContext& ctx,

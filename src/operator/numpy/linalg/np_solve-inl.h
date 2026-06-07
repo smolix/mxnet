@@ -129,19 +129,20 @@ LINALG_CPU_SOLVE(dgesv, double)
       const Tensor<gpu, 2, DType>& A, const Tensor<gpu, 1, int>& ipiv, Stream<gpu>* s) {      \
     using namespace mxnet;                                                                    \
     using mshadow::gpu;                                                                       \
-    Storage::Handle info      = Storage::Get()->Alloc(sizeof(int), Context::GPU());           \
+    /* info and workspace are written asynchronously by cusolver; EPHEMERAL handles  */     \
+    /* sync the stream in their dtors before freeing, so the kernel can't write into  */     \
+    /* a reused block after a CPU-side free (apache/mxnet#19353).                     */     \
     const int lwork           = linalg_dn_getrf_workspace_query(A, s);                        \
-    Storage::Handle workspace = Storage::Get()->Alloc(sizeof(DType) * lwork, Context::GPU()); \
+    EPHEMERAL_GPU_STORAGE_ALLOC(linalg_dn_getrf, info, int, 1);                               \
+    EPHEMERAL_GPU_STORAGE_ALLOC(linalg_dn_getrf, workspace, DType, lwork);                    \
     CUSOLVER_CALL(cusolver##fname(Stream<gpu>::GetSolverHandle(s),                            \
                                   A.size(1),                                                  \
                                   A.size(1),                                                  \
                                   A.dptr_,                                                    \
                                   (A.size(1) == 0 ? 1 : A.size(1)),                           \
-                                  static_cast<DType*>(workspace.dptr),                        \
+                                  static_cast<DType*>(workspace.dptr()),                      \
                                   ipiv.dptr_,                                                 \
-                                  static_cast<int*>(info.dptr)));                             \
-    Storage::Get()->Free(info);                                                               \
-    Storage::Get()->Free(workspace);                                                          \
+                                  static_cast<int*>(info.dptr())));                           \
   }
 
 #define LINALG_GPU_DN_GETRS(fname, DType)                                                     \
@@ -154,7 +155,9 @@ LINALG_CPU_SOLVE(dgesv, double)
     using mshadow::gpu;                                                                       \
     const int N = A.size(0), nrhs = X.size(0);                                                \
     const int lda = (A.size(1) == 0 ? 1 : A.size(1)), ldx = (X.size(1) == 0 ? 1 : X.size(1)); \
-    Storage::Handle info = Storage::Get()->Alloc(sizeof(int), Context::GPU());                \
+    /* info is written asynchronously by cusolver; sync-on-free via EPHEMERAL        */      \
+    /* (apache/mxnet#19353).                                                         */      \
+    EPHEMERAL_GPU_STORAGE_ALLOC(linalg_dn_getrs, info, int, 1);                               \
     CUSOLVER_CALL(cusolver##fname(Stream<gpu>::GetSolverHandle(s),                            \
                                   CUBLAS_OP_N,                                                \
                                   N,                                                          \
@@ -164,8 +167,7 @@ LINALG_CPU_SOLVE(dgesv, double)
                                   ipiv.dptr_,                                                 \
                                   X.dptr_,                                                    \
                                   ldx,                                                        \
-                                  static_cast<int*>(info.dptr)));                             \
-    Storage::Get()->Free(info);                                                               \
+                                  static_cast<int*>(info.dptr())));                           \
   }
 
 #define LINALG_GPU_SOLVE(DType)                                         \

@@ -81,7 +81,9 @@ struct Stream<gpu> {
       , solver_handle_ownership_(NoHandle)
       , dnn_handle_ownership_(NoHandle)
       , cutensor_handle_ownership_(NoHandle)
-      , cutensor_cachelines_(nullptr){}
+      , cutensor_cachelines_(nullptr)
+      , prop()       // zero-init; otherwise prop.major/minor read uninitialized
+      , dev_id(-1) {} //  if a Stream is used before NewStream<gpu> fills them in
   /*!
    * \brief wait for all the computation associated
    *  with this stream to complete
@@ -158,6 +160,7 @@ struct Stream<gpu> {
 #if MSHADOW_USE_CUSOLVER == 1
     if (solver_handle_ownership_ == OwnHandle) {
       cusolverStatus_t err = cusolverDnDestroy(solver_handle_);
+      solver_handle_ownership_ = NoHandle;  // mirror Destroy{Blas,Dnn}Handle; avoid double-destroy
       CHECK_EQ(err, CUSOLVER_STATUS_SUCCESS) << "Destory cusolver handle failed";
     }
 #endif

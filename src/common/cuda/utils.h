@@ -111,6 +111,20 @@ inline __device__ bool __is_supported_cuda_architecture() {
   }
 
 /*!
+ * \brief Non-throwing CUDA call: logs a warning instead of throwing on error.
+ * Use inside destructors -- a destructor is implicitly noexcept, so a throwing
+ * CHECK there (e.g. cudaEventSynchronize surfacing a latched async error, or a
+ * destroy failing during CUDA shutdown) calls std::terminate. Logging keeps the
+ * process alive; a failed cleanup at worst leaks a small handle.
+ */
+#define CUDA_CALL_NONFATAL(func)                                              \
+  {                                                                           \
+    cudaError_t e = (func);                                                   \
+    if (e != cudaSuccess && e != cudaErrorCudartUnloading)                    \
+      LOG(WARNING) << "CUDA (non-fatal, in cleanup): " << cudaGetErrorString(e); \
+  }
+
+/*!
  * \brief Protected cuBLAS call.
  * \param func Expression to call.
  *
@@ -177,6 +191,18 @@ inline __device__ bool __is_supported_cuda_architecture() {
       } else {                                                         \
         LOG(FATAL) << "CUDA Driver: " << e << " " << err_msg;          \
       }                                                                \
+    }                                                                  \
+  }
+
+// Non-throwing driver call for use in destructors (see CUDA_CALL_NONFATAL).
+#define CUDA_DRIVER_CALL_NONFATAL(func)                                \
+  {                                                                    \
+    CUresult e = (func);                                               \
+    if (e != CUDA_SUCCESS && e != CUDA_ERROR_DEINITIALIZED) {          \
+      char const* err_msg = nullptr;                                   \
+      cuGetErrorString(e, &err_msg);                                   \
+      LOG(WARNING) << "CUDA Driver (non-fatal, in cleanup): " << e     \
+                   << " " << (err_msg ? err_msg : "unknown");          \
     }                                                                  \
   }
 
@@ -421,9 +447,11 @@ class DeviceStore {
   }
 
   ~DeviceStore() {
+    // Non-throwing: a destructor is implicitly noexcept, so a throwing CHECK here
+    // would std::terminate (e.g. during CUDA shutdown). Log instead.
     if (restore_ && current_device_ != restore_device_ && current_device_ != -1 &&
         restore_device_ != -1)
-      CUDA_CALL(cudaSetDevice(restore_device_));
+      CUDA_CALL_NONFATAL(cudaSetDevice(restore_device_));
   }
 
   void SetDevice(int device) {
@@ -643,6 +671,30 @@ inline cublasMath_t SetCublasMathMode(cublasHandle_t blas_handle, cublasMath_t n
   CUBLAS_CALL(cublasSetMathMode(blas_handle, new_math_type));
   return handle_math_mode;
 }
+
+// RAII guard: set the cuBLAS handle's math mode and restore it on scope exit,
+// including when the GEMM in between throws. cuBLAS calls go through CUBLAS_CALL,
+// which throws (dmlc::Error) on failure under LOG_FATAL_THROW; the threaded
+// engine catches that and keeps running, so a manual restore-at-end is skipped on
+// the throwing path and the long-lived per-stream handle is left in the wrong
+// (TF32 / tensor-op) math mode, silently corrupting every later GEMM on that
+// stream. The destructor restores best-effort and never throws.
+class CublasMathModeGuard {
+ public:
+  CublasMathModeGuard(cublasHandle_t handle, cublasMath_t new_mode) : handle_(handle) {
+    CUBLAS_CALL(cublasGetMathMode(handle_, &saved_mode_));
+    CUBLAS_CALL(cublasSetMathMode(handle_, new_mode));
+  }
+  ~CublasMathModeGuard() {
+    cublasSetMathMode(handle_, saved_mode_);  // best-effort; never throw from a dtor
+  }
+  CublasMathModeGuard(const CublasMathModeGuard&)            = delete;
+  CublasMathModeGuard& operator=(const CublasMathModeGuard&) = delete;
+
+ private:
+  cublasHandle_t handle_;
+  cublasMath_t   saved_mode_ = CUBLAS_DEFAULT_MATH;
+};
 #endif
 
 #endif  // MXNET_USE_CUDA

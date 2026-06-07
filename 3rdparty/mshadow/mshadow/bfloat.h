@@ -134,13 +134,32 @@ static MSHADOW_XINLINE bf16_t Binary(uint16_t value) {
     uint32_t ui;
   };
 
+  // Convert fp32 -> bf16 (high 16 bits) with round-to-nearest-even, matching
+  // PyTorch/TensorFlow bf16 and the GPU RTC conversion. Plain truncation (just
+  // taking the high half) is biased toward zero and loses up to 1 ulp; RNE adds
+  // a 0x7fff + lsb rounding bias before discarding the low half. NaN is mapped
+  // to a quiet NaN so the rounding carry cannot turn it into an infinity.
   MSHADOW_XINLINE uint16_t FloatToBF16(const float& value) const {
-    return reinterpret_cast<const uint16_t*>(&value)[1];
+    Bits b;
+    b.f = value;
+    uint32_t u = b.ui;
+    if ((u & 0x7fffffffu) > 0x7f800000u) {
+      return static_cast<uint16_t>((u >> 16) | 0x0040u);
+    }
+    u += 0x00007fffu + ((u >> 16) & 1u);
+    return static_cast<uint16_t>(u >> 16);
   }
 
   // Same as above routine, except for addition of volatile keyword
   MSHADOW_XINLINE uint16_t FloatToBF16(const volatile float& value) const volatile {  // NOLINT (*)
-    return reinterpret_cast<const volatile uint16_t*>(&value)[1];
+    Bits b;
+    b.f = value;
+    uint32_t u = b.ui;
+    if ((u & 0x7fffffffu) > 0x7f800000u) {
+      return static_cast<uint16_t>((u >> 16) | 0x0040u);
+    }
+    u += 0x00007fffu + ((u >> 16) & 1u);
+    return static_cast<uint16_t>(u >> 16);
   }
 
   MSHADOW_XINLINE float BF16ToFloat(const uint16_t& value) const {

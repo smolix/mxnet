@@ -108,13 +108,13 @@ class CuDNNDeconvolutionOp {
   }
 
   ~CuDNNDeconvolutionOp() {
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(in_desc_));
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(out_desc_));
-    CUDNN_CALL(cudnnDestroyTensorDescriptor(bias_desc_));
-    CUDNN_CALL(cudnnDestroyFilterDescriptor(filter_desc_));
-    CUDNN_CALL(cudnnDestroyConvolutionDescriptor(forward_conv_desc_));
-    CUDNN_CALL(cudnnDestroyConvolutionDescriptor(back_conv_desc_));
-    CUDNN_CALL(cudnnDestroyConvolutionDescriptor(back_conv_desc_w_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(in_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(out_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(bias_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyFilterDescriptor(filter_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyConvolutionDescriptor(forward_conv_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyConvolutionDescriptor(back_conv_desc_));
+    CUDNN_CALL_NONFATAL(cudnnDestroyConvolutionDescriptor(back_conv_desc_w_));
   }
 
   void Forward(const OpContext& ctx,

@@ -776,7 +776,42 @@ NNVM_REGISTER_OP(_backward_Embedding)
     .set_attr<FCompute>("FCompute<cpu>", EmbeddingOpBackward<cpu>)
     .set_attr<FComputeEx>("FComputeEx<cpu>", EmbeddingOpBackwardEx<cpu>);
 
-NNVM_REGISTER_OP(take)
+// Shared attributes for the `take` family of ops. The two registrations below
+// (`take` and `_npi_take`) differ only in their op name, their TakeOpType<bool>
+// strictness flag, and their docs. This macro factors out everything else so the
+// two stay in sync. `STRICT` selects integer-index enforcement (numpy frontend)
+// vs. permissive auto-cast (legacy mx.nd). Returns the OpReg reference so callers
+// can keep chaining .describe()/.add_arguments() fluently.
+#define MXNET_REGISTER_TAKE_OP(OP_NAME, STRICT)                                                  \
+  NNVM_REGISTER_OP(OP_NAME)                                                                       \
+      .set_num_inputs(2)                                                                          \
+      .set_num_outputs(1)                                                                         \
+      .set_attr_parser(ParamParser<TakeParam>)                                                    \
+      .set_attr<nnvm::FListInputNames>("FListInputNames",                                         \
+                                       [](const NodeAttrs& attrs) {                               \
+                                         return std::vector<std::string>{"a", "indices"};         \
+                                       })                                                         \
+      .set_attr<mxnet::FInferShape>("FInferShape", TakeOpShape)                                   \
+      .set_attr<nnvm::FInferType>("FInferType", TakeOpType<STRICT>)                               \
+      .set_attr<FInferStorageType>("FInferStorageType", TakeOpForwardStorageType)                 \
+      .set_attr<FResourceRequest>("FResourceRequest",                                             \
+                                  [](const NodeAttrs& attrs) {                                    \
+                                    return std::vector<ResourceRequest>{                          \
+                                        ResourceRequest::kTempSpace};                             \
+                                  })                                                              \
+      .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)                        \
+      .set_attr<FCompute>("FCompute<cpu>", TakeOpForward<cpu>)                                    \
+      .set_attr<FComputeEx>("FComputeEx<cpu>", TakeOpForwardEx<cpu>)                              \
+      .set_attr<nnvm::FGradient>(                                                                 \
+          "FGradient",                                                                            \
+          [](const nnvm::ObjectPtr& n, const std::vector<nnvm::NodeEntry>& ograds) {             \
+            return MakeNonlossGradNode(                                                           \
+                "_backward_take", n, ograds, {n->inputs[1]}, n->attrs.dict);                     \
+          })                                                                                      \
+      .add_argument("a", "NDArray-or-Symbol", "The input array.")                                 \
+      .add_argument("indices", "NDArray-or-Symbol", "The indices of the values to be extracted.")
+
+MXNET_REGISTER_TAKE_OP(take, false)
     .describe(R"code(Takes elements from an input array along the given axis.
 
 This function slices the input array along a particular axis with the provided indices.
@@ -827,64 +862,13 @@ The storage type of ``take`` output depends upon the input storage type:
    - take(csr, default, axis=0) = csr
 
 )code" ADD_FILELINE)
-    .set_num_inputs(2)
-    .set_num_outputs(1)
-    .set_attr_parser(ParamParser<TakeParam>)
-    .set_attr<nnvm::FListInputNames>("FListInputNames",
-                                     [](const NodeAttrs& attrs) {
-                                       return std::vector<std::string>{"a", "indices"};
-                                     })
-    .set_attr<mxnet::FInferShape>("FInferShape", TakeOpShape)
-    .set_attr<nnvm::FInferType>("FInferType", TakeOpType<false>)
-    .set_attr<FInferStorageType>("FInferStorageType", TakeOpForwardStorageType)
-    .set_attr<FResourceRequest>("FResourceRequest",
-                                [](const NodeAttrs& attrs) {
-                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
-                                })
-    .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
-    .set_attr<FCompute>("FCompute<cpu>", TakeOpForward<cpu>)
-    .set_attr<FComputeEx>("FComputeEx<cpu>", TakeOpForwardEx<cpu>)
-    .set_attr<nnvm::FGradient>("FGradient",
-                               [](const nnvm::ObjectPtr& n,
-                                  const std::vector<nnvm::NodeEntry>& ograds) {
-                                 return MakeNonlossGradNode(
-                                     "_backward_take", n, ograds, {n->inputs[1]}, n->attrs.dict);
-                               })
-    .add_argument("a", "NDArray-or-Symbol", "The input array.")
-    .add_argument("indices", "NDArray-or-Symbol", "The indices of the values to be extracted.")
     .add_arguments(TakeParam::__FIELDS__());
 
 // NumPy frontend take (mx.np / mx.sym.np). Same kernel as the legacy `take`
 // op, but enforces NumPy/PyTorch integer-index semantics via TakeOpType<true>.
 // (Previously `_npi_take` was an alias of `take`; it is split out so the legacy
 //  op can remain permissive about float indices for backward compatibility.)
-NNVM_REGISTER_OP(_npi_take)
-    .set_num_inputs(2)
-    .set_num_outputs(1)
-    .set_attr_parser(ParamParser<TakeParam>)
-    .set_attr<nnvm::FListInputNames>("FListInputNames",
-                                     [](const NodeAttrs& attrs) {
-                                       return std::vector<std::string>{"a", "indices"};
-                                     })
-    .set_attr<mxnet::FInferShape>("FInferShape", TakeOpShape)
-    .set_attr<nnvm::FInferType>("FInferType", TakeOpType<true>)
-    .set_attr<FInferStorageType>("FInferStorageType", TakeOpForwardStorageType)
-    .set_attr<FResourceRequest>("FResourceRequest",
-                                [](const NodeAttrs& attrs) {
-                                  return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
-                                })
-    .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
-    .set_attr<FCompute>("FCompute<cpu>", TakeOpForward<cpu>)
-    .set_attr<FComputeEx>("FComputeEx<cpu>", TakeOpForwardEx<cpu>)
-    .set_attr<nnvm::FGradient>("FGradient",
-                               [](const nnvm::ObjectPtr& n,
-                                  const std::vector<nnvm::NodeEntry>& ograds) {
-                                 return MakeNonlossGradNode(
-                                     "_backward_take", n, ograds, {n->inputs[1]}, n->attrs.dict);
-                               })
-    .add_argument("a", "NDArray-or-Symbol", "The input array.")
-    .add_argument("indices", "NDArray-or-Symbol", "The indices of the values to be extracted.")
-    .add_arguments(TakeParam::__FIELDS__());
+MXNET_REGISTER_TAKE_OP(_npi_take, true).add_arguments(TakeParam::__FIELDS__());
 
 NNVM_REGISTER_OP(_backward_take)
     .set_num_inputs(2)

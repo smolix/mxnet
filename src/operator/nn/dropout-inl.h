@@ -271,11 +271,11 @@ class DropoutOp {
   ~DropoutOp() {
 #if MXNET_USE_CUDNN_DROPOUT
     if (this->ctx_.dev_type == kGPU && this->pkeep_ > 0 && !this->cudnn_off_) {
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(x_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(y_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(dx_desc_));
-      CUDNN_CALL(cudnnDestroyTensorDescriptor(dy_desc_));
-      CUDNN_CALL(cudnnDestroyDropoutDescriptor(dropout_desc_));
+      CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(x_desc_));
+      CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(y_desc_));
+      CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(dx_desc_));
+      CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(dy_desc_));
+      CUDNN_CALL_NONFATAL(cudnnDestroyDropoutDescriptor(dropout_desc_));
     }
 #endif  // MXNET_USE_CUDNN_DROPOUT
   }

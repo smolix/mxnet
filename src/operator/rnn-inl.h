@@ -689,17 +689,17 @@ class RNNOp {
       // any cudnnCreate* in the ctor may have thrown before the rest were
       // assigned; the corresponding handle is still nullptr from its
       // member initializer.
-      if (hx_desc_)  CUDNN_CALL(cudnnDestroyTensorDescriptor(hx_desc_));
-      if (cx_desc_)  CUDNN_CALL(cudnnDestroyTensorDescriptor(cx_desc_));
-      if (hy_desc_)  CUDNN_CALL(cudnnDestroyTensorDescriptor(hy_desc_));
-      if (cy_desc_)  CUDNN_CALL(cudnnDestroyTensorDescriptor(cy_desc_));
-      if (dhx_desc_) CUDNN_CALL(cudnnDestroyTensorDescriptor(dhx_desc_));
-      if (dcx_desc_) CUDNN_CALL(cudnnDestroyTensorDescriptor(dcx_desc_));
-      if (dhy_desc_) CUDNN_CALL(cudnnDestroyTensorDescriptor(dhy_desc_));
-      if (dcy_desc_) CUDNN_CALL(cudnnDestroyTensorDescriptor(dcy_desc_));
+      if (hx_desc_)  CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(hx_desc_));
+      if (cx_desc_)  CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(cx_desc_));
+      if (hy_desc_)  CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(hy_desc_));
+      if (cy_desc_)  CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(cy_desc_));
+      if (dhx_desc_) CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(dhx_desc_));
+      if (dcx_desc_) CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(dcx_desc_));
+      if (dhy_desc_) CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(dhy_desc_));
+      if (dcy_desc_) CUDNN_CALL_NONFATAL(cudnnDestroyTensorDescriptor(dcy_desc_));
 
-      if (rnn_desc_)     CUDNN_CALL(cudnnDestroyRNNDescriptor(rnn_desc_));
-      if (dropout_desc_) CUDNN_CALL(cudnnDestroyDropoutDescriptor(dropout_desc_));
+      if (rnn_desc_)     CUDNN_CALL_NONFATAL(cudnnDestroyRNNDescriptor(rnn_desc_));
+      if (dropout_desc_) CUDNN_CALL_NONFATAL(cudnnDestroyDropoutDescriptor(dropout_desc_));
       if (dgrad_sync_event_created_)
         CUDA_CALL(cudaEventDestroy(dgrad_sync_event_));
 
@@ -716,10 +716,10 @@ class RNNOp {
           dev_seq_lengths_.dptr = nullptr;
         }
       }
-      if (x_data_desc_)  CUDNN_CALL(cudnnDestroyRNNDataDescriptor(x_data_desc_));
-      if (y_data_desc_)  CUDNN_CALL(cudnnDestroyRNNDataDescriptor(y_data_desc_));
-      if (dx_data_desc_) CUDNN_CALL(cudnnDestroyRNNDataDescriptor(dx_data_desc_));
-      if (dy_data_desc_) CUDNN_CALL(cudnnDestroyRNNDataDescriptor(dy_data_desc_));
+      if (x_data_desc_)  CUDNN_CALL_NONFATAL(cudnnDestroyRNNDataDescriptor(x_data_desc_));
+      if (y_data_desc_)  CUDNN_CALL_NONFATAL(cudnnDestroyRNNDataDescriptor(y_data_desc_));
+      if (dx_data_desc_) CUDNN_CALL_NONFATAL(cudnnDestroyRNNDataDescriptor(dx_data_desc_));
+      if (dy_data_desc_) CUDNN_CALL_NONFATAL(cudnnDestroyRNNDataDescriptor(dy_data_desc_));
 #endif  // MXNET_USE_CUDNN
     }
   }

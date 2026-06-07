@@ -83,10 +83,14 @@ CudaModule::Chunk::Chunk(const char* source,
 }
 
 CudaModule::Chunk::~Chunk() {
+  // Non-throwing cleanup: a destructor is implicitly noexcept, so a throwing
+  // check here would std::terminate (e.g. during CUDA/driver shutdown).
   for (const auto& kv : mod_) {
-    CUDA_DRIVER_CALL(cuModuleUnload(kv.second));
+    CUDA_DRIVER_CALL_NONFATAL(cuModuleUnload(kv.second));
   }
-  NVRTC_CALL(nvrtcDestroyProgram(&prog_));
+  nvrtcResult nvrtc_e = nvrtcDestroyProgram(&prog_);
+  if (nvrtc_e != NVRTC_SUCCESS)
+    LOG(WARNING) << "NVRTC (non-fatal, in cleanup): " << nvrtcGetErrorString(nvrtc_e);
 }
 
 CUfunction CudaModule::Chunk::GetFunction(const std::string& mangled_name, const Context& ctx) {

@@ -850,7 +850,19 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
             return self._get_np_boolean_indexing(key, ndim, shape)
 
         all = __builtins__['all']  # `def all` below shadows the all builtin
-        if ndim == 0 and key != ():
+        if ndim == 0:
+            # 0-d arrays: () / Ellipsis / full-slice `:` select the scalar;
+            # newaxis (None) adds a leading dim (-> shape (1,)*num_newaxis).
+            # (A full slice is accepted as "the whole array" for interop with
+            # NumPy fallback ops that do `a[:]` on a 0-d; NumPy itself is
+            # stricter here.) Any other key (int/partial-slice) is too many
+            # indices.
+            if key is Ellipsis or key == () or key == slice(None):
+                return self
+            _keys = key if isinstance(key, tuple) else (key,)
+            if py_all(k is None or k is Ellipsis or k == slice(None) for k in _keys):
+                num_new = len([k for k in _keys if k is None])
+                return self if num_new == 0 else self.reshape((1,) * num_new)
             raise IndexError('scalar tensor can only accept `()` as index')
         # Handle simple cases for higher speed
         if isinstance(key, tuple) and len(key) == 0:
@@ -1027,7 +1039,15 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
 
         # handle basic and advanced indexing
         if self.ndim == 0:
-            if not isinstance(key, tuple) or len(key) != 0:
+            # 0-d arrays: (), Ellipsis, newaxis/None, and a full slice `:` are all
+            # accepted for an assignment (all set the single scalar element). The
+            # full slice is accepted for interop with NumPy fallback ops that do
+            # `a[:] = v` on a 0-d (NumPy itself is stricter).
+            def _noop0d(k):
+                return k is None or k is Ellipsis or (isinstance(k, slice) and k == slice(None))
+            _ok = (_noop0d(key) or
+                   (isinstance(key, tuple) and py_all(_noop0d(k) for k in key)))
+            if not _ok:
                 raise IndexError('scalar tensor can only accept `()` as index')
             if isinstance(value, numeric_types):
                 self._full(value)

@@ -1516,11 +1516,22 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
   Tensor<xpu, 1, char> workspace;
   TBlob temp_data_blob;
   const int compute_type = mean.type_flag_;
+  // fp16 mean/variance over a large reduced extent overflows: the reductions
+  // below write the un-normalized sum to the fp16 output before dividing, and
+  // that sum exceeds fp16's ~65504 range (diverging from NumPy, which stays
+  // finite). For an fp16 output, run the two reductions into fp32 scratch
+  // (sum in fp32, divide -> result is O(1)), then cast the finished
+  // mean/variance down to fp16. bf16 shares fp32's exponent range, so it does
+  // not overflow and keeps the in-place path.
+  const bool narrow_out  = (mean.type_flag_ == mshadow::kFloat16);
+  TBlob mean_acc         = mean;    // reduction target for the mean   (fp32 when narrow_out)
+  TBlob moment_acc       = moment;  // reduction target for the moment (fp32 when narrow_out)
   MSHADOW_TYPE_SWITCH(compute_type, DType, {
     const size_t cast_data_size =
         data.type_flag_ != compute_type ? data.shape_.Size() * sizeof(DType) : 0;
     const size_t temp_data_size = data.shape_.Size() * sizeof(DType);
-    const size_t temp_mem_size  = cast_data_size + temp_data_size + workspace_size;
+    const size_t acc_size       = narrow_out ? 2 * small.Size() * sizeof(float) : 0;
+    const size_t temp_mem_size  = cast_data_size + temp_data_size + workspace_size + acc_size;
     Tensor<xpu, 1, char> temp_mem =
         ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(temp_mem_size), s);
     char* offset = temp_mem.dptr_;
@@ -1534,40 +1545,33 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
     temp_data_blob = TBlob(temp_data_tensor).reshape(data.shape_);
     char* workspace_ptr = offset + temp_data_size;
     workspace           = Tensor<xpu, 1, char>(workspace_ptr, Shape1(workspace_size), s);
+    if (narrow_out) {
+      float* mean_acc_ptr   = reinterpret_cast<float*>(workspace_ptr + workspace_size);
+      float* moment_acc_ptr = mean_acc_ptr + small.Size();
+      mean_acc   = TBlob(mean_acc_ptr, small, xpu::kDevMask, mshadow::kFloat32, ctx.run_ctx.ctx.dev_id);
+      moment_acc = TBlob(moment_acc_ptr, small, xpu::kDevMask, mshadow::kFloat32, ctx.run_ctx.ctx.dev_id);
+    }
   });
-  // Compute mean
+  // Compute mean (into fp32 scratch when the output is fp16; see narrow_out).
 #if !defined(__CUDACC__)
   ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(
-      ctx, {compute_data}, {kWriteTo}, {mean}, small, &workspace);
+      ctx, {compute_data}, {kWriteTo}, {mean_acc}, small, &workspace);
 #else
   ReduceAxesRTCComputeImpl(
-      ctx, {compute_data}, {kWriteTo}, {mean}, small, "red::sum{}", &workspace, true, "identity");
+      ctx, {compute_data}, {kWriteTo}, {mean_acc}, small, "red::sum{}", &workspace, true, "identity");
 #endif
+  // Bring the (O(1), no longer overflowing) mean down to the fp16 output so the
+  // (data - mean) kernel below reads it in the compute dtype.
+  if (narrow_out) {
+    CastCompute<xpu>(attrs, ctx, {mean_acc}, {kWriteTo}, {mean});
+  }
   // Compute data - mean
   Shape<6> data_shape, mean_shape;
   for (int i = 0; i < 6; ++i) {
     data_shape[i] = (i < data.shape_.ndim()) ? data.shape_[i] : 1;
     mean_shape[i] = (i < small.ndim()) ? small[i] : 1;
   }
-#if !defined(__CUDACC__)
-  MSHADOW_TYPE_SWITCH(compute_type, DType, {
-    MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, OType, {
-      Kernel<VarBroadcastKernel, xpu>::Launch(s,
-                                              data_shape.Size(),
-                                              temp_data_blob.dptr<DType>(),
-                                              compute_data.dptr<DType>(),
-                                              mean.dptr<DType>(),
-                                              data_shape,
-                                              mean_shape);
-      ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(
-          ctx, {temp_data_blob}, {req[0]}, {moment}, small, &workspace, param.ddof);
-      if (sqrt && req[0] != kNullOp) {
-        Tensor<xpu, 1, OType> moment_tensor = moment.FlatTo1D<xpu, OType>(s);
-        moment_tensor                       = F<mshadow_op::square_root>(moment_tensor);
-      }
-    });
-  });
-#else
+  // (data - mean)^2 into temp_data_blob (in the compute dtype).
   MSHADOW_TYPE_SWITCH(compute_type, DType, {
     Kernel<VarBroadcastKernel, xpu>::Launch(s,
                                             data_shape.Size(),
@@ -1576,21 +1580,38 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
                                             mean.dptr<DType>(),
                                             data_shape,
                                             mean_shape);
-    ReduceAxesRTCComputeImpl(ctx,
-                             {temp_data_blob},
-                             {req[0]},
-                             {moment},
-                             small,
-                             "red::sum{}",
-                             &workspace,
-                             true,
-                             "identity",
-                             param.ddof);
-    if (sqrt && req[0] != kNullOp) {
-      UnaryRTCCompute{"sqrt"}({}, ctx, {moment}, {kWriteInplace}, {moment});  // NOLINT
-    }
   });
+  // Reduce into moment_acc (== moment unless narrow_out, where it is fp32 scratch
+  // so the sum does not overflow the fp16 output before the divide), sqrt for
+  // std, then cast the finished value down to the fp16 output if needed.
+  const OpReqType moment_req = narrow_out ? kWriteTo : req[0];
+#if !defined(__CUDACC__)
+  ReduceAxesComputeImpl<xpu, mshadow_op::sum, true, true>(
+      ctx, {temp_data_blob}, {moment_req}, {moment_acc}, small, &workspace, param.ddof);
+  if (sqrt && req[0] != kNullOp) {
+    MSHADOW_TYPE_SWITCH(moment_acc.type_flag_, AType, {
+      Tensor<xpu, 1, AType> moment_tensor = moment_acc.FlatTo1D<xpu, AType>(s);
+      moment_tensor                       = F<mshadow_op::square_root>(moment_tensor);
+    });
+  }
+#else
+  ReduceAxesRTCComputeImpl(ctx,
+                           {temp_data_blob},
+                           {moment_req},
+                           {moment_acc},
+                           small,
+                           "red::sum{}",
+                           &workspace,
+                           true,
+                           "identity",
+                           param.ddof);
+  if (sqrt && req[0] != kNullOp) {
+    UnaryRTCCompute{"sqrt"}({}, ctx, {moment_acc}, {kWriteInplace}, {moment_acc});  // NOLINT
+  }
 #endif
+  if (narrow_out) {
+    CastCompute<xpu>(attrs, ctx, {moment_acc}, {req[0]}, {moment});
+  }
 }
 
 template <int req, bool sqrt, int ndim>

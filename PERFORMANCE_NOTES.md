@@ -88,16 +88,24 @@ Status / fixes:
   and more accurate: rel_err 5e-9 vs 4.7e-6), float64 sum ~91 GB/s (~5x).
   2429 reduction tests pass. (float64 *mean* still takes the native path — a
   perf loose end, not a regression.)
-- **CPU outer/strided-axis** (~3 GB/s): still open — needs a vectorized/blocked
-  strided reduction in the native kernel; oneDNN is worse here (confirmed).
-- **GPU reductions** (~19% BW, ~190 GB/s): still open. The clean fix is to route
-  global sum/mean/max to `cub::DeviceReduce` (CUB is vendored in
-  `3rdparty/nvidia_cub` and already used by `optimizer_op.cu`). It must use a
-  `cub::TransformInputIterator` casting to a double accumulator (to preserve the
-  current `safe_acc` precision and not regress tight numeric tests), a double
-  temp output, and a small cast/normalize kernel honoring `req`. cub
-  DeviceReduce is near-peak (~900 GB/s on this GPU → ~5x). Scoped CUDA work;
-  validate across dtype/shape before landing.
+- **CPU outer/strided-axis: FIXED** (commit "reductions: cache-friendly CPU
+  outer-axis sum/mean"). `FlatOuterAxisSum` streams contiguous rows into
+  per-thread double accumulators (reused thread_local scratch), then combines:
+  ~22ms → ~0.67ms (~33x) on the measured case, double-accumulated. Guarded to
+  leading-axes {0..k} float sum/mean via `TryFastCpuFloatSum`.
+- **GPU global sum/mean: FIXED** (`reduce_cub.cu`, merged in #44). Routed to
+  `cub::DeviceReduce::Sum` with a `thrust::make_transform_iterator` double
+  accumulator + normalize/req kernel: float32 ~190→385 GB/s, float64 ~508.
+- **GPU axis (non-global) reductions: IMPROVED** (commit "reductions(gpu): don't
+  transpose large-N axis reductions"). The `calc_num_load` heuristic wrongly
+  chose the transpose layout for trailing-axis reductions; disabling transpose
+  when N>=8192 gives (256,256,256) axis=2: 187→317 GB/s (1.69x), (8192,256)
+  axis=1: 89→131 GB/s, no regression elsewhere, accuracy unchanged. Remaining
+  headroom (common cases ~35-40% BW) would need vectorized (float4) loads in the
+  RTC reduce kernel — a larger kernel project, deferred.
+- **mean dtype: FIXED** (same commit). `np.mean` of float64/float16 was being
+  truncated to float32 by the FFI forcing the default dtype; now preserves the
+  floating input dtype (NumPy/PyTorch semantics).
 
 ## Notes / smaller items
 

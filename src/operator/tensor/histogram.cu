@@ -139,19 +139,26 @@ void HistogramForwardImpl<gpu>(const OpContext& ctx,
   using namespace mshadow;
   using namespace mxnet_op;
   mshadow::Stream<gpu>* s = ctx.get_stream<gpu>();
+  // out_bins is float64 for the bin_cnt path (see HistogramOpType), which may
+  // differ from the input dtype. Switch on out_bins.type_flag_ for the bin
+  // edges (BType) -- matching the CPU impl -- instead of writing them as the
+  // input DType, which left a float32-filled buffer in a float64 blob and
+  // aborted asnumpy with "data type do not match ... Expected: double v.s. float".
   MSHADOW_TYPE_SWITCH(in_data.type_flag_, DType, {
-    MSHADOW_IDX_TYPE_SWITCH(out_data.type_flag_, CType, {
-      Kernel<set_zero, gpu>::Launch(s, bin_cnt, out_data.dptr<CType>());
-      Kernel<FillBinBoundsKernel, gpu>::Launch(
-          s, bin_cnt + 1, out_bins.dptr<DType>(), bin_cnt, min, max);
-      Kernel<HistogramFusedKernel, gpu>::Launch(s,
-                                                in_data.Size(),
-                                                in_data.dptr<DType>(),
-                                                out_bins.dptr<DType>(),
-                                                out_data.dptr<CType>(),
-                                                bin_cnt,
-                                                min,
-                                                max);
+    MSHADOW_TYPE_SWITCH(out_bins.type_flag_, BType, {
+      MSHADOW_IDX_TYPE_SWITCH(out_data.type_flag_, CType, {
+        Kernel<set_zero, gpu>::Launch(s, bin_cnt, out_data.dptr<CType>());
+        Kernel<FillBinBoundsKernel, gpu>::Launch(
+            s, bin_cnt + 1, out_bins.dptr<BType>(), bin_cnt, min, max);
+        Kernel<HistogramFusedKernel, gpu>::Launch(s,
+                                                  in_data.Size(),
+                                                  in_data.dptr<DType>(),
+                                                  out_bins.dptr<BType>(),
+                                                  out_data.dptr<CType>(),
+                                                  bin_cnt,
+                                                  min,
+                                                  max);
+      });
     });
   });
 }

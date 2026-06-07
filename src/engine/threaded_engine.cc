@@ -700,8 +700,16 @@ void ThreadedEngine::OnStartCPU(Engine* engine, void* opr_block, const dmlc::Err
     }
   }
   for (auto event : event_per_stream) {
-    auto ev = event.second.event.lock();
-    MSHADOW_CUDA_CALL(cudaEventSynchronize(*ev));
+    const EventInfo& ei = event.second;
+    // If the pooled event slot has been lapped (reused for a newer, unrelated
+    // record), the cached event no longer reflects the op we depend on. Wait on
+    // the recorded stream directly instead -- correct (it drains that op too),
+    // just coarser. Otherwise wait on the specific event.
+    if (ei.pool != nullptr && ei.pool->IsLapped(ei.pool_index)) {
+      MSHADOW_CUDA_CALL(cudaStreamSynchronize(ei.stream));
+    } else if (auto ev = ei.event.lock()) {
+      MSHADOW_CUDA_CALL(cudaEventSynchronize(*ev));
+    }
   }
 }
 
@@ -772,8 +780,17 @@ void ThreadedEngine::OnStartGPU(Engine* engine, void* sync_info, const dmlc::Err
     }
   }
   for (auto event : event_per_stream) {
-    auto ev = event.second.event.lock();
-    MSHADOW_CUDA_CALL(cudaStreamWaitEvent(worker_stream->stream_, *ev, 0));
+    const EventInfo& ei = event.second;
+    // Lapped slot (reused for a newer record): the cached event no longer
+    // tracks our dependency -- and since the pool owns the event the weak_ptr
+    // never expires to signal this. Fall back to a host sync of the recorded
+    // stream (correct: it drains the depended-on op) instead of a device-side
+    // wait on the wrong (reused) event, which would under-synchronize.
+    if (ei.pool != nullptr && ei.pool->IsLapped(ei.pool_index)) {
+      MSHADOW_CUDA_CALL(cudaStreamSynchronize(ei.stream));
+    } else if (auto ev = ei.event.lock()) {
+      MSHADOW_CUDA_CALL(cudaStreamWaitEvent(worker_stream->stream_, *ev, 0));
+    }
   }
 }
 
@@ -807,11 +824,12 @@ void ThreadedEngine::OnCompleteGPU(Engine* engine, void* sync_info, const dmlc::
       if (stream == worker_stream->stream_) {
         sync_obj.reader_events[i].event      = event;
         sync_obj.reader_events[i].pool_index = event_pool_idx;
+        sync_obj.reader_events[i].pool       = event_pool;
         break;
       }
     }
     if (i == sync_obj.reader_events.size()) {
-      sync_obj.reader_events.push_back({event, worker_stream->stream_, event_pool_idx});
+      sync_obj.reader_events.push_back({event, worker_stream->stream_, event_pool_idx, event_pool});
     }
   }
 
@@ -820,7 +838,7 @@ void ThreadedEngine::OnCompleteGPU(Engine* engine, void* sync_info, const dmlc::
     std::lock_guard<std::mutex> l(sync_obj.mutex);
     sync_obj.reader_events.clear();
     sync_obj.writer_event.clear();
-    sync_obj.writer_event.push_back({event, worker_stream->stream_, event_pool_idx});
+    sync_obj.writer_event.push_back({event, worker_stream->stream_, event_pool_idx, event_pool});
   }
 
   ThreadedEngine::OnCompleteStatic(engine, info->opr_block, error);

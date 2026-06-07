@@ -60,13 +60,34 @@ destroy-without-recreate path is ever added. **Fix:** add the one line.
 
 ## Tier 2 — note, higher risk or pre-existing; defer / careful
 
-### T1. CUDA event-pool `weak_ptr` never expires  [needs-verify, risky]
-`include/mxnet/engine.h` `CUDAEvent` keeps the owning `shared_ptr` for pool lifetime;
-only `weak_ptr` is handed out, so the expiry-based recycling in `OnStart*` is dead
-code and events recycle by 64-slot counter wraparound (shared per device). Possible
-cross-stream ordering hole under >64 outstanding deps with the async engine
-(non-default). Needs a runtime stress check to prove wraparound overtakes an in-flight
-dependency before changing — fixing blindly risks regressions. Defer.
+### T1. CUDA event-pool slot recycling under-synchronizes  [FIXED]
+Confirmed real (async/event-bus engine, MXNET_ENGINE_TYPE=...Async). The pool of
+reusable CUDA events hands out a `weak_ptr` + monotonic `pool_index`; the pool owns
+the `shared_ptr` for its lifetime so the `weak_ptr` NEVER expires, making the
+`expired()`-based recycling guard in OnStart{CPU,GPU} dead code. Once a slot is
+"lapped" (>= pool_size later events issued; pool was 64, shared per device), its
+cached `cudaEvent_t` reflects a newer, unrelated record -- possibly on a DIFFERENT
+stream. A consumer still holding the old `pool_index` then `cudaStreamWaitEvent`s on
+that reused event and waits for the wrong stream's work, not the op it depends on ->
+cross-stream UNDER-synchronization -> stale reads / wrong results (the producer op
+can still be running, since OnCompleteGPU records the event without waiting).
+
+Fix (engine.h + threaded_engine.cc):
+- `CUDAEventPool::IsLapped(pool_index)` reports when a slot has been re-issued;
+  `EventInfo` now carries the issuing pool so consumers can check it (handles the
+  cross-device case too). The two dependency-wait loops (OnStartCPU /
+  OnStartGPU) fall back to a host `cudaStreamSynchronize` of the recorded stream
+  when the slot is lapped (correct -- it drains the depended-on op -- just
+  coarser), instead of a device wait on the reused event.
+- Pool size is now `MXNET_CUDA_EVENT_POOL_SIZE` (default 1024, was a hardcoded 64)
+  so lapping -- and the serializing fallback -- is rare under real workloads.
+The common (not-lapped) path is byte-for-byte the old behavior; default
+(non-async) engine is unaffected. Validated: op suites correct under the async
+engine with default AND forced-tiny (=2/4) pools that lap every op; a 30x60-op
+dependency-chain stress matches a float64 reference; new regression test
+tests/python/gpu/test_event_pool_recycling_gpu.py. (The async engine + CUDA
+graphs combo still aborts on capture -- a separate, pre-existing issue documented
+in CUDA_GRAPHS_PLAN.md, untouched by this fix.)
 
 ### T2. `Stream<gpu>` ctor leaves `prop`/`dev_id` uninitialized  [FIXED]
 `stream_gpu-inl.h` ctor; `prop` read in `batched_gemm`. Always set via engine

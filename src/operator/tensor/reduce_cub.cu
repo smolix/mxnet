@@ -69,13 +69,30 @@ __global__ void FinalizeGlobalReduceKernel(const double* total_sum,
 
 }  // namespace
 
+size_t CubGlobalSumReduceWorkspaceBytes(size_t n) {
+  // CUB's DeviceReduce::Sum temp storage depends on the element count and the
+  // (double) accumulator, not the input iterator's value type, so a plain
+  // double->double query yields the same size the real reduce needs.
+  size_t temp_bytes = 0;
+  cub::DeviceReduce::Sum(nullptr,
+                         temp_bytes,
+                         static_cast<double*>(nullptr),
+                         static_cast<double*>(nullptr),
+                         static_cast<index_t>(n),
+                         /*stream=*/0);
+  const size_t result_off = ((temp_bytes + sizeof(double) - 1) / sizeof(double)) * sizeof(double);
+  return result_off + sizeof(double);
+}
+
 template <typename DType>
 void CubGlobalSumReduce(const OpContext& ctx,
                         const TBlob& in,
                         const TBlob& out,
                         const bool mean,
                         const double count,
-                        const bool addto) {
+                        const bool addto,
+                        char* ext_workspace,
+                        size_t ext_workspace_bytes) {
   using namespace mshadow;
   Stream<gpu>* s        = ctx.get_stream<gpu>();
   cudaStream_t stream   = Stream<gpu>::GetStream(s);
@@ -84,15 +101,29 @@ void CubGlobalSumReduce(const OpContext& ctx,
   CastToDouble<DType> conv;
   auto it = thrust::make_transform_iterator(in_ptr, conv);
 
-  // Query temp storage size, then carve one workspace holding temp + a double
-  // result, both from the op's kTempSpace resource.
+  // Query temp storage size, then carve one scratch region holding the CUB temp
+  // + a double result slot.
   size_t temp_bytes = 0;
   cub::DeviceReduce::Sum(nullptr, temp_bytes, it, static_cast<double*>(nullptr), total, stream);
   const size_t result_off = ((temp_bytes + sizeof(double) - 1) / sizeof(double)) * sizeof(double);
-  Tensor<gpu, 1, char> ws =
-      ctx.requested[0].get_space_typed<gpu, 1, char>(Shape1(result_off + sizeof(double)), s);
-  void* d_temp     = ws.dptr_;
-  double* d_result = reinterpret_cast<double*>(ws.dptr_ + result_off);
+  const size_t needed     = result_off + sizeof(double);
+
+  // Use the caller-supplied scratch when provided (it is guaranteed not to alias
+  // the reduction input); otherwise request our own from kTempSpace. Re-using
+  // ctx.requested[0] here would alias inputs that callers also carve from it
+  // (e.g. weighted-average `wa`) and silently corrupt the reduction.
+  char* base = ext_workspace;
+  Tensor<gpu, 1, char> ws;
+  if (base == nullptr) {
+    ws   = ctx.requested[0].get_space_typed<gpu, 1, char>(Shape1(needed), s);
+    base = ws.dptr_;
+  } else {
+    CHECK_GE(ext_workspace_bytes, needed)
+        << "CubGlobalSumReduce: supplied workspace (" << ext_workspace_bytes
+        << " B) smaller than required (" << needed << " B)";
+  }
+  void* d_temp     = base;
+  double* d_result = reinterpret_cast<double*>(base + result_off);
 
   cub::DeviceReduce::Sum(d_temp, temp_bytes, it, d_result, total, stream);
   FinalizeGlobalReduceKernel<DType>
@@ -101,11 +132,11 @@ void CubGlobalSumReduce(const OpContext& ctx,
 }
 
 template void CubGlobalSumReduce<float>(
-    const OpContext&, const TBlob&, const TBlob&, const bool, const double, const bool);
+    const OpContext&, const TBlob&, const TBlob&, const bool, const double, const bool, char*, size_t);
 template void CubGlobalSumReduce<double>(
-    const OpContext&, const TBlob&, const TBlob&, const bool, const double, const bool);
+    const OpContext&, const TBlob&, const TBlob&, const bool, const double, const bool, char*, size_t);
 template void CubGlobalSumReduce<mshadow::half::half_t>(
-    const OpContext&, const TBlob&, const TBlob&, const bool, const double, const bool);
+    const OpContext&, const TBlob&, const TBlob&, const bool, const double, const bool, char*, size_t);
 
 }  // namespace op
 }  // namespace mxnet

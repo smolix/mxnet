@@ -1006,6 +1006,12 @@ def insert(arr, obj, values, axis=None):
     arr = _as_np_ndarray(arr)
     if not isinstance(obj, (slice,) + integer_types) and not isinstance(obj, NDArray):
         obj = _as_np_ndarray(obj).astype('int64')
+    # The insert ops require every ndarray input on arr's context. obj/values
+    # may have been built elsewhere (e.g. a CPU index array passed for a GPU
+    # arr), so move them onto arr's context to avoid "require all inputs live on
+    # the same context".
+    if isinstance(obj, NDArray):
+        obj = obj.as_in_ctx(arr.ctx)
 
     if isinstance(values, numeric_types):
         if isinstance(obj, slice):
@@ -1018,13 +1024,14 @@ def insert(arr, obj, values, axis=None):
         elif isinstance(obj, integer_types):
             return _api_internal.insert_scalar(arr, values, obj, axis)
         elif isinstance(obj, NDArray):
-            values = _as_np_ndarray(values)
+            values = _as_np_ndarray(values).as_in_ctx(arr.ctx)
             if values.dtype != arr.dtype:
                 values = values.astype(arr.dtype)
             return _api_internal.insert_tensor(arr, values, obj, axis)
 
     if not isinstance(values, NDArray):
         values = _as_np_ndarray(values)
+    values = values.as_in_ctx(arr.ctx)
     if isinstance(obj, slice):
         start = obj.start
         stop = obj.stop

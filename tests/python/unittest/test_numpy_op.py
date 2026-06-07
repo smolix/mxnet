@@ -2540,17 +2540,21 @@ def test_np_reshape_shape_validation():
     invalid_shapes = [
         ((2.0, 3), TypeError),
         (('2', 3), TypeError),
-        ((-2, 3), ValueError),
         ((-4,), ValueError),
         ((-5,), ValueError),
-        ((2, -2), ValueError),
-        ((-1, -1), ValueError),
+        ((-1, -1), ValueError),  # at most one inferred (-1) dimension
     ]
     for shape, error_type in invalid_shapes:
         with pytest.raises(error_type):
             np.reshape(data, shape)
         with pytest.raises(error_type):
             mx.sym.np.reshape(sym_data, shape)
+    # -2 is the valid "copy the corresponding input dimension" extension code
+    # (accepted by the _npi reshape op), and may appear multiple times; only -1
+    # is the single inferred dimension. These must NOT raise.
+    for shape in [(-2, 3), (2, -2), (-2, -2), (-2, -1)]:
+        assert np.reshape(data, shape).shape == (2, 3)
+        mx.sym.np.reshape(sym_data, shape)  # builds without error
 
 
 @use_np

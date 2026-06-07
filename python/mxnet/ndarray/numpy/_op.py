@@ -145,7 +145,11 @@ def _normalize_reshape_shape(shape):
         if not isinstance(dim, (integer_types, _np.integer)):
             raise TypeError("'{}' object cannot be interpreted as an integer"
                             .format(type(dim).__name__))
-        if dim < 0 and dim != -1:
+        # -1 infers the dimension (at most one); -2 copies the corresponding
+        # input dimension (MXNet's reshape extension, accepted by the _npi
+        # reshape op and used e.g. by self-attention reshapes). Only -1 counts
+        # toward the single-unknown-dimension limit enforced below.
+        if dim < 0 and dim not in (-1, -2):
             raise ValueError("can only specify one unknown dimension")
         return int(dim)
 

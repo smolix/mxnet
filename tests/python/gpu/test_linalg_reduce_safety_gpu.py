@@ -93,6 +93,28 @@ def test_global_var_std_mean_gpu(dtype, shape):
                                     err_msg="{} {} {}".format(op, dtype, shape))
 
 
+@pytest.mark.parametrize('shape,axis', [((8, 200000), 1), ((200000, 8), 0),
+                                        ((4, 4, 65536), 2)])
+def test_fp16_mean_large_axis_no_overflow_gpu(shape, axis):
+    """np.mean(fp16) over a large axis must not overflow to inf.
+
+    The reduce writes the un-normalized sum to the fp16 output before dividing;
+    for a large reduced extent that sum exceeds fp16's ~65504 range. The fix
+    accumulates the sum in fp32 and divides before casting. NumPy stays finite
+    here (it accumulates mean in a wider type), so MXNet must too. (np.sum on
+    fp16 may still overflow -- that matches NumPy -- so we only assert on mean.)
+    """
+    ctx = _gpu()
+    onp.random.seed(4)
+    a_np = onp.random.uniform(0.5, 1.5, shape).astype('float16')
+    a = np.array(a_np, ctx=ctx, dtype='float16')
+    got = np.mean(a, axis=axis).asnumpy().astype('float64')
+    assert not onp.isinf(got).any(), "fp16 mean overflowed to inf"
+    assert not onp.isnan(got).any()
+    ref = onp.mean(a_np.astype('float64'), axis=axis)
+    onp.testing.assert_allclose(got, ref, rtol=3e-2, atol=3e-2)
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

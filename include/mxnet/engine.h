@@ -68,7 +68,14 @@ class CUDAEvent final {
 class CUDAEventPool final {
  public:
   explicit CUDAEventPool(Context const& ctx) : counter_(0) {
-    for (size_t i = 0; i < kPoolSize; ++i) {
+    // Round-robin pool of reusable CUDA events. The pool must be large enough
+    // that an event is not reused (its slot "lapped") while a still-pending
+    // dependency references it -- see IsLapped() and the engine's dependency
+    // wait paths, which fall back to a host stream-sync when a slot is lapped.
+    // A bigger pool makes that (correct but serializing) fallback rare.
+    int requested = dmlc::GetEnv("MXNET_CUDA_EVENT_POOL_SIZE", 1024);
+    pool_size_    = requested < 2 ? 2u : static_cast<size_t>(requested);
+    for (size_t i = 0; i < pool_size_; ++i) {
       events_.emplace_back(ctx);
     }
   }
@@ -79,15 +86,25 @@ class CUDAEventPool final {
 
   inline std::pair<std::weak_ptr<cudaEvent_t>, uint64_t> GetNextEvent() noexcept {
     uint64_t c = counter_++;
-    return {events_.at((c) % kPoolSize).GetEvent(), c};
+    return {events_.at((c) % pool_size_).GetEvent(), c};
   }
 
   inline uint64_t GetCounterValue() noexcept {
     return counter_.load();
   }
 
+  // A previously handed-out pool_index is "lapped" once its slot has been
+  // re-issued (i.e. >= pool_size_ later events have been requested). The cached
+  // cudaEvent_t for that slot then reflects a newer, unrelated record -- waiting
+  // on it would not wait for the original op (potential cross-stream under-sync,
+  // since the weak_ptr never expires while the pool owns the event). Callers
+  // that detect this must fall back to a host sync of the recorded stream.
+  inline bool IsLapped(uint64_t pool_index) const noexcept {
+    return counter_.load() > pool_index + pool_size_;
+  }
+
  private:
-  static constexpr size_t kPoolSize = 64;
+  size_t pool_size_;
   std::vector<CUDAEvent> events_;
   std::atomic<uint64_t> counter_;
 };
@@ -97,6 +114,10 @@ struct EventInfo {
   std::weak_ptr<cudaEvent_t> event;
   cudaStream_t stream;
   uint64_t pool_index;
+  // Pool that issued `event`/`pool_index`, so a consumer can detect whether the
+  // slot has been lapped (reused) before waiting on it. May be null for events
+  // recorded before this field was set.
+  CUDAEventPool* pool = nullptr;
 };
 /*! \brief struct containing cuda events and variables needed for the dependencies.*/
 struct SyncObject {

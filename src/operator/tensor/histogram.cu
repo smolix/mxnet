@@ -28,10 +28,10 @@ namespace mxnet {
 namespace op {
 
 struct HistogramFusedKernel {
-  template <typename DType, typename CType>
+  template <typename DType, typename BType, typename CType>
   static MSHADOW_XINLINE void Map(int i,
                                   const DType* in_data,
-                                  const DType* bin_bounds,
+                                  const BType* bin_bounds,
                                   CType* bins,
                                   const int bin_cnt,
                                   const double min,

@@ -73,10 +73,24 @@ dependency before changing — fixing blindly risks regressions. Defer.
 (`dev_id>=0`) today, so latent. Fixed: ctor now zero-inits `prop()` and
 `dev_id(-1)`.
 
-### T3. Unchecked `cudaMemsetAsync`/`cudaMemcpyAsync` returns  [pre-existing, broad]
-Many sites discard the `cudaError_t` (transformer.cu, softmax.cu, several
-numpy/tensor -inl.h). A failure gets misattributed to a later op. Low-med; broad
-churn — selective wrapping only.
+### T3. Unchecked `cudaMemsetAsync`/`cudaMemcpyAsync` returns  [FIXED]
+19 sites discarded the `cudaError_t` from async memset/memcpy (transformer.cu,
+softmax.cu, elemwise_binary_broadcast_op.cc, elemwise_unary_op_basic.cu,
+np_matrix_op{.cu,-inl.h}, matrix_op-inl.h, np_repeat_op-inl.h,
+np_fill_diagonal_op-inl.h, np_norm-inl.h). A failed launch (bad args, etc.) would
+be silently dropped and later misattributed to an unrelated kernel's post-launch
+check. Wrapped all in `MSHADOW_CUDA_CALL` so the error surfaces at its own call
+site. (Sites already guarded by FRCNN_CUDA_CHECK / CUDA_CALL / a checked
+`cudaError_t` -- proposal.cu, multi_proposal.cu, histogram.cu,
+sequence_op_common.h -- were left as-is.) Normal-path behavior is unchanged
+(cudaSuccess passes through); validated by exercising the affected ops.
+
+### np.var/np.std(fp16) over a large axis  [FIXED]
+The moments path (CPU + GPU) reduced the un-normalized sum into the fp16 output
+before dividing (both the mean and second-moment reductions), overflowing fp16 ->
+inf/nan, diverging from NumPy. Fixed: for an fp16 output, reduce both into fp32
+scratch and cast the O(1) result down. (Follow-up to T5, which only covered the
+direct mean op.) Test in test_linalg_reduce_safety_gpu.py.
 
 ### T5. np.mean(fp16) over a large axis overflows to inf  [FIXED]
 Confirmed real and NumPy-divergent: `np.mean(fp16, axis)` over a large reduced

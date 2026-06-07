@@ -725,10 +725,10 @@ void SoftmaxRTCGradCompute::operator()(const nnvm::NodeAttrs& attrs,
   Stream<gpu>* s = ctx.get_stream<gpu>();
   if (softmax_use_length(attrs)) {
     if (req[1] != kNullOp) {
-      cudaMemsetAsync(outputs[1].dptr_,
+      MSHADOW_CUDA_CALL(cudaMemsetAsync(outputs[1].dptr_,
                       0,
                       outputs[1].Size() * mshadow_type_info(outputs[1].type_flag_).size,
-                      Stream<gpu>::GetStream(s));
+                      Stream<gpu>::GetStream(s)));
     }
   }
   if (req[0] == kNullOp || inputs[0].Size() == 0U)

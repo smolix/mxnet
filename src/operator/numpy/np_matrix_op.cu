@@ -87,16 +87,16 @@ void NumpyFlipForwardImpl<gpu>(const OpContext& ctx,
   auto stride_workspace   = workspace.dptr_;
   auto trailing_workspace = workspace.dptr_ + flip_index * sizeof(index_t);
 
-  cudaMemcpyAsync(stride_workspace,
+  MSHADOW_CUDA_CALL(cudaMemcpyAsync(stride_workspace,
                   thrust::raw_pointer_cast(stride_.data()),
                   stride_.size() * sizeof(index_t),
                   cudaMemcpyHostToDevice,
-                  mshadow::Stream<gpu>::GetStream(s));
-  cudaMemcpyAsync(trailing_workspace,
+                  mshadow::Stream<gpu>::GetStream(s)));
+  MSHADOW_CUDA_CALL(cudaMemcpyAsync(trailing_workspace,
                   thrust::raw_pointer_cast(trailing_.data()),
                   trailing_.size() * sizeof(index_t),
                   cudaMemcpyHostToDevice,
-                  mshadow::Stream<gpu>::GetStream(s));
+                  mshadow::Stream<gpu>::GetStream(s)));
 
   MSHADOW_TYPE_SWITCH(outputs[0].type_flag_, DType, {
     MXNET_ASSIGN_REQ_SWITCH(req[0], req_type, {

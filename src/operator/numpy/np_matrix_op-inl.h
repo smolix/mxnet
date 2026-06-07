@@ -472,11 +472,11 @@ void TrilindicesOpForward(const nnvm::NodeAttrs& attrs,
 
   if (ctx.run_ctx.ctx.dev_mask() == gpu::kDevMask) {
 #if MXNET_USE_CUDA
-    cudaMemcpyAsync(indices,
+    MSHADOW_CUDA_CALL(cudaMemcpyAsync(indices,
                     indices_cpu.data(),
                     indices_cpu.size() * sizeof(index_t),
                     cudaMemcpyHostToDevice,
-                    Stream<gpu>::GetStream(ctx.get_stream<gpu>()));
+                    Stream<gpu>::GetStream(ctx.get_stream<gpu>())));
 #else
     LOG(FATAL) << "Illegal attempt to use GPU in a CPU-only build";
 #endif
@@ -582,11 +582,11 @@ void TriangleIndicesFromOpForward(const nnvm::NodeAttrs& attrs,
 
   if (ctx.run_ctx.ctx.dev_mask() == gpu::kDevMask) {
 #if MXNET_USE_CUDA
-    cudaMemcpyAsync(indices,
+    MSHADOW_CUDA_CALL(cudaMemcpyAsync(indices,
                     indices_cpu.data(),
                     indices_cpu.size() * sizeof(index_t),
                     cudaMemcpyHostToDevice,
-                    Stream<gpu>::GetStream(ctx.get_stream<gpu>()));
+                    Stream<gpu>::GetStream(ctx.get_stream<gpu>())));
 #else
     LOG(FATAL) << "Illegal attempt to use GPU in a CPU-only build";
 #endif

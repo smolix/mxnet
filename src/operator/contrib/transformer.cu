@@ -322,10 +322,10 @@ void BackwardInterleavedMatMulSelfAttQKGPU(const nnvm::NodeAttrs& attrs,
       return;
 
     if (req[0] == kWriteTo) {
-      cudaMemsetAsync(queries_keys_values_grads,
+      MSHADOW_CUDA_CALL(cudaMemsetAsync(queries_keys_values_grads,
                       0,
                       outputs[0].shape_.Size() * sizeof(DType),
-                      mshadow::Stream<gpu>::GetStream(s));
+                      mshadow::Stream<gpu>::GetStream(s)));
     }
 
     gemm_switch_fp32accum(s,
@@ -443,10 +443,10 @@ void BackwardInterleavedMatMulSelfAttValAttGPU(const nnvm::NodeAttrs& attrs,
 
     if (req[0] != kNullOp) {
       if (req[0] == kWriteTo) {
-        cudaMemsetAsync(queries_keys_values_grads,
+        MSHADOW_CUDA_CALL(cudaMemsetAsync(queries_keys_values_grads,
                         0,
                         outputs[0].shape_.Size() * sizeof(DType),
-                        mshadow::Stream<gpu>::GetStream(s));
+                        mshadow::Stream<gpu>::GetStream(s)));
       }
       const float beta = req[0] == kAddTo ? 1.f : 0.f;
       gemm_switch_fp32accum(s,
@@ -598,10 +598,10 @@ void BackwardInterleavedMatMulEncDecQKGPU(const nnvm::NodeAttrs& attrs,
     }
     if (req[1] != kNullOp) {
       if (req[1] == kWriteTo) {
-        cudaMemsetAsync(keys_values_grads,
+        MSHADOW_CUDA_CALL(cudaMemsetAsync(keys_values_grads,
                         0,
                         outputs[1].shape_.Size() * sizeof(DType),
-                        mshadow::Stream<gpu>::GetStream(s));
+                        mshadow::Stream<gpu>::GetStream(s)));
       }
       const float beta = req[1] == kAddTo ? 1.f : 0.f;
       gemm_switch_fp32accum(s,
@@ -703,10 +703,10 @@ void BackwardInterleavedMatMulEncDecValAttGPU(const nnvm::NodeAttrs& attrs,
 
     if (req[0] != kNullOp) {
       if (req[0] == kWriteTo) {
-        cudaMemsetAsync(keys_values_grads,
+        MSHADOW_CUDA_CALL(cudaMemsetAsync(keys_values_grads,
                         0,
                         outputs[0].shape_.Size() * sizeof(DType),
-                        mshadow::Stream<gpu>::GetStream(s));
+                        mshadow::Stream<gpu>::GetStream(s)));
       }
       const float beta = req[0] == kAddTo ? 1.f : 0.f;
       gemm_switch_fp32accum(s,

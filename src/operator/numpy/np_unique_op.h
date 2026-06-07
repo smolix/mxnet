@@ -46,6 +46,31 @@
 namespace mxnet {
 namespace op {
 
+// NaN-aware ordering/equality so np.unique collapses duplicate NaNs and sorts
+// them last, matching NumPy. Shared by the CPU and GPU paths. The NaN test uses
+// the self-inequality trick (value != value) so it is device-safe (no std::isnan
+// in __device__ code) and correct for every dtype: integers are never NaN, and
+// half/float/double NaNs compare unequal to themselves.
+template <typename DType>
+MSHADOW_XINLINE bool NumpyUniqueIsNan(DType value) {
+  return value != value;
+}
+
+template <typename DType>
+MSHADOW_XINLINE bool NumpyUniqueValueLess(DType lhs, DType rhs) {
+  const bool lhs_nan = NumpyUniqueIsNan(lhs);
+  const bool rhs_nan = NumpyUniqueIsNan(rhs);
+  if (lhs_nan || rhs_nan) {
+    return !lhs_nan && rhs_nan;
+  }
+  return lhs < rhs;
+}
+
+template <typename DType>
+MSHADOW_XINLINE bool NumpyUniqueValueEqual(DType lhs, DType rhs) {
+  return (NumpyUniqueIsNan(lhs) && NumpyUniqueIsNan(rhs)) || lhs == rhs;
+}
+
 inline bool NumpyUniqueShouldWrite(const std::vector<OpReqType>& req, const size_t output_idx) {
   CHECK_LT(output_idx, req.size());
   CHECK(req[output_idx] == kNullOp || req[output_idx] == kWriteTo ||

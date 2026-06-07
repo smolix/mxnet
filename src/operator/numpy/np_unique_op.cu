@@ -91,7 +91,8 @@ struct UniqueComputeMaskGPUKernel {
     } else {
       out_data[i] = 0;
       for (dim_t j = 0; j < numel; ++j) {
-        if (in_data[(i - 1) * numel + j] != in_data[i * numel + j]) {
+        // NaN-aware equality so duplicate NaNs collapse like NumPy/the CPU path.
+        if (!NumpyUniqueValueEqual(in_data[(i - 1) * numel + j], in_data[i * numel + j])) {
           out_data[i] = 1;
           break;
         }
@@ -104,7 +105,8 @@ template <typename DType>
 struct argsort_functor1d {
   explicit argsort_functor1d(DType* data_) : data(data_) {}
   __device__ bool operator()(dim_t a, dim_t b) {
-    return data[a] < data[b];
+    // NaN-aware ordering (NaNs sort last) so the sort+mask matches the CPU path.
+    return NumpyUniqueValueLess(data[a], data[b]);
   }
   DType* data;
 };
@@ -116,9 +118,9 @@ struct argsort_functor2d {
     for (dim_t i = 0; i < numel; ++i) {
       DType lhs = data[i + a * numel];
       DType rhs = data[i + b * numel];
-      if (lhs < rhs) {
+      if (NumpyUniqueValueLess(lhs, rhs)) {
         return true;
-      } else if (lhs > rhs) {
+      } else if (NumpyUniqueValueLess(rhs, lhs)) {
         return false;
       }
     }

@@ -155,6 +155,25 @@ fi
 patchelf --set-rpath "$new_runpath" python/mxnet/libmxnet.so
 echo "    new RUNPATH: $new_runpath"
 
+# Verify libmxnet declares a dependency on the CUDA driver (libcuda.so.1).
+# libmxnet references Driver-API symbols (e.g. cuLaunchKernel) directly, so it
+# MUST carry a DT_NEEDED for libcuda.so.1 — otherwise a clean wheel venv aborts
+# dlopen with "undefined symbol: cuLaunchKernel" (the dev tree only works
+# because the driver is already loaded globally).  This is supplied at link
+# time by `CUDA::cuda_driver` in CMakeLists.txt; the driver itself is
+# host-provided by the NVIDIA kernel driver and never bundled.  We do NOT use
+# `patchelf --add-needed` for this: it corrupts this ~1 GB binary (the .so loads
+# but segfaults during init).  Fail loudly if the NEEDED is missing so the build
+# is fixed at the source (link CUDA::cuda_driver) rather than papered over.
+if readelf -d python/mxnet/libmxnet.so 2>/dev/null \
+        | grep -qiE 'NEEDED.*\blibcuda\.so\.1\b'; then
+    echo "==> libcuda.so.1 is a NEEDED dependency (from CUDA::cuda_driver link) — OK"
+else
+    echo "  FAILED: libmxnet.so has no DT_NEEDED for libcuda.so.1." >&2
+    echo "          Ensure CMakeLists.txt links CUDA::cuda_driver and rebuild." >&2
+    exit 5
+fi
+
 OPENCV_DEPS_FLAG="${OPENCV_DEPS_FLAG:-1}"
 if [ "$HAS_OPENCV" != 1 ]; then
     OPENCV_DEPS_FLAG=0

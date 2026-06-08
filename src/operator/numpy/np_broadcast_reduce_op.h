@@ -1261,6 +1261,19 @@ void NumpyWeightedAverageComputeImpl(const nnvm::NodeAttrs& attrs,
     BroadcastReduceShapeCompact(data.shape_, small1, &src_shape, &dst_shape);
     size_t workspace_size = 0;
     workspace_size        = broadcast::ReduceWorkspaceSize(s, dst_shape, {kWriteTo}, src_shape);
+#ifdef __CUDACC__
+    // For a global (scalar) sum/mean the reduce takes the cub::DeviceReduce fast
+    // path, which needs its own scratch. Size the workspace to also fit CUB so
+    // it uses THIS (non-aliasing) buffer rather than re-requesting
+    // ctx.requested[0] -- which would alias `wa`/`compute_weights` and corrupt
+    // the result (audit B1). float types only (the CUB path's instantiations).
+    if (dst_shape.Size() == 1 &&
+        (compute_type == mshadow::kFloat16 || compute_type == mshadow::kFloat32 ||
+         compute_type == mshadow::kFloat64)) {
+      workspace_size =
+          std::max(workspace_size, CubGlobalSumReduceWorkspaceBytes(src_shape.Size()));
+    }
+#endif
     const size_t temp_mem_size = cast_data_size + cast_weight_size + temp_data_size +
                                  temp_sum_size + temp_scl_size + workspace_size;
     Tensor<xpu, 1, char> temp_mem =
@@ -1539,6 +1552,18 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
 
   // Get workspace and temp space for data - mean
   size_t workspace_size = broadcast::ReduceWorkspaceSize(s, dst_shape, {kWriteTo}, src_shape);
+#ifdef __CUDACC__
+  // For a global (scalar) reduction the variance reduce below takes inputs carved
+  // from ctx.requested[0] (temp_data_blob). Size the workspace to also fit
+  // cub::DeviceReduce's scratch so the global sum/mean fast path uses THIS
+  // (non-aliasing) buffer instead of re-requesting ctx.requested[0] and aliasing
+  // that input (audit B1). float types only (the CUB path's instantiations).
+  if (dst_shape.Size() == 1 &&
+      (mean.type_flag_ == mshadow::kFloat16 || mean.type_flag_ == mshadow::kFloat32 ||
+       mean.type_flag_ == mshadow::kFloat64)) {
+    workspace_size = std::max(workspace_size, CubGlobalSumReduceWorkspaceBytes(src_shape.Size()));
+  }
+#endif
   TBlob compute_data    = data;
   Tensor<xpu, 1, char> workspace;
   TBlob temp_data_blob;

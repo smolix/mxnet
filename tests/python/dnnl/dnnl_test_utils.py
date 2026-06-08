@@ -30,22 +30,27 @@ def has_native_onednn_bf16():
     if not has_onednn():
         return False
 
-    data = mx.sym.Variable(name="data", dtype="bfloat16")
-    conv = mx.sym.Convolution(data=data, name="bf16_probe",
-                              kernel=(1, 1), num_filter=1, no_bias=True)
+    # Probe with a BF16 matmul (dot), NOT a convolution. Convolution has a
+    # BF16->FP32 graceful fallback ("route unsupported BF16 away from oneDNN"),
+    # so a conv probe succeeds even on CPUs without native BF16 ISA and would
+    # wrongly report BF16 as available. dot/batch_dot have no such fallback:
+    # on a CPU with native oneDNN BF16, dot dispatches to the oneDNN BF16
+    # matmul primitive and succeeds; without it, oneDNN cannot create the
+    # primitive and the native dot rejects BF16 outright. That makes dot a
+    # faithful probe for *native* oneDNN BF16 support, correctly gating the
+    # BF16 op tests (dot/batch_dot/LRN/batch_norm/...) on non-BF16 CPUs.
     try:
-        exe = conv._simple_bind(ctx=mx.cpu(), data=(1, 1, 4, 4),
-                                type_dict={"bf16_probe_weight": "bfloat16"})
-        exe.arg_dict["data"][:] = mx.nd.ones((1, 1, 4, 4)).astype("bfloat16")
-        exe.arg_dict["bf16_probe_weight"][:] = mx.nd.ones((1, 1, 1, 1)).astype("bfloat16")
-        exe.forward()[0].wait_to_read()
+        a = mx.nd.ones((4, 4), dtype="bfloat16")
+        mx.nd.dot(a, a).wait_to_read()
         return True
     except mx.MXNetError as err:
         message = str(err).lower()
         expected_missing_isa = (
             "could not create a primitive descriptor" in message or
             "bf16" in message or
-            "bfloat16" in message
+            "bfloat16" in message or
+            "float16/float32/float64" in message or
+            "only supports floating point" in message
         )
         if expected_missing_isa:
             return False

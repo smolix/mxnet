@@ -53,11 +53,28 @@ void ReduceAxesRTCComputeImpl(const OpContext& ctx,
     if (req[0] != kNullOp && reducer == "red::sum{}" && OP == "identity" &&
         dst_shape.Size() == 1 && inputs[0].type_flag_ == outputs[0].type_flag_ &&
         (dt == kFloat32 || dt == kFloat64 || dt == kFloat16)) {
-      const double count = static_cast<double>(src_shape.Size()) - static_cast<double>(ddof);
-      MSHADOW_REAL_TYPE_SWITCH(dt, DType, {
-        CubGlobalSumReduce<DType>(ctx, inputs[0], outputs[0], normalize, count, req[0] == kAddTo);
-      });
-      return;
+      // The CUB fast path needs its own scratch. When the caller manages its
+      // own buffers (workspace != nullptr) it carves the reduction input out of
+      // ctx.requested[0]; CUB must therefore use THAT workspace -- re-requesting
+      // ctx.requested[0] would return the same base pointer and alias the input
+      // (e.g. weighted-average `wa`), silently corrupting the result (audit B1).
+      // Take the CUB path only when we own the tempspace, or when the supplied
+      // workspace is large enough to hold CUB's scratch; otherwise fall through
+      // to the RTC reduce (only reached for small reductions, where CUB's
+      // double-accumulation precision is not needed and fp16 cannot overflow).
+      const size_t cub_bytes = CubGlobalSumReduceWorkspaceBytes(src_shape.Size());
+      const bool cub_ok =
+          (workspace == nullptr) || (workspace->shape_.Size() >= cub_bytes);
+      if (cub_ok) {
+        const double count = static_cast<double>(src_shape.Size()) - static_cast<double>(ddof);
+        char* ext_ws         = workspace ? workspace->dptr_ : nullptr;
+        size_t ext_ws_bytes  = workspace ? workspace->shape_.Size() : 0;
+        MSHADOW_REAL_TYPE_SWITCH(dt, DType, {
+          CubGlobalSumReduce<DType>(
+              ctx, inputs[0], outputs[0], normalize, count, req[0] == kAddTo, ext_ws, ext_ws_bytes);
+        });
+        return;
+      }
     }
   }
 

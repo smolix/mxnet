@@ -860,8 +860,16 @@ if(USE_CUDA)
     unset(MXNET_CMAKE_MODULE_PATH_WITH_UPSTREAM)
   endif()
 
+  # CUDA::cuda_driver links the CUDA driver stub (SONAME libcuda.so.1), which
+  # supplies the Driver-API symbols libmxnet references directly (cuLaunchKernel,
+  # cuModuleLoad, ...).  Without it those stay UNDEFINED with no DT_NEEDED for
+  # libcuda.so.1, so a clean wheel venv aborts dlopen with
+  # "undefined symbol: cuLaunchKernel" (the dev tree happens to have the driver
+  # loaded globally).  The stub is host-provided at runtime by the NVIDIA driver
+  # (never bundled).  Emitting the NEEDED at link time is robust; patchelf
+  # --add-needed corrupts this ~1 GB binary.
   list(APPEND mxnet_LINKER_LIBS CUDA::cudart CUDA::cublas CUDA::cufft CUDA::cusolver CUDA::curand
-                                CUDA::nvrtc)
+                                CUDA::nvrtc CUDA::cuda_driver)
   list(APPEND SOURCE ${CUDA})
   add_definitions(-DMXNET_USE_CUDA=1)
 

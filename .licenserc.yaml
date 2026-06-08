@@ -113,6 +113,13 @@ header:
     - 'fp16_perf_bench.md'
     - 'sparse_thrust3_bench.md'
     - 'storage_pool_bench.md'
+    - 'BUG_AUDIT.md'
+    - 'CUDA_GRAPHS_PLAN.md'
+    - 'multi-output-ops-bug-audit.md'
+    - 'pytorch-convention-sweep.md'
+    - 'tril-indices-partial-output-bug.md'
+    - 'tricky-bug.md'
+    - 'perf_scan.py'
     # Investigations directory (patches, repros, notes — not shipped).
     - '.investigations/**'
     - 'd2l-issues/**'

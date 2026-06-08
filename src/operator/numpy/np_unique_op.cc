@@ -68,25 +68,8 @@ namespace op {
       LOG(FATAL) << "Unknown type enum " << type;              \
   }
 
-template <typename DType>
-MSHADOW_XINLINE bool NumpyUniqueIsNan(DType value) {
-  return std::is_floating_point<DType>::value && std::isnan(value);
-}
-
-template <typename DType>
-MSHADOW_XINLINE bool NumpyUniqueValueLess(DType lhs, DType rhs) {
-  const bool lhs_nan = NumpyUniqueIsNan(lhs);
-  const bool rhs_nan = NumpyUniqueIsNan(rhs);
-  if (lhs_nan || rhs_nan) {
-    return !lhs_nan && rhs_nan;
-  }
-  return lhs < rhs;
-}
-
-template <typename DType>
-MSHADOW_XINLINE bool NumpyUniqueValueEqual(DType lhs, DType rhs) {
-  return (NumpyUniqueIsNan(lhs) && NumpyUniqueIsNan(rhs)) || lhs == rhs;
-}
+// NaN-aware comparison helpers now live in np_unique_op.h (shared with the GPU
+// path so both collapse duplicate NaNs identically).
 
 inline bool NumpyUniqueType(const nnvm::NodeAttrs& attrs,
                             std::vector<int>* in_attrs,

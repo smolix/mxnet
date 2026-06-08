@@ -52,10 +52,78 @@ bool CheckInvalidInput(mshadow::Stream<gpu>* s,
   return is_valid == 0;
 }
 
+// Percentile backward is a host algorithm (per-group std::sort + scatter) with
+// no GPU kernel. Run it on the CPU and shuttle the (small) tensors across,
+// instead of leaving _backward_npi_percentile unimplemented for GPU (which
+// aborts with "not implemented for GPU"). inputs: [ograd, data, (q)];
+// outputs: [data_grad, (q_grad)]. The CPU impl does not use the stream/device.
+template <>
+void NumpyPercentileBackward<gpu>(const nnvm::NodeAttrs& attrs,
+                                  const OpContext& ctx,
+                                  const std::vector<TBlob>& inputs,
+                                  const std::vector<OpReqType>& req,
+                                  const std::vector<TBlob>& outputs) {
+  using namespace mshadow;
+  Stream<gpu>* s      = ctx.get_stream<gpu>();
+  cudaStream_t stream = Stream<gpu>::GetStream(s);
+
+  auto byte_size = [](const TBlob& b) -> size_t {
+    size_t elem = 0;
+    MSHADOW_TYPE_SWITCH_WITH_BOOL(b.type_flag_, DType, { elem = sizeof(DType); });
+    return b.shape_.Size() * elem;
+  };
+  // Copy into a local: emplace_back perfect-forwards by reference, which would
+  // odr-use mshadow::cpu::kDevMask (a static const int with no out-of-class
+  // definition) and leave an undefined symbol. A by-value ctor arg constant-
+  // folds, but the forwarded reference does not.
+  const int cpu_mask = mshadow::cpu::kDevMask;
+
+  std::vector<std::vector<char>> in_store(inputs.size());
+  std::vector<TBlob> h_inputs;
+  h_inputs.reserve(inputs.size());
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    in_store[i].resize(byte_size(inputs[i]));
+    if (!in_store[i].empty()) {
+      CUDA_CALL(cudaMemcpyAsync(in_store[i].data(), inputs[i].dptr_, in_store[i].size(),
+                                cudaMemcpyDeviceToHost, stream));
+    }
+    h_inputs.emplace_back(in_store[i].data(), inputs[i].shape_, cpu_mask,
+                          inputs[i].type_flag_, 0);
+  }
+
+  std::vector<std::vector<char>> out_store(outputs.size());
+  std::vector<TBlob> h_outputs;
+  h_outputs.reserve(outputs.size());
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    out_store[i].resize(byte_size(outputs[i]));
+    // kAddTo accumulates onto the existing gradient, so seed the host buffer.
+    if (req[i] == kAddTo && !out_store[i].empty()) {
+      CUDA_CALL(cudaMemcpyAsync(out_store[i].data(), outputs[i].dptr_, out_store[i].size(),
+                                cudaMemcpyDeviceToHost, stream));
+    }
+    h_outputs.emplace_back(out_store[i].data(), outputs[i].shape_, cpu_mask,
+                           outputs[i].type_flag_, 0);
+  }
+
+  CUDA_CALL(cudaStreamSynchronize(stream));  // inputs (and kAddTo seeds) now on host
+  NumpyPercentileBackward<cpu>(attrs, ctx, h_inputs, req, h_outputs);
+
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    if (req[i] != kNullOp && !out_store[i].empty()) {
+      CUDA_CALL(cudaMemcpyAsync(outputs[i].dptr_, out_store[i].data(), out_store[i].size(),
+                                cudaMemcpyHostToDevice, stream));
+    }
+  }
+  CUDA_CALL(cudaStreamSynchronize(stream));
+}
+
 NNVM_REGISTER_OP(_npi_percentile)
     .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
                                        [](const NodeAttrs&, const bool) { return false; })
     .set_attr<FCompute>("FCompute<gpu>", NumpyPercentileForward<gpu>);
+
+NNVM_REGISTER_OP(_backward_npi_percentile)
+    .set_attr<FCompute>("FCompute<gpu>", NumpyPercentileBackward<gpu>);
 
 }  // namespace op
 }  // namespace mxnet

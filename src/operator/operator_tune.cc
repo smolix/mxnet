@@ -72,6 +72,11 @@ IMPLEMENT_OPERATOR_TUNE_STATICS_FOR_TYPE(int16_t);
 IMPLEMENT_OPERATOR_TUNE_STATICS_FOR_TYPE(uint16_t);
 IMPLEMENT_OPERATOR_TUNE_STATICS_FOR_TYPE(uint32_t);
 IMPLEMENT_OPERATOR_TUNE_STATICS_FOR_TYPE(uint64_t);
+// `char` is a distinct type from int8_t (signed char) and uint8_t (unsigned
+// char) on this platform; some ops (e.g. np_insert/np_delete set_zero on a
+// `char` flag buffer) instantiate tuned_op<OP, char>, so it needs its own
+// OperatorTune<char> statics and the per-op UseOMP below.
+IMPLEMENT_OPERATOR_TUNE_STATICS_FOR_TYPE(char);
 
 /*!
  * \brief Init variable used to facilitate registering a tunable operator during
@@ -100,7 +105,8 @@ struct static_init_var {
   __macro$(__VA_ARGS__, int16_t);                 \
   __macro$(__VA_ARGS__, uint16_t);                \
   __macro$(__VA_ARGS__, uint32_t);                \
-  __macro$(__VA_ARGS__, uint64_t)
+  __macro$(__VA_ARGS__, uint64_t);                \
+  __macro$(__VA_ARGS__, char)
 
 #define MSHADOW_MACRO_FOREACH_TYPE_WITH_BOOL(__macro$, ...) \
   __macro$(__VA_ARGS__, float);                             \
@@ -115,7 +121,8 @@ struct static_init_var {
   __macro$(__VA_ARGS__, int16_t);                           \
   __macro$(__VA_ARGS__, uint16_t);                          \
   __macro$(__VA_ARGS__, uint32_t);                          \
-  __macro$(__VA_ARGS__, uint64_t)
+  __macro$(__VA_ARGS__, uint64_t);                          \
+  __macro$(__VA_ARGS__, char)
 
 #define IMPLEMENT_WORKLOAD_VALUE_FOR_TYPE(__op$, __typ$)                         \
   namespace mxnet_op {                                                           \

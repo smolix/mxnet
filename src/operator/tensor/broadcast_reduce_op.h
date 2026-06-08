@@ -839,13 +839,27 @@ void ReduceAxesRTCComputeImpl(const OpContext& ctx,
 // Fast global (scalar-output) sum/mean reduction via cub::DeviceReduce.
 // Defined in reduce_cub.cu; accumulates in double. ``count`` is the divisor for
 // the mean case (number of reduced elements minus ddof).
+//
+// ``ext_workspace`` lets a caller that manages its own temp buffers (e.g. the
+// weighted-average / moments paths, which carve the reduction *input* out of
+// ctx.requested[0]) hand CUB a non-aliasing scratch region. When it is null,
+// CUB requests its own scratch from ctx.requested[0] (safe only when the caller
+// does not also carve the input from that resource). The supplied region must
+// be at least ``CubGlobalSumReduceWorkspaceBytes(in.Size())`` bytes.
 template <typename DType>
 void CubGlobalSumReduce(const OpContext& ctx,
                         const TBlob& in,
                         const TBlob& out,
                         const bool mean,
                         const double count,
-                        const bool addto);
+                        const bool addto,
+                        char* ext_workspace        = nullptr,
+                        size_t ext_workspace_bytes = 0);
+
+// Bytes of scratch CubGlobalSumReduce needs to reduce ``n`` elements (CUB temp
+// storage + the double result slot). Callers that pass ext_workspace must size
+// it to at least this. Defined in reduce_cub.cu.
+size_t CubGlobalSumReduceWorkspaceBytes(size_t n);
 
 #endif
 

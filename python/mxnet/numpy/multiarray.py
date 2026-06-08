@@ -207,9 +207,9 @@ def _as_onp_array(object, cur_device=None):
         if cur_device is None:
             cur_device = tmp_device
         elif tmp_device is not None and cur_device != tmp_device:
-            raise ValueError('Ambiguous to set the device for the output ndarray since'  # pylint: disable=too-few-format-args
+            raise ValueError('Ambiguous to set the device for the output ndarray since'
                              ' input ndarrays are allocated on different devices: {} and {}'
-                             .format(str(cur_device, tmp_device)))
+                             .format(cur_device, tmp_device))
         return cur_device
 
     if isinstance(object, ndarray):
@@ -378,21 +378,31 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
                 cur_device = None
                 original_out = kwargs.get('out', None)
                 new_inputs, cur_device = _as_onp_array(inputs, cur_device)
-                new_kwargs, cur_device = _as_onp_array(kwargs, cur_device)
+                # Exclude `out` from the kwargs device tracking: it is the
+                # write-back destination, not a compute input, so its device must
+                # not be forced to match the inputs' (the fallback computes in
+                # NumPy and writes the result back to `out` below, on out's
+                # device). Otherwise a GPU `out=` with CPU inputs -- or vice
+                # versa -- spuriously raised "Ambiguous device".
+                kwargs_no_out = {k: v for k, v in kwargs.items() if k != 'out'}
+                new_kwargs, cur_device = _as_onp_array(kwargs_no_out, cur_device)
                 if onp_op not in _FALLBACK_ARRAY_UFUNC_WARNED_RECORD:
                     import logging
                     logging.warning("np.%s is a fallback operator, "
                                     "which is actually using official numpy's implementation", name)
                     _FALLBACK_ARRAY_UFUNC_WARNED_RECORD[onp_op] = True
-                out = _as_mx_np_array(onp_op(*new_inputs, **new_kwargs), device=cur_device)
+                onp_result = onp_op(*new_inputs, **new_kwargs)
                 if isinstance(original_out, tuple):
+                    # Single-output `out=(arr,)`, or a multi-output ufunc
+                    # (modf/frexp/divmod) whose `out` is a tuple of arrays.
                     if len(original_out) == 1:
-                        original_out[0][:] = out
+                        original_out[0][:] = _as_mx_np_array(onp_result,
+                                                             device=original_out[0].device)
                         return original_out[0]
-                    for arr, value in zip(original_out, out):
-                        arr[:] = value
+                    for arr, value in zip(original_out, onp_result):
+                        arr[:] = _as_mx_np_array(value, device=arr.device)
                     return original_out
-                return out
+                return _as_mx_np_array(onp_result, device=cur_device)
             if 'out' in kwargs:
                 # need to unfold tuple argument in kwargs
                 out = kwargs['out']

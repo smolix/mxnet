@@ -72,6 +72,11 @@ void NumpyPercentileBackward<gpu>(const nnvm::NodeAttrs& attrs,
     MSHADOW_TYPE_SWITCH_WITH_BOOL(b.type_flag_, DType, { elem = sizeof(DType); });
     return b.shape_.Size() * elem;
   };
+  // Copy into a local: emplace_back perfect-forwards by reference, which would
+  // odr-use mshadow::cpu::kDevMask (a static const int with no out-of-class
+  // definition) and leave an undefined symbol. A by-value ctor arg constant-
+  // folds, but the forwarded reference does not.
+  const int cpu_mask = mshadow::cpu::kDevMask;
 
   std::vector<std::vector<char>> in_store(inputs.size());
   std::vector<TBlob> h_inputs;
@@ -82,7 +87,7 @@ void NumpyPercentileBackward<gpu>(const nnvm::NodeAttrs& attrs,
       CUDA_CALL(cudaMemcpyAsync(in_store[i].data(), inputs[i].dptr_, in_store[i].size(),
                                 cudaMemcpyDeviceToHost, stream));
     }
-    h_inputs.emplace_back(in_store[i].data(), inputs[i].shape_, cpu::kDevMask,
+    h_inputs.emplace_back(in_store[i].data(), inputs[i].shape_, cpu_mask,
                           inputs[i].type_flag_, 0);
   }
 
@@ -96,7 +101,7 @@ void NumpyPercentileBackward<gpu>(const nnvm::NodeAttrs& attrs,
       CUDA_CALL(cudaMemcpyAsync(out_store[i].data(), outputs[i].dptr_, out_store[i].size(),
                                 cudaMemcpyDeviceToHost, stream));
     }
-    h_outputs.emplace_back(out_store[i].data(), outputs[i].shape_, cpu::kDevMask,
+    h_outputs.emplace_back(out_store[i].data(), outputs[i].shape_, cpu_mask,
                            outputs[i].type_flag_, 0);
   }
 

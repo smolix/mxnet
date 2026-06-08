@@ -17,14 +17,19 @@ jobs:
   build:
     name: CPU build (oneDNN, no CUDA)
     runs-on: ubuntu-22.04
-    # Job-level: 90 (cold build) + ~10 (setup, smoke-test, artefact upload).
-    # Step-level cap for the build itself is set to 90 separately.
-    timeout-minutes: 110
+    # Job-level: build step cap (120) + ~20 (setup, smoke-test, artefact
+    # upload, cache save). Generous headroom so the *first* cold build in a
+    # ref scope completes and seeds the ccache/build-dir caches — once seeded,
+    # warm builds finish in ~5 min. Step-level cap is set on the build below.
+    timeout-minutes: 150
     env:
       CMAKE_BUILD_DIR: build
       CMAKE_BUILD_TYPE: Release
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: "2G"
+      # 5G: the full CPU object set is well over 2G, so a 2G cap evicted
+      # objects *within* a single cold build (cache thrash) and left warm
+      # builds with avoidable misses. 5G holds the whole build comfortably.
+      CCACHE_MAXSIZE: "5G"
       VENV_DIR: ${{ github.workspace }}/.venv
       UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
     steps:
@@ -92,14 +97,17 @@ jobs:
             -DBUILD_CPP_EXAMPLES=OFF
 
       - name: Build (ninja mxnet)
-        # 90-min timeout so cold-cache first builds on the standard
-        # ubuntu-22.04 runner (4 cores / 7 GB) fit; warm builds are
-        # under 10 min via ccache. Hard-cap parallelism to 2 — each
-        # mxnet cc1plus consumes ~1.5 GB RSS in the heavy-template
-        # files (operator_tune.cc etc.), and -j4 on 7 GB swaps into
-        # disk and slows down further.
-        timeout-minutes: 90
-        run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j 2
+        # Standard ubuntu-22.04 GitHub-hosted runners are 4 vCPU / 16 GB
+        # (the old "7 GB" comment was stale, which is why this was pinned
+        # to -j2). Each mxnet cc1plus peaks ~1.5 GB RSS in the heavy-template
+        # files (operator_tune.cc, np_moments_op.cc, etc.), so -j4 peaks
+        # ~6 GB — comfortably within 16 GB and no swapping. -j4 ~halves the
+        # cold wall-time (was timing out >90 min at -j2), which lets the
+        # first cold build in a ref scope finish and seed the cache. The
+        # 120-min cap is headroom for that one-time cold seed; warm ccache
+        # builds finish in ~5 min.
+        timeout-minutes: 120
+        run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j 4
 
       - name: ccache stats
         if: always()

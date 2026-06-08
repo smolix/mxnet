@@ -7522,11 +7522,18 @@ def test_gather_nd_check_bound():
 def test_gather_scatter_nd_index_validation():
     data = mx.nd.arange(6).reshape((2, 3))
     zero_index_dim = mx.nd.empty((0, 4), dtype='int32')
-    with pytest.raises(MXNetError, match="at least one index dimension"):
+    # An empty index-tuple dimension must be rejected. On CPU the empty (0, N)
+    # index keeps a 0 first dim and trips the "at least one index dimension"
+    # check; on GPU (legacy shape mode) the 0 dim is reported as unknown (-1),
+    # so gather_nd's shape inference rejects it first with "inferring shapes
+    # failed". Either rejection message is acceptable -- the point is that it
+    # raises rather than silently producing a result.
+    bad_index_re = "at least one index dimension|inferring shapes failed"
+    with pytest.raises(MXNetError, match=bad_index_re):
         mx.nd.gather_nd(data, zero_index_dim).asnumpy()
 
     scatter_data = mx.nd.ones((4,))
-    with pytest.raises(MXNetError, match="at least one index dimension"):
+    with pytest.raises(MXNetError, match=bad_index_re):
         mx.nd.scatter_nd(scatter_data, zero_index_dim, shape=(2, 3)).asnumpy()
 
     float_indices = mx.nd.array([[0.0, 1.0]], dtype='float32')

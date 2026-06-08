@@ -131,8 +131,12 @@ inline static bool LeakyReLUStorageType(const nnvm::NodeAttrs& attrs,
   const LeakyReLUParam& param = nnvm::get<LeakyReLUParam>(attrs.parsed);
   size_t expected             = param.act_type == leakyrelu::kPReLU ? 2 : 1;
   CHECK_EQ(in_attrs->size(), expected);
-  return DNNLStorageType(
-      attrs, dev_mask, SupportDNNLLeakyRelu(param), dispatch_mode, in_attrs, out_attrs);
+  // Always expose the FComputeEx (oneDNN) path so bf16/fp16 inputs oneDNN cannot
+  // handle (e.g. on AArch64, or an ISA without native low-precision kernels) reach
+  // FallBackCompute(), which upcasts to fp32 for the native kernel. The ExCPU handler
+  // still checks SupportDNNLLeakyRelu(param, input) to pick oneDNN vs. fallback.
+  // (Mirrors ConvStorageType.)
+  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
 }
 
 inline static bool BackwardLeakyReLUStorageType(const nnvm::NodeAttrs& attrs,
@@ -140,9 +144,8 @@ inline static bool BackwardLeakyReLUStorageType(const nnvm::NodeAttrs& attrs,
                                                 DispatchMode* dispatch_mode,
                                                 std::vector<int>* in_attrs,
                                                 std::vector<int>* out_attrs) {
-  const LeakyReLUParam& param = nnvm::get<LeakyReLUParam>(attrs.parsed);
-  return DNNLStorageType(
-      attrs, dev_mask, SupportDNNLLeakyRelu(param), dispatch_mode, in_attrs, out_attrs);
+  // See LeakyReLUStorageType: always expose the FComputeEx path for fallback.
+  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
 }
 #endif  // MXNET_USE_ONEDNN == 1
 

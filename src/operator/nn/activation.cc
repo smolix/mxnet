@@ -144,9 +144,14 @@ inline static bool ActivationStorageType(const nnvm::NodeAttrs& attrs,
                                          std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 1);
   CHECK_EQ(out_attrs->size(), 1);
-  const ActivationParam& param = nnvm::get<ActivationParam>(attrs.parsed);
-  return DNNLStorageType(
-      attrs, dev_mask, SupportDNNLAct(param), dispatch_mode, in_attrs, out_attrs);
+  // Always expose the FComputeEx (oneDNN) path. Inputs oneDNN cannot handle --
+  // bf16/fp16 on a CPU whose ISA lacks native low-precision eltwise kernels, or
+  // AArch64 where the JIT-backed primitives are disabled -- then reach
+  // FallBackCompute(), which upcasts to fp32 for the native kernel rather than
+  // reaching MSHADOW_REAL_TYPE_SWITCH with an unsupported dtype. The ExCPU handler
+  // still checks SupportDNNLAct(param, input) to pick oneDNN vs. fallback.
+  // (Mirrors ConvStorageType.)
+  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
 }
 
 inline static bool BackwardActStorageType(const nnvm::NodeAttrs& attrs,
@@ -156,8 +161,8 @@ inline static bool BackwardActStorageType(const nnvm::NodeAttrs& attrs,
                                           std::vector<int>* out_attrs) {
   const ActivationParam& param = nnvm::get<ActivationParam>(attrs.parsed);
   CHECK_EQ(in_attrs->size(), activation::GradNumInputs(param.act_type));
-  return DNNLStorageType(
-      attrs, dev_mask, SupportDNNLAct(param), dispatch_mode, in_attrs, out_attrs);
+  // See ActivationStorageType: always expose the FComputeEx path for fallback.
+  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
 }
 #endif  // MXNET_USE_ONEDNN == 1
 

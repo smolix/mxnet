@@ -333,10 +333,12 @@ inline static bool PoolingStorageType(const nnvm::NodeAttrs& attrs,
                                       std::vector<int>* in_attrs,
                                       std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 1);
-  const PoolingParam& param = nnvm::get<PoolingParam>(attrs.parsed);
-  bool support_dnnl_pool    = SupportDNNLPooling(param);
-
-  return DNNLStorageType(attrs, dev_mask, support_dnnl_pool, dispatch_mode, in_attrs, out_attrs);
+  // Always expose the FComputeEx (oneDNN) path so bf16/fp16 inputs oneDNN cannot
+  // handle (e.g. on AArch64, or an ISA without native low-precision kernels) reach
+  // FallBackCompute(), which upcasts to fp32 for the native kernel. The ExCPU handler
+  // still checks SupportDNNLPooling(param, input) to pick oneDNN vs. fallback.
+  // (Mirrors ConvStorageType.)
+  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
 }
 
 inline static bool BackwardPoolingStorageType(const nnvm::NodeAttrs& attrs,
@@ -347,9 +349,8 @@ inline static bool BackwardPoolingStorageType(const nnvm::NodeAttrs& attrs,
   const PoolingParam& param = nnvm::get<PoolingParam>(attrs.parsed);
   CHECK_EQ(in_attrs->size(), GetNumBackInputs(param));
   CHECK_EQ(out_attrs->size(), 1);
-  bool support_dnnl_pool = SupportDNNLPooling(param);
-
-  return DNNLStorageType(attrs, dev_mask, support_dnnl_pool, dispatch_mode, in_attrs, out_attrs);
+  // See PoolingStorageType: always expose the FComputeEx path for fallback.
+  return DNNLStorageType(attrs, dev_mask, true, dispatch_mode, in_attrs, out_attrs);
 }
 #endif
 

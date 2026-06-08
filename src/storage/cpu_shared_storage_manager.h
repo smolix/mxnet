@@ -32,6 +32,7 @@
 #include <process.h>
 #endif  // _WIN32
 
+#include <cerrno>
 #include <string>
 #include <limits>
 #include "./storage_manager.h"
@@ -164,61 +165,69 @@ void CPUSharedStorageManager::Alloc(Storage::Handle* handle, bool /* failsafe */
 #endif  // __linux__
   }
 
-	  if (fid == -1) {
-	    if (is_new) {
-	      LOG(FATAL) << "Failed to open shared memory. shm_open failed with error " << strerror(errno);
-	    } else {
-	      LOG(FATAL) << "Invalid file descriptor from shared array.";
-	    }
-	  }
+  if (fid == -1) {
+    if (is_new) {
+      LOG(FATAL) << "Failed to open shared memory. shm_open failed with error " << strerror(errno);
+    } else {
+      LOG(FATAL) << "Invalid file descriptor from shared array.";
+    }
+  }
 
-	  class ScopedPosixSharedMemory {
-	   public:
-	    ScopedPosixSharedMemory(int* fd, const std::string* name, bool unlink_name)
-	        : fd_(fd), name_(name), unlink_name_(unlink_name) {}
-	    ~ScopedPosixSharedMemory() {
-	      if (unlink_name_ && name_ != nullptr && !name_->empty()) {
-	        shm_unlink(name_->c_str());
-	      }
-	      if (close_fd_ && fd_ != nullptr && *fd_ != -1) {
-	        close(*fd_);
-	        *fd_ = -1;
-	      }
-	    }
-	    void ReleaseFd() {
-	      close_fd_ = false;
-	    }
-	    void ReleaseName() {
-	      unlink_name_ = false;
-	    }
+  class ScopedPosixSharedMemory {
+   public:
+    ScopedPosixSharedMemory(int* fd, const std::string* name, bool unlink_name)
+        : fd_(fd), name_(name), unlink_name_(unlink_name) {}
+    ~ScopedPosixSharedMemory() {
+      if (unlink_name_ && name_ != nullptr && !name_->empty()) {
+        shm_unlink(name_->c_str());
+      }
+      if (close_fd_ && fd_ != nullptr && *fd_ != -1) {
+        close(*fd_);
+        *fd_ = -1;
+      }
+    }
+    void ReleaseFd() {
+      close_fd_ = false;
+    }
+    void ReleaseName() {
+      unlink_name_ = false;
+    }
 
-	   private:
-	    int* fd_;
-	    const std::string* name_;
-	    bool unlink_name_;
-	    bool close_fd_{true};
-	  };
-	  ScopedPosixSharedMemory cleanup(&fid, &filename, is_new);
+   private:
+    int* fd_;
+    const std::string* name_;
+    bool unlink_name_;
+    bool close_fd_{true};
+  };
+  ScopedPosixSharedMemory cleanup(&fid, &filename, is_new);
 
-	  if (is_new)
-	    CHECK_EQ(ftruncate(fid, size), 0);
+  if (is_new)
+    CHECK_EQ(ftruncate(fid, size), 0);
 
   ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fid, 0);
   CHECK_NE(ptr, MAP_FAILED) << "Failed to map shared memory. mmap failed with error "
                             << strerror(errno);
 #ifdef __linux__
   handle->shared_id = fid;
-	  if (is_new) {
-	    CHECK_EQ(shm_unlink(filename.c_str()), 0)
-	        << "Failed to unlink shared memory. shm_unlink failed with error " << strerror(errno);
-	    cleanup.ReleaseName();
-	  }
-	  cleanup.ReleaseFd();
-	#else
-	  CHECK_EQ(close(fid), 0) << "Failed to close shared memory. close failed with error "
-	                          << strerror(errno);
-	  cleanup.ReleaseFd();
-	#endif  // __linux__
+  if (is_new) {
+    CHECK_EQ(shm_unlink(filename.c_str()), 0)
+        << "Failed to unlink shared memory. shm_unlink failed with error " << strerror(errno);
+    cleanup.ReleaseName();
+  }
+  cleanup.ReleaseFd();
+#else
+  CHECK_EQ(close(fid), 0) << "Failed to close shared memory. close failed with error "
+                          << strerror(errno);
+  // On non-Linux POSIX (e.g. macOS) the segment is attached by name from other
+  // processes: Python multiprocessing defaults to the "spawn" start method on
+  // macOS, so DataLoader workers re-open the segment with shm_open() instead of
+  // inheriting the mapping across fork(). The name must therefore outlive
+  // Alloc(); FreeImpl() unlinks it once the reference count reaches zero. Release
+  // it from the RAII guard so the success path does not unlink it here (doing so
+  // would break cross-process attach and make the FreeImpl unlink fail ENOENT).
+  cleanup.ReleaseName();
+  cleanup.ReleaseFd();
+#endif  // __linux__
 #endif  // _WIN32
 
   if (is_new) {
@@ -245,8 +254,13 @@ void CPUSharedStorageManager::FreeImpl(const Storage::Handle& handle) {
 #else
   if (count == 0) {
     auto filename = SharedHandleToString(handle.shared_pid, handle.shared_id);
-    CHECK_EQ(shm_unlink(filename.c_str()), 0)
-        << "Failed to unlink shared memory. shm_unlink failed with error " << strerror(errno);
+    // During teardown the name may already be gone (removed by a peer process or
+    // by the RAII error-path cleanup in Alloc()), so shm_unlink() racing to
+    // ENOENT is benign on a free/destructor path. Only a genuine failure is fatal.
+    if (shm_unlink(filename.c_str()) != 0 && errno != ENOENT) {
+      LOG(FATAL) << "Failed to unlink shared memory. shm_unlink failed with error "
+                 << strerror(errno);
+    }
   }
 #endif  // __linux__
 #endif  // _WIN32

@@ -1726,6 +1726,26 @@ def test_ndarray_indexing():
         test_setitem_autograd(np_array, index[0])
 
 
+def test_ndarray_advanced_indexing_float_coercion():
+    """Float index arrays are permissively coerced to int (legacy behavior).
+
+    mx.nd.array defaults to float32, so the idiomatic way to build an index
+    array yields a float array even for integral values; advanced indexing
+    auto-casts it (toward zero) rather than rejecting it.
+    """
+    a = mx.nd.arange(5)
+    assert same(a[mx.nd.array([2.0, 4.0])].asnumpy(), np.array([2., 4.], dtype='float32'))
+    # 1.9 truncates toward zero -> 1
+    assert same(a[mx.nd.array([1.9])].asnumpy(), np.array([1.], dtype='float32'))
+    # Multi-axis advanced indexing with float indices.
+    m = mx.nd.arange(9).reshape((3, 3))
+    assert same(m[mx.nd.array([0.0, 2.0]), mx.nd.array([1.0, 2.0])].asnumpy(),
+                np.array([1., 8.], dtype='float32'))
+    # Integer indices still work unchanged.
+    assert same(a[mx.nd.array([0, 2, 4], dtype='int64')].asnumpy(),
+                np.array([0., 2., 4.], dtype='float32'))
+
+
 def test_assign_float_value_to_ndarray():
     """Test case from https://github.com/apache/mxnet/issues/8668"""
     a = np.array([47.844944], dtype=np.float32)

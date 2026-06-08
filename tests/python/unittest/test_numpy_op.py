@@ -4551,9 +4551,31 @@ def test_np_advanced_assignment_index_validation():
         data[np.array([3], dtype='int32')] = 7
     assert_almost_equal(data.asnumpy(), onp.zeros((3,), dtype='float32'))
 
+    # Float index arrays are permissively coerced to integer rather than
+    # rejected. MXNet's global default dtype is float32, so the idiomatic
+    # ``np.array([...])`` index is float even when its values are integral;
+    # auto-casting (toward zero, 1.9 -> 1) keeps the indexing interface usable.
     data = np.zeros((3,), dtype='float32')
-    with pytest.raises(IndexError, match="integer type"):
-        data[np.array([1.9], dtype='float32')] = 7
+    data[np.array([1.9], dtype='float32')] = 7
+    assert_almost_equal(data.asnumpy(), onp.array([0, 7, 0], dtype='float32'))
+
+
+@use_np
+def test_np_advanced_indexing_float_coercion():
+    # Reading via advanced indexing also coerces float index arrays to int.
+    a = np.arange(5)  # float32 by default
+    assert_almost_equal(a[np.array([1.9, 3.0], dtype='float32')].asnumpy(),
+                        onp.array([1, 3], dtype='float32'))
+    # Multi-axis advanced indexing with float indices.
+    m = np.arange(9).reshape(3, 3)
+    assert_almost_equal(
+        m[np.array([0.0, 2.0], dtype='float32'), np.array([1.0, 2.0], dtype='float32')].asnumpy(),
+        onp.array([1, 8], dtype='float32'))
+    # Integer and boolean indices keep working unchanged.
+    assert_almost_equal(a[np.array([0, 2, 4], dtype='int64')].asnumpy(),
+                        onp.array([0, 2, 4], dtype='float32'))
+    assert_almost_equal(a[np.array([True, False, True, False, True], dtype='bool')].asnumpy(),
+                        onp.array([0, 2, 4], dtype='float32'))
 
 
 @use_np

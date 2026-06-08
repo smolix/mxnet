@@ -1153,8 +1153,12 @@ fixed-size items.
                 # Boolean mask: expand to integer positions (NumPy semantics).
                 idx = np.flatnonzero(idx.asnumpy())
                 return array(idx, ctx, idx_dtype)
-            if np.dtype(idx.dtype).kind not in ('i', 'u'):
-                raise IndexError('arrays used as indices must be of integer type')
+            # Permissive coercion: float index arrays are cast to integer rather
+            # than rejected. NumPy/PyTorch reject non-integer indices, but
+            # MXNet's global default dtype is float32, so the idiomatic
+            # ``mx.np.array([...])`` / ``mx.np.arange(...)`` index is float even
+            # when all values are integral. Auto-casting keeps the indexing
+            # interface usable for the common case (matching legacy behavior).
             if idx.dtype != idx_dtype:
                 idx = idx.astype(idx_dtype)
             return idx.to_device(ctx) if hasattr(idx, 'to_device') else idx.as_in_context(ctx)
@@ -1163,8 +1167,7 @@ fixed-size items.
             if idx_kind == 'b':
                 # Boolean mask: expand to integer positions (NumPy semantics).
                 return array(np.flatnonzero(np.asarray(idx)), ctx, idx_dtype)
-            if idx_kind not in ('i', 'u'):
-                raise IndexError('arrays used as indices must be of integer type')
+            # Permissive coercion of float index arrays (see note above).
             return array(idx, ctx, idx_dtype)
         elif isinstance(idx, integer_types):
             return array([idx], ctx, idx_dtype)

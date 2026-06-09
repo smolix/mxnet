@@ -22,6 +22,7 @@
  * \brief fully connect operator
  */
 #include "./fully_connected-inl.h"
+#include "../../common/cuda/cublaslt_gemm.h"
 namespace mxnet {
 namespace op {
 
@@ -71,15 +72,13 @@ void FullyConnectedGradCompute<gpu>(const nnvm::NodeAttrs& attrs,
   }
 }
 
-// cuBLAS gemm has historically not been safe to call while a CUDA stream is
-// capturing (capture-illegal stream/workspace setup -> cudaError 900), so FC is
-// excluded from graph capture by default and runs conventionally between graphs.
-// Set MXNET_CUDA_GRAPHS_ALLOW_CUBLAS=1 to opt FC back into capture (Phase 2
-// investigation flag; validate with the differential-replay net before relying
-// on it — see CUDA_GRAPHS_PLAN.md / CUDA_GRAPHS_PROGRESS.md).
+// Legacy cuBLAS gemm is capture-illegal (stream/workspace setup -> cudaError
+// 900), but the cuBLASLt path is capture-safe (persistent per-stream workspace)
+// and is auto-forced on under capture (see UseCuBlasLt). FC is therefore
+// graph-capturable by default (Phase 5); set MXNET_CUDA_GRAPHS_ALLOW_CUBLAS=0
+// to opt FC back out of capture.
 inline bool FCGraphsCompatible() {
-  static const bool allow = dmlc::GetEnv("MXNET_CUDA_GRAPHS_ALLOW_CUBLAS", false);
-  return allow;
+  return mxnet::common::cuda::AllowGemmCapture();
 }
 
 NNVM_REGISTER_OP(FullyConnected)

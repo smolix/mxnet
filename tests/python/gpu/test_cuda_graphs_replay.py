@@ -191,6 +191,18 @@ def _run(env_extra, code=_WORKLOAD):
                           env=env, capture_output=True, text=True, timeout=300)
 
 
+def _run_default(env_extra, code=_WORKLOAD):
+    """Run WITHOUT setting MXNET_ENABLE_CUDA_GRAPHS / MXNET_CUDA_GRAPHS_ALLOW_CUBLAS,
+    so capture relies on the Phase-5 defaults (on for the static-shape regime)."""
+    env = os.environ.copy()
+    env["MXNET_USE_FUSION"] = "0"
+    for k in ("MXNET_ENABLE_CUDA_GRAPHS", "MXNET_CUDA_GRAPHS_ALLOW_CUBLAS"):
+        env.pop(k, None)
+    env.update(env_extra)
+    return subprocess.run([sys.executable, "-c", code],
+                          env=env, capture_output=True, text=True, timeout=300)
+
+
 @pytest.mark.serial
 def test_cuda_graphs_differential_replay_matches():
     """Deterministic captured graphs must match conventional execution exactly."""
@@ -285,6 +297,52 @@ def test_cuda_graphs_unrolled_rnn_capture():
     # The unrolled cell's FC gemms must actually be inside a captured graph.
     assert "FullyConnected" in out and "replay OK" in out, \
         f"unrolled RNN FC not captured/verified:\n{out[-3000:]}"
+
+
+@pytest.mark.serial
+def test_cuda_graphs_phase5_default_on_static_regime():
+    """Phase 5: a hybridized static_alloc+static_shape net captures (incl. FC gemm
+    via cuBLASLt) with NO MXNET_ENABLE_CUDA_GRAPHS / ALLOW_CUBLAS env set."""
+    r = _run_default({"MXNET_CUDA_GRAPHS_VERIFY": "1",
+                      "MXNET_CUDA_GRAPHS_VERBOSE": "1"},
+                     code=_FC_WORKLOAD.format(dtype="float32"))
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, f"default-on capture aborted:\n{out[-3000:]}"
+    assert "WORKLOAD_OK" in r.stdout, f"workload did not finish:\n{out[-3000:]}"
+    assert "differential-replay MISMATCH" not in out, f"mismatch:\n{out[-3000:]}"
+    assert "capture-unsafe legacy cuBLAS" not in out, f"hit legacy fallback:\n{out[-3000:]}"
+    # Capture + FC gemm must engage purely from the static-shape default.
+    assert "FullyConnected" in out and "replay OK" in out, \
+        f"capture did not engage by default:\n{out[-3000:]}"
+
+
+@pytest.mark.serial
+def test_cuda_graphs_phase5_eager_unaffected():
+    """Phase 5 must NOT capture for a non-hybridized (eager) net: no static
+    cached-op ⇒ no capture, even with the defaults on."""
+    eager = r"""
+import mxnet as mx
+from mxnet import np, npx
+from mxnet.gluon import nn
+npx.set_np()
+dev = mx.gpu(0)
+net = nn.HybridSequential()
+for _ in range(4):
+    net.add(nn.Dense(128, activation="relu"))
+net.initialize(device=dev)
+# NOTE: no hybridize() -> eager imperative execution, no static cached-op.
+x = np.ones((16, 128), device=dev)
+for _ in range(10):
+    y = net(x)
+y.wait_to_read(); npx.waitall(); print("WORKLOAD_OK")
+"""
+    r = _run_default({"MXNET_CUDA_GRAPHS_VERBOSE": "1"}, code=eager)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, f"eager run aborted:\n{out[-3000:]}"
+    assert "WORKLOAD_OK" in r.stdout, f"workload did not finish:\n{out[-3000:]}"
+    # No capture machinery should have engaged (no cached-op segments built).
+    assert "CUDA graph segment summary" not in out, \
+        f"capture engaged for eager net (should not):\n{out[-3000:]}"
 
 
 @pytest.mark.serial

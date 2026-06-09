@@ -38,6 +38,7 @@
 
 #include "./exec_pass.h"
 #include "../common/cuda/utils.h"
+#include "../common/cuda/cublaslt_gemm.h"
 
 #if MXNET_USE_CUDA
 #define CUDA_GRAPHS_AVAILABLE (CUDA_VERSION >= 10020)
@@ -619,7 +620,8 @@ class CudaGraphsExec {
  public:
   CudaGraphsExec(const std::vector<std::shared_ptr<exec::OpExecutor>>& exec_list,
                  bool is_gpu,
-                 const char* opr_names)
+                 const char* opr_names,
+                 bool default_enable = false)
       : verbose_(false),
         is_enabled_(false),
         verify_(false),
@@ -629,7 +631,14 @@ class CudaGraphsExec {
         verify_counter_(0) {
     opr_names_ = opr_names ? std::string(opr_names) : std::string();
     if (is_gpu) {
-      is_enabled_ = dmlc::GetEnv("MXNET_ENABLE_CUDA_GRAPHS", false);
+      // Phase 5: capture defaults on in the static-shape cached-op regime
+      // (default_enable). MXNET_ENABLE_CUDA_GRAPHS still overrides either way.
+      is_enabled_ = dmlc::GetEnv("MXNET_ENABLE_CUDA_GRAPHS", default_enable);
+      // When this segment will capture, make gemm capture-safe for the whole
+      // process: force cuBLASLt on now (before warm-up) so its persistent
+      // per-stream workspace is allocated conventionally, not during capture.
+      if (is_enabled_ && mxnet::common::cuda::AllowGemmCapture())
+        mxnet::common::cuda::EnableCuBlasLtForGraphs();
       verbose_    = dmlc::GetEnv("MXNET_CUDA_GRAPHS_VERBOSE", false);
       // Differential-replay correctness net (Phase 1): opt-in, debug-only.
       verify_       = dmlc::GetEnv("MXNET_CUDA_GRAPHS_VERIFY", false);

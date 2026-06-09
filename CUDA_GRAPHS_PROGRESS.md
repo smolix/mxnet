@@ -377,3 +377,84 @@ capture-unsafe legacy cuBLAS fallback).
 Net: the high-value RNN case (unrolled, dispatch-bound) is **done** and yields
 ~2.3×; the low-value fused-cudnnRNN op capture stays deferred. Recommend Phase 5
 (default-on for the validated gemm+conv capture) for further immediate value.
+
+---
+
+## Phase 5 — default-on for the static-shape regime (2026-06-09)
+CUDA-graph capture (incl. the Phase-2 cuBLASLt gemm family: FC / batch_dot /
+matmul, fwd+bwd, fp32+fp16) now defaults **ON** for hybridized cached-ops with
+`static_alloc=True && static_shape=True`, with **zero change to eager execution**.
+
+### Why gated on static_shape (not just static_alloc)
+The capture cache key is `{stream, is_train}` — no shape. A `static_alloc`-only
+cached-op can change input shapes between calls, so capturing it would replay a
+stale-dimension graph. Capture is only reached via `StaticInitExec`
+(`CreateEngineOpSeg`, the static path), so gating the default on
+`static_alloc && static_shape` is both necessary and sufficient for safety.
+
+### Two coupled gates, two mechanisms
+1. **Master switch** (`is_enabled_`): plumbed a `default_enable` flag from
+   `CachedOp` (`static_alloc && static_shape`) → `CreateEngineOpSeg` →
+   `CreateEngineOp` → `CudaGraphsExec`. `is_enabled_ =
+   GetEnv("MXNET_ENABLE_CUDA_GRAPHS", default_enable)` — env still overrides
+   (force-on for everything, or force-off).
+2. **cuBLASLt backend** (`UseCuBlasLt`): the global static flag would, if simply
+   defaulted on, force cuBLASLt for *all* gemms including eager — an unvalidated
+   eager change. Instead a process-global runtime flag
+   (`EnableCuBlasLtForGraphs`) is set from `CudaGraphsExec` the first time a
+   capture-enabled segment is built (BEFORE warm-up, so the persistent per-stream
+   cuBLASLt workspace is allocated conventionally, not during capture). Result:
+   - graph-using processes → cuBLASLt for warm-up+capture (capture-safe);
+   - **pure-eager processes never set the flag → legacy gemm, byte-identical to
+     pre-Phase-5.**
+   `MXNET_CUDA_GRAPHS_ALLOW_CUBLAS=0` still opts gemm capture out
+   (`AllowGemmCapture()`, default true). gemm `FIsCUDAGraphsCompatible` attrs now
+   default true (OpOK eligibility only; no eager effect).
+
+### Validation
+- CI: `tests/python/gpu/test_cuda_graphs_replay.py` — 10/10 pass, incl. two new:
+  - `test_cuda_graphs_phase5_default_on_static_regime`: a hybridized static net
+    captures + FC-gemm-via-cuBLASLt with **no** ENABLE/ALLOW_CUBLAS env set.
+  - `test_cuda_graphs_phase5_eager_unaffected`: a non-hybridized (eager) net
+    builds **no** capture segments (summary never emitted).
+- Speedup (transformer-ish hybridized static net, 6× attn+FFN block, sm_89):
+  graphs OFF 1493.5 → **Phase-5 default 976.0 µs/iter = 1.53×**; explicit opt-in
+  905.7 µs (same path). **Checksums bitwise-identical** across off/default/opt-in
+  (25914.0137) — correct results.
+- No eager regression: the d2l RNN notebooks run eager (no `hybridize()`), so the
+  runtime cuBLASLt flag is never set and behavior is unchanged (see the RNN
+  notebook A/B below).
+
+### d2l RNN notebook A/B (eager no-regression gate, 4×4090)
+Ran the d2l-neu RNN training notebooks (rnn-scratch, rnn-concise, lstm, gru,
+deep-rnn, seq2seq) one-per-GPU. These run **eager** (no `hybridize()`), so they
+test that the Phase-5 code changes don't regress the default eager path. They
+also validate that the Phase-0–3 operator reroutes match the published reference.
+
+Wall time (s), build-g pre-Phase-5 vs Phase-5 build, default env (no graph flags):
+
+| notebook    | pre-P5 | Phase-5 | Δ      |
+|-------------|--------|---------|--------|
+| deep-rnn    | 471.8  | 472.9   | +0.2%  |
+| lstm        | 309.7  | 303.2   | −2.1%  |
+| gru         | 285.3  | 277.3   | −2.8%  |
+| rnn-scratch | 240.1  | 234.2   | −2.5%  |
+| rnn-concise | 163.6  | 158.4   | −3.2%  |
+| seq2seq     |  19.1  |  18.2   | −4.7%  |
+
+All within run-to-run noise (wall times include dataset download + kernel
+startup + plotting), no regression. Separately, released-wheel (pre-CUDA-graphs)
+vs our branch was within ±1.5% on the four substantial workloads.
+
+Correctness vs the d2l.smola.org reference (executed under the released wheel):
+- rnn-scratch perplexity 7.5 (ref 7.2); rnn-concise 7.4 (ref 7.0) — within RNG
+  variance; generated "time traveller …" text the same char-level quality.
+- seq2seq BLEU 0.687/1.0/1.0 (ref 1.0/0.658/0.0) — comparable, ours no worse.
+
+## Status summary (updated)
+gemm family (FC/batch_dot/matmul, fwd+bwd, fp32+fp16) and conv/pool/norm capture
+**default-on** for the static_alloc+static_shape regime (Phase 5). Eager
+execution unchanged. RNN: unrolled/dispatch-bound path captures (~2.3×); fused
+cudnnRNN op capture deferred (low value). Remaining: Phase 4 RNG-under-replay
+(dropout-train) — tractable (mxnet parallel RNG is device-resident philox);
+tensordot/np.dot reroute.

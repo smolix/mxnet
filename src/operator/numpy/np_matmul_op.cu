@@ -23,17 +23,17 @@
  */
 
 #include "np_matmul_op-inl.h"
+#include "../../common/cuda/cublaslt_gemm.h"
 namespace mxnet {
 namespace op {
 
 // matmul routes its GPU gemm through linalg_batch_gemm (cuBLASLt, capture-safe;
-// fp32 honors MXNET_CUDA_ALLOW_TENSOR_CORE). Gate capture on
-// MXNET_CUDA_GRAPHS_ALLOW_CUBLAS (Phase-2 opt-in). Backward reuses MatmulImpl,
+// fp32 honors MXNET_CUDA_ALLOW_TENSOR_CORE). Capturable by default (Phase 5);
+// set MXNET_CUDA_GRAPHS_ALLOW_CUBLAS=0 to opt out. Backward reuses MatmulImpl,
 // so it is capture-safe too.
 namespace {
 inline bool MatmulGraphsCompatible() {
-  static const bool allow = dmlc::GetEnv("MXNET_CUDA_GRAPHS_ALLOW_CUBLAS", false);
-  return allow;
+  return mxnet::common::cuda::AllowGemmCapture();
 }
 }  // namespace
 

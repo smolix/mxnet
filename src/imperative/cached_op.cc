@@ -530,6 +530,12 @@ void CachedOp::StaticInitExec(const OpStatePtr& state_ptr, bool recording, bool 
         bulk_size = 0;
     }
 
+    // Phase 5: default CUDA-graph capture ON for the static-shape regime only
+    // (static_alloc + static_shape ⇒ stable shapes & pointers; the capture
+    // cache key is {stream, is_train} with no shape, so capturing a
+    // shape-varying op would replay stale dims). MXNET_ENABLE_CUDA_GRAPHS still
+    // overrides per CudaGraphsExec.
+    const bool default_enable_graphs = config_.static_alloc && config_.static_shape;
     CreateEngineOpSeg(idx,
                       default_ctx,
                       start_nid,
@@ -537,7 +543,8 @@ void CachedOp::StaticInitExec(const OpStatePtr& state_ptr, bool recording, bool 
                       bulk_size,
                       state.execs,
                       skip_plus_node,
-                      &state.opr_segs);
+                      &state.opr_segs,
+                      default_enable_graphs);
   }
 
   if (keep_fwd) {

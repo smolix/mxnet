@@ -396,22 +396,41 @@ cublasStatus_t MaybeCublasLtGemmImpl(cublasHandle_t legacy_handle,
 
 }  // namespace
 
+// Set true once a CUDA-graph-capture-enabled cached-op segment is built in this
+// process (EnableCuBlasLtForGraphs). Lets UseCuBlasLt() turn on cuBLASLt for
+// graph-using processes WITHOUT a global env flag, while leaving pure-eager
+// processes on the legacy gemm backend (Phase 5 default-on, no eager change).
+std::atomic<bool> g_graphs_gemm_enabled{false};
+
+void EnableCuBlasLtForGraphs() {
+  g_graphs_gemm_enabled.store(true, std::memory_order_relaxed);
+}
+
+bool AllowGemmCapture() {
+  // Default true since Phase 5: gemm ops are graph-capturable unless the user
+  // explicitly opts out. Affects only OpOK capture eligibility, not eager exec.
+  static const bool allow = dmlc::GetEnv("MXNET_CUDA_GRAPHS_ALLOW_CUBLAS", true);
+  return allow;
+}
+
 bool UseCuBlasLt() {
-  static const bool flag = []() {
+  // Env-derived part is fixed for the process; cache it.
+  static const bool env_forced = []() {
     if (dmlc::GetEnv("MXNET_USE_CUBLASLT", dmlc::optional<bool>(false)).value())
       return true;
-    // cuBLASLt is the only capture-safe gemm backend (persistent per-stream
-    // workspace; the legacy cublas*gemm* path does capture-illegal internal
-    // setup). When CUDA Graphs are enabled AND gemm is opted into capture
-    // (MXNET_CUDA_GRAPHS_ALLOW_CUBLAS), force cuBLASLt on so the warm-up
-    // (conventional) run and the captured run use the SAME backend — required
-    // for the captured graph to match normal execution and for the
-    // differential-replay net to be a valid check.
-    const bool graphs_on    = dmlc::GetEnv("MXNET_ENABLE_CUDA_GRAPHS", false);
-    const bool allow_cublas = dmlc::GetEnv("MXNET_CUDA_GRAPHS_ALLOW_CUBLAS", false);
-    return graphs_on && allow_cublas;
+    // Explicit legacy opt-in: graphs on AND gemm capture allowed via env.
+    const bool graphs_on = dmlc::GetEnv("MXNET_ENABLE_CUDA_GRAPHS", false);
+    return graphs_on && AllowGemmCapture();
   }();
-  return flag;
+  // cuBLASLt is the only capture-safe gemm backend (persistent per-stream
+  // workspace; the legacy cublas*gemm* path does capture-illegal internal
+  // setup). The warm-up (conventional) run and the captured run must use the
+  // SAME backend, so once a capture-enabled segment exists we force cuBLASLt on
+  // for the whole process (the live flag), unless the user opted gemm capture
+  // out via MXNET_CUDA_GRAPHS_ALLOW_CUBLAS=0.
+  if (env_forced)
+    return true;
+  return g_graphs_gemm_enabled.load(std::memory_order_relaxed) && AllowGemmCapture();
 }
 
 cublasStatus_t MaybeCublasLtSgemm(cublasHandle_t legacy_handle,

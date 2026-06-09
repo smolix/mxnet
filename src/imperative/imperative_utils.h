@@ -1266,7 +1266,8 @@ inline void SetupOpExec(const nnvm::Graph& g,
 inline Engine::OprHandle CreateEngineOp(
     const Context& default_ctx,
     const std::vector<std::shared_ptr<exec::OpExecutor> >& execs,
-    const char* opr_names) {
+    const char* opr_names,
+    bool default_enable_graphs = false) {
   CHECK_GT(execs.size(), 0);
   std::vector<Engine::VarHandle> use_vars, mutate_vars;
 
@@ -1297,7 +1298,7 @@ inline Engine::OprHandle CreateEngineOp(
 #if CUDA_GRAPHS_AVAILABLE
   // Provide initialized `cuda_graphs_exec`, which when captured
   // by exec_fun, acts like a static variable inside the mutable closure.
-  cuda_graphs::CudaGraphsExec cuda_graphs_exec(execs, is_gpu, opr_names);
+  cuda_graphs::CudaGraphsExec cuda_graphs_exec(execs, is_gpu, opr_names, default_enable_graphs);
   auto exec_fun = [cuda_graphs_exec, execs, is_async, is_gpu](
                       RunContext ctx,
                       Engine::CallbackOnStart on_start,
@@ -1340,7 +1341,8 @@ inline void CreateEngineOpSeg(const nnvm::IndexedGraph& idx,
                               const size_t bulk_size,
                               const std::vector<std::shared_ptr<exec::OpExecutor> >& execs,
                               const std::vector<int> skip_plus_node,
-                              std::vector<EngineOprSeg>* opr_segs) {
+                              std::vector<EngineOprSeg>* opr_segs,
+                              bool default_enable_graphs = false) {
   size_t seg_start = start_nid;
   std::vector<std::shared_ptr<exec::OpExecutor> > seg_execs;
   std::string opr_names = "[";
@@ -1365,7 +1367,7 @@ inline void CreateEngineOpSeg(const nnvm::IndexedGraph& idx,
         seg = EngineOprSeg{false, nid};
         opr_names.pop_back();
         opr_names += "]";
-        seg.opr.reset(CreateEngineOp(default_ctx, seg_execs, opr_names.c_str()));
+        seg.opr.reset(CreateEngineOp(default_ctx, seg_execs, opr_names.c_str(), default_enable_graphs));
       } else {
         seg = EngineOprSeg{true, nid, nullptr};
       }
@@ -1398,7 +1400,7 @@ inline void CreateEngineOpSeg(const nnvm::IndexedGraph& idx,
       seg = EngineOprSeg{false, nid + 1};
       opr_names.pop_back();
       opr_names += "]";
-      seg.opr.reset(CreateEngineOp(default_ctx, seg_execs, opr_names.c_str()));
+      seg.opr.reset(CreateEngineOp(default_ctx, seg_execs, opr_names.c_str(), default_enable_graphs));
       seg_execs.clear();
       opr_names.clear();
       seg_start = nid + 1;
@@ -1411,7 +1413,7 @@ inline void CreateEngineOpSeg(const nnvm::IndexedGraph& idx,
       seg = EngineOprSeg{false, end_nid};
       opr_names.pop_back();
       opr_names += "]";
-      seg.opr.reset(CreateEngineOp(default_ctx, seg_execs, opr_names.c_str()));
+      seg.opr.reset(CreateEngineOp(default_ctx, seg_execs, opr_names.c_str(), default_enable_graphs));
     } else {
       seg = EngineOprSeg{true, end_nid, nullptr};
     }

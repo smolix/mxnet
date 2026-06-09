@@ -458,3 +458,43 @@ execution unchanged. RNN: unrolled/dispatch-bound path captures (~2.3×); fused
 cudnnRNN op capture deferred (low value). Remaining: Phase 4 RNG-under-replay
 (dropout-train) — tractable (mxnet parallel RNG is device-resident philox);
 tensordot/np.dot reroute.
+
+---
+
+## Phase 4 — RNG correct under replay (2026-06-09)
+RNG ops now capture: `OpOK` admits ops whose only resources are capture-safe —
+`kTempSpace`, `kParallelRandom`, and `kCuDNNDropoutDesc` (`ResourceCaptureSafe`).
+Previously *any* non-tempspace resource vetoed capture, splitting the graph at
+every dropout / random op.
+
+### Why these are replay-safe (and `kRandom` is not)
+- **`kParallelRandom`**: MXNet's per-thread Philox states live in a
+  device-resident buffer; the kernel loads → advances → stores them on device, so
+  each graph *replay* advances the RNG exactly as a conventional run would.
+- **`kCuDNNDropoutDesc`**: `cudnnDropoutForward` advances a device-resident
+  counter in the dropout state buffer; the descriptor is *restored* (not
+  re-seeded) per call (`cudnnRestoreDropoutDescriptor`, no per-call alloc).
+- **`kRandom`** (legacy curand host generator: np.random.*, shuffle, image aug,
+  RNN's cuDNN dropout) stays excluded — its offset is bumped host-side, which a
+  captured graph would bake once and repeat on every replay.
+
+Note: cuDNN dropout was *already* `FIsCUDAGraphsCompatible` (and that attr
+short-circuits `OpOK` before the resource check), so Phase 5's default-on already
+captured it — this phase **verifies** that path is correct and additionally
+admits the `kParallelRandom` ops (rrelu, legacy sample_*).
+
+### Verification (build-g, sm_89) — replay advances RNG, sequence matches eager
+Hybridized static net, training, per-iteration output sum, graphs-off vs
+graphs-default (captured), seed fixed:
+- **cuDNN dropout** (p=0.5): off 24/24 distinct sums; captured 24/24 distinct and
+  **byte-identical sequence to off** (`first6=[422.92,360.1,188.78,264.23,293.46,
+  170.3]`). No repeated mask; replay sequence == conventional.
+- **rrelu** (`kParallelRandom`): off 20/20 distinct; captured 20/20 distinct,
+  **byte-identical to off**.
+
+CI: `test_cuda_graphs_dropout_rng_under_replay` (replay tail must not collapse to
+one value AND graphs-on sequence == graphs-off). Full replay suite 11/11; eager
+dropout/leaky_relu operator tests 8/8 (OpOK change doesn't affect eager).
+
+Remaining: `kRandom` host-generator ops (would need a device-resident offset or a
+host-side per-replay bump); tensordot/np.dot reroute.

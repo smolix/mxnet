@@ -182,6 +182,37 @@ y.wait_to_read(); npx.waitall(); print("WORKLOAD_OK")
 """
 
 
+# Dropout in training inside a hybridized static net (Phase 4: RNG under replay).
+# cuDNN dropout is FIsCUDAGraphsCompatible, so it captures; its device-resident
+# Philox counter must advance on every replay (no repeated mask). Prints the
+# per-iteration dropout-output sum as JSON so the test can assert both that the
+# values vary across replays AND that the graphs-on sequence matches graphs-off.
+_DROPOUT_RNG_WORKLOAD = r"""
+import json
+import mxnet as mx
+from mxnet import np, npx, gluon, autograd
+from mxnet.gluon import nn
+npx.set_np()
+dev = mx.gpu(0)
+mx.np.random.seed(7)
+class Net(nn.HybridBlock):
+    def __init__(s, **k):
+        super().__init__(**k); s.d = nn.Dense(512, flatten=False); s.drop = nn.Dropout(0.5)
+    def forward(s, x):
+        return s.drop(s.d(x))
+net = Net(); net.initialize(device=dev)
+net.hybridize(static_alloc=True, static_shape=True)
+x = np.ones((16, 512), device=dev)
+sums = []
+for _ in range(24):
+    with autograd.record():
+        y = net(x)
+    y.wait_to_read(); sums.append(round(float(np.sum(y).item()), 2))
+npx.waitall()
+print("SUMS", json.dumps(sums))
+"""
+
+
 def _run(env_extra, code=_WORKLOAD):
     env = os.environ.copy()
     env["MXNET_ENABLE_CUDA_GRAPHS"] = "1"
@@ -343,6 +374,31 @@ y.wait_to_read(); npx.waitall(); print("WORKLOAD_OK")
     # No capture machinery should have engaged (no cached-op segments built).
     assert "CUDA graph segment summary" not in out, \
         f"capture engaged for eager net (should not):\n{out[-3000:]}"
+
+
+@pytest.mark.serial
+def test_cuda_graphs_dropout_rng_under_replay():
+    """Phase 4: captured dropout must advance its RNG every replay (no repeated
+    mask) AND produce the same sequence as graphs-off (device-resident counter)."""
+    import json
+
+    def sums(env_extra):
+        r = _run(env_extra, code=_DROPOUT_RNG_WORKLOAD)
+        out = r.stdout + r.stderr
+        assert r.returncode == 0, f"dropout run failed:\n{out[-3000:]}"
+        line = [ln for ln in r.stdout.splitlines() if ln.startswith("SUMS")][0]
+        return json.loads(line[len("SUMS"):])
+
+    off = sums({"MXNET_ENABLE_CUDA_GRAPHS": "0"})
+    on = sums({})  # graphs on by default (Phase 5), dropout captured
+    assert len(off) == len(on) == 24
+    # The tail iterations are the replayed ones; they must NOT collapse to a
+    # single repeated value (that would be the stale-RNG-under-replay bug).
+    tail = on[6:]
+    assert len(set(tail)) >= len(tail) - 1, \
+        f"captured dropout RNG repeated under replay (stale mask):\n{on}"
+    # And the captured RNG sequence must match conventional execution exactly.
+    assert off == on, f"graphs-on dropout RNG diverged from graphs-off:\noff={off}\non={on}"
 
 
 @pytest.mark.serial

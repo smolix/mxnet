@@ -855,7 +855,7 @@ class CudaGraphsExec {
       }
     }
     for (auto& resource : exec->op_ctx.requested) {
-      if (!(resource.req.type == ResourceRequest::kTempSpace)) {
+      if (!ResourceCaptureSafe(resource.req.type)) {
         if (verbose_) {
           LOG(INFO) << "Omitting operator " << attrs.op->name
                     << " from CUDA graph due to using the resource type "
@@ -865,6 +865,26 @@ class CudaGraphsExec {
       }
     }
     return true;
+  }
+
+  // Resource types whose ops are safe to capture & replay (Phase 4).
+  //
+  // kTempSpace: scratch only, no cross-replay state.
+  // kParallelRandom: MXNet's per-thread Philox states live in a device-resident
+  //   buffer; the kernel loads/advances/stores them on device, so each replay
+  //   advances the RNG (no repeated "random" values) and the graphs-on sequence
+  //   matches graphs-off. (dropout-no-cudnn, rrelu, legacy sample_* ops.)
+  // kCuDNNDropoutDesc: cudnnDropoutForward advances a device-resident counter in
+  //   the dropout state buffer (verified: eager AND replayed masks vary across
+  //   iterations); the descriptor is restored, not re-seeded, per call.
+  // kRandom (legacy curand host generator) stays excluded: its offset is bumped
+  //   host-side, which a captured graph would bake once and repeat on replay.
+  static bool ResourceCaptureSafe(ResourceRequest::Type t) {
+    return t == ResourceRequest::kTempSpace || t == ResourceRequest::kParallelRandom
+#if MXNET_USE_CUDNN == 1
+           || t == ResourceRequest::kCuDNNDropoutDesc
+#endif
+        ;  // NOLINT(whitespace/semicolon)
   }
 
   // Determine Tempspaces used by ops.  Other resource uses disable CUDA Graphs.

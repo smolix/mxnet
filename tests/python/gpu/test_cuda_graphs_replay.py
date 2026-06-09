@@ -152,6 +152,36 @@ print("LOSSES", json.dumps(losses))
 """
 
 
+# Unrolled RNN (the dispatch-bound case that makes MXNet RNNs slow): an LSTMCell
+# unrolled over T steps is many small FC + elementwise ops, which capture via the
+# existing internal-op path — including the i2h/h2h FullyConnected gemms (Phase 2).
+# States are passed explicitly (no begin_state in forward) so it hybridizes
+# cleanly into a static cached-op. This is where CUDA-graph capture gives RNNs a
+# large speedup (measured ~2.3x), vs. the fused cudnnRNN op (a single call).
+_UNROLLED_RNN_WORKLOAD = r"""
+import mxnet as mx
+from mxnet import np, npx, gluon
+npx.set_np()
+dev = mx.gpu(0)
+T, N, C, H = 10, 4, 32, 32
+class Net(gluon.HybridBlock):
+    def __init__(s, **k):
+        super().__init__(**k); s.cell = gluon.rnn.LSTMCell(H, input_size=C)
+    def forward(s, x, h0, c0):
+        st = [h0, c0]; o = None
+        for t in range(T):
+            o, st = s.cell(x[t], st)
+        return o
+net = Net(); net.initialize(device=dev)
+net.hybridize(static_alloc=True, static_shape=True)
+x = np.ones((T, N, C), device=dev) * 0.05
+h0 = np.zeros((N, H), device=dev); c0 = np.zeros((N, H), device=dev)
+for _ in range(20):
+    y = net(x, h0, c0)
+y.wait_to_read(); npx.waitall(); print("WORKLOAD_OK")
+"""
+
+
 def _run(env_extra, code=_WORKLOAD):
     env = os.environ.copy()
     env["MXNET_ENABLE_CUDA_GRAPHS"] = "1"
@@ -233,6 +263,28 @@ def test_cuda_graphs_training_matches_eager():
     assert len(off) == len(on) == 30
     for i, (a, b) in enumerate(zip(off, on)):
         assert abs(a - b) <= 1e-4, f"step {i}: graphs-off {a} vs graphs-on {b}\noff={off}\non={on}"
+
+
+@pytest.mark.serial
+def test_cuda_graphs_unrolled_rnn_capture():
+    """An unrolled LSTMCell (many small FC gemms) captures and matches conventional.
+
+    This is the dispatch-bound workload that makes MXNet RNNs slow; its i2h/h2h
+    FullyConnected gemms go through the Phase-2 cuBLASLt capture path. Verifies the
+    captured graph matches conventional execution exactly.
+    """
+    r = _run({"MXNET_CUDA_GRAPHS_ALLOW_CUBLAS": "1",
+              "MXNET_CUDA_GRAPHS_VERIFY": "1",
+              "MXNET_CUDA_GRAPHS_VERBOSE": "1"},
+             code=_UNROLLED_RNN_WORKLOAD)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, f"unrolled RNN capture aborted:\n{out[-3000:]}"
+    assert "WORKLOAD_OK" in r.stdout, f"workload did not finish:\n{out[-3000:]}"
+    assert "differential-replay MISMATCH" not in out, f"mismatch:\n{out[-3000:]}"
+    assert "capture-unsafe legacy cuBLAS" not in out, f"hit legacy fallback:\n{out[-3000:]}"
+    # The unrolled cell's FC gemms must actually be inside a captured graph.
+    assert "FullyConnected" in out and "replay OK" in out, \
+        f"unrolled RNN FC not captured/verified:\n{out[-3000:]}"
 
 
 @pytest.mark.serial

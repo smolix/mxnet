@@ -349,9 +349,31 @@ Attempted RNN capture. Findings:
    warm-up-allocated so those are fine for static shape.
 3. The differential-replay net would also need to handle RNN's stateful I/O.
 
-Conclusion: RNN capture is a multi-layer effort (frontend/executor routing +
-cuDNN compute capture-safety + state-aware verification), much larger than the
-gemm family and of lower value (RNN ≪ transformer/conv, which already capture).
-Reverted the ineffective attr. Recommend Phase 5 (default-on for the validated
-gemm+conv capture) for higher immediate value, or a dedicated RNN-routing
-investigation if RNN capture is specifically needed.
+Conclusion (fused path): capturing the single fused `cudnnRNNForward` op is a
+multi-layer effort (frontend/executor routing + cuDNN compute capture-safety +
+state-aware verification), much larger than the gemm family. Deferred.
+
+### Phase 3 — RESOLVED via the unrolled-RNN path (2026-06-09)
+The reason MXNet RNNs are slow is **dispatch overhead**, and the fused
+`cudnnRNNForward` op is *already* a single kernel launch — capturing it would
+save almost nothing. The dispatch-bound case is the **unrolled RNN** (an
+`LSTMCell` stepped over T timesteps = many small FullyConnected gemms +
+elementwise ops), which is exactly the regime CUDA-graph capture accelerates.
+
+That path **already captures** through the validated Phase-2 cuBLASLt gemm work:
+an unrolled `LSTMCell` (states passed explicitly so it hybridizes into a static
+cached-op) runs its i2h/h2h FC gemms through the capture-safe cuBLASLt path with
+no new code.
+
+Measured (unrolled LSTM, T/N/C/H = 10/4/32/32, sm_89):
+- graphs OFF: 3053 µs/iter → graphs ON: 1312 µs/iter = **2.33× speedup**.
+- attribution: OFF 4940 → FC-bypassed 2676 → FC-captured (Phase 2) 1533 µs —
+  i.e. capturing the FC gemms is what unlocks the RNN speedup.
+
+Verified for correctness by `test_cuda_graphs_unrolled_rnn_capture` (differential
+replay: captured graph == conventional, FC inside a captured graph, no
+capture-unsafe legacy cuBLAS fallback).
+
+Net: the high-value RNN case (unrolled, dispatch-bound) is **done** and yields
+~2.3×; the low-value fused-cudnnRNN op capture stays deferred. Recommend Phase 5
+(default-on for the validated gemm+conv capture) for further immediate value.

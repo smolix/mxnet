@@ -17,12 +17,18 @@ jobs:
   test:
     name: CPU pytest sweep (operator, gluon, dnnl)
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    # Cold build (~70 min at -j4) + deps install + 30-min pytest sweep, with
+    # headroom. Nightly normally restores the build-cpu master cache (see the
+    # cmake-build-cpu-/ccache-build-cpu- restore-keys) and builds warm in
+    # minutes; this cap only matters if it ever runs genuinely cold.
+    timeout-minutes: 180
     env:
       CMAKE_BUILD_DIR: build
       CMAKE_BUILD_TYPE: Release
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: "2G"
+      # 5G: the full CPU object set exceeds 2G, so a 2G cap thrashed within a
+      # single cold build. Matches build-cpu.yml.
+      CCACHE_MAXSIZE: "5G"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,7 +92,12 @@ jobs:
             -DBUILD_CPP_EXAMPLES=OFF
 
       - name: Build (ninja mxnet)
-        timeout-minutes: 60
+        # 120-min cap: a cold build at -j4 (= nproc on the standard
+        # ubuntu-22.04 runner) takes ~70 min. The old 60-min cap killed cold
+        # builds before they finished, so the Post Cache steps never ran and
+        # the cache never seeded -> every nightly started cold and timed out
+        # again. Warm builds (cache restored) finish in minutes.
+        timeout-minutes: 120
         run: cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j"$(nproc)"
 
       - name: Install python package + test deps

@@ -23,6 +23,7 @@
  */
 
 #include "./dot-inl.h"
+#include "../../common/cuda/cublaslt_gemm.h"
 
 namespace mxnet {
 namespace op {
@@ -35,12 +36,15 @@ NNVM_REGISTER_OP(_backward_dot)
     .set_attr<FCompute>("FCompute<gpu>", DotBackward_<gpu>)
     .set_attr<FComputeEx>("FComputeEx<gpu>", DotBackwardEx<gpu>);
 
-// cuBLAS-backed; not capture-safe (see FullyConnected / CUDA_GRAPHS_PLAN.md).
-// dot / _backward_dot are already excluded from capture via their FComputeEx
-// dispatch; batch_dot has only FCompute, so exclude it explicitly.
+// batch_dot now routes its GPU gemm through linalg_batch_gemm, which is
+// CUDA-graph capture-safe via cuBLASLt (see linalg_impl.h / fully_connected.cu).
+// Capturable by default (Phase 5); the cuBLASLt path is auto-forced on under
+// capture so warm-up and captured runs match. Set MXNET_CUDA_GRAPHS_ALLOW_CUBLAS=0
+// to opt out. dot / _backward_dot remain excluded via their FComputeEx dispatch.
 NNVM_REGISTER_OP(batch_dot)
-    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
-                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FIsCUDAGraphsCompatible>(
+        "FIsCUDAGraphsCompatible",
+        [](const NodeAttrs&, const bool) { return mxnet::common::cuda::AllowGemmCapture(); })
     .set_attr<FCompute>("FCompute<gpu>", BatchDotForward_<gpu>);
 
 }  // namespace op

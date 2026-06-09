@@ -32,6 +32,7 @@
 #include <dmlc/logging.h>
 #include <dmlc/parameter.h>
 
+#include <atomic>
 #include <list>
 #include <mutex>
 #include <unordered_map>
@@ -121,29 +122,49 @@ class LtPool {
 
   cublasLtHandle_t handle() const { return handle_; }
 
-  void* AllocWorkspace(size_t bytes) {
-    int prev_dev = -1;
-    cudaGetDevice(&prev_dev);
-    if (prev_dev != dev_id_) cudaSetDevice(dev_id_);
-    void* ws = nullptr;
-    cudaError_t err = cudaMalloc(&ws, bytes);
-    if (err != cudaSuccess) {
-      // Clear the sticky error so the next unrelated CUDA call / post-kernel
-      // check does not observe this failed allocation and abort with a
-      // misleading message. We fall back to the legacy cuBLAS path on nullptr.
-      cudaGetLastError();
-    }
-    if (prev_dev != -1 && prev_dev != dev_id_) cudaSetDevice(prev_dev);
-    return (err == cudaSuccess) ? ws : nullptr;
-  }
+  // Persistent per-stream workspace. cublasLtMatmul takes the workspace as an
+  // argument; a buffer is allocated once per stream and reused, never freed per
+  // call. This is required for CUDA Graph capture safety — a per-call
+  // cudaMalloc/cudaFree is illegal during capture and silently invalidates the
+  // graph. Per-stream (not per-device) keeps it concurrency-safe: matmuls on one
+  // stream are serialized by stream ordering, so they can share one workspace,
+  // while distinct streams get distinct buffers. Process-lifetime, like handle_.
+  //
+  // Returns nullptr if a buffer would have to be (re)allocated while the stream
+  // is capturing — the caller then falls back to the no-workspace legacy path.
+  // The warm-up (conventional) run sizes the workspace before capture, so during
+  // capture this is always a hit.
+  void* StreamWorkspace(cudaStream_t stream, size_t need_bytes) {
+    std::lock_guard<std::mutex> lk(ws_mu_);
+    auto it = ws_by_stream_.find(stream);
+    if (it != ws_by_stream_.end() && it->second.bytes >= need_bytes)
+      return it->second.ptr;
 
-  void FreeWorkspace(void* ws) {
-    if (ws == nullptr) return;
-    int prev_dev = -1;
+    cudaStreamCaptureStatus cap = cudaStreamCaptureStatusNone;
+    if (cudaStreamIsCapturing(stream, &cap) != cudaSuccess) {
+      cudaGetLastError();
+      return nullptr;
+    }
+    if (cap != cudaStreamCaptureStatusNone)
+      return nullptr;  // capturing: cannot allocate — caller falls back.
+
+    const size_t want = need_bytes > kWorkspaceBytes ? need_bytes : kWorkspaceBytes;
+    int prev_dev      = -1;
     cudaGetDevice(&prev_dev);
     if (prev_dev != dev_id_) cudaSetDevice(dev_id_);
-    cudaFree(ws);
+    if (it != ws_by_stream_.end()) {
+      cudaFree(it->second.ptr);  // grow
+      ws_by_stream_.erase(it);
+    }
+    void* ws        = nullptr;
+    cudaError_t err = cudaMalloc(&ws, want);
     if (prev_dev != -1 && prev_dev != dev_id_) cudaSetDevice(prev_dev);
+    if (err != cudaSuccess) {
+      cudaGetLastError();  // clear sticky error; fall back to legacy path.
+      return nullptr;
+    }
+    ws_by_stream_[stream] = {ws, want};
+    return ws;
   }
 
   // LRU lookup. Returns nullptr on miss.
@@ -192,11 +213,18 @@ class LtPool {
     std::list<GemmKey>::iterator lru_it;
   };
 
+  struct WsBuf {
+    void*  ptr   = nullptr;
+    size_t bytes = 0;
+  };
+
   int                                                dev_id_;
   cublasLtHandle_t                                   handle_{nullptr};
   std::mutex                                         cache_mu_;
   std::list<GemmKey>                                 lru_;
   std::unordered_map<GemmKey, Entry, GemmKeyHash>    cache_;
+  std::mutex                                         ws_mu_;
+  std::unordered_map<cudaStream_t, WsBuf>            ws_by_stream_;
 };
 
 inline int BetaClassF32(float beta) {
@@ -345,23 +373,64 @@ cublasStatus_t MaybeCublasLtGemmImpl(cublasHandle_t legacy_handle,
 
   void* ws = nullptr;
   if (algo_ws_bytes > 0) {
-    ws = pool.AllocWorkspace(algo_ws_bytes);
+    ws = pool.StreamWorkspace(stream, algo_ws_bytes);
     if (ws == nullptr) { cleanup(); return CUBLAS_STATUS_ALLOC_FAILED; }
   }
 
   s = cublasLtMatmul(pool.handle(), op_desc, alpha, A, a_lay, B, b_lay, beta,
                      C, c_lay, C, c_lay, &algo, ws, algo_ws_bytes, stream);
-  pool.FreeWorkspace(ws);
+  // Workspace is persistent per stream — not freed here.
   cleanup();
+  static const bool lt_verbose = dmlc::GetEnv("MXNET_CUBLASLT_VERBOSE", false);
+  if (lt_verbose) {
+    static std::atomic<long> served{0}, failed{0};
+    if (s == CUBLAS_STATUS_SUCCESS)
+      LOG(INFO) << "[cublasLt] served gemm #" << (++served) << " (m=" << m << ",n=" << n
+                << ",k=" << k << ")";
+    else
+      LOG(INFO) << "[cublasLt] FAILED gemm #" << (++failed) << " status=" << s << " (m=" << m
+                << ",n=" << n << ",k=" << k << ") -> legacy fallback";
+  }
   return s;
 }
 
 }  // namespace
 
+// Set true once a CUDA-graph-capture-enabled cached-op segment is built in this
+// process (EnableCuBlasLtForGraphs). Lets UseCuBlasLt() turn on cuBLASLt for
+// graph-using processes WITHOUT a global env flag, while leaving pure-eager
+// processes on the legacy gemm backend (Phase 5 default-on, no eager change).
+std::atomic<bool> g_graphs_gemm_enabled{false};
+
+void EnableCuBlasLtForGraphs() {
+  g_graphs_gemm_enabled.store(true, std::memory_order_relaxed);
+}
+
+bool AllowGemmCapture() {
+  // Default true since Phase 5: gemm ops are graph-capturable unless the user
+  // explicitly opts out. Affects only OpOK capture eligibility, not eager exec.
+  static const bool allow = dmlc::GetEnv("MXNET_CUDA_GRAPHS_ALLOW_CUBLAS", true);
+  return allow;
+}
+
 bool UseCuBlasLt() {
-  static const bool flag =
-      dmlc::GetEnv("MXNET_USE_CUBLASLT", dmlc::optional<bool>(false)).value();
-  return flag;
+  // Env-derived part is fixed for the process; cache it.
+  static const bool env_forced = []() {
+    if (dmlc::GetEnv("MXNET_USE_CUBLASLT", dmlc::optional<bool>(false)).value())
+      return true;
+    // Explicit legacy opt-in: graphs on AND gemm capture allowed via env.
+    const bool graphs_on = dmlc::GetEnv("MXNET_ENABLE_CUDA_GRAPHS", false);
+    return graphs_on && AllowGemmCapture();
+  }();
+  // cuBLASLt is the only capture-safe gemm backend (persistent per-stream
+  // workspace; the legacy cublas*gemm* path does capture-illegal internal
+  // setup). The warm-up (conventional) run and the captured run must use the
+  // SAME backend, so once a capture-enabled segment exists we force cuBLASLt on
+  // for the whole process (the live flag), unless the user opted gemm capture
+  // out via MXNET_CUDA_GRAPHS_ALLOW_CUBLAS=0.
+  if (env_forced)
+    return true;
+  return g_graphs_gemm_enabled.load(std::memory_order_relaxed) && AllowGemmCapture();
 }
 
 cublasStatus_t MaybeCublasLtSgemm(cublasHandle_t legacy_handle,
@@ -473,12 +542,18 @@ cublasStatus_t MaybeCublasLtSgemmStrided(cublasHandle_t legacy_handle,
                                          const float* B, int ldb, int64_t stride_b,
                                          const float* beta,
                                          float* C, int ldc, int64_t stride_c,
-                                         int batch) {
+                                         int batch,
+                                         bool allow_tf32) {
   if (batch <= 0) return CUBLAS_STATUS_INVALID_VALUE;
+  // allow_tf32=false preserves full fp32 precision (CUBLAS_COMPUTE_32F) for ops
+  // that require it (e.g. batch_dot, which was full-fp32 via the legacy mshadow
+  // path); true uses TF32 tensor cores (the default for FC / la_op gemms).
+  const cublasComputeType_t compute =
+      allow_tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
   return MaybeCublasLtGemmImpl(legacy_handle, opA, opB, m, n, k,
                                alpha, A, lda, B, ldb, beta, C, ldc,
                                CUDA_R_32F, CUDA_R_32F,
-                               CUBLAS_COMPUTE_32F_FAST_TF32,
+                               compute,
                                (*alpha == 1.0f) ? 1 : 0, BetaClassF32(*beta),
                                batch, stride_a, stride_b, stride_c);
 }

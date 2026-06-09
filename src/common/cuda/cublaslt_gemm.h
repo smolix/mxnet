@@ -52,9 +52,30 @@ namespace mxnet {
 namespace common {
 namespace cuda {
 
-/*! \brief Returns true when MXNET_USE_CUBLASLT=1 in the environment.
- *  Default is false. Cached after first call. */
+/*! \brief Returns true when the cuBLASLt gemm backend should be used.
+ *
+ * True when MXNET_USE_CUBLASLT=1, or the explicit graph opt-in
+ * (MXNET_ENABLE_CUDA_GRAPHS && MXNET_CUDA_GRAPHS_ALLOW_CUBLAS) is set, or a
+ * CUDA-graph-enabled cached-op segment has been constructed in this process
+ * (see EnableCuBlasLtForGraphs). The last case is what makes the Phase-5
+ * default-on (static-shape regime) capture gemm without a global env flag:
+ * pure-eager processes never call EnableCuBlasLtForGraphs, so they keep the
+ * legacy gemm backend unchanged. The env-derived part is cached; the
+ * graph-runtime part is a live flag. */
 bool UseCuBlasLt();
+
+/*! \brief Mark this process as graph-capture-bound so UseCuBlasLt() returns
+ * true. Called from CudaGraphsExec when a capture-enabled segment is built,
+ * BEFORE the conventional warm-up run — so the persistent per-stream cuBLASLt
+ * workspace is allocated during warm-up (legal) rather than during capture
+ * (illegal). Idempotent and thread-safe. */
+void EnableCuBlasLtForGraphs();
+
+/*! \brief Whether gemm ops should be marked CUDA-graph-capturable.
+ * MXNET_CUDA_GRAPHS_ALLOW_CUBLAS (default true since Phase 5); set =0 to keep
+ * gemm out of capture. Cached after first call. Affects only OpOK capture
+ * eligibility, never eager execution. */
+bool AllowGemmCapture();
 
 /*!
  * \brief Attempt to run a single-precision GEMM via cuBLASLt.
@@ -183,7 +204,8 @@ cublasStatus_t MaybeCublasLtSgemmStrided(cublasHandle_t legacy_handle,
                                          float* C,
                                          int ldc,
                                          int64_t stride_c,
-                                         int batch);
+                                         int batch,
+                                         bool allow_tf32 = true);
 
 /*! \brief Stride-aware pseudo-fp16 GEMM (fp16 I/O, fp32 compute). */
 cublasStatus_t MaybeCublasLtHgemmStrided(cublasHandle_t legacy_handle,

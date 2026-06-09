@@ -32,6 +32,7 @@
 #include <limits>
 
 #include "../common/cuda/utils.h"
+#include "../common/utils.h"  // common::LogOnce (used by the fp16 gemm fallback)
 #if MXNET_USE_CUDA
 #include "../common/cuda/cublaslt_gemm.h"
 #endif
@@ -311,6 +312,33 @@ inline void linalg_gemm<cpu, mshadow::half::half_t>(const Tensor<cpu, 2, mshadow
 
 #ifdef __CUDACC__
 
+// CUDA-graph capture safety. The legacy cublas*gemm* fallbacks below perform
+// capture-illegal internal setup (lazy default-workspace allocation) and must
+// never execute while a stream is capturing a CUDA graph. cuBLASLt is the
+// capture-safe path and is auto-forced on under graph capture (see
+// UseCuBlasLt()); reaching a legacy fallback while capturing means cuBLASLt did
+// not serve this shape/dtype. Fail loudly and actionably here rather than let
+// cuBLAS abort deep inside with a cryptic "operation not permitted when stream
+// is capturing" (cudaError 900) that invalidates the whole graph.
+inline void AssertGemmCaptureSafe(mshadow::Stream<mshadow::gpu>* s, const char* what) {
+  // Cheap fast-out when CUDA graphs are disabled (the default): a single cached
+  // bool, no per-gemm CUDA call. Only when graphs are on do we query capture
+  // status, so the legacy gemm path pays nothing in the common case.
+  static const bool graphs_on = dmlc::GetEnv("MXNET_ENABLE_CUDA_GRAPHS", false);
+  if (!graphs_on || s == nullptr)
+    return;
+  cudaStream_t cu_s           = mshadow::Stream<mshadow::gpu>::GetStream(s);
+  cudaStreamCaptureStatus cap = cudaStreamCaptureStatusNone;
+  if (cudaStreamIsCapturing(cu_s, &cap) == cudaSuccess &&
+      cap != cudaStreamCaptureStatusNone) {
+    LOG(FATAL) << "linalg_gemm(" << what
+               << "): reached the capture-unsafe legacy cuBLAS path while a CUDA graph "
+                  "is capturing. cuBLASLt did not serve this gemm (uncovered shape/dtype). "
+                  "Exclude this op from CUDA graphs (FIsCUDAGraphsCompatible=false) or "
+                  "extend cuBLASLt coverage.";
+  }
+}
+
 // cublas col-major processing accounted for by switching first two operands
 
 #define LINALG_GPU_GEMM(fname, DType)                                 \
@@ -381,6 +409,7 @@ inline void linalg_gemm<gpu, float>(const Tensor<gpu, 2, float>& A,
     used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
   }
   if (!used_lt) {
+    AssertGemmCaptureSafe(s, "fp32");
     CUBLAS_CALL(cublasSgemmEx(handle,
                               op_a,
                               op_b,
@@ -426,8 +455,13 @@ inline void linalg_gemm<gpu, double>(const Tensor<gpu, 2, double>& A,
   const int gemm_m             = C.size(1);
   const int gemm_n             = C.size(0);
   const int gemm_k             = (tB ? B.size(1) : B.size(0));
-  bool used_lt                 = false;
-  if (mxnet::common::cuda::UseCuBlasLt()) {
+  // CUDA 13's legacy cublasGemmEx(fp64) returns CUBLAS_STATUS_NOT_INITIALIZED for
+  // some shapes (e.g. resnet18 cast to fp64 — see test_dtype). cuBLASLt's fp64
+  // path is reliable and full precision (CUBLAS_COMPUTE_64F), so ALWAYS try it
+  // first for fp64 (not only when MXNET_USE_CUBLASLT is set); fall back to
+  // cublasGemmEx only if cuBLASLt declines. Also makes fp64 gemm capture-safe.
+  bool used_lt = false;
+  {
     cublasStatus_t lt_status =
         mxnet::common::cuda::MaybeCublasLtDgemm(handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
                                                 &alpha, B.dptr_, B.stride_,
@@ -436,6 +470,7 @@ inline void linalg_gemm<gpu, double>(const Tensor<gpu, 2, double>& A,
     used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
   }
   if (!used_lt) {
+    AssertGemmCaptureSafe(s, "fp64");
     // CUDA 13's legacy cublasDgemm returns CUBLAS_STATUS_NOT_INITIALIZED on this
     // runtime; use cublasGemmEx with fp64 I/O and CUBLAS_COMPUTE_64F, mirroring the
     // fp32 SgemmEx fallback above. See docs/cuda_wheel_build.md.
@@ -572,6 +607,7 @@ inline void linalg_gemm<gpu, mshadow::half::half_t>(const Tensor<gpu, 2, mshadow
   if (used_lt_fp16) {
     // skipped; lt path completed.
   } else if (SupportsFloat16Compute(s->dev_id)) {
+    AssertGemmCaptureSafe(s, "fp16");
     CUBLAS_CALL(cublasGemmEx(blas_handle,
                              (tB ? CUBLAS_OP_T : CUBLAS_OP_N),
                              (tA ? CUBLAS_OP_T : CUBLAS_OP_N),
@@ -599,6 +635,7 @@ inline void linalg_gemm<gpu, mshadow::half::half_t>(const Tensor<gpu, 2, mshadow
     // pseudo-fp16 (fp32 math with fp16 I/O)
     if (use_true_fp16)
       common::LogOnce("MXNET_FC_TRUE_FP16 was set but this architecture does not support it.");
+    AssertGemmCaptureSafe(s, "fp16-pseudo");
     float alpha_f = static_cast<float>(alpha);
     float beta_f  = static_cast<float>(beta);
     CUBLAS_CALL(cublasSgemmEx(blas_handle,
@@ -663,6 +700,7 @@ inline void linalg_gemm<gpu, mshadow::bfloat::bf16_t>(
     used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
   }
   if (!used_lt) {
+    AssertGemmCaptureSafe(s, "bf16");
     CUBLAS_CALL(cublasGemmEx(blas_handle,
                              op_a,
                              op_b,
@@ -772,6 +810,7 @@ inline void linalg_batch_gemm<gpu, double>(const Tensor<gpu, 3, double>& A,
     used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
   }
   if (!used_lt) {
+    AssertGemmCaptureSafe(s, "batch-fp64");
     CUBLAS_CALL(cublasDgemmStridedBatched(handle,
                                           op_a,
                                           op_b,
@@ -849,6 +888,7 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
   if (used_lt) {
     // skipped; lt path completed.
   } else if ((cc_major >= 5) && use_tensor_ops) {
+    AssertGemmCaptureSafe(s, "batch-fp32");
     CUBLAS_CALL(cublasGemmStridedBatchedEx(blas_handle,
                                            op_a,
                                            op_b,
@@ -877,6 +917,7 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
 #endif
                                            CUBLAS_GEMM_DEFAULT_TENSOR_OP));
   } else {
+    AssertGemmCaptureSafe(s, "batch-fp32");
     CUBLAS_CALL(cublasSgemmStridedBatched(blas_handle,
                                           op_a,
                                           op_b,
@@ -897,6 +938,143 @@ inline void linalg_batch_gemm<gpu, float>(const Tensor<gpu, 3, float>& A,
                                           batch));
   }
   // math mode restored by math_mode_guard's destructor (exception-safe)
+}
+
+// Full-fp32 (no TF32) capture-safe strided-batched GEMM. linalg_batch_gemm<gpu,
+// float> uses TF32 (the FC / la_op convention); batch_dot and matmul were
+// full-fp32 via the legacy mshadow path, so they use THIS helper to preserve
+// precision parity (no regression) while still routing through the capture-safe
+// cuBLASLt path (CUBLAS_COMPUTE_32F). Same arg convention as
+// linalg_batch_gemm<gpu, float>: computes C[b] = alpha*op_tA(A[b])*op_tB(B[b]) +
+// beta*C[b]. GPU only.
+inline void linalg_batch_gemm_fullfp32(const Tensor<gpu, 3, float>& A,
+                                       const Tensor<gpu, 3, float>& B,
+                                       const Tensor<gpu, 3, float>& C,
+                                       float alpha,
+                                       float beta,
+                                       bool tA,
+                                       bool tB,
+                                       Stream<gpu>* s) {
+  using namespace mxnet;
+  using mshadow::gpu;
+  CHECK_NOTNULL(s);
+  linalg_check_batch_size(A.size(0), B.size(0), C.size(0));
+  auto handle = Stream<gpu>::GetBlasHandle(s);
+  // Full fp32 for the legacy fallback (matches legacy cublasSgemmStridedBatched
+  // with the handle's default math mode).
+  CublasMathModeGuard math_mode_guard(handle, CUBLAS_DEFAULT_MATH);
+  const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const int gemm_m             = C.size(2);
+  const int gemm_n             = C.size(1);
+  const int gemm_k             = (tB ? B.size(2) : B.size(1));
+  const int64_t stride_b       = static_cast<int64_t>(B.size(1)) * B.stride_;
+  const int64_t stride_a       = static_cast<int64_t>(A.size(1)) * A.stride_;
+  const int64_t stride_c       = static_cast<int64_t>(C.size(1)) * C.stride_;
+  const int batch              = A.size(0);
+  bool used_lt                 = false;
+  if (mxnet::common::cuda::UseCuBlasLt()) {
+    cublasStatus_t lt_status = mxnet::common::cuda::MaybeCublasLtSgemmStrided(
+        handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
+        &alpha, B.dptr_, B.stride_, stride_b,
+        A.dptr_, A.stride_, stride_a, &beta,
+        C.dptr_, C.stride_, stride_c, batch, /*allow_tf32=*/false);
+    used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (!used_lt) {
+    AssertGemmCaptureSafe(s, "batch-fp32-full");
+    CUBLAS_CALL(cublasSgemmStridedBatched(handle,
+                                          op_a,
+                                          op_b,
+                                          gemm_m,
+                                          gemm_n,
+                                          gemm_k,
+                                          &alpha,
+                                          B.dptr_,
+                                          B.stride_,
+                                          stride_b,
+                                          A.dptr_,
+                                          A.stride_,
+                                          stride_a,
+                                          &beta,
+                                          C.dptr_,
+                                          C.stride_,
+                                          stride_c,
+                                          batch));
+  }
+}
+
+// fp16 (pseudo-fp16: fp16 I/O, fp32 compute) strided-batched GEMM with cuBLASLt
+// fast path. Mirrors linalg_batch_gemm<gpu, float>; added so batch_dot / matmul
+// fp16 can route through the capture-safe cuBLASLt path (CUDA Graphs Phase 2).
+template <>
+inline void linalg_batch_gemm<gpu, mshadow::half::half_t>(
+    const Tensor<gpu, 3, mshadow::half::half_t>& A,
+    const Tensor<gpu, 3, mshadow::half::half_t>& B,
+    const Tensor<gpu, 3, mshadow::half::half_t>& C,
+    mshadow::half::half_t alpha,
+    mshadow::half::half_t beta,
+    bool tA,
+    bool tB,
+    Stream<gpu>* s) {
+  using namespace mxnet;
+  using mshadow::gpu;
+  CHECK_NOTNULL(s);
+  linalg_check_batch_size(A.size(0), B.size(0), C.size(0));
+  auto blas_handle             = Stream<gpu>::GetBlasHandle(s);
+  // Pseudo-fp16: fp16 I/O with fp32 compute and fp32 alpha/beta — matches
+  // cublasGemmEx(... CUBLAS_COMPUTE_32F ...) and MaybeCublasLtHgemm.
+  const float alpha_f          = static_cast<float>(alpha);
+  const float beta_f           = static_cast<float>(beta);
+  const cublasOperation_t op_a = (tB ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const cublasOperation_t op_b = (tA ? CUBLAS_OP_T : CUBLAS_OP_N);
+  const int gemm_m             = C.size(2);
+  const int gemm_n             = C.size(1);
+  const int gemm_k             = (tB ? B.size(2) : B.size(1));
+  const int64_t stride_b       = static_cast<int64_t>(B.size(1)) * B.stride_;
+  const int64_t stride_a       = static_cast<int64_t>(A.size(1)) * A.stride_;
+  const int64_t stride_c       = static_cast<int64_t>(C.size(1)) * C.stride_;
+  const int batch              = A.size(0);
+
+  bool used_lt = false;
+  if (mxnet::common::cuda::UseCuBlasLt()) {
+    cublasStatus_t lt_status = mxnet::common::cuda::MaybeCublasLtHgemmStrided(
+        blas_handle, op_a, op_b, gemm_m, gemm_n, gemm_k,
+        &alpha_f,
+        B.dptr_, B.stride_, stride_b,
+        A.dptr_, A.stride_, stride_a,
+        &beta_f,
+        C.dptr_, C.stride_, stride_c,
+        batch);
+    used_lt = (lt_status == CUBLAS_STATUS_SUCCESS);
+  }
+  if (!used_lt) {
+    AssertGemmCaptureSafe(s, "batch-fp16");
+    CublasMathModeGuard math_mode_guard(blas_handle, CUBLAS_TENSOR_OP_MATH);
+    CUBLAS_CALL(cublasGemmStridedBatchedEx(blas_handle,
+                                           op_a,
+                                           op_b,
+                                           gemm_m,
+                                           gemm_n,
+                                           gemm_k,
+                                           &alpha_f,
+                                           B.dptr_,
+                                           CUDA_R_16F,
+                                           B.stride_,
+                                           stride_b,
+                                           A.dptr_,
+                                           CUDA_R_16F,
+                                           A.stride_,
+                                           stride_a,
+                                           &beta_f,
+                                           C.dptr_,
+                                           CUDA_R_16F,
+                                           C.stride_,
+                                           stride_c,
+                                           batch,
+                                           CUBLAS_COMPUTE_32F,
+                                           CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+  }
 }
 #endif  // CUDA_VERSION < 9010
 
@@ -1590,7 +1768,13 @@ LINALG_XPU_BATCH_SYRK(cpu, double)
 
 #ifdef __CUDACC__
 
-// cublas col-major processing accounted for by switching transpose and fill mode
+// CUDA 13's legacy cublas<t>syrk crashes on the host (segfault) on this cuBLAS
+// (13.5.x) — same family of legacy-API breakage as cublasDgemm (which already
+// had to move to cublasGemmEx). Compute the symmetric rank-k update as a full
+// gemm instead: B = alpha*op(A)*op(A)^T + beta*B (tA=false) or A^T*A (tA=true).
+// The result is symmetric, so the full gemm is numerically equivalent to the
+// upper-triangular syrk for all downstream consumers, and it uses the working,
+// capture-safe gemm path. (fname is unused now; kept for the macro signature.)
 #define LINALG_GPU_SYRK(fname, DType)                                 \
   template <>                                                         \
   inline void linalg_syrk<gpu, DType>(const Tensor<gpu, 2, DType>& A, \
@@ -1603,17 +1787,7 @@ LINALG_XPU_BATCH_SYRK(cpu, double)
     using mshadow::gpu;                                               \
     CHECK_NOTNULL(s);                                                 \
     check_syrk(A, B, alpha, beta, tA);                                \
-    CUBLAS_CALL(cublas##fname(Stream<gpu>::GetBlasHandle(s),          \
-                              CUBLAS_FILL_MODE_UPPER,                 \
-                              (tA ? CUBLAS_OP_N : CUBLAS_OP_T),       \
-                              B.size(1),                              \
-                              (tA ? A.size(0) : A.size(1)),           \
-                              &alpha,                                 \
-                              A.dptr_,                                \
-                              A.stride_,                              \
-                              &beta,                                  \
-                              B.dptr_,                                \
-                              B.stride_));                            \
+    linalg_gemm(A, A, B, alpha, beta, tA, !tA, s);                    \
   }
 
 LINALG_GPU_SYRK(Ssyrk, float)

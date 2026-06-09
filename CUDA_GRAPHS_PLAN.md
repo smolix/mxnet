@@ -1,9 +1,18 @@
 # Plan: Revive and harden CUDA Graphs in MXNet
 
-Status: proposal. CUDA Graphs are implemented but **off by default**
-(`MXNET_ENABLE_CUDA_GRAPHS=0`). They worked in MXNet 1.x and were backported to
-2.0 (commit `5ab7f64c2`, 2022). This plan brings them back to a reliable,
-default-on-for-hybridized state, with a correctness story at each step.
+Status: **Phases 0–2 done** (see CUDA_GRAPHS_PROGRESS.md for results). CUDA Graphs
+are still **off by default** (`MXNET_ENABLE_CUDA_GRAPHS=0`); when enabled, the
+cuBLAS gemm family (FullyConnected, batch_dot, matmul — fwd+bwd, fp32/fp16) now
+captures via cuBLASLt behind `MXNET_CUDA_GRAPHS_ALLOW_CUBLAS`, with a
+differential-replay correctness net (`MXNET_CUDA_GRAPHS_VERIFY`). Validated by the
+full GPU operator suite (13,124 pass, 0 fail/segfault), e2e training (bitwise),
+and real models (resnet18 bitwise; transformer block 1.68×). Remaining:
+**Phase 3** cuDNN RNN, **Phase 4** RNG-correct-under-replay (dropout),
+**Phase 5** default-on for the validated static-shape regime; plus the np.dot/
+tensordot reroute. Work is on branch `cuda-graphs-gemm-capture`.
+
+This plan brings them back to a reliable, default-on-for-hybridized state, with a
+correctness story at each step.
 
 ---
 

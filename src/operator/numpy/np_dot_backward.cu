@@ -27,7 +27,12 @@
 namespace mxnet {
 namespace op {
 
-NNVM_REGISTER_OP(_backward_npi_dot).set_attr<FCompute>("FCompute<gpu>", NumpyDotBackward<gpu>);
+// See np_dot_forward.cu: tensordot's GPU gemm is the capture-unsafe legacy
+// mshadow path, so exclude the numpy dot backward from CUDA Graphs too.
+NNVM_REGISTER_OP(_backward_npi_dot)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FCompute>("FCompute<gpu>", NumpyDotBackward<gpu>);
 
 }  // namespace op
 }  // namespace mxnet

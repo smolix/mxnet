@@ -26,15 +26,27 @@
 namespace mxnet {
 namespace op {
 
-// cuBLAS-backed; not capture-safe (see FullyConnected / CUDA_GRAPHS_PLAN.md).
+// matmul routes its GPU gemm through linalg_batch_gemm (cuBLASLt, capture-safe;
+// fp32 honors MXNET_CUDA_ALLOW_TENSOR_CORE). Gate capture on
+// MXNET_CUDA_GRAPHS_ALLOW_CUBLAS (Phase-2 opt-in). Backward reuses MatmulImpl,
+// so it is capture-safe too.
+namespace {
+inline bool MatmulGraphsCompatible() {
+  static const bool allow = dmlc::GetEnv("MXNET_CUDA_GRAPHS_ALLOW_CUBLAS", false);
+  return allow;
+}
+}  // namespace
+
 NNVM_REGISTER_OP(_npi_matmul)
-    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
-                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FIsCUDAGraphsCompatible>(
+        "FIsCUDAGraphsCompatible",
+        [](const NodeAttrs&, const bool) { return MatmulGraphsCompatible(); })
     .set_attr<FCompute>("FCompute<gpu>", NumpyMatmulForward<gpu>);
 
 NNVM_REGISTER_OP(_backward_np_matmul)
-    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
-                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FIsCUDAGraphsCompatible>(
+        "FIsCUDAGraphsCompatible",
+        [](const NodeAttrs&, const bool) { return MatmulGraphsCompatible(); })
     .set_attr<FCompute>("FCompute<gpu>", NumpyMatmulBackward<gpu>);
 
 }  // namespace op

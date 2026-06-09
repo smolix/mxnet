@@ -37,6 +37,7 @@
 #include "../elemwise_op_common.h"
 #include "./init_op.h"
 #include "../mxnet_op.h"
+#include "../linalg.h"
 #ifdef __CUDACC__
 #include "./dot-inl.cuh"
 #endif  // __CUDACC__
@@ -1709,36 +1710,44 @@ void BatchDotForward_(const nnvm::NodeAttrs& attrs,
         Shape3(
             batch_size, inputs[DotIn::rhs].shape_[ndim - 2], inputs[DotIn::rhs].shape_[ndim - 1]),
         s);
-    mshadow::Tensor<xpu, 1, DType*> workspace =
-        ctx.requested[0].get_space_typed<xpu, 1, DType*>(mshadow::Shape1(3 * out.size(0)), s);
-    if (param.transpose_a && param.transpose_b) {
-      mshadow::BatchGEMM<true, true>(out,
-                                     mlhs,
-                                     mrhs,
-                                     (DType)1.0f,
-                                     (kAddTo == req[DotOut::out]) ? (DType)1.0f : (DType)0.0f,
-                                     workspace);
-    } else if (!param.transpose_a && param.transpose_b) {
-      mshadow::BatchGEMM<false, true>(out,
-                                      mlhs,
-                                      mrhs,
-                                      (DType)1.0f,
-                                      (kAddTo == req[DotOut::out]) ? (DType)1.0f : (DType)0.0f,
-                                      workspace);
-    } else if (param.transpose_a && !param.transpose_b) {
-      mshadow::BatchGEMM<true, false>(out,
-                                      mlhs,
-                                      mrhs,
-                                      (DType)1.0f,
-                                      (kAddTo == req[DotOut::out]) ? (DType)1.0f : (DType)0.0f,
-                                      workspace);
+    const DType gemm_alpha = (DType)1.0f;
+    const DType gemm_beta  = (kAddTo == req[DotOut::out]) ? (DType)1.0f : (DType)0.0f;
+    if constexpr (std::is_same<xpu, mshadow::gpu>::value) {
+      // GPU: route through the cuBLASLt-backed linalg batched gemm (capture-safe;
+      // legacy strided-batched API otherwise). Equivalent mapping (verified):
+      // BatchGEMM<tL,tR>(dst,lhs,rhs) == linalg(lhs, rhs, dst, alpha, beta,
+      // tL, tR). No pointer-array workspace needed.
+      // fp32 honors MXNET_CUDA_ALLOW_TENSOR_CORE (like FC / la_op): TF32 when
+      // allowed (default, faster), full fp32 otherwise (precision parity with
+      // the legacy path). fp16/fp64 use linalg_batch_gemm (pseudo-fp16 / fp64).
+      if constexpr (std::is_same<DType, float>::value) {
+        // batch_dot historically used full fp32 (mshadow cublasSgemmStridedBatched,
+        // default math). Preserve that as the DEFAULT (no precision regression);
+        // TF32 is opt-in via MXNET_CUDA_ALLOW_TENSOR_CORE=1 (default off here, so
+        // an unset env keeps full fp32). Fresh read so it is honored at runtime.
+        if (dmlc::GetEnv("MXNET_CUDA_ALLOW_TENSOR_CORE", false)) {
+          linalg_batch_gemm(
+              mlhs, mrhs, out, gemm_alpha, gemm_beta, param.transpose_a, param.transpose_b, s);
+        } else {
+          linalg_batch_gemm_fullfp32(
+              mlhs, mrhs, out, gemm_alpha, gemm_beta, param.transpose_a, param.transpose_b, s);
+        }
+      } else {
+        linalg_batch_gemm(
+            mlhs, mrhs, out, gemm_alpha, gemm_beta, param.transpose_a, param.transpose_b, s);
+      }
     } else {
-      mshadow::BatchGEMM<false, false>(out,
-                                       mlhs,
-                                       mrhs,
-                                       (DType)1.0f,
-                                       (kAddTo == req[DotOut::out]) ? (DType)1.0f : (DType)0.0f,
-                                       workspace);
+      mshadow::Tensor<xpu, 1, DType*> workspace =
+          ctx.requested[0].get_space_typed<xpu, 1, DType*>(mshadow::Shape1(3 * out.size(0)), s);
+      if (param.transpose_a && param.transpose_b) {
+        mshadow::BatchGEMM<true, true>(out, mlhs, mrhs, gemm_alpha, gemm_beta, workspace);
+      } else if (!param.transpose_a && param.transpose_b) {
+        mshadow::BatchGEMM<false, true>(out, mlhs, mrhs, gemm_alpha, gemm_beta, workspace);
+      } else if (param.transpose_a && !param.transpose_b) {
+        mshadow::BatchGEMM<true, false>(out, mlhs, mrhs, gemm_alpha, gemm_beta, workspace);
+      } else {
+        mshadow::BatchGEMM<false, false>(out, mlhs, mrhs, gemm_alpha, gemm_beta, workspace);
+      }
     }
   });
 }

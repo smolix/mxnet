@@ -31,6 +31,10 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <utility>
 
 #include "./exec_pass.h"
 #include "../common/cuda/utils.h"
@@ -159,6 +163,68 @@ inline std::string CudaGraphNodeToString(const cudaGraphNode_t node) {
   return ss.str();
 }
 
+// ---- Phase 1: differential-replay correctness net ------------------------
+// Result of comparing a graph-produced buffer against a conventionally-produced
+// reference buffer for one output. Float dtypes compare by value (fp16/bf16
+// widened to float, numpy-style |a-b| <= atol + rtol*|b|); all other dtypes
+// compare byte-exact.
+struct ReplayDiff {
+  double max_abs  = 0.0;
+  double max_rel  = 0.0;
+  bool   violated = false;
+};
+
+template <typename DType>
+inline void AccumFloatDiff(const void* a,
+                           const void* b,
+                           size_t n,
+                           double rtol,
+                           double atol,
+                           ReplayDiff* d) {
+  const DType* pa = static_cast<const DType*>(a);
+  const DType* pb = static_cast<const DType*>(b);
+  for (size_t i = 0; i < n; ++i) {
+    const double va = static_cast<double>(static_cast<float>(pa[i]));
+    const double vb = static_cast<double>(static_cast<float>(pb[i]));
+    const double ad = std::fabs(va - vb);
+    if (ad > d->max_abs)
+      d->max_abs = ad;
+    const double rd = ad / (std::fabs(vb) + 1e-30);
+    if (rd > d->max_rel)
+      d->max_rel = rd;
+    if (ad > atol + rtol * std::fabs(vb))
+      d->violated = true;
+  }
+}
+
+inline ReplayDiff CompareHostBuffers(const void* graph_buf,
+                                     const void* ref_buf,
+                                     size_t n_elem,
+                                     size_t bytes,
+                                     int dtype,
+                                     double rtol,
+                                     double atol) {
+  ReplayDiff d;
+  switch (dtype) {
+    case mshadow::kFloat32:
+      AccumFloatDiff<float>(graph_buf, ref_buf, n_elem, rtol, atol, &d);
+      break;
+    case mshadow::kFloat64:
+      AccumFloatDiff<double>(graph_buf, ref_buf, n_elem, rtol, atol, &d);
+      break;
+    case mshadow::kFloat16:
+      AccumFloatDiff<mshadow::half::half_t>(graph_buf, ref_buf, n_elem, rtol, atol, &d);
+      break;
+    case mshadow::kBfloat16:
+      AccumFloatDiff<mshadow::bfloat::bf16_t>(graph_buf, ref_buf, n_elem, rtol, atol, &d);
+      break;
+    default:
+      d.violated = (std::memcmp(graph_buf, ref_buf, bytes) != 0);
+      break;
+  }
+  return d;
+}
+
 // CUDA Graphs are managed in RAII fashion by smart pointers below.
 // Function objects (preferred for readability) provide the deleter function.
 class CudaGraphDeleter {
@@ -231,11 +297,20 @@ class CudaGraphsSubSegExec {
 
   void RunSubSeg(const std::vector<std::shared_ptr<exec::OpExecutor>>& exec_list,
                  const RunContext& rctx,
-                 bool is_gpu) {
+                 bool is_gpu,
+                 bool verify             = false,
+                 double rtol             = 1e-3,
+                 double atol             = 1e-4,
+                 bool verbose            = false,
+                 const std::string& seg  = std::string()) {
     if (IsRunnable()) {
       auto s                  = rctx.get_stream<gpu>();
       const cudaStream_t cu_s = mshadow::Stream<gpu>::GetStream(s);
-      CUDA_CALL(cudaGraphLaunch(graph_exec_.get(), cu_s));
+      if (verify) {
+        VerifyReplay(exec_list, rctx, is_gpu, cu_s, rtol, atol, verbose, seg);
+      } else {
+        CUDA_CALL(cudaGraphLaunch(graph_exec_.get(), cu_s));
+      }
     } else {
       // No CUDA Graph could be made for this portion of the OpSegment.  Run conventionally.
       for (int i = 0; i != num_ops_; ++i)
@@ -267,8 +342,21 @@ class CudaGraphsSubSegExec {
     // to sync their streams without disturbing this capture.
     CUDA_CALL(cudaStreamBeginCapture(cu_s, cudaStreamCaptureModeThreadLocal));
     // Run those oprs in the sub segment while capturing- no actual GPU work is launched.
-    for (int i = 0; i != num_ops; ++i)
-      exec_list[from_op_idx + i]->Run(rctx, is_gpu);
+    static bool dbg_ops = dmlc::GetEnv("MXNET_CUDA_GRAPHS_DEBUG_OPS", false);
+    for (int i = 0; i != num_ops; ++i) {
+      if (dbg_ops) {
+        const auto& ex     = exec_list[from_op_idx + i];
+        const std::string nm = (ex->attrs.op != nullptr) ? ex->attrs.op->name : "<null>";
+        LOG(INFO) << "[capture] running op " << i << "/" << num_ops << " : " << nm;
+        ex->Run(rctx, is_gpu);
+        cudaStreamCaptureStatus st = cudaStreamCaptureStatusNone;
+        cudaError_t e              = cudaStreamIsCapturing(cu_s, &st);
+        LOG(INFO) << "[capture]   after " << nm << " : isCapturing err=" << e
+                  << " status=" << static_cast<int>(st);
+      } else {
+        exec_list[from_op_idx + i]->Run(rctx, is_gpu);
+      }
+    }
     cudaGraph_t cuda_graph = nullptr;
     CUDA_CALL(cudaStreamEndCapture(cu_s, &cuda_graph));
     graph_.reset(cuda_graph, CudaGraphDeleter());
@@ -325,6 +413,180 @@ class CudaGraphsSubSegExec {
     }
   }
 
+  // Differential replay: run the captured graph AND a conventional execution of
+  // the same ops, both starting from the identical pre-segment buffer state, and
+  // assert the outputs match. Catches pointer staleness, stale workspace, and
+  // any graph-vs-conventional divergence at segment granularity. Opt-in (debug)
+  // because it allocates shadow buffers and runs the ops twice. Final buffer
+  // state left equal to the graph result (same as the non-verify path).
+  void VerifyReplay(const std::vector<std::shared_ptr<exec::OpExecutor>>& exec_list,
+                    const RunContext& rctx,
+                    bool is_gpu,
+                    cudaStream_t cu_s,
+                    double rtol,
+                    double atol,
+                    bool verbose,
+                    const std::string& seg) {
+    struct Buf {
+      void* ptr     = nullptr;
+      size_t bytes  = 0;
+      size_t n_elem = 0;
+      int dtype     = 0;
+    };
+    auto consider = [](const NDArray& nd, Buf* b) -> bool {
+      if (nd.is_none())
+        return false;
+      const TBlob& blob = nd.data();
+      if (blob.dptr_ == nullptr)
+        return false;
+      const size_t n = blob.shape_.Size();
+      if (n == 0)
+        return false;
+      b->ptr    = blob.dptr_;
+      b->n_elem = n;
+      b->dtype  = blob.type_flag_;
+      b->bytes  = n * mshadow::mshadow_sizeof(blob.type_flag_);
+      return b->bytes > 0;
+    };
+
+    // Collect unique buffers: 'all' (in+out) for snapshot/restore, 'outs' (out)
+    // for the comparison.
+    std::map<void*, Buf> all;
+    std::vector<Buf> outs;
+    std::set<void*> out_seen;
+    for (int i = 0; i != num_ops_; ++i) {
+      auto& e = exec_list[from_op_idx_ + i];
+      for (const auto& nd : e->in_array) {
+        Buf b;
+        if (consider(nd, &b))
+          all[b.ptr] = b;
+      }
+      for (const auto& nd : e->out_array) {
+        Buf b;
+        if (consider(nd, &b)) {
+          all[b.ptr] = b;
+          if (out_seen.insert(b.ptr).second)
+            outs.push_back(b);
+        }
+      }
+    }
+
+    // Snapshot the pre-segment state of every touched buffer.
+    std::map<void*, void*> snap;
+    for (auto& kv : all) {
+      void* tmp = nullptr;
+      CUDA_CALL(cudaMalloc(&tmp, kv.second.bytes));
+      CUDA_CALL(
+          cudaMemcpyAsync(tmp, kv.first, kv.second.bytes, cudaMemcpyDeviceToDevice, cu_s));
+      snap[kv.first] = tmp;
+    }
+    CUDA_CALL(cudaStreamSynchronize(cu_s));
+
+    // Helpers. run_conv() executes the ops conventionally into the real buffers
+    // and stashes a fresh device copy of every output. restore() returns all
+    // touched buffers to the snapshotted pre-segment state. compare() returns
+    // false (and fills worst) if any output of 'a' differs from 'b' beyond tol.
+    auto run_conv = [&](std::vector<void*>* dst) {
+      for (int i = 0; i != num_ops_; ++i)
+        exec_list[from_op_idx_ + i]->Run(rctx, is_gpu);
+      CUDA_CALL(cudaStreamSynchronize(cu_s));
+      dst->assign(outs.size(), nullptr);
+      for (size_t i = 0; i < outs.size(); ++i) {
+        CUDA_CALL(cudaMalloc(&(*dst)[i], outs[i].bytes));
+        CUDA_CALL(cudaMemcpyAsync(
+            (*dst)[i], outs[i].ptr, outs[i].bytes, cudaMemcpyDeviceToDevice, cu_s));
+      }
+      CUDA_CALL(cudaStreamSynchronize(cu_s));
+    };
+    auto restore = [&]() {
+      for (auto& kv : snap)
+        CUDA_CALL(cudaMemcpyAsync(
+            kv.first, kv.second, all[kv.first].bytes, cudaMemcpyDeviceToDevice, cu_s));
+      CUDA_CALL(cudaStreamSynchronize(cu_s));
+    };
+    auto compare = [&](const std::vector<void*>& a,
+                       const std::vector<void*>& b,
+                       ReplayDiff* worst,
+                       size_t* worst_idx) -> bool {
+      bool ok = true;
+      for (size_t i = 0; i < outs.size(); ++i) {
+        std::vector<char> ha(outs[i].bytes), hb(outs[i].bytes);
+        CUDA_CALL(cudaMemcpy(ha.data(), a[i], outs[i].bytes, cudaMemcpyDeviceToHost));
+        CUDA_CALL(cudaMemcpy(hb.data(), b[i], outs[i].bytes, cudaMemcpyDeviceToHost));
+        ReplayDiff d = CompareHostBuffers(
+            ha.data(), hb.data(), outs[i].n_elem, outs[i].bytes, outs[i].dtype, rtol, atol);
+        if (d.max_rel > worst->max_rel) {
+          *worst     = d;
+          *worst_idx = i;
+        }
+        if (d.violated)
+          ok = false;
+      }
+      return ok;
+    };
+    auto free_list = [](std::vector<void*>* v) {
+      for (void* p : *v)
+        CUDA_CALL_NONFATAL(cudaFree(p));
+      v->clear();
+    };
+
+    // Determinism self-check: run the conventional path twice. If its own
+    // outputs differ (RNG ops, cuDNN dropout state, atomics with nondeterministic
+    // reduction order), graph-vs-conventional equality is not a valid test, so
+    // skip the comparison for this segment (RNG-under-replay correctness is a
+    // separate concern, see CUDA_GRAPHS_PLAN.md Phase 4). We still run the graph
+    // so downstream state matches the normal graphs-on path.
+    std::vector<void*> ref1, ref2;
+    run_conv(&ref1);
+    restore();
+    run_conv(&ref2);
+    ReplayDiff dd;
+    size_t dd_idx        = 0;
+    bool deterministic   = compare(ref1, ref2, &dd, &dd_idx);
+    free_list(&ref2);
+
+    restore();
+    CUDA_CALL(cudaGraphLaunch(graph_exec_.get(), cu_s));
+    CUDA_CALL(cudaStreamSynchronize(cu_s));
+
+    if (!deterministic) {
+      free_list(&ref1);
+      for (auto& kv : snap)
+        CUDA_CALL_NONFATAL(cudaFree(kv.second));
+      if (verbose) {
+        LOG(INFO) << "CUDA Graphs replay SKIPPED (nondeterministic segment) [" << seg
+                  << "] subseg[" << from_op_idx_ << ":" << (from_op_idx_ + num_ops_ - 1)
+                  << "]: conventional run not self-consistent (worst output #" << dd_idx
+                  << " max_rel=" << dd.max_rel << ").";
+      }
+      return;
+    }
+
+    // Deterministic segment: graph result (real buffers) must match conventional.
+    std::vector<void*> real(outs.size());
+    for (size_t i = 0; i < outs.size(); ++i)
+      real[i] = outs[i].ptr;
+    ReplayDiff worst;
+    size_t worst_idx = 0;
+    bool ok          = compare(real, ref1, &worst, &worst_idx);
+
+    free_list(&ref1);
+    for (auto& kv : snap)
+      CUDA_CALL_NONFATAL(cudaFree(kv.second));
+
+    if (!ok) {
+      LOG(FATAL) << "CUDA Graphs differential-replay MISMATCH in segment [" << seg << "] subseg["
+                 << from_op_idx_ << ":" << (from_op_idx_ + num_ops_ - 1) << "]: worst output #"
+                 << worst_idx << " max_abs=" << worst.max_abs << " max_rel=" << worst.max_rel
+                 << " (rtol=" << rtol << ", atol=" << atol << "). The captured graph diverged "
+                 << "from conventional execution.";
+    } else if (verbose) {
+      LOG(INFO) << "CUDA Graphs replay OK: segment [" << seg << "] subseg[" << from_op_idx_ << ":"
+                << (from_op_idx_ + num_ops_ - 1) << "] " << outs.size()
+                << " outputs, worst max_rel=" << worst.max_rel;
+    }
+  }
+
   int from_op_idx_;
   int num_ops_;
   using cudaGraphStruct_t     = typename std::remove_pointer<cudaGraph_t>::type;
@@ -358,11 +620,22 @@ class CudaGraphsExec {
   CudaGraphsExec(const std::vector<std::shared_ptr<exec::OpExecutor>>& exec_list,
                  bool is_gpu,
                  const char* opr_names)
-      : verbose_(false), is_enabled_(false) {
+      : verbose_(false),
+        is_enabled_(false),
+        verify_(false),
+        verify_every_(1),
+        verify_rtol_(1e-3),
+        verify_atol_(1e-4),
+        verify_counter_(0) {
     opr_names_ = opr_names ? std::string(opr_names) : std::string();
     if (is_gpu) {
       is_enabled_ = dmlc::GetEnv("MXNET_ENABLE_CUDA_GRAPHS", false);
       verbose_    = dmlc::GetEnv("MXNET_CUDA_GRAPHS_VERBOSE", false);
+      // Differential-replay correctness net (Phase 1): opt-in, debug-only.
+      verify_       = dmlc::GetEnv("MXNET_CUDA_GRAPHS_VERIFY", false);
+      verify_every_ = std::max(1, dmlc::GetEnv("MXNET_CUDA_GRAPHS_VERIFY_EVERY", 1));
+      verify_rtol_  = dmlc::GetEnv("MXNET_CUDA_GRAPHS_VERIFY_RTOL", 1e-3);
+      verify_atol_  = dmlc::GetEnv("MXNET_CUDA_GRAPHS_VERIFY_ATOL", 1e-4);
       SetTempSpaces(exec_list);
     }
   }
@@ -446,6 +719,23 @@ class CudaGraphsExec {
       if (before_exec_tempspace_ptrs != after_capture_tempspace_ptrs)
         LOG(FATAL) << "Internal error: saw change in TempSpace ptrs during CUDA graph use.";
       cuda_graph_info.tempspace_dptrs = before_exec_tempspace_ptrs;
+
+      // One-line capture summary (Phase 1): how the segment was carved into
+      // graphs vs conventionally-run ops. Makes coverage/regressions visible.
+      if (verbose_) {
+        int n_graphs = 0, n_bypassed = 0, n_nodes = 0;
+        for (auto& se : cuda_graph_info.cuda_graph_subseg_execs) {
+          if (se.IsRunnable()) {
+            n_graphs++;
+            n_nodes += se.NumGraphNodes();
+          } else {
+            n_bypassed++;
+          }
+        }
+        LOG(INFO) << "CUDA graph segment summary [" << opr_names_ << "]: "
+                  << cuda_graph_info.cuda_graph_subseg_execs.size() << " subsegs -> " << n_graphs
+                  << " graphs (" << n_nodes << " nodes), " << n_bypassed << " bypassed ops.";
+      }
     }
     // Now execute the CUDA Graph that we either just created or looked-up in the cache.
     if (verbose_) {
@@ -462,8 +752,12 @@ class CudaGraphsExec {
       if (bypassed_ops > 0)
         LOG(INFO) << "    (bypassing " << bypassed_ops << " un-capturable ops)";
     }
+    bool do_verify = false;
+    if (verify_ && cuda_graph_info.cuda_graph_subseg_execs.size() > 0)
+      do_verify = (++verify_counter_ % verify_every_ == 0);
     for (auto& subseg_exec : cuda_graph_info.cuda_graph_subseg_execs)
-      subseg_exec.RunSubSeg(exec_list, rctx, is_gpu);
+      subseg_exec.RunSubSeg(
+          exec_list, rctx, is_gpu, do_verify, verify_rtol_, verify_atol_, verbose_, opr_names_);
   }
 
  private:
@@ -596,6 +890,12 @@ class CudaGraphsExec {
   std::string opr_names_;
   bool verbose_;
   bool is_enabled_;
+  // Differential-replay correctness net (Phase 1).
+  bool verify_;
+  int verify_every_;
+  double verify_rtol_;
+  double verify_atol_;
+  size_t verify_counter_;
 };
 
 }  // namespace cuda_graphs

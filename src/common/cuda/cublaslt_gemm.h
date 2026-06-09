@@ -183,7 +183,8 @@ cublasStatus_t MaybeCublasLtSgemmStrided(cublasHandle_t legacy_handle,
                                          float* C,
                                          int ldc,
                                          int64_t stride_c,
-                                         int batch);
+                                         int batch,
+                                         bool allow_tf32 = true);
 
 /*! \brief Stride-aware pseudo-fp16 GEMM (fp16 I/O, fp32 compute). */
 cublasStatus_t MaybeCublasLtHgemmStrided(cublasHandle_t legacy_handle,

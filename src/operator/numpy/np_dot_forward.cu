@@ -27,7 +27,15 @@
 namespace mxnet {
 namespace op {
 
-NNVM_REGISTER_OP(_npi_dot).set_attr<FCompute>("FCompute<gpu>", NumpyDotForward<gpu>);
+// _npi_dot dispatches through the tensordot machinery, whose GPU gemm uses the
+// legacy mshadow BLASEngine path (capture-unsafe). It has no FStatefulCompute /
+// FComputeEx to exclude it, so mark it explicitly incompatible with CUDA Graphs
+// to avoid a capture-time crash; it runs conventionally between graphs.
+// (Routing tensordot through linalg/cuBLASLt is possible future work.)
+NNVM_REGISTER_OP(_npi_dot)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FCompute>("FCompute<gpu>", NumpyDotForward<gpu>);
 
 }  // namespace op
 }  // namespace mxnet

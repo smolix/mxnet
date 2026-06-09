@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <memory>
 #include "../mxnet_op.h"
+#include "../linalg.h"
 #include "np_tensordot_op-inl.h"
 #include "np_dot-inl.h"
 
@@ -234,18 +235,35 @@ inline void MatmulImpl(const OpContext& ctx,
     workspace =
         ctx.requested[0].get_space_typed<xpu, 1, DType*>(mshadow::Shape1(3 * ans.size(0)), s);
   }
-  if (TA && TB) {
-    mshadow::BatchGEMM<true, true>(
-        ans, mlhs, mrhs, (DType)1.0f, (kAddTo == req) ? (DType)1.0f : (DType)0.0f, workspace);
-  } else if (TA && !TB) {
-    mshadow::BatchGEMM<true, false>(
-        ans, mlhs, mrhs, (DType)1.0f, (kAddTo == req) ? (DType)1.0f : (DType)0.0f, workspace);
-  } else if (!TA && TB) {
-    mshadow::BatchGEMM<false, true>(
-        ans, mlhs, mrhs, (DType)1.0f, (kAddTo == req) ? (DType)1.0f : (DType)0.0f, workspace);
+  const DType mm_alpha = (DType)1.0f;
+  const DType mm_beta  = (kAddTo == req) ? (DType)1.0f : (DType)0.0f;
+  if constexpr (std::is_same<xpu, mshadow::gpu>::value) {
+    // GPU: route through the cuBLASLt-backed linalg batched gemm (CUDA-graph
+    // capture-safe). Mapping (verified): BatchGEMM<TA,TB>(ans,mlhs,mrhs) ==
+    // linalg(mlhs, mrhs, ans, alpha, beta, TA, TB). fp32 honors
+    // MXNET_CUDA_ALLOW_TENSOR_CORE (TF32 default, full fp32 when off);
+    // fp16/fp64 use linalg_batch_gemm. (workspace is unused on this path.)
+    if constexpr (std::is_same<DType, float>::value) {
+      // Full fp32 by default (preserves the legacy mshadow precision — no
+      // regression); TF32 opt-in via MXNET_CUDA_ALLOW_TENSOR_CORE=1.
+      if (dmlc::GetEnv("MXNET_CUDA_ALLOW_TENSOR_CORE", false)) {
+        linalg_batch_gemm(mlhs, mrhs, ans, mm_alpha, mm_beta, TA, TB, s);
+      } else {
+        linalg_batch_gemm_fullfp32(mlhs, mrhs, ans, mm_alpha, mm_beta, TA, TB, s);
+      }
+    } else {
+      linalg_batch_gemm(mlhs, mrhs, ans, mm_alpha, mm_beta, TA, TB, s);
+    }
   } else {
-    mshadow::BatchGEMM<false, false>(
-        ans, mlhs, mrhs, (DType)1.0f, (kAddTo == req) ? (DType)1.0f : (DType)0.0f, workspace);
+    if (TA && TB) {
+      mshadow::BatchGEMM<true, true>(ans, mlhs, mrhs, mm_alpha, mm_beta, workspace);
+    } else if (TA && !TB) {
+      mshadow::BatchGEMM<true, false>(ans, mlhs, mrhs, mm_alpha, mm_beta, workspace);
+    } else if (!TA && TB) {
+      mshadow::BatchGEMM<false, true>(ans, mlhs, mrhs, mm_alpha, mm_beta, workspace);
+    } else {
+      mshadow::BatchGEMM<false, false>(ans, mlhs, mrhs, mm_alpha, mm_beta, workspace);
+    }
   }
 }
 

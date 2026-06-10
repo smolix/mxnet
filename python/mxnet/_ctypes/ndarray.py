@@ -118,7 +118,8 @@ def _imperative_invoke(handle, ndargs, keys, vals, out, is_np_op, output_is_list
         ctypes.byref(output_vars),
         ctypes.c_int(len(keys)),
         c_str_array(keys),
-        c_str_array([str(s) for s in vals]),
+        # M15: avoid str() on values that are already strings (the common case).
+        c_str_array([s if isinstance(s, str) else str(s) for s in vals]),
         ctypes.byref(out_stypes)))
 
     create_ndarray_fn = _global_var._np_ndarray_cls if is_np_op else _global_var._ndarray_cls

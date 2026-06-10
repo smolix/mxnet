@@ -80,11 +80,11 @@ build/test · ⏳ not started · ➖ no code change needed (explained inline).
 | M11 | ✅ | `SyncCopyToCPU` reorders only when `IsDNNLData()` (no extra round-trip). |
 | M12 | ⚠️ | **Deferred (analyzed).** The `const_cast` `SelfReorder2Default` was an intentional fork change; reverting risks reintroducing the crash it fixed. Correct fix (reorder at call sites under var serialization) needs a full caller audit. |
 | M13 | ✅ | Over-cap pool free now waits on the chunk's events before cudaFree. |
-| M14 | ⏳ | Pending (eager-path NDArray-wrapper arena; perf, hot path). |
-| M15 | ⏳ | Pending (per-op ctypes marshaling; frontend perf). |
+| M14 | ⚠️ | **Reverted (deferred).** The by-value `ScopedDerefInputOutput` + `PushFCompute` change destroyed NDArray handles during exception unwinding when `Engine::Push` throws (e.g. invalid-GPU device check), so an NDArray dtor threw mid-unwind → `std::terminate` (process abort on ANY synchronous engine error, caught by `test_incorrect_gpu`). Reverted to the heap path; needs a redesign that doesn't destroy handles during unwinding. |
+| M15 | ✅ | **Root cause + leak both fixed.** `_cy3` never compiled — `cython/ndarray.pyx:41` used Py2 `long` → `cythonize` errored → silent ctypes fallback for every op. Fixed the compile; gave the cython `NDArrayBase` a `__del__` finalizer (PEP 442, mirrors ctypes) so cycle-trapped NDArrays free their handle on gc collection (the missing finalizer was the leak source the validation caught). Verified: cython active, prior-leaking svd/svdvals/qr now pass. setup.py honors `MXNET_WITH_CYTHON=1`; wheel build enables it. |
 | M16 | ✅ | batch_dot caches the tensor-core env read; denorms load relaxed. |
 | M17 | ✅ | DLPack `ToDLPack` uses `unique_ptr` RAII until the no-throw `release()` hand-off. |
-| M18 | ⚠️ | **Deferred (oneDNN).** scale-memory lifetime; latent (both callers pass `submit=true`). |
+| M18 | ✅ | `ConvertWeightBias2DNNL` now `CHECK(submit || weight_scales.empty())` — closes the latent use-after-free (deferred-submit with registered scale-memory locals). Inert today (both callers pass submit=true). |
 | M19 | ⚠️ | **Deferred (oneDNN).** uint8 requantize CPU-fallback; needs asymmetric reorder + accuracy harness. |
 | M20 | ✅ | cnpy: header-len decode fixed, header bounds-checked, shape overflow guarded, zero-length zip name guarded. New test: `test_npy_npz_load_safety.py`. |
 | M21 | 🔧 | Done: source-glob `CONFIGURE_DEPENDS`, removed no-op `OpenMP_EXE_LINKER_FLAGS`. Backlog (can break valid setups): FindCUDNN version guard, ChooseBlas MKL default, NCCL static/dynamic reconciliation. |
@@ -162,6 +162,58 @@ on 64 cores → the 20-min faulthandler timeout. Measured on `build-g` (`test_op
 Portable test runner added: `tools/run_gpu_shards.sh` + `tools/pytest_gpu_shard_plugin.py`
 (supports `GPU_IDS="0 2 3"` to target specific GPUs; caps OMP threads + passive wait policy
 to avoid many-core oversubscription).
+
+---
+
+## Still open — what each means and why
+
+Everything else in the table above is ✅ (fixed & validated), ➖ (no change needed), or 🔧
+(fixed, pending only final build/test: M5, M21-partial, L17). The **genuinely open** items
+are the 7 below. **None block the GPU wheel** — they are CPU-INT8-quantization, perf/refactor,
+or latent thread-safety. The only items with real *correctness* weight are H15 and H16, both
+confined to INT8 quantized **CPU** inference (gate behind "are we advertising INT8 quant?").
+
+### oneDNN / INT8-quantization cluster (CPU; not the GPU-wheel path)
+
+- **H15 — asymmetric quantize loses sub-integer shift.** v3 folds the affine offset into a
+  single *integer* zero-point; oneDNN zero-points must be integers, so the fractional part of
+  `shift` (≤0.5 LSB) is dropped → *silent* accuracy loss on quantized models. **Open because**
+  the correct fix (fold the fractional shift in as an input pre-bias) risks aliasing the
+  caller's buffer via `Reorder2Default()`, and a CPU fallback would fire on ~every calibrated
+  call (perf cliff). Needs a quantization-accuracy harness — cannot be patched blind.
+- **H16 — quantized concat/batch_norm affine fallback layout.** Hand-rolled requant indexes
+  output as dense row-major. **Open because** the feared bug (wrong results on strided inputs)
+  is *not* actually reachable (MXNet default storage is always contiguous after
+  `Reorder2Default`). The real remaining work — consolidate the 3 near-identical affine-requant
+  helpers and root-cause a u8→s8 f32 round-trip — is quality/refactor needing oneDNN expertise
+  + accuracy validation, not a live-bug fix.
+- **M19 — uint8 requantize uses a per-call CPU fallback.** Throughput regression on the
+  ReLU-fused INT8 inference path (perf, not correctness). **Open because** the proper fix
+  (asymmetric oneDNN reorder with DST scale + zero-point) needs accuracy validation.
+
+### Perf / refactor — deferred to their own cycle
+
+- **M4 — RNN re-issues cuDNN descriptors every forward.** Re-sets data descriptors +
+  temp-size query + clip each call though invariant; plus a sync memcpy in the variable-length
+  path. Pure host overhead. **Open because** the fix is stateful caching keyed on shape and the
+  sync-memcpy is in the narrow `use_sequence_length` path — warrants its own careful cycle.
+- **M7 — proposal ops do per-call `cudaMalloc`/`cudaFree`.** Faster-RCNN contrib ops bypass the
+  pool (fragmentation) + a D2H sync. **Open because** the "abort macros" concern was overstated
+  (`FRCNN_CUDA_CHECK` already throws like `CUDA_CALL`); the real ask — route allocations through
+  `ctx.requested` — is a refactor on rarely-tested legacy ops (low payoff, high regression risk).
+- **M14 — eager-dispatch per-op heap allocation.** Each op `new`s an NDArray wrapper per
+  input/output. **Open because it was attempted and REVERTED this session:** storing handles by
+  value destroyed them during exception unwinding, so an engine error (e.g. invalid GPU)
+  aborted the process (`std::terminate`, caught by `test_incorrect_gpu`). Needs a redesign that
+  frees handles outside the throw path.
+
+### Latent / intentional fork change
+
+- **M12 — `SetTBlob()` mutates via `const_cast`.** A `const` method does an in-place oneDNN
+  reorder through `const_cast` — a thread-safety hazard if the chunk is shared. **Open because**
+  it was a *deliberate* fork change; reverting risks reintroducing the crash it fixed, and the
+  correct fix (reorder at call sites under engine var-serialization) needs a full audit of every
+  `SetTBlob` caller. Latent in practice (the var is exclusively held during op execution).
 
 ---
 

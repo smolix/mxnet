@@ -96,6 +96,18 @@ The user-facing ones:
   `MXNET_ENGINE_TYPE` `Async` tag is honored only as a suffix, matching engine
   construction.
 
+### Performance
+
+- **Cython fast path restored.** The `_cy3` Cython extension never compiled —
+  `cython/ndarray.pyx` used the Python-2 name `long`, so `cythonize` errored and
+  every build (including shipped wheels) silently fell back to the slow ctypes
+  marshaling path for *every* imperative op. Fixed the compile, and gave the
+  cython `NDArrayBase` a `__del__` finalizer (PEP 442) matching the ctypes class
+  so NDArrays in reference cycles free their backend handle on cyclic-GC
+  collection (the missing finalizer otherwise leaked handles). The wheel now
+  builds with `MXNET_WITH_CYTHON=1`, dropping per-op dispatch to the Cython fast
+  path — a measurable speedup for op-heavy / small-op eager workloads.
+
 ---
 
 ## 2.0.0+cu13.bw.20260518 — 2026-05-18

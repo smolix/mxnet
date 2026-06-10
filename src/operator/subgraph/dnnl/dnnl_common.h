@@ -119,6 +119,13 @@ static inline void ConvertWeightBias2DNNL(NDArray* weight,
                                           float data_scale,
                                           const std::vector<float>& weight_scales,
                                           const bool submit = true) {
+  // M18: the scale dnnl::memory objects below are function-locals registered into
+  // the stream's reorder args; deferring the Submit (submit=false) would let them
+  // be destroyed before the caller submits -> use-after-free. Require an immediate
+  // submit whenever quantization scales are present.
+  CHECK(submit || weight_scales.empty())
+      << "ConvertWeightBias2DNNL: submit=false with quantization scales would leave "
+         "scale memory dangling; pass submit=true (or cache the scales as members).";
   DNNLStream* stream             = DNNLStream::Get();
   const auto new_weight          = NDArray(&weight_md);
   const auto conv_weights_memory = new_weight.GetDNNLData();

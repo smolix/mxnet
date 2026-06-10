@@ -278,7 +278,12 @@ inline void FCForwardCPUHalf(const FullyConnectedParam& param,
                              const std::vector<TBlob>& out_data) {
   if (req[fullc::kOut] == kNullOp)
     return;
-  CHECK_EQ(req[fullc::kOut], kWriteTo);
+  // M5: support kAddTo (accumulate) in addition to kWriteTo/kWriteInplace, like
+  // the templated fp32/fp64 FCForward helper. Previously this hard-asserted
+  // kWriteTo and crashed on a legitimate accumulate request.
+  const OpReqType out_req = req[fullc::kOut];
+  CHECK(out_req == kWriteTo || out_req == kWriteInplace || out_req == kAddTo)
+      << "FCForwardCPUHalf: unsupported req " << out_req;
   const TBlob& data_blob   = in_data[fullc::kData];
   const TBlob& weight_blob = in_data[fullc::kWeight];
   const TBlob& out_blob    = out_data[fullc::kOut];
@@ -307,7 +312,12 @@ inline void FCForwardCPUHalf(const FullyConnectedParam& param,
       if (bias_ptr != nullptr) {
         acc += static_cast<float>(bias_ptr[col]);
       }
-      out_ptr[row * num_hidden + col] = static_cast<mshadow::half::half_t>(acc);
+      const index_t o = row * num_hidden + col;
+      if (out_req == kAddTo) {
+        out_ptr[o] = static_cast<mshadow::half::half_t>(static_cast<float>(out_ptr[o]) + acc);
+      } else {
+        out_ptr[o] = static_cast<mshadow::half::half_t>(acc);
+      }
     }
   }
 }

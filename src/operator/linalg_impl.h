@@ -321,11 +321,13 @@ inline void linalg_gemm<cpu, mshadow::half::half_t>(const Tensor<cpu, 2, mshadow
 // cuBLAS abort deep inside with a cryptic "operation not permitted when stream
 // is capturing" (cudaError 900) that invalidates the whole graph.
 inline void AssertGemmCaptureSafe(mshadow::Stream<mshadow::gpu>* s, const char* what) {
-  // Cheap fast-out when CUDA graphs are disabled (the default): a single cached
-  // bool, no per-gemm CUDA call. Only when graphs are on do we query capture
-  // status, so the legacy gemm path pays nothing in the common case.
-  static const bool graphs_on = dmlc::GetEnv("MXNET_ENABLE_CUDA_GRAPHS", false);
-  if (!graphs_on || s == nullptr)
+  // Only meaningful when cuBLASLt is the intended (capture-safe) gemm path -- i.e.
+  // CUDA graphs are active, INCLUDING the default-on static-shape regime where
+  // MXNET_ENABLE_CUDA_GRAPHS is unset (so we must NOT gate on that env var, as the
+  // old code did -- that disabled this guard exactly in the shipped default-on case).
+  // Pure-eager processes keep cuBLASLt off, take the legacy gemm path normally, and
+  // pay nothing here (UseCuBlasLt() is a single cached/atomic check, no CUDA call).
+  if (s == nullptr || !mxnet::common::cuda::UseCuBlasLt())
     return;
   cudaStream_t cu_s           = mshadow::Stream<mshadow::gpu>::GetStream(s);
   cudaStreamCaptureStatus cap = cudaStreamCaptureStatusNone;

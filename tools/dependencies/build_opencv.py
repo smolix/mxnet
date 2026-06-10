@@ -137,9 +137,27 @@ def extract(archive: Path, source_dir: Path) -> None:
         return
     source_dir.parent.mkdir(parents=True, exist_ok=True)
     print(f"Extracting {archive} -> {source_dir.parent}", flush=True)
-    with zipfile.ZipFile(archive) as zf:
-        _validate_zip_members(zf, source_dir.parent)
-        zf.extractall(source_dir.parent)
+    # Extract into a private staging dir and atomically promote it only on
+    # success. The source_dir.exists() short-circuit above must never trust a
+    # partial/poisoned tree left behind by an interrupted extraction, so the
+    # final source_dir only ever appears via an atomic rename of a complete tree.
+    staging = source_dir.parent / (source_dir.name + ".tmp-extract")
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            _validate_zip_members(zf, staging)
+            zf.extractall(staging)
+        entries = list(staging.iterdir())
+        # The archive is expected to contain a single top-level directory.
+        if len(entries) == 1 and entries[0].is_dir():
+            os.replace(entries[0], source_dir)
+        else:
+            os.replace(staging, source_dir)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
 
 
 def patch_sources(source_dir: Path) -> None:

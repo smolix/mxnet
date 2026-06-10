@@ -62,7 +62,10 @@ cdef class NDArrayBase:
         self._alive = True
 
     def __dealloc__(self):
-        CALL(MXNDArrayFree(self.chandle))
+        # chandle may be NULL if __init__/__setstate__ raised before it was set
+        # (e.g. the __reduce__/unpickle path constructs with None); don't free NULL.
+        if self.chandle != NULL:
+            CALL(MXNDArrayFree(self.chandle))
         self._alive = False
 
     def __reduce__(self):

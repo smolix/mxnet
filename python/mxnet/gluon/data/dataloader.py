@@ -600,7 +600,7 @@ class _MultiWorkerIter(object):
                 msg += '''- Insufficient shared_memory if `timeout` is large enough.
             Please consider reduce `num_workers` or increase shared_memory in system.
             '''
-            print(msg)
+            logging.warning(msg)
             self.close()
             raise
         except BaseException:

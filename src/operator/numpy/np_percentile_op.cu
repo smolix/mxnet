@@ -123,6 +123,11 @@ NNVM_REGISTER_OP(_npi_percentile)
     .set_attr<FCompute>("FCompute<gpu>", NumpyPercentileForward<gpu>);
 
 NNVM_REGISTER_OP(_backward_npi_percentile)
+    // Backward routes through a CPU fallback (D2H copy + host sort + H2D + sync),
+    // illegal under CUDA graph capture. Backward graphs are captured too (the graph
+    // cache is keyed on is_train), so exclude it like the forward above.
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
     .set_attr<FCompute>("FCompute<gpu>", NumpyPercentileBackward<gpu>);
 
 }  // namespace op

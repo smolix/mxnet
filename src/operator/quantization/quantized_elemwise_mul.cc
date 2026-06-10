@@ -202,7 +202,11 @@ void QuantizedElemwiseMulOpForward(const nnvm::NodeAttrs& attrs,
         for (size_t i = 0; i < out_size; ++i) {
           const int8_t a = input_l[i];
           const int8_t b = input_r[i];
-          const auto value = static_cast<out_type>(a * b * out_scale);
+          // L18: round to nearest like the int8 path; a plain cast truncates
+          // toward zero and biases the int32 output low.
+          const float scaled = std::nearbyint(static_cast<float>(a) * static_cast<float>(b) *
+                                              out_scale);
+          const auto value = static_cast<out_type>(scaled);
           if (req[quantized_elemwise_mul::kOut] == kAddTo) {
             out_data[i] += value;
           } else {
@@ -212,6 +216,8 @@ void QuantizedElemwiseMulOpForward(const nnvm::NodeAttrs& attrs,
       }
     }
   } else {
+    // Float output is a real value, not a quantized integer, so it is NOT
+    // rounded to nearest (rounding would discard the fractional result).
     using out_type = float;
     auto* out_data = outputs[quantized_elemwise_mul::kOut].dptr<out_type>();
     if (req[quantized_elemwise_mul::kOut] != kNullOp) {

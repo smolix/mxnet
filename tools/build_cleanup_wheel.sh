@@ -189,7 +189,10 @@ mkdir -p dist
     MXNET_SETUP_ENABLE_CUDA_DEPS=1 \
     "$PYTHON_BIN" -m build --wheel --no-isolation --outdir ../dist)
 
-WHEEL=$(ls -1 dist/*.whl | head -n1)
+# Pick the most recently built wheel (-1t), not the lexically-first (-1): if a
+# stale wheel from a prior version is still in dist/, lexical order could select
+# it and we would validate/ship the wrong artifact (H17).
+WHEEL=$(ls -1t dist/*.whl 2>/dev/null | head -n1)
 if [ -z "$WHEEL" ]; then
     echo "No wheel produced" >&2
     exit 3

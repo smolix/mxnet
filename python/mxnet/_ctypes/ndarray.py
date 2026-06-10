@@ -48,7 +48,12 @@ class NDArrayBase(object):
         self._alive = True
 
     def __del__(self):
-        check_call(_LIB.MXNDArrayFree(self.handle))
+        # handle may be missing/None if __init__ or __setstate__ raised before
+        # assigning it (e.g. the __reduce__/unpickle path constructs with None),
+        # so never pass a missing/NULL handle to the C free.
+        handle = getattr(self, "handle", None)
+        if handle is not None:
+            check_call(_LIB.MXNDArrayFree(handle))
         self._alive = False
 
     def __reduce__(self):

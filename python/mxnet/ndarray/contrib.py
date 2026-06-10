@@ -329,8 +329,8 @@ def while_loop(cond, func, loop_vars, max_iterations=None):
             inputs = inputs.asscalar()
         try:
             inputs = type_(inputs)
-        except:
-            raise ValueError(f"Cannot convert {name} to python {type_.__name__}")
+        except Exception as e:
+            raise ValueError(f"Cannot convert {name} to python {type_.__name__}") from e
         return inputs
 
     def _func_wrapper(loop_vars):
@@ -457,8 +457,8 @@ def cond(pred, then_func, else_func):
             inputs = inputs.asscalar()
         try:
             inputs = type_(inputs)
-        except:
-            raise ValueError(f"Cannot convert {name} to python {type_.__name__}")
+        except Exception as e:
+            raise ValueError(f"Cannot convert {name} to python {type_.__name__}") from e
         return inputs
 
     branch = _to_python_scalar(pred, bool, "pred")

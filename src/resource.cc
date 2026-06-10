@@ -116,10 +116,10 @@ class ResourceManagerImpl : public ResourceManager {
         Context::CPU(), cpu_temp_space_copy_);
     // Pre-allocate dev_id=0 entries so that the common case (cpu(0)) has no
     // lazy-init overhead on the hot path.
-    cpu_rand_.Get(0, [this]() {
+    cpu_rand0_ = cpu_rand_.Get(0, [this]() {
       return new ResourceRandom<cpu>(Context::CPU(0), global_seed_);
     });
-    cpu_parallel_rand_.Get(0, [this]() {
+    cpu_parallel_rand0_ = cpu_parallel_rand_.Get(0, [this]() {
       return new ResourceParallelRandom<cpu>(Context::CPU(0), cpu_native_rand_copy_, global_seed_);
     });
   }
@@ -149,6 +149,10 @@ class ResourceManagerImpl : public ResourceManager {
     if (ctx.dev_mask() == Context::kCPU) {
       switch (req.type) {
         case ResourceRequest::kRandom:
+          // Fast path for the common CPU(0) context: the resource is pre-created in
+          // the ctor, so skip LazyAllocArray::Get()'s create_mutex_ lock (H11).
+          if (ctx.dev_id == 0)
+            return cpu_rand0_->resource;
           return cpu_rand_
               .Get(ctx.dev_id,
                    [ctx, this]() { return new ResourceRandom<cpu>(ctx, global_seed_); })
@@ -156,6 +160,8 @@ class ResourceManagerImpl : public ResourceManager {
         case ResourceRequest::kTempSpace:
           return cpu_space_->GetNext();
         case ResourceRequest::kParallelRandom:
+          if (ctx.dev_id == 0)
+            return cpu_parallel_rand0_->GetNext();
           return cpu_parallel_rand_
               .Get(ctx.dev_id,
                    [ctx, this]() {
@@ -539,6 +545,12 @@ class ResourceManagerImpl : public ResourceManager {
   std::unique_ptr<ResourceTempSpace<ResourceRequest::kTempSpace>> cpu_space_;
   /*! \brief CPU parallel random number resources, indexed by dev_id */
   common::LazyAllocArray<ResourceParallelRandom<cpu>> cpu_parallel_rand_;
+  /*! \brief Cached dev_id==0 CPU RNG resources (pre-created in the ctor). The common
+   *  case is CPU(0); caching the pointers lets Request() skip LazyAllocArray::Get()'s
+   *  per-call create_mutex_ lock, which otherwise serializes every dropout/sampler op
+   *  across engine threads (H11). */
+  std::shared_ptr<ResourceRandom<cpu>> cpu_rand0_;
+  std::shared_ptr<ResourceParallelRandom<cpu>> cpu_parallel_rand0_;
 #if MXNET_USE_CUDA
   /*! \brief random number generator for GPU */
   common::LazyAllocArray<ResourceRandom<gpu>> gpu_rand_;

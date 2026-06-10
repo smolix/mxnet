@@ -169,8 +169,8 @@ struct repeat_axis_fwd {
                                   const int* indx,
                                   int stride) {
     using namespace mxnet_op;
-    int ind_row = i / stride, ind_col = i % stride;
-    int ind = 0;
+    index_t ind_row = i / stride, ind_col = i % stride;
+    index_t ind = 0;
     while (ind_row >= indx[ind])
       ind++;
     out[i] = input[ind * stride + ind_col];

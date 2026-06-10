@@ -321,6 +321,11 @@ __global__ void BatchNormalizationUpdateOutputKernel(DeviceTensor input,
   }
 
   // Save the mean, variance, and moving averages
+  // L9: running mean/var are updated HERE in the training-mode forward kernel
+  // (previously the update lived in backward). This matches PyTorch -- a
+  // training-mode forward pass alone now advances the running statistics, even
+  // without a corresponding backward. Observable behavior change; noted for the
+  // changelog.
   if (threadIdx.x == 0) {
     // For one item (0th) per plane (channel), write the per-channel data (ie mean, variance, etc)
     // Momentum based writeback

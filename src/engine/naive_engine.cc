@@ -249,6 +249,14 @@ class NaiveEngine final : public Engine {
 
   void DeleteVariable(SyncFn delete_fn, Context exec_ctx, VarHandle var) override {
     NaiveVar* naive_var = NaiveVar::CastFromBase(var);
+    // Drop any stored exception keyed on this var before its handle is freed (M10).
+    // VarHandle is a raw pointer; once freed the address can be reused by a new var,
+    // and a stale entry would then be (wrongly) thrown for that unrelated variable.
+    // Also prevents an unbounded leak if the user never drains via WaitForVar.
+    {
+      std::lock_guard<std::mutex> lock(exception_mutex_);
+      var_exceptions_.erase(var);
+    }
     this->PushAsync(
         [delete_fn, naive_var](
             RunContext ctx, CallbackOnStart on_start, CallbackOnComplete on_complete) mutable {

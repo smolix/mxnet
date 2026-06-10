@@ -46,6 +46,18 @@ namespace {
 constexpr size_t kWorkspaceBytes      = 32ull * 1024 * 1024;  // 32 MiB cap.
 constexpr size_t kHeuristicCacheCap   = 256;
 
+// Max workspace advertised to the cuBLASLt heuristic. CAPTURE INVARIANT: the
+// persistent per-stream workspace floor (kWorkspaceBytes, the size every buffer
+// is grown to) must be >= this cap. The warm-up run sizes each stream's buffer
+// to the floor; during graph capture a buffer can no longer grow (cudaMalloc is
+// illegal), so a captured gemm whose algo needs more than the floor would miss
+// StreamWorkspace -> ALLOC_FAILED -> legacy fallback -> graph abort. Keeping the
+// heuristic cap <= the floor guarantees the captured request always fits.
+constexpr size_t kHeuristicMaxWorkspaceBytes = kWorkspaceBytes;
+static_assert(kWorkspaceBytes >= kHeuristicMaxWorkspaceBytes,
+              "persistent per-stream workspace floor must cover the cuBLASLt "
+              "heuristic workspace cap, or captured gemms can abort the graph");
+
 // Cache key. Quantizes alpha/beta to the three values the legacy fast path
 // cares about (1.0, 0.0, "other"). The dtype triplet (a_type, b_type, c_type)
 // + compute type fold into a single uint32 to avoid bloating the key. Scale
@@ -103,6 +115,17 @@ struct GemmKeyHash {
 struct CachedAlgo {
   cublasLtMatmulAlgo_t algo;
   size_t               workspace_bytes;
+  // Descriptors are fully determined by the GemmKey (shapes/strides/ops/dtype),
+  // so cache and reuse them instead of recreating + destroying ~5 cuBLASLt opaque
+  // objects on every gemm call (H9). They are owned by the pool for process
+  // lifetime and never destroyed (bounded by the number of distinct shapes, same
+  // philosophy as the handle and per-stream workspace), which also keeps lookups
+  // race-free: a handle copied out under the cache lock can never be destroyed
+  // out from under a concurrent caller.
+  cublasLtMatmulDesc_t   op_desc;
+  cublasLtMatrixLayout_t a_lay;
+  cublasLtMatrixLayout_t b_lay;
+  cublasLtMatrixLayout_t c_lay;
 };
 
 // Per-device pool: long-lived cublasLtHandle_t, workspace buffer, LRU cache.
@@ -150,8 +173,14 @@ class LtPool {
 
     const size_t want = need_bytes > kWorkspaceBytes ? need_bytes : kWorkspaceBytes;
     int prev_dev      = -1;
-    cudaGetDevice(&prev_dev);
-    if (prev_dev != dev_id_) cudaSetDevice(dev_id_);
+    if (cudaGetDevice(&prev_dev) != cudaSuccess) {
+      cudaGetLastError();
+      return nullptr;
+    }
+    if (prev_dev != dev_id_ && cudaSetDevice(dev_id_) != cudaSuccess) {
+      cudaGetLastError();
+      return nullptr;
+    }
     if (it != ws_by_stream_.end()) {
       cudaFree(it->second.ptr);  // grow
       ws_by_stream_.erase(it);
@@ -167,13 +196,16 @@ class LtPool {
     return ws;
   }
 
-  // LRU lookup. Returns nullptr on miss.
-  const CachedAlgo* Find(const GemmKey& key) {
+  // LRU lookup. Copies the cached entry out by value (returns true on hit) so the
+  // caller never holds a pointer into the map that a concurrent Insert/evict could
+  // invalidate. The cached descriptor handles stay valid regardless (never freed).
+  bool Find(const GemmKey& key, CachedAlgo* out) {
     std::lock_guard<std::mutex> lk(cache_mu_);
     auto it = cache_.find(key);
-    if (it == cache_.end()) return nullptr;
+    if (it == cache_.end()) return false;
     lru_.splice(lru_.begin(), lru_, it->second.lru_it);
-    return &it->second.algo;
+    *out = it->second.algo;
+    return true;
   }
 
   void Insert(const GemmKey& key, const CachedAlgo& algo) {
@@ -186,6 +218,9 @@ class LtPool {
     }
     lru_.push_front(key);
     cache_[key] = {algo, lru_.begin()};
+    // Evict the LRU map entry past the cap. The cached descriptors are NOT
+    // destroyed (process-lifetime, bounded by distinct shapes) so any concurrent
+    // user of a previously-returned handle stays safe.
     while (cache_.size() > kHeuristicCacheCap) {
       cache_.erase(lru_.back());
       lru_.pop_back();
@@ -279,83 +314,103 @@ cublasStatus_t MaybeCublasLtGemmImpl(cublasHandle_t legacy_handle,
   if (pool.handle() == nullptr) return CUBLAS_STATUS_NOT_INITIALIZED;
 
   cudaStream_t stream = nullptr;
-  cublasGetStream(legacy_handle, &stream);
+  // A failed query would otherwise leave `stream` as the default stream (0),
+  // silently running the matmul off the engine stream. Fall back instead.
+  if (cublasGetStream(legacy_handle, &stream) != CUBLAS_STATUS_SUCCESS)
+    return CUBLAS_STATUS_NOT_INITIALIZED;
+
+  // L4: scale_dtype is omitted from GemmKey because it is fully implied by
+  // compute_type (fp64 scale iff fp64 compute, fp32 scale otherwise). The cached
+  // descriptor is built with scale_dtype, so this implication MUST hold or a
+  // cache hit could return a descriptor with the wrong scale type. Enforce it.
+  const cudaDataType_t expected_scale =
+      (compute_type == CUBLAS_COMPUTE_64F) ? CUDA_R_64F : CUDA_R_32F;
+  CHECK_EQ(static_cast<int>(scale_dtype), static_cast<int>(expected_scale))
+      << "cuBLASLt scale_dtype is not implied by compute_type; GemmKey would "
+         "alias descriptors with different scale types";
 
   GemmKey key{m, n, k, lda, ldb, ldc, opA, opB,
               alpha_is_one, beta_class,
               MakeDtypeTag(io_dtype, compute_type),
               batch, stride_a, stride_b, stride_c};
 
-  // Build descriptors. These are cheap (stack-resident opaques) but the algo
-  // selection underneath is what we cache.
+  // Descriptors are fully determined by `key`, so reuse them across calls (H9).
+  // On a hit we copy the cached handles out (race-free: they are never destroyed);
+  // on a miss we build them once and hand ownership to the pool.
   cublasLtMatmulDesc_t   op_desc = nullptr;
   cublasLtMatrixLayout_t a_lay = nullptr, b_lay = nullptr, c_lay = nullptr;
-  cublasLtMatmulPreference_t pref = nullptr;
-  cublasStatus_t s;
+  cublasLtMatmulAlgo_t   algo;
+  size_t                 algo_ws_bytes = 0;
+  cublasStatus_t         s;
 
-  auto cleanup = [&]() {
-    if (pref) cublasLtMatmulPreferenceDestroy(pref);
-    if (a_lay) cublasLtMatrixLayoutDestroy(a_lay);
-    if (b_lay) cublasLtMatrixLayoutDestroy(b_lay);
-    if (c_lay) cublasLtMatrixLayoutDestroy(c_lay);
-    if (op_desc) cublasLtMatmulDescDestroy(op_desc);
-  };
-
-  s = cublasLtMatmulDescCreate(&op_desc, compute_type, scale_dtype);
-  if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-  // Attribute is documented as int32_t.
-  int32_t op_a_int = static_cast<int32_t>(opA);
-  int32_t op_b_int = static_cast<int32_t>(opB);
-  s = cublasLtMatmulDescSetAttribute(op_desc, CUBLASLT_MATMUL_DESC_TRANSA,
-                                     &op_a_int, sizeof(op_a_int));
-  if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-  s = cublasLtMatmulDescSetAttribute(op_desc, CUBLASLT_MATMUL_DESC_TRANSB,
-                                     &op_b_int, sizeof(op_b_int));
-  if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-
-  const int a_rows = (opA == CUBLAS_OP_N) ? m : k;
-  const int a_cols = (opA == CUBLAS_OP_N) ? k : m;
-  const int b_rows = (opB == CUBLAS_OP_N) ? k : n;
-  const int b_cols = (opB == CUBLAS_OP_N) ? n : k;
-  s = cublasLtMatrixLayoutCreate(&a_lay, io_dtype, a_rows, a_cols, lda);
-  if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-  s = cublasLtMatrixLayoutCreate(&b_lay, io_dtype, b_rows, b_cols, ldb);
-  if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-  s = cublasLtMatrixLayoutCreate(&c_lay, io_dtype, m, n, ldc);
-  if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-
-  // PR-C: optional batch/stride attributes.
-  if (batch > 1) {
-    auto set_batch = [&](cublasLtMatrixLayout_t lay, int64_t stride) {
-      cublasStatus_t st = cublasLtMatrixLayoutSetAttribute(
-          lay, CUBLASLT_MATRIX_LAYOUT_BATCH_COUNT, &batch, sizeof(batch));
-      if (st != CUBLAS_STATUS_SUCCESS) return st;
-      return cublasLtMatrixLayoutSetAttribute(
-          lay, CUBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET,
-          &stride, sizeof(stride));
-    };
-    s = set_batch(a_lay, stride_a);
-    if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-    s = set_batch(b_lay, stride_b);
-    if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-    s = set_batch(c_lay, stride_c);
-    if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-  }
-
-  // Heuristic / algo selection.
-  cublasLtMatmulAlgo_t algo;
-  size_t               algo_ws_bytes = 0;
-  const CachedAlgo*    hit           = pool.Find(key);
-  if (hit != nullptr) {
-    algo          = hit->algo;
-    algo_ws_bytes = hit->workspace_bytes;
+  CachedAlgo cached;
+  if (pool.Find(key, &cached)) {
+    algo          = cached.algo;
+    algo_ws_bytes = cached.workspace_bytes;
+    op_desc       = cached.op_desc;
+    a_lay         = cached.a_lay;
+    b_lay         = cached.b_lay;
+    c_lay         = cached.c_lay;
   } else {
+    cublasLtMatmulPreference_t pref = nullptr;
+    // On any error before Insert, destroy what we built (it is not yet cache-owned).
+    auto fail = [&](cublasStatus_t st) -> cublasStatus_t {
+      if (pref) cublasLtMatmulPreferenceDestroy(pref);
+      if (a_lay) cublasLtMatrixLayoutDestroy(a_lay);
+      if (b_lay) cublasLtMatrixLayoutDestroy(b_lay);
+      if (c_lay) cublasLtMatrixLayoutDestroy(c_lay);
+      if (op_desc) cublasLtMatmulDescDestroy(op_desc);
+      return st;
+    };
+
+    s = cublasLtMatmulDescCreate(&op_desc, compute_type, scale_dtype);
+    if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
+    // Attribute is documented as int32_t.
+    int32_t op_a_int = static_cast<int32_t>(opA);
+    int32_t op_b_int = static_cast<int32_t>(opB);
+    s = cublasLtMatmulDescSetAttribute(op_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                       &op_a_int, sizeof(op_a_int));
+    if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
+    s = cublasLtMatmulDescSetAttribute(op_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                       &op_b_int, sizeof(op_b_int));
+    if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
+
+    const int a_rows = (opA == CUBLAS_OP_N) ? m : k;
+    const int a_cols = (opA == CUBLAS_OP_N) ? k : m;
+    const int b_rows = (opB == CUBLAS_OP_N) ? k : n;
+    const int b_cols = (opB == CUBLAS_OP_N) ? n : k;
+    s = cublasLtMatrixLayoutCreate(&a_lay, io_dtype, a_rows, a_cols, lda);
+    if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
+    s = cublasLtMatrixLayoutCreate(&b_lay, io_dtype, b_rows, b_cols, ldb);
+    if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
+    s = cublasLtMatrixLayoutCreate(&c_lay, io_dtype, m, n, ldc);
+    if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
+
+    // PR-C: optional batch/stride attributes.
+    if (batch > 1) {
+      auto set_batch = [&](cublasLtMatrixLayout_t lay, int64_t stride) {
+        cublasStatus_t st = cublasLtMatrixLayoutSetAttribute(
+            lay, CUBLASLT_MATRIX_LAYOUT_BATCH_COUNT, &batch, sizeof(batch));
+        if (st != CUBLAS_STATUS_SUCCESS) return st;
+        return cublasLtMatrixLayoutSetAttribute(
+            lay, CUBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET,
+            &stride, sizeof(stride));
+      };
+      s = set_batch(a_lay, stride_a);
+      if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
+      s = set_batch(b_lay, stride_b);
+      if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
+      s = set_batch(c_lay, stride_c);
+      if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
+    }
+
+    // Heuristic / algo selection.
     s = cublasLtMatmulPreferenceCreate(&pref);
-    if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
-    size_t ws_cap = kWorkspaceBytes;
+    if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
+    size_t ws_cap = kHeuristicMaxWorkspaceBytes;  // <= the persistent floor (capture invariant)
     s = cublasLtMatmulPreferenceSetAttribute(
         pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &ws_cap, sizeof(ws_cap));
-    if (s != CUBLAS_STATUS_SUCCESS) { cleanup(); return s; }
+    if (s != CUBLAS_STATUS_SUCCESS) return fail(s);
 
     cublasLtMatmulHeuristicResult_t heur[1] = {};
     int returned = 0;
@@ -363,24 +418,26 @@ cublasStatus_t MaybeCublasLtGemmImpl(cublasHandle_t legacy_handle,
                                        c_lay, c_lay, pref, 1, heur, &returned);
     if (s != CUBLAS_STATUS_SUCCESS || returned <= 0 ||
         heur[0].state != CUBLAS_STATUS_SUCCESS) {
-      cleanup();
-      return (s == CUBLAS_STATUS_SUCCESS) ? CUBLAS_STATUS_NOT_SUPPORTED : s;
+      return fail((s == CUBLAS_STATUS_SUCCESS) ? CUBLAS_STATUS_NOT_SUPPORTED : s);
     }
     algo          = heur[0].algo;
     algo_ws_bytes = heur[0].workspaceSize;
-    pool.Insert(key, {algo, algo_ws_bytes});
+    cublasLtMatmulPreferenceDestroy(pref);  // pref is not cached
+    // Hand descriptor ownership to the pool (never destroyed afterwards).
+    pool.Insert(key, {algo, algo_ws_bytes, op_desc, a_lay, b_lay, c_lay});
   }
 
   void* ws = nullptr;
   if (algo_ws_bytes > 0) {
     ws = pool.StreamWorkspace(stream, algo_ws_bytes);
-    if (ws == nullptr) { cleanup(); return CUBLAS_STATUS_ALLOC_FAILED; }
+    // Descriptors are cache-owned; nothing to destroy on this fallback path.
+    if (ws == nullptr) return CUBLAS_STATUS_ALLOC_FAILED;
   }
 
   s = cublasLtMatmul(pool.handle(), op_desc, alpha, A, a_lay, B, b_lay, beta,
                      C, c_lay, C, c_lay, &algo, ws, algo_ws_bytes, stream);
-  // Workspace is persistent per stream — not freed here.
-  cleanup();
+  // Workspace is persistent per stream and descriptors are cache-owned — neither
+  // is freed here.
   static const bool lt_verbose = dmlc::GetEnv("MXNET_CUBLASLT_VERBOSE", false);
   if (lt_verbose) {
     static std::atomic<long> served{0}, failed{0};

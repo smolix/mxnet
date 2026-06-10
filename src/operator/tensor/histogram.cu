@@ -36,13 +36,19 @@ struct HistogramFusedKernel {
                                   const int bin_cnt,
                                   const double min,
                                   const double max) {
-    DType data = in_data[i];
-    int target = -1;
+    // Promote to double like the no-range kernel below (M2): computing the bin
+    // target in reduced (e.g. fp16) precision while bin_bounds is float64 can place
+    // a value near an edge in the wrong bin, diverging from NumPy and the CPU path.
+    const double data = static_cast<double>(in_data[i]);
+    int target        = -1;
     if (data >= min && data <= max) {
       target = mshadow_op::floor::Map((data - min) * bin_cnt / (max - min));
       target = mshadow_op::minimum::Map(bin_cnt - 1, target);
-      target -= (data < bin_bounds[target]) ? 1 : 0;
-      target += ((data >= bin_bounds[target + 1]) && (target != bin_cnt - 1)) ? 1 : 0;
+      target -= (data < static_cast<double>(bin_bounds[target])) ? 1 : 0;
+      target += ((data >= static_cast<double>(bin_bounds[target + 1])) &&
+                 (target != bin_cnt - 1)) ?
+                    1 :
+                    0;
     }
     if (target >= 0) {
       atomicAdd(&bins[target], CType(1));

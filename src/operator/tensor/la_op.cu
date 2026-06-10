@@ -96,6 +96,11 @@ NNVM_REGISTER_OP(_backward_linalg_potri)
     .set_attr<FCompute>("FCompute<gpu>", LaOpBackward<gpu, 2, 2, 3, 1, potri_backward>);
 
 NNVM_REGISTER_OP(_linalg_inverse)
+    // Incompatibility comes from allocs made in linalg_batch_getrf()/linalg_batch_getri(),
+    // called by linalg_batch_inverse(), called by inverse::op() -- same as det/slogdet below.
+    // (The backward only uses gemm + temp space, so it stays capture-compatible.)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
     .set_attr<FCompute>("FCompute<gpu>", LaOpForward<gpu, 2, 2, 1, 1, inverse>);
 
 NNVM_REGISTER_OP(_backward_linalg_inverse)

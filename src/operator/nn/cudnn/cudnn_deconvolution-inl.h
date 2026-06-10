@@ -427,6 +427,11 @@ class CuDNNDeconvolutionOp {
     cudnnMathType_t math_type = cudnn_tensor_core_ ? CUDNN_TENSOR_OP_MATH
                                                    : CUDNN_DEFAULT_MATH;
 #if CUDNN_VERSION >= 7200
+    // L8: ALLOW_CONVERSION lets cuDNN run fp32 deconv math through tensor cores
+    // (down-converting operands to TF32/fp16) -- faster but a precision reduction
+    // vs. CUDNN_DEFAULT_MATH. Strictly opt-in: BOTH MXNET_CUDA_ALLOW_TENSOR_CORE
+    // and MXNET_CUDA_TENSOR_OP_MATH_ALLOW_CONVERSION must be set (the latter
+    // defaults off), so default builds keep full fp32 precision.
     if (GetEnvAllowTensorCore() && GetEnvAllowTensorCoreConversion() &&
         (DataType<DType>::kFlag != kFloat16))
       math_type = CUDNN_TENSOR_OP_MATH_ALLOW_CONVERSION;

@@ -21,7 +21,9 @@
 #define MXNET_COMMON_OBJECT_POOL_H_
 #include <dmlc/logging.h>
 #include <cstdlib>
+#include <functional>
 #include <mutex>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -84,26 +86,45 @@ class ObjectPool {
    * Currently defined to be 4KB.
    */
   constexpr static std::size_t kPageSize = 1 << 12;
-  /*! \brief internal mutex */
-  std::mutex m_;
   /*!
-   * \brief Head of free list.
+   * \brief Number of independent free-list shards (power of two).
+   *
+   * The free list used to be a single list behind one mutex, so every engine
+   * worker thread that created/destroyed an OprBlock/VersionedVarBlock/etc.
+   * (one per op and per dependency edge) contended on that single lock, which
+   * serialized the scheduler's hot path (H13). Sharding by thread id spreads the
+   * contention across kNumShards locks. Cross-thread alloc/free is safe: a slot
+   * freed to a different shard than it came from is simply reused by that shard;
+   * the backing chunks live until pool destruction and are never handed back to
+   * the OS mid-run, so no shard ever dereferences another shard's freed memory.
    */
-  LinkedList* head_{nullptr};
+  constexpr static std::size_t kNumShards = 8;
+  struct Shard {
+    std::mutex m;
+    LinkedList* head{nullptr};
+  };
+  /*! \brief Per-shard free lists. */
+  Shard shards_[kNumShards];
+  /*! \brief Guards the allocated-chunk bookkeeping vector only (slow path). */
+  std::mutex alloc_list_mutex_;
   /*!
    * \brief Pages allocated.
    */
   std::vector<void*> allocated_;
+  /*! \brief Pick a shard for the calling thread. */
+  static std::size_t ShardIndex() {
+    return std::hash<std::thread::id>{}(std::this_thread::get_id()) & (kNumShards - 1);
+  }
   /*!
    * \brief Private constructor.
    */
   ObjectPool();
   /*!
-   * \brief Allocate a page of raw objects.
+   * \brief Allocate a page of raw objects into the given shard's free list.
    *
-   * This function is not protected and must be called with caution.
+   * Must be called with shard->m held.
    */
-  void AllocateChunk();
+  void AllocateChunk(Shard* shard);
   DISALLOW_COPY_AND_ASSIGN(ObjectPool);
 };  // class ObjectPool
 
@@ -141,14 +162,15 @@ ObjectPool<T>::~ObjectPool() {
 template <typename T>
 template <typename... Args>
 T* ObjectPool<T>::New(Args&&... args) {
+  Shard& shard = shards_[ShardIndex()];
   LinkedList* ret;
   {
-    std::lock_guard<std::mutex> lock{m_};
-    if (head_->next == nullptr) {
-      AllocateChunk();
+    std::lock_guard<std::mutex> lock{shard.m};
+    if (shard.head == nullptr) {
+      AllocateChunk(&shard);
     }
-    ret   = head_;
-    head_ = head_->next;
+    ret        = shard.head;
+    shard.head = shard.head->next;
   }
   return new (static_cast<void*>(ret)) T(std::forward<Args>(args)...);
 }
@@ -157,10 +179,13 @@ template <typename T>
 void ObjectPool<T>::Delete(T* ptr) {
   ptr->~T();
   auto linked_list_ptr = reinterpret_cast<LinkedList*>(ptr);
+  // A slot may be freed by a different thread (hence shard) than allocated it;
+  // that is fine -- it is just reused by whichever shard receives it.
+  Shard& shard = shards_[ShardIndex()];
   {
-    std::lock_guard<std::mutex> lock{m_};
-    linked_list_ptr->next = head_;
-    head_                 = linked_list_ptr;
+    std::lock_guard<std::mutex> lock{shard.m};
+    linked_list_ptr->next = shard.head;
+    shard.head            = linked_list_ptr;
   }
 }
 
@@ -177,11 +202,11 @@ const std::shared_ptr<ObjectPool<T> >& ObjectPool<T>::_GetSharedRef() {
 
 template <typename T>
 ObjectPool<T>::ObjectPool() {
-  AllocateChunk();
+  // Free lists fill lazily on first New() per shard; nothing to pre-allocate.
 }
 
 template <typename T>
-void ObjectPool<T>::AllocateChunk() {
+void ObjectPool<T>::AllocateChunk(Shard* shard) {
   static_assert(sizeof(LinkedList) <= kPageSize, "Object too big.");
   static_assert(sizeof(LinkedList) % alignof(LinkedList) == 0, "ObjectPooll Invariant");
   static_assert(alignof(LinkedList) % alignof(T) == 0, "ObjectPooll Invariant");
@@ -194,14 +219,19 @@ void ObjectPool<T>::AllocateChunk() {
   int ret = posix_memalign(&new_chunk_ptr, kPageSize, kPageSize);
   CHECK_EQ(ret, 0) << "Allocation failed";
 #endif
-  allocated_.emplace_back(new_chunk_ptr);
+  {
+    // Only the shared chunk-bookkeeping vector needs global protection; the
+    // free-list splice below touches just this shard (caller holds shard->m).
+    std::lock_guard<std::mutex> lock{alloc_list_mutex_};
+    allocated_.emplace_back(new_chunk_ptr);
+  }
   auto new_chunk = static_cast<LinkedList*>(new_chunk_ptr);
   auto size      = kPageSize / sizeof(LinkedList);
   for (std::size_t i = 0; i < size - 1; ++i) {
     new_chunk[i].next = &new_chunk[i + 1];
   }
-  new_chunk[size - 1].next = head_;
-  head_                    = new_chunk;
+  new_chunk[size - 1].next = shard->head;
+  shard->head              = new_chunk;
 }
 
 template <typename T>

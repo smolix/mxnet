@@ -90,8 +90,12 @@ void IndexUpdateForwardCalc(mshadow::Stream<xpu>* s,
   using namespace mxnet_op;
   using namespace mshadow;
   int seg = MXNET_SPECIAL_MAX_NDIM - a_ndim;
+  // H8: kernel guards every index, so host validation is not needed for safety.
+  // Gate the friendly bounds error behind an opt-in debug flag instead of doing a
+  // blocking D2H + cudaStreamSynchronize on every call (perf + capture hazard).
+  static const bool bounds_check = dmlc::GetEnv("MXNET_INDEX_BOUNDS_CHECK", false);
   std::vector<int> ind_host(static_cast<size_t>(ind_num) * ind_ndim);
-  if (!ind_host.empty()) {
+  if (bounds_check && !ind_host.empty()) {
     cudaStream_t stream = mshadow::Stream<xpu>::GetStream(s);
     CUDA_CALL(cudaMemcpyAsync(ind_host.data(),
                               ind,

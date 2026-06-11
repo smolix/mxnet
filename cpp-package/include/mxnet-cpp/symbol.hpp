@@ -219,6 +219,171 @@ inline mxnet::cpp::Symbol Symbol::GetBackendSymbol(const std::string &backendNam
     return mxnet::cpp::Symbol(symbolHandle);
 }
 
+inline mxnet::cpp::Symbol Symbol::OptimizeForBackend(
+    const std::string &backendName,
+    std::map<std::string, NDArray> *args,
+    std::map<std::string, NDArray> *aux,
+    const Context &context,
+    const std::map<std::string, std::string> &options,
+    const std::map<std::string, std::vector<mx_uint> > &shape_dict,
+    const std::map<std::string, int> &type_dict,
+    const std::map<std::string, int> &stype_dict,
+    bool skip_infer) const {
+  SymbolHandle symbolHandle;
+
+  const bool infer_inputs = args != nullptr || aux != nullptr || !shape_dict.empty() ||
+                            !type_dict.empty() || !stype_dict.empty();
+  std::vector<std::string> old_arg_names;
+  std::vector<std::string> old_aux_names;
+  std::vector<NDArrayHandle> arg_handles;
+  std::vector<NDArrayHandle> aux_handles;
+
+  if (infer_inputs) {
+    old_arg_names = ListArguments();
+    old_aux_names = ListAuxiliaryStates();
+    arg_handles.reserve(old_arg_names.size());
+    aux_handles.reserve(old_aux_names.size());
+
+    for (const auto &arg_name : old_arg_names) {
+      NDArrayHandle handle = nullptr;
+      if (args != nullptr) {
+        auto iter = args->find(arg_name);
+        if (iter != args->end()) {
+          handle = iter->second.GetHandle();
+        }
+      }
+      arg_handles.push_back(handle);
+    }
+
+    for (const auto &aux_name : old_aux_names) {
+      NDArrayHandle handle = nullptr;
+      if (aux != nullptr) {
+        auto iter = aux->find(aux_name);
+        if (iter != aux->end()) {
+          handle = iter->second.GetHandle();
+        }
+      }
+      aux_handles.push_back(handle);
+    }
+  }
+
+  std::vector<const char *> option_keys;
+  std::vector<const char *> option_values;
+  option_keys.reserve(options.size());
+  option_values.reserve(options.size());
+  for (const auto &option : options) {
+    option_keys.push_back(option.first.c_str());
+    option_values.push_back(option.second.c_str());
+  }
+
+  std::vector<const char *> input_shape_names;
+  std::vector<int64_t> input_shape_data;
+  std::vector<mx_uint> input_shape_idx;
+  if (!shape_dict.empty()) {
+    input_shape_idx.push_back(0);
+  }
+  input_shape_names.reserve(shape_dict.size());
+  for (const auto &shape : shape_dict) {
+    input_shape_names.push_back(shape.first.c_str());
+    for (auto dim : shape.second) {
+      input_shape_data.push_back(static_cast<int64_t>(dim));
+    }
+    input_shape_idx.push_back(static_cast<mx_uint>(input_shape_data.size()));
+  }
+
+  std::vector<const char *> input_dtype_names;
+  std::vector<int> input_dtype_values;
+  input_dtype_names.reserve(type_dict.size());
+  input_dtype_values.reserve(type_dict.size());
+  for (const auto &dtype : type_dict) {
+    input_dtype_names.push_back(dtype.first.c_str());
+    input_dtype_values.push_back(dtype.second);
+  }
+
+  std::vector<const char *> input_stype_names;
+  std::vector<int> input_stype_values;
+  input_stype_names.reserve(stype_dict.size());
+  input_stype_values.reserve(stype_dict.size());
+  for (const auto &stype : stype_dict) {
+    input_stype_names.push_back(stype.first.c_str());
+    input_stype_values.push_back(stype.second);
+  }
+
+  int new_args_cnt = 0;
+  NDArrayHandle *new_args_handle = nullptr;
+  char **new_arg_names_handle = nullptr;
+  int new_aux_cnt = 0;
+  NDArrayHandle *new_aux_handle = nullptr;
+  char **new_aux_names_handle = nullptr;
+
+  CHECK_EQ(MXOptimizeForBackend(
+               GetHandle(),
+               backendName.c_str(),
+               static_cast<int>(context.GetDeviceType()),
+               &symbolHandle,
+               static_cast<mx_uint>(arg_handles.size()),
+               arg_handles.empty() ? nullptr : arg_handles.data(),
+               static_cast<mx_uint>(aux_handles.size()),
+               aux_handles.empty() ? nullptr : aux_handles.data(),
+               static_cast<mx_uint>(option_keys.size()),
+               option_keys.empty() ? nullptr : option_keys.data(),
+               option_values.empty() ? nullptr : option_values.data(),
+               static_cast<mx_uint>(input_shape_names.size()),
+               input_shape_names.empty() ? nullptr : input_shape_names.data(),
+               input_shape_data.empty() ? nullptr : input_shape_data.data(),
+               input_shape_idx.empty() ? nullptr : input_shape_idx.data(),
+               static_cast<mx_uint>(input_dtype_names.size()),
+               input_dtype_names.empty() ? nullptr : input_dtype_names.data(),
+               input_dtype_values.empty() ? nullptr : input_dtype_values.data(),
+               static_cast<mx_uint>(input_stype_names.size()),
+               input_stype_names.empty() ? nullptr : input_stype_names.data(),
+               input_stype_values.empty() ? nullptr : input_stype_values.data(),
+               skip_infer,
+               &new_args_cnt,
+               &new_args_handle,
+               &new_arg_names_handle,
+               &new_aux_cnt,
+               &new_aux_handle,
+               &new_aux_names_handle),
+           0);
+
+  if (new_args_cnt > 0) {
+    CHECK(args != nullptr) << "Cannot add new args when args is nullptr";
+    for (int i = 0; i < new_args_cnt; ++i) {
+      (*args)[new_arg_names_handle[i]] = NDArray(new_args_handle[i]);
+    }
+  }
+
+  if (new_aux_cnt > 0) {
+    CHECK(aux != nullptr) << "Cannot add new aux states when aux is nullptr";
+    for (int i = 0; i < new_aux_cnt; ++i) {
+      (*aux)[new_aux_names_handle[i]] = NDArray(new_aux_handle[i]);
+    }
+  }
+
+  mxnet::cpp::Symbol optimized(symbolHandle);
+  if (args != nullptr) {
+    const auto new_arg_names = optimized.ListArguments();
+    for (const auto &old_arg_name : old_arg_names) {
+      if (std::find(new_arg_names.begin(), new_arg_names.end(), old_arg_name) ==
+          new_arg_names.end()) {
+        args->erase(old_arg_name);
+      }
+    }
+  }
+  if (aux != nullptr) {
+    const auto new_aux_names = optimized.ListAuxiliaryStates();
+    for (const auto &old_aux_name : old_aux_names) {
+      if (std::find(new_aux_names.begin(), new_aux_names.end(), old_aux_name) ==
+          new_aux_names.end()) {
+        aux->erase(old_aux_name);
+      }
+    }
+  }
+
+  return optimized;
+}
+
 inline std::string Symbol::GetName() const {
   int success;
   const char* out_name;
@@ -285,6 +450,66 @@ inline void Symbol::InferShape(
       }
     }
   }
+}
+
+inline bool Symbol::InferShapePartial(
+    const std::map<std::string, std::vector<mx_uint> > &arg_shapes,
+    std::vector<std::vector<mx_uint> > *in_shape,
+    std::vector<std::vector<mx_uint> > *aux_shape,
+    std::vector<std::vector<mx_uint> > *out_shape) const {
+
+  std::vector<const char *> keys;
+  std::vector<mx_uint> arg_ind_ptr;
+  std::vector<int> arg_shape_data;
+
+  for (const auto &arg : arg_shapes) {
+    keys.push_back(arg.first.c_str());
+    arg_ind_ptr.push_back(arg_shape_data.size());
+    for (auto i : arg.second) {
+      arg_shape_data.push_back(i);
+    }
+  }
+  arg_ind_ptr.push_back(arg_shape_data.size());
+
+  mx_uint in_shape_size;
+  const int *in_shape_ndim;
+  const int **in_shape_data;
+  mx_uint out_shape_size;
+  const int *out_shape_ndim;
+  const int **out_shape_data;
+  mx_uint aux_shape_size;
+  const int *aux_shape_ndim;
+  const int **aux_shape_data;
+  int complete;
+
+  CHECK_EQ(MXSymbolInferShapePartial(GetHandle(), keys.size(), keys.data(),
+                                     arg_ind_ptr.data(), arg_shape_data.data(),
+                                     &in_shape_size, &in_shape_ndim, &in_shape_data,
+                                     &out_shape_size, &out_shape_ndim, &out_shape_data,
+                                     &aux_shape_size, &aux_shape_ndim, &aux_shape_data,
+                                     &complete),
+           0);
+
+  for (mx_uint i = 0; i < in_shape_size; ++i) {
+    in_shape->push_back(std::vector<mx_uint>());
+    for (int j = 0; j < in_shape_ndim[i]; ++j) {
+      (*in_shape)[i].push_back(in_shape_data[i][j]);
+    }
+  }
+  for (mx_uint i = 0; i < aux_shape_size; ++i) {
+    aux_shape->push_back(std::vector<mx_uint>());
+    for (int j = 0; j < aux_shape_ndim[i]; ++j) {
+      (*aux_shape)[i].push_back(aux_shape_data[i][j]);
+    }
+  }
+  for (mx_uint i = 0; i < out_shape_size; ++i) {
+    out_shape->push_back(std::vector<mx_uint>());
+    for (int j = 0; j < out_shape_ndim[i]; ++j) {
+      (*out_shape)[i].push_back(out_shape_data[i][j]);
+    }
+  }
+
+  return complete != 0;
 }
 
 inline void Symbol::InferExecutorArrays(

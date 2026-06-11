@@ -2598,7 +2598,7 @@ fixed-size items.
         mx_dtype = ctypes.c_int()
         check_call(_LIB.MXNDArrayGetDType(
             self.handle, ctypes.byref(mx_dtype)))
-        return dtype_mx_to_np(mx_dtype.value)
+        return np.dtype(dtype_mx_to_np(mx_dtype.value))
 
     @property
     def stype(self):
@@ -2976,6 +2976,9 @@ fixed-size items.
         if out_grad is None:
             ograd_handles = [NDArrayHandle(0)]
         else:
+            if out_grad.shape != self.shape:
+                raise ValueError("out_grad shape {} does not match output shape {}".format(
+                    out_grad.shape, self.shape))
             ograd_handles = [out_grad.handle]
 
         check_call(_LIB.MXAutogradBackwardEx(

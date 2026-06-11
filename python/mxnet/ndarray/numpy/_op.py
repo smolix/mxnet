@@ -204,6 +204,12 @@ def _normalize_repeat_repeats(repeats):
                     .format(type(repeats).__name__))
 
 
+def _tensordot_axes_are_empty(axes):
+    builtin_all = __builtins__['all'] if isinstance(__builtins__, dict) else __builtins__.all
+    return (isinstance(axes, (tuple, list)) and len(axes) == 2 and
+            builtin_all(isinstance(axis, (tuple, list)) and len(axis) == 0 for axis in axes))
+
+
 def _normalize_tensordot_axes(axes):
     def normalize_axis(axis):
         if not isinstance(axis, (integer_types, _np.integer)):
@@ -1092,6 +1098,9 @@ def _ufunc_helper(lhs, rhs, fn_array, fn_scalar, lfn_scalar, rfn_scalar=None, ou
     elif isinstance(rhs, numeric_types):
         return lfn_scalar(lhs, float(rhs), out=out)
     elif isinstance(lhs, ndarray) and isinstance(rhs, ndarray):
+        if lhs.device != rhs.device:
+            raise ValueError("operands must be on the same device/context, got {} and {}".format(
+                lhs.device, rhs.device))
         return fn_array(lhs, rhs, out=out)
     else:
         raise TypeError('type {} not supported'.format(str(type(rhs))))
@@ -2062,7 +2071,13 @@ def tensordot(a, b, axes=2):
            [ 4796.,  5162.],
            [ 4928.,  5306.]])
     """
-    return _api_internal.tensordot(a, b, _normalize_tensordot_axes(axes))
+    axes = _normalize_tensordot_axes(axes)
+    if (_tensordot_axes_are_empty(axes) and isinstance(a, NDArray) and
+            isinstance(b, NDArray) and (a.ndim == 0 or b.ndim == 0)):
+        left = a.reshape(a.shape + (1,) * b.ndim) if b.ndim else a
+        right = b.reshape((1,) * a.ndim + b.shape) if a.ndim else b
+        return multiply(left, right)
+    return _api_internal.tensordot(a, b, axes)
 
 
 @set_module('mxnet.ndarray.numpy')

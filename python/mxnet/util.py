@@ -650,6 +650,12 @@ def wrap_np_binary_func(func):
                         raise NotImplementedError("{}={} is not implemented yet".format(key, str(value)))
                     # otherwise raise TypeError with not understood error message
                     raise TypeError("{} {} not understood".format(key, value))
+        dev1 = getattr(x1, "device", None)
+        dev2 = getattr(x2, "device", None)
+        if dev1 is not None and dev2 is not None and dev1 != dev2:
+            raise ValueError(
+                "operands for {} must be on the same device/context, got {} and {}"
+                .format(func.__name__, dev1, dev2))
         return func(x1, x2, out=out)
     return _wrap_np_binary_func
 

@@ -60,13 +60,16 @@ def _make_ndarray_outputs(output_vars, out_stypes, num_output, create_ndarray_fn
 
 class CachedOp(object):
     """Cached operator handle."""
-    __slots__ = ["handle", "is_np_sym", "_monitor_callback"]
+    __slots__ = ["handle", "is_np_sym", "_monitor_callback", "_mutable_aux_indices"]
 
     def __init__(self, sym, flags=(), thread_safe=False):
         self._monitor_callback = None
 
         from ..symbol.numpy._symbol import _Symbol
         self.is_np_sym = bool(isinstance(sym, _Symbol))
+        aux_names = set(sym.list_auxiliary_states())
+        self._mutable_aux_indices = tuple(
+            i for i, name in enumerate(sym.list_inputs()) if name in aux_names)
 
         flags = {key: str(value) for key, value in flags}
         self.handle = CachedOpHandle(_api_internal.create(
@@ -145,6 +148,18 @@ class CachedOp(object):
                 assert default_device is not None, 'default_device is required if no input is provided'
             else:
                 default_device = args[0].device if default_device is None else default_device
+
+            # In train mode without recording, mutable auxiliary states must not
+            # leak state updates back to the caller. Recorded training keeps the
+            # original inputs so backward sees the same stateful forward.
+            if self._mutable_aux_indices:
+                from .. import autograd
+                if autograd.is_training() and not autograd.is_recording():
+                    args = list(args)
+                    for index in self._mutable_aux_indices:
+                        if index < len(args):
+                            args[index] = args[index].copy()
+                    args = tuple(args)
 
             check_call(_LIB.MXInvokeCachedOp(
                 self.handle,

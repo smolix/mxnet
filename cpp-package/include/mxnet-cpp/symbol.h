@@ -26,6 +26,8 @@
 #ifndef MXNET_CPP_SYMBOL_H_
 #define MXNET_CPP_SYMBOL_H_
 
+#include <algorithm>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -169,6 +171,19 @@ class Symbol {
                   std::vector<std::vector<mx_uint> >* aux_shape,
                   std::vector<std::vector<mx_uint> >* out_shape) const;
   /*!
+   * \brief partially infer the shapes by providing shapes of known argument shapes.
+   * \param arg_shapes map of argument name to shape of arguments with known
+   * shapes.
+   * \param in_shapes used to store partially infered shapes of input arguments.
+   * \param out_shapes used to store partially infered shapes of outputs.
+   * \param aux_shapes use to store the partially infered shapes of auxiliary states
+   * \return whether all shapes were inferred.
+   */
+  bool InferShapePartial(const std::map<std::string, std::vector<mx_uint> >& arg_shapes,
+                         std::vector<std::vector<mx_uint> >* in_shape,
+                         std::vector<std::vector<mx_uint> >* aux_shape,
+                         std::vector<std::vector<mx_uint> >* out_shape) const;
+  /*!
    * \brief List the arguments names.
    *
    * The position of the returned list also corresponds to calling position in
@@ -200,6 +215,30 @@ class Symbol {
   mx_uint GetNumOutputs() const;
   /*! \return get the new symbol through subgraph API for this symbol */
   mxnet::cpp::Symbol GetBackendSymbol(const std::string& backendName) const;
+  /*!
+   * \brief optimize the symbol for a registered backend or graph pass.
+   * \param backendName name of the registered backend or graph pass.
+   * \param args optional map of input argument arrays, updated with new arguments.
+   * \param aux optional map of auxiliary arrays, updated with new auxiliary states.
+   * \param context context used for backend inference.
+   * \param options backend options.
+   * \param shape_dict optional input shapes for missing argument arrays.
+   * \param type_dict optional input data types for missing argument arrays.
+   * \param stype_dict optional input storage types for missing argument arrays.
+   * \param skip_infer whether backend shape/type/storage inference should be skipped.
+   * \return optimized symbol.
+   */
+  mxnet::cpp::Symbol OptimizeForBackend(
+      const std::string& backendName,
+      std::map<std::string, NDArray>* args = nullptr,
+      std::map<std::string, NDArray>* aux = nullptr,
+      const Context& context = Context::cpu(),
+      const std::map<std::string, std::string>& options = std::map<std::string, std::string>(),
+      const std::map<std::string, std::vector<mx_uint> >& shape_dict =
+          std::map<std::string, std::vector<mx_uint> >(),
+      const std::map<std::string, int>& type_dict = std::map<std::string, int>(),
+      const std::map<std::string, int>& stype_dict = std::map<std::string, int>(),
+      bool skip_infer = false) const;
   /*! \return get the name of the symbol */
   std::string GetName() const;
   /*!

@@ -1546,6 +1546,8 @@ def zeros(stype, shape, ctx=None, dtype=None, **kwargs):
     array([[ 0.,  0.]], dtype=float16)
     """
     # pylint: disable= no-member, protected-access
+    if isinstance(shape, integer_types):
+        shape = (shape,)
     if stype == 'default':
         return _zeros_ndarray(shape, ctx=ctx, dtype=dtype, **kwargs)
     if ctx is None:

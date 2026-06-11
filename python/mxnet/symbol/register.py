@@ -179,6 +179,10 @@ def %s(*%s, **kwargs):"""%(func_name, arr_name))
     name = _name.current().get(name, '%s')
     if not isinstance(kwargs.get('out', None), SymbolBase):
         _ = kwargs.pop('out', None)
+    if not sym_args and "data" in kwargs and "arg0" not in kwargs and isinstance(kwargs["data"], SymbolBase):
+        kwargs["arg0"] = kwargs.pop("data")
+    if not sym_args and "weight" in kwargs and "arg1" not in kwargs and isinstance(kwargs["weight"], SymbolBase):
+        kwargs["arg1"] = kwargs.pop("weight")
     keys = []
     vals = []
     sym_kwargs = dict()
@@ -248,9 +252,9 @@ def %s(%s):"""%(func_name, ', '.join(signature)))
         _vals.append(get_dtype_name(%s))"""%(dtype_name, dtype_name, dtype_name))
 
             code.append("""
-    name = _name.current().get(name, '%s')
-    if 'profiler_scope' not in _keys:
-        _keys.append('profiler_scope')
+    name = _name.current().get(name, "%s")
+    if "profiler_scope" not in _keys:
+        _keys.append("profiler_scope")
         _vals.append(_profiler_scope.get())
     return _symbol_creator(%d, None, sym_kwargs, _keys, _vals, name, %s, %s)"""%(
         func_name.lower(), handle.value, str(is_np_op), str(output_is_list)))

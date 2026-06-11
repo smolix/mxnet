@@ -444,7 +444,9 @@ class KLDivLoss(Loss):
     def forward(self, pred, label, sample_weight=None):
         if not self._from_logits:
             pred = npx.log_softmax(pred, self._axis)
-        loss = label * (np.log(label + 1e-12) - pred)
+        safe_label = np.maximum(label, 1e-12)
+        loss = label * (np.log(safe_label) - pred)
+        loss = np.nan_to_num(loss, nan=0.0)
         loss = _apply_weighting(loss, self._weight, sample_weight)
         return _batch_mean(loss, self._batch_axis)
 
@@ -521,6 +523,8 @@ class CTCLoss(Loss):
     def forward(self, pred, label, pred_lengths=None, label_lengths=None, sample_weight=None):
         if self._layout == 'NTC':
             pred = np.swapaxes(pred, 0, 1)
+        if pred.dtype == _np.float16:
+            pred = pred.astype('float32')
         if self._batch_axis == 1:
             label = np.swapaxes(label, 0, 1)
         loss = npx.ctc_loss(pred, label, pred_lengths, label_lengths,
@@ -575,8 +579,9 @@ class HuberLoss(Loss):
     def forward(self, pred, label, sample_weight=None):
         label = npx.reshape_like(label, pred)
         loss = np.abs(label - pred)
-        loss = np.where(loss > self._rho, loss - 0.5 * self._rho,
-                        (0.5 / self._rho) * np.square(loss))
+        quadratic = np.minimum(loss, self._rho)
+        linear = loss - quadratic
+        loss = linear + (0.5 / self._rho) * np.square(quadratic)
         loss = _apply_weighting(loss, self._weight, sample_weight)
         return _batch_mean(loss, self._batch_axis)
 
@@ -768,7 +773,7 @@ class TripletLoss(Loss):
     def forward(self, pred, positive, negative, sample_weight=None):
         positive = npx.reshape_like(positive, pred)
         negative = npx.reshape_like(negative, pred)
-        loss = _batch_sum(np.square(positive - pred) - np.square(negative - pred), self._batch_axis)
+        loss = _batch_sum((positive - negative) * (positive + negative - 2 * pred), self._batch_axis)
         loss = npx.relu(loss + self._margin)
         return _apply_weighting(loss, self._weight, sample_weight)
 
@@ -827,10 +832,10 @@ class PoissonNLLLoss(Loss):
             loss = pred - target * np.log(pred + epsilon)
         if self._compute_full:
             # Using numpy's pi value
-            stirling_factor = target * \
-                np.log(target) - target + 0.5 * np.log(2 * target * _np.pi)
-            target_gt_1 = target > 1
-            stirling_factor = stirling_factor * target_gt_1
+            safe_target = np.maximum(target, 1)
+            stirling_factor = safe_target * \
+                np.log(safe_target) - safe_target + 0.5 * np.log(2 * safe_target * _np.pi)
+            stirling_factor = np.where(target > 1, stirling_factor, np.zeros_like(stirling_factor))
             loss = loss + stirling_factor
         loss = _apply_weighting(loss, self._weight, sample_weight)
         return _batch_mean(loss, self._batch_axis)

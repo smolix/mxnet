@@ -972,6 +972,8 @@ class ZoneoutCell(ModifierCell):
                   if p_outputs != 0. else next_output)
         states = ([np.where(mask(p_states, new_s), new_s, old_s.to_device(device)) for new_s, old_s in
                    zip(next_states, states)] if p_states != 0. else next_states)
+        if p_outputs != 0. and states:
+            states[0] = output
 
         self._prev_output = output
 

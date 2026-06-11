@@ -1366,7 +1366,7 @@ int MXOptimizeForBackend(SymbolHandle sym_handle,
     *new_aux_ptr          = new_aux_arr;
   } else {
     // cannot find graph pass or subgraph backend registered in this name
-    LOG(ERROR) << "Error optimizing for backend '" << backend_name << "' cannot be found";
+    CHECK(false) << "Error optimizing for backend '" << backend_name << "' cannot be found";
   }
 
   *ret_sym_handle = s;

@@ -155,6 +155,17 @@ def _new_alloc_handle(shape, device, delay_alloc, dtype=mx_real_t):  # pylint: d
     return hdl
 
 
+def _raise_if_non_native_byte_order(dtype):
+    dtype = _np.dtype(dtype)
+    byteorder = dtype.byteorder
+    if byteorder in ('=', '|'):
+        return
+    if ((byteorder == '<' and sys.byteorder == 'little') or
+            (byteorder == '>' and sys.byteorder == 'big')):
+        return
+    raise ValueError('MXNet does not support non-native byte-order dtype {}'.format(dtype))
+
+
 def _reshape_view(a, *shape):  # pylint: disable=redefined-outer-name
     """Returns a **view** of this array with a new shape without altering any data.
 
@@ -188,6 +199,7 @@ def _as_mx_np_array(object, device=None, zero_copy=False):
     if object is None or isinstance(object, ndarray):
         return object
     elif isinstance(object, _np.ndarray):
+        _raise_if_non_native_byte_order(object.dtype)
         from_numpy = ndarray_from_numpy(ndarray, array)
         return from_numpy(object, zero_copy and object.flags['C_CONTIGUOUS'])
     elif isinstance(object, (integer_types, numeric_types)):
@@ -908,8 +920,9 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         elif isinstance(key, tuple) and \
            all((isinstance(arr, NDArray) and _np.issubdtype(arr.dtype, _np.integer) and \
                 arr.ndim > 0) for arr in key):
-            # Equivalent case in numpy/_symbol.py
-            return _npi.advanced_indexing_multiple(self, _mx_nd_np.stack(key))
+            # Equivalent case in numpy/_symbol.py for the already-broadcast case.
+            if py_all(arr.shape == key[0].shape for arr in key):
+                return _npi.advanced_indexing_multiple(self, _mx_nd_np.stack(key))
         elif isinstance(key, tuple) and dc.is_deferred_compute():
             # Equivalent to isinstance(key, tuple) case in numpy/_symbol.py
             # Only enabled in deferred compute mode, as this codepath prevents
@@ -1477,6 +1490,13 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         if len(shape) == 0:
             raise TypeError('len() of unsized object')
         return self.shape[0]
+
+    def __iter__(self):
+        if self.ndim == 0:
+            raise TypeError("iteration over a 0-d array")
+        for i in range(len(self)):
+            item = self[i]
+            yield item.item() if item.ndim == 0 else item
 
     def __reduce__(self):
         return ndarray, (None,), self.__getstate__()
@@ -2773,6 +2793,7 @@ def empty(shape, dtype=None, order='C', device=None):  # pylint: disable=redefin
         device = current_device()
     if dtype is None or dtype is float:
         dtype = _np.float64 if is_np_default_dtype() else _np.float32
+    _raise_if_non_native_byte_order(dtype)
     if isinstance(shape, int):
         shape = (shape,)
     return ndarray(handle=_new_alloc_handle(shape, device, False, dtype))
@@ -2830,6 +2851,10 @@ def array(object, dtype=None, device=None):
     if device is None:
         device = current_device()
     if isinstance(object, _np.ndarray):
+        if dtype is None:
+            _raise_if_non_native_byte_order(object.dtype)
+        else:
+            _raise_if_non_native_byte_order(dtype)
         if is_np_default_dtype():
             dtype = object.dtype if dtype is None else dtype
         else:
@@ -12799,7 +12824,7 @@ def prod(a, axis=None, dtype=None, out=None, keepdims=False, initial=None): # py
     >>> np.prod([1, 2], initial=5)
     10
     """
-    return _mx_nd_np.prod(a, axis=axis, dtype=dtype, keepdims=keepdims, initial=initial, out=out)
+    return _mx_nd_np.prod(asarray(a), axis=axis, dtype=dtype, keepdims=keepdims, initial=initial, out=out)
 
 @set_module('mxnet.numpy')
 def dot(a, b, out=None):
@@ -13433,6 +13458,10 @@ def asarray(obj, dtype=None, device=None, copy=None):
         dtype = dtype_from_number(obj) if dtype is None else dtype
         obj = _np.asarray(obj, dtype=dtype)
     elif isinstance(obj, _np.ndarray):
+        if dtype is None:
+            _raise_if_non_native_byte_order(obj.dtype)
+        else:
+            _raise_if_non_native_byte_order(dtype)
         if is_np_default_dtype():
             dtype = obj.dtype if dtype is None else dtype
         else:

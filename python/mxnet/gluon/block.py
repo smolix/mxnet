@@ -1555,7 +1555,11 @@ class HybridBlock(Block):
         arg_names = set(sym.list_arguments())
         aux_names = set(sym.list_auxiliary_states())
         arg_dict = {}
-        for is_arg, name, param in self._cached_op_args:
+        cached_op_args = getattr(self, '_cached_op_args', None)
+        if cached_op_args is None:
+            cached_op_args = [(False, name, param)
+                              for name, param in self.collect_params().items()]
+        for is_arg, name, param in cached_op_args:
             if not is_arg:
                 if name in arg_names:
                     arg_dict['arg:{}'.format(name)] = param._reduce()
@@ -1809,6 +1813,22 @@ class SymbolBlock(HybridBlock):
         aux_params = out.list_auxiliary_states()
 
         arg_types, aux_types = _infer_param_types(syms, out, arg_params, aux_params)
+        param_attrs = out.attr_dict()
+
+        def _symbol_param_kwargs(name):
+            attrs = param_attrs.get(name, {})
+            kwargs = {}
+            if '__lr_mult__' in attrs:
+                kwargs['lr_mult'] = float(attrs['__lr_mult__'])
+            elif 'lr_mult' in attrs:
+                kwargs['lr_mult'] = float(attrs['lr_mult'])
+            if '__wd_mult__' in attrs:
+                kwargs['wd_mult'] = float(attrs['__wd_mult__'])
+            elif 'wd_mult' in attrs:
+                kwargs['wd_mult'] = float(attrs['wd_mult'])
+            if '__init__' in attrs:
+                kwargs['init'] = attrs['__init__']
+            return kwargs
 
         if params is None:
             params = {}
@@ -1823,7 +1843,9 @@ class SymbolBlock(HybridBlock):
                 if self._reg_params[arg]._var is None:
                     self._reg_params[arg]._var_name = arg
             elif arg not in input_names:
-                self._reg_params[arg] = Parameter(name=arg, allow_deferred_init=True, dtype=arg_types[i])
+                self._reg_params[arg] = Parameter(name=arg, allow_deferred_init=True,
+                                                  dtype=arg_types[i],
+                                                  **_symbol_param_kwargs(arg))
                 self._reg_params[arg]._var_name = arg
         for i, aux in enumerate(aux_params):
             if aux in self._reg_params:
@@ -1833,7 +1855,8 @@ class SymbolBlock(HybridBlock):
                     self._reg_params[aux]._var_name = aux
             elif aux not in input_names:
                 self._reg_params[aux] = Parameter(name=aux, grad_req='null',
-                                                  allow_deferred_init=True, dtype=aux_types[i])
+                                                  allow_deferred_init=True, dtype=aux_types[i],
+                                                  **_symbol_param_kwargs(aux))
                 self._reg_params[aux]._var_name = aux
 
         self._cached_graph = syms, out

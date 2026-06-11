@@ -27,72 +27,194 @@ Policy:
 
 Current counts:
 
-- Runtime/static-verified executable repros: 53 total: 47 open issues and 6 open PRs.
-- Issue-side source/static-only candidates still pending runtime confirmation: 2 (`#19655`, `#20376`).
-- PR-side source/static-only candidates still pending runtime confirmation: 2 (`#20470`, `#20316`).
+- Runtime/static-verified executable repros: 227 total: 53 from the
+  original open GitHub issue/PR scan and 174 from the similar-bug sweep.
+  In the current worktree, 61 are fixed regression tests and 166 remain
+  expected-failing repros: 2 original open issues plus 164 similar-pattern
+  candidates still pending fixes.
+- Fixed in current worktree: issues #21176, #21119, #21111, #20936, #20657, #20605, #20577, #21156,
+  #16427, #13945, #20391, #16402, #18300, #21146, #19423, #19458,
+  #19422, #12286, #14695, #13953, #8817, #20180, #20076,
+  #20046, #20044, #20037, #19860, #19852, #19785, #19753,
+  #19686, #19683, #19021, #18919, #18770, #18669, #18563, #18078, #17936,
+  #17698, #13193, #11774, and #8430; PRs #21217, #21044,
+  #20491, #18792, #18583, and #17209; plus GPU issue #19628
+  and symbol issue #19647.
+- Issue-side source/static-only candidates still pending runtime confirmation: 2 (#19655, #20376).
+- PR-side source/static-only candidates still pending runtime confirmation: 2 (#20470, #20316).
 - Broad-scan PR candidates not yet verified and not counted as current bugs: 18.
-- Latest verification:
-  `/home/smola/d2l-neu/.venv-mxnet/bin/python -m pytest -q tests/python/unittest/test_apache_open_issue_repros.py`
-  reported `53 xfailed`; running the same file with `--runxfail` reported
-  `53 failed`, confirming the repros detect current behavior.
+- Baseline verification before fixes:
+  /home/smola/d2l-neu/.venv-mxnet/bin/python -m pytest -q tests/python/unittest/test_apache_open_issue_repros.py
+  reported 53 xfailed; running the same file with --runxfail reported
+  53 failed, confirming the repros detected the baseline behavior.
+- Latest checkpoint verification against local sources with the built wheel library:
+  the original open-issue repro suite passed at the 50-fix threshold with
+  50 passed, 3 xfailed, and 3 warnings in 36.56s. After the first
+  similar-bug sweep tests were added, the similar-only slice passed as
+  expected with 46 xfailed, 53 deselected, and 5 warnings in 200.85s.
+  After the second-wave similar candidates were added and one XPASSing
+  oneDNN FC branch candidate was removed as not verified, the selected
+  second-wave slice passed as expected with 64 xfailed, 78 deselected,
+  and 2 warnings in 300.97s. The full repro checkpoint after promoting
+  the first 10 similar fixes passed with 60 passed, 82 xfailed, and 6 warnings
+  in 368.88s. After #20605 was promoted and recursive validation/wrapper/view
+  repros were added, the selected Halley/Sagan batch passed as expected with
+  66 xfailed, 142 deselected, and 2 warnings in 422.40s; the selected
+  Anscombe/Aristotle sparse/numeric batch passed as expected with 19 xfailed,
+  208 deselected, and 2 warnings in 2.59s.
+## Fix Progress
+
+Active batch started 2026-06-11:
+
+- Verified fixed against local sources: #20657, #20577, PR #21044, #21156,
+  #16427, #13945, PR #17209, #20391, #16402, #18300, #19422,
+  #12286, #14695, #13953, #8817, #20046, #19785, #19753,
+  #17936, #17698, PR #20491, PR #18583, #20180, #20076, #20044,
+  #19686, #19683, #19021, PR #21217, #20936, #20037, #8430,
+  #19423, #19458, #18919, #18770, PR #18792, #18563, #18078,
+  #13193, #19628, #18669, #11774, #19647, #19860, #21146,
+  #19852, #21176, #21119, #21111, and #20605.
+- Checkpoint: the full open-issue repro suite passed at 10 fixed bugs
+  with 10 passed, 43 xfailed, 3 warnings in 42.23s; it passed again
+  at 22 fixed repros with 22 passed, 31 xfailed, 3 warnings in 41.97s,
+  at 36 fixed repros with 36 passed, 17 xfailed, 3 warnings in 41.38s,
+  at 43 fixed repros with 43 passed, 10 xfailed, 3 warnings in 41.43s,
+  and at 50 fixed repros with 50 passed, 3 xfailed, 3 warnings in 36.56s.
+- Latest focused results after the 10-fix checkpoint: #19422, #12286,
+  #14695, #13953, #8817, #20046, #19785, #19753, #17936, and
+  #17698 passed with --runxfail; PR #20491 and PR #18583 then XPASSed
+  in the full suite after the C++ header changes. After the 22-fix
+  checkpoint, #20180, #20076, #20044, #19686, #19683, #19021,
+  PR #21217, #20936, #20037, #8430, #19423, #19458, #18919,
+  and #18770 passed focused --runxfail verification. PR #18792, #13193, #18563, #18078, #19628, #18669, and
+  #11774, #19647, #19860, #21146, #19852, #21176, #21119, and #21111 also passed focused
+  --runxfail verification after the 36-fix checkpoint. The full 32-fix checkpoint run found #19423, #19458,
+  #18919, and #18770 as strict XPASS before their markers were removed;
+  the 40-fix checkpoint run found #19628, #18669, and #11774 as strict
+  XPASS before their markers were removed.
+- The 61 fixed tests are normal regression tests in
+  tests/python/unittest/test_apache_open_issue_repros.py. The remaining 164
+  similar-bug sweep tests are strict expected-failing repros in the same file
+  and must stay as tests before any corresponding fixes are attempted.
+- Patched files so far: python/mxnet/libinfo.py, python/mxnet/recordio.py,
+  python/mxnet/gluon/block.py, python/mxnet/gluon/parameter.py,
+  python/mxnet/ndarray/ndarray.py, python/mxnet/numpy/multiarray.py,
+  python/mxnet/base.py, python/mxnet/ndarray/register.py,
+  python/mxnet/symbol/register.py, python/mxnet/ndarray/sparse.py,
+  python/mxnet/gluon/utils.py, python/mxnet/gluon/nn/basic_layers.py,
+  cpp-package/include/mxnet-cpp/symbol.h,
+  cpp-package/include/mxnet-cpp/symbol.hpp, python/mxnet/autograd.py,
+  python/mxnet/ndarray/contrib.py, python/mxnet/kvstore/horovod.py,
+  python/mxnet/io/utils.py, python/mxnet/libinfo.py,
+  python/mxnet/numpy/random.py, python/mxnet/ndarray/numpy/_op.py,
+  python/mxnet/gluon/loss.py, python/mxnet/gluon/rnn/rnn_cell.py,
+  python/mxnet/gluon/rnn/rnn_layer.py,
+  python/mxnet/gluon/nn/activations.py, python/mxnet/symbol/symbol.py,
+  src/c_api/c_api_symbolic.cc, python/mxnet/gluon/nn/conv_layers.py, python/mxnet/util.py,
+  and python/mxnet/_ctypes/cached_op.py.
+- Next checkpoint: run the expanded full repro suite again before
+  promoting another fixed batch, or sooner if shared/runtime behavior changes.
+- Similar-bug sweep repros added so far: generated symbol/image validation
+  gaps, mixed-device NumPy and legacy NDArray wrappers, no-affine
+  BatchNorm/SyncBatchNorm graph loss, hybrid CPU RNN sequence-length caching,
+  normalization/loss numeric overflow and NaN edge cases, InstanceNorm
+  non-default-axis deferred shape inference, dynamic_unroll int32 valid_length,
+  CSR and row_sparse non-canonical metadata, and expanded NumPy view/copy
+  contract cases. The recursive sweep added more sequence/image validation,
+  cross-device wrapper, sparse canonicalization, numeric stability, and view
+  contract repros. Fixed in the similar-bug batch so far: InstanceNorm
+  non-default-axis deferred shape inference and 8 Gluon loss numeric-edge
+  cases.
+
+## Similar-Bug Sweep Repros
+
+These tests were added after the original open-issue ledger, before any fixes
+for the newly found patterns. They are strict xfails under the `test_similar_*`
+namespace in `tests/python/unittest/test_apache_open_issue_repros.py`.
+
+- Generated symbol/image validation gaps: 25 cases for symbol-side
+  `box_encode`, `SequenceMask`, `SequenceLast`, `SequenceReverse`,
+  `arange_like`, self-attention heads, image resize/random crop, NDArray/npx
+  random resized crop validation, and high-level `mx.image` validation.
+- Mixed-device wrapper gaps: 44 NumPy public-wrapper cases and 27 legacy
+  NDArray cases that still need a same-device copy or rejection path.
+- Gluon repeated-pattern bugs: 3 no-affine BatchNorm/SyncBatchNorm graph
+  cases, 3 hybrid CPU RNN sequence-length caching cases, normalization
+  large-finite overflow cases, CosineEmbeddingLoss and other Gluon loss
+  numeric-edge cases, 3 dynamic_unroll int32 valid_length cases, and one
+  native LP-pooling large-finite overflow case.
+- Sparse/view repeated-pattern bugs: CSR, CSR-dense, row_sparse retain,
+  row_sparse elemwise, sparse unary/scalar canonicalization cases, plus
+  stepped-slice, axis movement, reshape-like, flip/rot/squeeze/atleast_* NumPy
+  view-contract cases.
+- Verification after adding the first wave: `pytest -q ... -k test_similar`
+  reported 46 xfailed, 53 deselected, and 5 warnings in 200.85s. Verification
+  after adding the second wave and dropping the unverified oneDNN FC branch
+  candidate reported 64 xfailed, 78 deselected, and 2 warnings in 300.97s for
+  the selected second-wave slice. Focused verification after fixing InstanceNorm
+  non-default-axis deferred shape inference and Gluon loss numeric-edge cases
+  passed with 10 passed, 132 deselected, and 2 warnings in 1.11s under
+  `--runxfail`. The recursive Halley/Sagan batch then verified with 66 xfailed,
+  142 deselected, and 2 warnings in 422.40s; the recursive Anscombe/Aristotle
+  batch verified with 19 xfailed, 208 deselected, and 2 warnings in 2.59s.
 
 ## Runtime/API-Verified Repros
 
 | GitHub item | Test | Current symptom |
 |---|---|---|
-| PR #21217 | `test_pr_21217_horovod_kvstore_exposes_barrier` | Horovod KVStore exposes no `_barrier` method. |
-| issue #21176 | `test_issue_21176_conv2d_nhwc_cpu_runs` | CPU NHWC `Conv2D` reaches oneDNN and fails primitive creation. |
-| PR #21044 | `test_pr_21044_symbolblock_preserves_symbol_parameter_attrs` | `SymbolBlock` drops user-provided `lr_mult`, `wd_mult`, and initializer attributes from symbols. |
-| issue #21119 | `test_issue_21119_cross_gpu_binary_op_does_not_hang` | Cross-GPU NumPy binary op hangs instead of copying or rejecting contexts. |
-| issue #21111 | `test_issue_21111_cudnn_batchnorm_cachedop_forward_only_train_mode_is_stateless` | cuDNN `BatchNorm` `CachedOp` mutates moving variance to NaN during forward-only train-mode execution. |
-| issue #21156 | `test_issue_21156_indexed_recordio_close_survives_module_teardown` | `MXIndexedRecordIO.close()` depends on `MXIndexedRecordIO` module global during teardown. |
-| issue #21146 | `test_issue_21146_gru_deferred_init_with_sequence_length_runs` | GRU with `use_sequence_length=True` fails in deferred-init/argument binding. |
-| issue #20936 | `test_issue_20936_wheel_exposes_include_path` | Installed wheel has no include path usable by `mx.libinfo.find_include_path()`. |
-| issue #20657 | `test_issue_20657_find_conf_path_env_override_is_sequence` | `find_conf_path()` returns a bare string for `MXNET_CONF_PATH`; callers index the first character. |
-| issue #20605 | `test_issue_20605_csr_gradient_preserves_sparse_pattern` | CSR gradients keep CSR storage but densify to all entries instead of preserving the source sparse pattern. |
-| issue #20577 | `test_issue_20577_symbolblock_export_succeeds_without_cached_op_args` | `SymbolBlock.export()` raises a raw missing `_cached_op_args` `AttributeError`. |
-| issue #20391 | `test_issue_20391_numpy_gluon_allows_row_sparse_gradients` | NumPy/Gluon 2.0 rejects row-sparse gradients. |
-| PR #20491 | `test_pr_20491_cpp_symbol_exposes_optimize_for_backend` | The C++ `Symbol` API does not expose `OptimizeForBackend`. |
-| issue #20037 | `test_issue_20037_recordio_preserves_large_integer_label` | Scalar RecordIO labels round through float32. |
-| issue #20180 | `test_issue_20180_box_encode_zero_refs_is_validated_or_empty` | `contrib.box_encode` with zero reference boxes fails through an internal `TBlob` shape error. |
-| issue #20076 | `test_issue_20076_sequence_mask_rejects_huge_lengths_cleanly` | `SequenceMask` accepts huge `sequence_length` values and crashes instead of validating. |
-| issue #20046 | `test_issue_20046_image_resize_invalid_interp_has_mxnet_validation` | `image.resize` forwards invalid interpolation ids into OpenCV instead of rejecting them in MXNet. |
-| issue #20044 | `test_issue_20044_boolean_mask_empty_out_is_safe` | `contrib.boolean_mask` with empty data and `out=` crashes asynchronously. |
-| issue #19860 | `test_issue_19860_swish_negative_beta_zero_input_is_finite` | `Swish(beta=-1e307)` returns NaN for zero input. |
-| issue #19852 | `test_issue_19852_instancenorm_large_finite_input_is_finite` | `InstanceNorm` overflows large finite inputs into NaN outputs. |
-| issue #19785 | `test_issue_19785_groupnorm_zero_groups_is_python_error_not_abort` | `GroupNorm(num_groups=0)` aborts with SIGFPE instead of a Python error. |
-| issue #19753 | `test_issue_19753_topk_indices_are_integer_typed` | `topk(..., ret_typ='both')` returns float32 indices. |
-| issue #19628 | `test_issue_19628_gpu_ctcloss_accepts_fp16_predictions` | GPU `CTCLoss` with FP16 predictions fails with an internal half-vs-float `TBlob` mismatch. |
+| PR #21217 | `test_pr_21217_horovod_kvstore_exposes_barrier` | Fixed in current worktree; Horovod KVStore exposes `_barrier()`. |
+| issue #21176 | `test_issue_21176_conv2d_nhwc_cpu_runs` | Fixed in current worktree; CPU NHWC `Conv2D` runs by dispatching through NCHW on CPU. |
+| PR #21044 | `test_pr_21044_symbolblock_preserves_symbol_parameter_attrs` | Fixed in current worktree; now preserves user `lr_mult`, `wd_mult`, and initializer attributes. |
+| issue #21119 | `test_issue_21119_cross_gpu_binary_op_does_not_hang` | Fixed in current worktree; public NumPy binary wrappers reject operands on different devices before backend dispatch. |
+| issue #21111 | `test_issue_21111_cudnn_batchnorm_cachedop_forward_only_train_mode_is_stateless` | Fixed in current worktree; non-recording train-mode `CachedOp` calls copy mutable aux states so BatchNorm cannot leak forward-only state mutations. |
+| issue #21156 | `test_issue_21156_indexed_recordio_close_survives_module_teardown` | Fixed in current worktree; close no longer depends on the module global and tolerates partial teardown state. |
+| issue #21146 | `test_issue_21146_gru_deferred_init_with_sequence_length_runs` | Fixed in current worktree; GRU sequence lengths are passed by keyword and non-LSTM state is returned as a tensor. |
+| issue #20936 | `test_issue_20936_wheel_exposes_include_path` | Fixed in current worktree; `find_include_path()` returns include paths as a list. |
+| issue #20657 | `test_issue_20657_find_conf_path_env_override_is_sequence` | Fixed in current worktree; env override now returns a one-item list. |
+| issue #20605 | `test_issue_20605_csr_gradient_preserves_sparse_pattern` | Fixed in current worktree; CSR dot gradients preserve the source CSR sparse pattern. |
+| issue #20577 | `test_issue_20577_symbolblock_export_succeeds_without_cached_op_args` | Fixed in current worktree; export falls back to collected params when cached-op args are absent. |
+| issue #20391 | `test_issue_20391_numpy_gluon_allows_row_sparse_gradients` | Fixed in current worktree; sparse data/grad buffers use legacy sparse NDArrays under NumPy mode. |
+| PR #20491 | `test_pr_20491_cpp_symbol_exposes_optimize_for_backend` | Fixed in current worktree; C++ `Symbol` exposes `OptimizeForBackend`. |
+| issue #20037 | `test_issue_20037_recordio_preserves_large_integer_label` | Fixed in current worktree; scalar labels not exactly representable as float32 round-trip via a float64 payload extension. |
+| issue #20180 | `test_issue_20180_box_encode_zero_refs_is_validated_or_empty` | Fixed in current worktree; empty refs are rejected before the internal `TBlob` path. |
+| issue #20076 | `test_issue_20076_sequence_mask_rejects_huge_lengths_cleanly` | Fixed in current worktree; out-of-range `sequence_length` values are rejected in Python. |
+| issue #20046 | `test_issue_20046_image_resize_invalid_interp_has_mxnet_validation` | Fixed in current worktree; invalid interpolation ids are rejected before OpenCV. |
+| issue #20044 | `test_issue_20044_boolean_mask_empty_out_is_safe` | Fixed in current worktree; empty `boolean_mask` input is rejected before async execution. |
+| issue #19860 | `test_issue_19860_swish_negative_beta_zero_input_is_finite` | Fixed in current worktree; zero Swish inputs bypass the unstable extreme-beta sigmoid path. |
+| issue #19852 | `test_issue_19852_instancenorm_large_finite_input_is_finite` | Fixed in current worktree; imperative InstanceNorm uses a float64 variance path for large finite inputs. |
+| issue #19785 | `test_issue_19785_groupnorm_zero_groups_is_python_error_not_abort` | Fixed in current worktree; `GroupNorm(num_groups=0)` raises a Python `ValueError`. |
+| issue #19753 | `test_issue_19753_topk_indices_are_integer_typed` | Fixed in current worktree; `topk` index outputs are returned with integer dtype. |
+| issue #19628 | `test_issue_19628_gpu_ctcloss_accepts_fp16_predictions` | Fixed in current worktree; GPU `CTCLoss` accepts FP16 predictions without the internal dtype mismatch. |
 | issue #19659 | `test_issue_19659_hybrid_boolean_mask_backward_runs` | Hybridized `boolean_mask` backward fails because required backward inputs are missing. |
-| issue #19686 | `test_issue_19686_selfatt_qk_rejects_zero_heads_cleanly` | `interleaved_matmul_selfatt_qk(heads=0)` divides by zero or raises an unhelpful floating-point error. |
-| issue #19683 | `test_issue_19683_arange_like_repeat_zero_is_safe` | `contrib.arange_like(repeat=0)` aborts instead of producing or validating an empty result. |
-| issue #19647 | `test_issue_19647_optimize_for_missing_backend_raises` | `Symbol.optimize_for()` logs a missing backend error but still returns a symbol. |
-| issue #19423 | `test_issue_19423_choice_full_without_replacement_is_permutation` | `np.random.choice(n, size=n, replace=False)` returns the identity range. |
-| issue #19458 | `test_issue_19458_tensordot_scalar_empty_axes_backward` | `mx.np.tensordot` backward with scalar input and explicit empty axes fails with an internal shape mismatch. |
-| issue #19422 | `test_issue_19422_numpy_array_iteration_yields_python_scalars` | Iterating an MXNet NumPy ndarray yields zero-dimensional MXNet arrays instead of Python scalars. |
+| issue #19686 | `test_issue_19686_selfatt_qk_rejects_zero_heads_cleanly` | Fixed in current worktree; zero attention heads are rejected before backend dispatch. |
+| issue #19683 | `test_issue_19683_arange_like_repeat_zero_is_safe` | Fixed in current worktree; non-positive `repeat` is rejected before backend dispatch. |
+| issue #19647 | `test_issue_19647_optimize_for_missing_backend_raises` | Fixed in current worktree; missing optimization backends raise instead of returning a symbol after logging. |
+| issue #19423 | `test_issue_19423_choice_full_without_replacement_is_permutation` | Fixed in current worktree; full-range no-replacement choice now produces a non-identity permutation for some seeds. |
+| issue #19458 | `test_issue_19458_tensordot_scalar_empty_axes_backward` | Fixed in current worktree; scalar empty-axis `tensordot` backward returns finite correct gradients. |
+| issue #19422 | `test_issue_19422_numpy_array_iteration_yields_python_scalars` | Fixed in current worktree; NumPy ndarray iteration yields Python scalars for scalar elements. |
 | issue #19170 | `test_issue_19170_stepped_slice_shares_storage` | Stepped NumPy slicing returns a copy instead of a view. |
-| PR #18583 | `test_pr_18583_cpp_symbol_exposes_partial_shape_inference` | The C++ `Symbol` API does not expose partial shape inference. |
-| issue #19021 | `test_issue_19021_backward_rejects_mismatched_head_gradient_shape` | `backward()` accepts head gradients with shapes incompatible with the output and silently computes partial gradients. |
-| issue #18919 | `test_issue_18919_numpy_advanced_indexing_matches_numpy` | NumPy advanced indexing rejects broadcast-compatible mixed index arrays. |
-| issue #18770 | `test_issue_18770_non_native_byte_order_is_not_silently_lost` | Non-native NumPy byte order is silently discarded instead of preserved or rejected. |
-| PR #18792 | `test_pr_18792_sort_and_argsort_support_float16` | `sort` and `argsort` reject float16 tensors. |
-| issue #18669 | `test_issue_18669_zoneout_output_matches_new_state` | `ZoneoutCell` returns an output inconsistent with its first recurrent state. |
-| issue #18563 | `test_issue_18563_max_backward_splits_tied_gradient` | `max` backward gives full gradient to every tied maximum. |
-| issue #18078 | `test_issue_18078_prod_backward_multiple_zeros_is_finite` | `prod` backward with multiple zeros returns NaN gradients. |
-| issue #18300 | `test_issue_18300_numpy_prod_accepts_shape_tuple` | `mxnet.numpy.prod` rejects shape tuples such as `array.shape`. |
-| PR #17209 | `test_pr_17209_parameter_symbol_var_omits_dtype_attribute` | Gluon `Parameter.var()` still emits a fixed `__dtype__` attribute. |
-| issue #17936 | `test_issue_17936_gammaln_promotes_integer_input` | `npx.gammaln(int32)` returns integer zeros. |
-| issue #17698 | `test_issue_17698_split_and_load_does_not_materialize_full_input_first` | `split_and_load` first materializes the whole NumPy input on `ctx_list[0]`. |
-| issue #11774 | `test_issue_11774_batchnorm_without_scale_or_center_trains` | `BatchNorm(scale=False, center=False)` loses the autograd graph during training-style backward. |
-| issue #16402 | `test_issue_16402_legacy_ndarray_dtype_is_numpy_dtype_object` | Legacy `NDArray.dtype` is a scalar class, so `dtype()` returns `0.0`. |
-| issue #16427 | `test_issue_16427_recordio_pack_accepts_python3_string_payload` | `recordio.pack()` concatenates Python 3 `str` payloads with bytes. |
-| issue #13953 | `test_issue_13953_upsampling_accepts_data_keyword` | The symbolic `UpSampling` wrapper rejects the documented `data=` keyword. |
-| issue #13945 | `test_issue_13945_indexed_recordio_shared_reader_is_thread_safe` | Concurrent `MXIndexedRecordIO.read_idx()` calls on one reader return records for the wrong key. |
-| issue #13193 | `test_issue_13193_sparse_elemwise_mul_has_canonical_csr_payload` | Sparse CSR `elemwise_mul` has correct dense values but non-canonical, overallocated CSR payload metadata. |
-| issue #8430 | `test_issue_8430_ndarrayiter_preserves_integer_label_dtype` | `NDArrayIter` converts large integer labels to float32 and loses precision. |
-| issue #12286 | `test_issue_12286_ndarray_wrapper_raises_python_typeerror_for_missing_inputs` | Generated NDArray wrappers allow missing required inputs to reach backend `MXNetError` instead of Python `TypeError`. |
-| issue #8817 | `test_issue_8817_sparse_zeros_accepts_integer_shape` | `mx.nd.sparse.zeros(..., shape=10)` rejects one-dimensional integer shapes. |
-| issue #14695 | `test_issue_14695_single_output_ndarray_is_not_tuple_unpackable` | A single-output legacy `NDArray` result can be unpacked into multiple values. |
+| PR #18583 | `test_pr_18583_cpp_symbol_exposes_partial_shape_inference` | Fixed in current worktree; C++ `Symbol` exposes partial shape inference. |
+| issue #19021 | `test_issue_19021_backward_rejects_mismatched_head_gradient_shape` | Fixed in current worktree; Python backward rejects head gradients with mismatched shapes. |
+| issue #18919 | `test_issue_18919_numpy_advanced_indexing_matches_numpy` | Fixed in current worktree; mixed advanced index arrays are broadcast before indexing. |
+| issue #18770 | `test_issue_18770_non_native_byte_order_is_not_silently_lost` | Fixed in current worktree; non-native byte order inputs are rejected instead of silently normalized. |
+| PR #18792 | `test_pr_18792_sort_and_argsort_support_float16` | Fixed in current worktree; legacy `sort`/`argsort` handle float16 inputs through a float32 dispatch path. |
+| issue #18669 | `test_issue_18669_zoneout_output_matches_new_state` | Fixed in current worktree; `ZoneoutCell` returns output consistent with its first recurrent state. |
+| issue #18563 | `test_issue_18563_max_backward_splits_tied_gradient` | Fixed in current worktree; tied full-reduction extrema split gradient across equal winners. |
+| issue #18078 | `test_issue_18078_prod_backward_multiple_zeros_is_finite` | Fixed in current worktree; full-reduction `prod` with multiple zeros returns finite zero gradients. |
+| issue #18300 | `test_issue_18300_numpy_prod_accepts_shape_tuple` | Fixed in current worktree; public `mxnet.numpy.prod` converts array-like input with `asarray`. |
+| PR #17209 | `test_pr_17209_parameter_symbol_var_omits_dtype_attribute` | Fixed in current worktree; `Parameter.var()` no longer emits a fixed dtype attribute. |
+| issue #17936 | `test_issue_17936_gammaln_promotes_integer_input` | Fixed in current worktree; integer inputs to `npx.gammaln` are promoted before evaluation. |
+| issue #17698 | `test_issue_17698_split_and_load_does_not_materialize_full_input_first` | Fixed in current worktree; NumPy inputs are split before per-context MXNet materialization. |
+| issue #11774 | `test_issue_11774_batchnorm_without_scale_or_center_trains` | Fixed in current worktree; `BatchNorm(scale=False, center=False)` preserves the training autograd graph. |
+| issue #16402 | `test_issue_16402_legacy_ndarray_dtype_is_numpy_dtype_object` | Fixed in current worktree; legacy `NDArray.dtype` now returns a `numpy.dtype`. |
+| issue #16427 | `test_issue_16427_recordio_pack_accepts_python3_string_payload` | Fixed in current worktree; `recordio.pack()` encodes Python 3 string payloads before concatenation. |
+| issue #13953 | `test_issue_13953_upsampling_accepts_data_keyword` | Fixed in current worktree; vararg Symbol wrappers map `data`/`weight` Symbol kwargs to backend `arg0`/`arg1`. |
+| issue #13945 | `test_issue_13945_indexed_recordio_shared_reader_is_thread_safe` | Fixed in current worktree; indexed reads and writes are guarded by a per-reader lock. |
+| issue #13193 | `test_issue_13193_sparse_elemwise_mul_has_canonical_csr_payload` | Fixed in current worktree; CSR sparse `elemwise_mul` output is canonicalized before return. |
+| issue #8430 | `test_issue_8430_ndarrayiter_preserves_integer_label_dtype` | Fixed in current worktree; `NDArrayIter` preserves NumPy label dtype during construction and shuffle. |
+| issue #12286 | `test_issue_12286_ndarray_wrapper_raises_python_typeerror_for_missing_inputs` | Fixed in current worktree; generated NDArray wrappers translate backend input-count mismatches to `TypeError`. |
+| issue #8817 | `test_issue_8817_sparse_zeros_accepts_integer_shape` | Fixed in current worktree; sparse zeros normalizes integer shapes to one-dimensional tuples. |
+| issue #14695 | `test_issue_14695_single_output_ndarray_is_not_tuple_unpackable` | Fixed in current worktree; legacy split/SliceChannel remain list-returning even with one output. |
 
 ## Source-Verified Pending Runtime Repro
 
@@ -136,6 +258,13 @@ unit repro:
 - GPU memory report `#20315`: the exact loop plateaued in this wheel in both
   the `asnumpy()` and no-`asnumpy()` fresh-process comparisons, so it is not a
   current deterministic leak repro here.
+
+
+Similar-sweep candidates tried but not promoted:
+
+- oneDNN FC branch subgraph candidate: a proposed repro XPASSed in this
+  checkout, so it was removed from the test file and is not counted as a
+  verified current bug.
 
 Broad-scan items kept out of xfail tests:
 

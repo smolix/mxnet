@@ -484,6 +484,15 @@ inline bool DotBackwardInferStorageType(const nnvm::NodeAttrs& attrs,
       dispatched = true;
     }
   }
+  if (!dispatched && dev_mask == mshadow::cpu::kDevMask && no_transpose &&
+      lhs_stype == kCSRStorage && rhs_stype == kDefaultStorage &&
+      ograd_stype == kDefaultStorage && lhs_grad_stype == kCSRStorage) {
+    if (type_assign(&lhs_grad_stype, kCSRStorage) &&
+        type_assign(&rhs_grad_stype, kDefaultStorage)) {
+      DISPATCH_MODE_ASSIGN_CHECK(dispatch_mode, 0, DispatchMode::kFComputeEx);
+      dispatched = true;
+    }
+  }
   if (!dispatched && no_transpose && lhs_stype == kCSRStorage &&
       (ograd_stype == kRowSparseStorage || ograd_stype == kDefaultStorage)) {
     // backward: csr.T, rsp/dns -> rsp, dns.T, rsp/dns -> dns
@@ -514,6 +523,101 @@ inline bool DotBackwardInferStorageType(const nnvm::NodeAttrs& attrs,
     dispatched = dispatch_fallback(out_attrs, dispatch_mode);
   }
   return dispatched;
+}
+
+/*!
+ * \brief CPU kernel that computes sampled dot(ograd, rhs.T) values on a CSR pattern.
+ */
+struct DotDnsDnsCsrLikeByRowBlocks {
+  template <typename DType, typename IType, typename CType>
+  MSHADOW_CINLINE static void Map(int row,
+                                  DType* out,
+                                  const DType* ograd,
+                                  const DType* rhs,
+                                  const IType* indptr,
+                                  const CType* col_idx,
+                                  const nnvm::dim_t num_cols,
+                                  const int req) {
+    for (IType k = indptr[row]; k < indptr[row + 1]; ++k) {
+      DType val = 0;
+      const CType col = col_idx[k];
+      for (nnvm::dim_t j = 0; j < num_cols; ++j) {
+        val += ograd[row * num_cols + j] * rhs[col * num_cols + j];
+      }
+      if (req == kAddTo) {
+        out[k] += val;
+      } else {
+        out[k] = val;
+      }
+    }
+  }
+};
+
+template <typename xpu>
+inline void DotDnsDnsCsrLikeImpl(const OpContext& ctx,
+                                 const xpu& dev,
+                                 const TBlob& ograd,
+                                 const TBlob& rhs,
+                                 const NDArray& pattern,
+                                 const OpReqType req,
+                                 NDArray* ret) {
+  LOG(FATAL) << "DotDnsDnsCsrLikeImpl is not implemented for this device";
+}
+
+/*!
+ * \brief CPU Impl of sampled dot(ograd, rhs.T) using the input CSR pattern.
+ */
+inline void DotDnsDnsCsrLikeImpl(const OpContext& ctx,
+                                 const cpu& cpu_dev,
+                                 const TBlob& ograd,
+                                 const TBlob& rhs,
+                                 const NDArray& pattern,
+                                 const OpReqType req,
+                                 NDArray* ret) {
+  if (kNullOp == req)
+    return;
+
+  CHECK(req == kWriteTo || req == kAddTo)
+      << "DotDnsDnsCsrLikeImpl only supports WriteTo and AddTo";
+  CHECK_EQ(pattern.storage_type(), kCSRStorage);
+  CHECK_EQ(ret->storage_type(), kCSRStorage);
+  CHECK_EQ(ograd.ndim(), 2);
+  CHECK_EQ(rhs.ndim(), 2);
+  CHECK_EQ(pattern.shape()[0], ograd.shape_[0]);
+  CHECK_EQ(pattern.shape()[1], rhs.shape_[0]);
+  CHECK_EQ(ograd.shape_[1], rhs.shape_[1]);
+  CHECK_EQ(ograd.type_flag_, rhs.type_flag_);
+
+  mshadow::Stream<cpu>* s = ctx.get_stream<cpu>();
+  if (!pattern.storage_initialized()) {
+    FillZerosCsrImpl(s, *ret);
+    return;
+  }
+
+  mxnet::ShapeVector aux_shapes({pattern.aux_shape(csr::kIndPtr), pattern.aux_shape(csr::kIdx)});
+  ret->CheckAndAlloc(aux_shapes);
+  mxnet_op::copy(s, ret->aux_data(csr::kIndPtr), pattern.aux_data(csr::kIndPtr));
+  mxnet_op::copy(s, ret->aux_data(csr::kIdx), pattern.aux_data(csr::kIdx));
+
+  const TBlob& data_out  = ret->data();
+  const TBlob& indptr    = pattern.aux_data(csr::kIndPtr);
+  const TBlob& col_idx   = pattern.aux_data(csr::kIdx);
+  const nnvm::dim_t rows = pattern.shape()[0];
+  MSHADOW_SGL_DBL_TYPE_SWITCH(data_out.type_flag_, DType, {
+    MSHADOW_IDX_TYPE_SWITCH(indptr.type_flag_, IType, {
+      MSHADOW_IDX_TYPE_SWITCH(col_idx.type_flag_, CType, {
+        mxnet_op::Kernel<DotDnsDnsCsrLikeByRowBlocks, cpu>::Launch(s,
+                                                                   rows,
+                                                                   data_out.dptr<DType>(),
+                                                                   ograd.dptr<DType>(),
+                                                                   rhs.dptr<DType>(),
+                                                                   indptr.dptr<IType>(),
+                                                                   col_idx.dptr<CType>(),
+                                                                   ograd.shape_[1],
+                                                                   req);
+      });
+    });
+  });
 }
 
 /*!
@@ -1622,20 +1726,38 @@ void DotBackwardEx(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(inputs.size(), 3U);
   CHECK_EQ(outputs.size(), 2U);
   CHECK_EQ(req.size(), 2U);
-  CHECK(!(req[0] != kNullOp && outputs[0].storage_type() == kCSRStorage))
+
+  const DotParam& param = nnvm::get<DotParam>(attrs.parsed);
+  const auto ograd_stype    = inputs[0].storage_type();
+  const auto lhs_stype      = inputs[1].storage_type();
+  const auto rhs_stype      = inputs[2].storage_type();
+  const auto grad_lhs_stype = outputs[0].storage_type();
+  const auto grad_rhs_stype = outputs[1].storage_type();
+  const bool no_transpose   = !param.transpose_a && !param.transpose_b;
+  const bool supports_lhs_csr_grad =
+      std::is_same<xpu, cpu>::value && no_transpose && ograd_stype == kDefaultStorage &&
+      lhs_stype == kCSRStorage && rhs_stype == kDefaultStorage &&
+      grad_lhs_stype == kCSRStorage;
+  CHECK(!(req[0] != kNullOp && grad_lhs_stype == kCSRStorage && !supports_lhs_csr_grad))
       << "sparse dot does not support computing the gradient of csr";
   CHECK(!(req[1] != kNullOp && outputs[1].storage_type() == kCSRStorage))
       << "sparse dot does not support computing the gradient of csr";
   CHECK_NE(req[1], kWriteInplace) << "DotBackwardEx does not support WriteInplace";
-
-  const DotParam& param = nnvm::get<DotParam>(attrs.parsed);
   CHECK_EQ(inputs[0].shape().ndim(), 2) << "sparse dot only supports 2 dimensional lhs";
   CHECK_EQ(inputs[1].shape().ndim(), 2) << "sparse dot only supports 2 dimensional rhs";
-  const auto ograd_stype    = inputs[0].storage_type();
-  const auto lhs_stype      = inputs[1].storage_type();
-  const auto rhs_stype      = inputs[2].storage_type();
-  const auto grad_rhs_stype = outputs[1].storage_type();
-  if (ograd_stype == kDefaultStorage                                 // ograd dns format
+  if (supports_lhs_csr_grad && grad_rhs_stype == kDefaultStorage) {
+    NDArray lhs_ret = outputs[0];
+    DotDnsDnsCsrLikeImpl(
+        ctx, xpu(), inputs[0].data(), inputs[2].data(), inputs[1], req[0], &lhs_ret);
+    TBlob rhs_ret = outputs[1].data();
+    DotCsrDnsDnsImpl(ctx, xpu(), inputs[1], inputs[0].data(), req[1], true, &rhs_ret);
+  } else if (supports_lhs_csr_grad && grad_rhs_stype == kRowSparseStorage) {
+    NDArray lhs_ret = outputs[0];
+    DotDnsDnsCsrLikeImpl(
+        ctx, xpu(), inputs[0].data(), inputs[2].data(), inputs[1], req[0], &lhs_ret);
+    NDArray rhs_ret = outputs[1];
+    DotCsrDnsRspImpl(ctx, xpu(), inputs[1], inputs[0].data(), req[1], true, &rhs_ret);
+  } else if (ograd_stype == kDefaultStorage                           // ograd dns format
       && lhs_stype == kCSRStorage                                    // csr input lhs of the op
       && grad_rhs_stype == kDefaultStorage && !param.transpose_b) {  // grad(rhs) dns format
     TBlob ret = outputs[1].data();

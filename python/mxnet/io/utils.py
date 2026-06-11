@@ -52,7 +52,8 @@ def _init_data(data, allow_empty, default_name):
     for k, v in data.items():
         if not isinstance(v, (NDArray, h5py.Dataset) if h5py else NDArray):
             try:
-                data[k] = array(v)
+                dtype = v.dtype if isinstance(v, np.ndarray) else None
+                data[k] = array(v, dtype=dtype)
             except Exception as e:
                 raise TypeError((f"Invalid type '{type(v)}' for {k}, ") +
                                 "should be NDArray, numpy.ndarray or h5py.Dataset") from e
@@ -81,6 +82,7 @@ def _getdata_by_idx(data, idx):
         elif isinstance(v, CSRNDArray):
             shuffle_data.append((k, sparse_array(v.asscipy()[idx], v.context)))
         else:
-            shuffle_data.append((k, array(v.asnumpy()[idx], v.context)))
+            shuffled = v.asnumpy()[idx]
+            shuffle_data.append((k, array(shuffled, v.context, dtype=shuffled.dtype)))
 
     return shuffle_data

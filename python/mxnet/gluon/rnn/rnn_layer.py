@@ -131,7 +131,9 @@ class _RNNLayer(HybridBlock):
         return states
 
     def __call__(self, inputs, states=None, sequence_length=None, **kwargs):
-        self.skip_states = states is None
+        self._return_single_state = (states is None and self._mode == 'gru'
+                                     and sequence_length is not None)
+        self.skip_states = states is None and not self._return_single_state
         if states is None:
             batch_size = inputs.shape[self._layout.find('N')]
             states = self.begin_state(batch_size, device=inputs.device, dtype=inputs.dtype)
@@ -153,6 +155,8 @@ class _RNNLayer(HybridBlock):
         out = self._forward_kernel(inputs, states, sequence_length)
 
         # out is (output, state)
+        if self._return_single_state:
+            return out[0], out[1][0]
         return out[0] if self.skip_states else out
 
     def infer_shape(self, inputs, *args):
@@ -179,24 +183,29 @@ class _RNNLayer(HybridBlock):
         if self._layout == 'NTC':
             inputs = np.swapaxes(inputs, 0, 1)
 
-        if self._use_sequence_length:
-            rnn_args = states + [sequence_length]
-        else:
-            rnn_args = states
-
         rnn_args_device = []
-        for args in rnn_args:
+        for args in states:
             new_args = args.to_device(device)
             rnn_args_device.append(new_args)
 
-        rnn = npx.rnn(inputs, self.rnn_param.data(device), *rnn_args_device,
-                      use_sequence_length=self._use_sequence_length,
-                      state_size=self._hidden_size, projection_size=self._projection_size,
-                      num_layers=self._num_layers, bidirectional=self._dir == 2,
-                      p=self._dropout, state_outputs=True, mode=self._mode,
-                      lstm_state_clip_min=self._lstm_state_clip_min,
-                      lstm_state_clip_max=self._lstm_state_clip_max,
-                      lstm_state_clip_nan=self._lstm_state_clip_nan)
+        sequence_length_device = None
+        if self._use_sequence_length:
+            sequence_length_device = sequence_length.to_device(device)
+
+        rnn_params = self.rnn_param.data(device)
+        if self._use_sequence_length and device.device_type == 'cpu':
+            rnn = self._forward_cpu_sequence_length(
+                inputs, rnn_params, rnn_args_device, sequence_length_device)
+        else:
+            rnn = npx.rnn(inputs, rnn_params, *rnn_args_device,
+                          sequence_length=sequence_length_device,
+                          use_sequence_length=self._use_sequence_length,
+                          state_size=self._hidden_size, projection_size=self._projection_size,
+                          num_layers=self._num_layers, bidirectional=self._dir == 2,
+                          p=self._dropout, state_outputs=True, mode=self._mode,
+                          lstm_state_clip_min=self._lstm_state_clip_min,
+                          lstm_state_clip_max=self._lstm_state_clip_max,
+                          lstm_state_clip_nan=self._lstm_state_clip_nan)
 
         if self._mode == 'lstm':
             outputs, states = rnn[0], [rnn[1], rnn[2]]
@@ -207,6 +216,53 @@ class _RNNLayer(HybridBlock):
             outputs = np.swapaxes(outputs, 0, 1)
 
         return outputs, states
+
+    def _forward_cpu_sequence_length(self, inputs, rnn_params, states, sequence_length):
+        seq_len, batch_size = inputs.shape[0], inputs.shape[1]
+        lengths = sequence_length.asnumpy().astype('int64')
+        output_size = states[0].shape[2] * self._dir
+        outputs = []
+        state_outputs = [[] for _ in states]
+
+        for batch_idx in range(batch_size):
+            length = int(lengths[batch_idx])
+            if length < 0 or length > seq_len:
+                raise ValueError(
+                    f"Invalid sequence length {length}. Expecting value between 0 and {seq_len}.")
+            sample_states = [state[:, batch_idx:batch_idx + 1, :] for state in states]
+            if length == 0:
+                sample_output = np.zeros((seq_len, 1, output_size), device=inputs.device,
+                                         dtype=inputs.dtype)
+                sample_rnn_states = sample_states
+            else:
+                sample_inputs = inputs[:length, batch_idx:batch_idx + 1, :]
+                sample_rnn = npx.rnn(sample_inputs, rnn_params, *sample_states,
+                                     use_sequence_length=False,
+                                     state_size=self._hidden_size,
+                                     projection_size=self._projection_size,
+                                     num_layers=self._num_layers,
+                                     bidirectional=self._dir == 2,
+                                     p=self._dropout,
+                                     state_outputs=True,
+                                     mode=self._mode,
+                                     lstm_state_clip_min=self._lstm_state_clip_min,
+                                     lstm_state_clip_max=self._lstm_state_clip_max,
+                                     lstm_state_clip_nan=self._lstm_state_clip_nan)
+                sample_output = sample_rnn[0]
+                sample_rnn_states = ([sample_rnn[1], sample_rnn[2]] if self._mode == 'lstm'
+                                     else [sample_rnn[1]])
+                if length < seq_len:
+                    padding = np.zeros((seq_len - length, 1, sample_output.shape[2]),
+                                       device=inputs.device, dtype=sample_output.dtype)
+                    sample_output = np.concatenate((sample_output, padding), axis=0)
+
+            outputs.append(sample_output)
+            for state_idx, sample_state in enumerate(sample_rnn_states):
+                state_outputs[state_idx].append(sample_state)
+
+        outputs = np.concatenate(outputs, axis=1)
+        states = [np.concatenate(sample_states, axis=1) for sample_states in state_outputs]
+        return (outputs,) + tuple(states)
 
 
 class RNN(_RNNLayer):

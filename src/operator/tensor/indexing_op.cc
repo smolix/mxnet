@@ -644,10 +644,19 @@ GatherNDBackwardImpl(index_t N,
 #pragma omp parallel for
   for (index_t i = 0; i < N; i++) {
     index_t offset = 0;
+    bool valid     = true;
     for (index_t j = 0; j < M; ++j) {
-      offset +=
-          strides[j] * (static_cast<index_t>(indices[j * N + i] + mshape[j]) % mshape[j]);
+      const index_t idx = static_cast<index_t>(indices[j * N + i]);
+      // Guard against out-of-range indices (H7): the modulo would otherwise wrap an
+      // OOB index into a valid-looking offset and corrupt an unrelated gradient cell.
+      if (idx < -mshape[j] || idx >= mshape[j]) {
+        valid = false;
+        break;
+      }
+      offset += strides[j] * ((idx + mshape[j]) % mshape[j]);
     }
+    if (!valid)
+      continue;
     for (index_t j = 0; j < K; ++j) {
 #pragma omp atomic
       out[offset + j] += data[i * K + j];
@@ -668,10 +677,19 @@ GatherNDBackwardImpl(index_t N,
                      mshadow::Stream<cpu>* s) {
   for (index_t i = 0; i < N; i++) {
     index_t offset = 0;
+    bool valid     = true;
     for (index_t j = 0; j < M; ++j) {
-      offset +=
-          strides[j] * (static_cast<index_t>(indices[j * N + i] + mshape[j]) % mshape[j]);
+      const index_t idx = static_cast<index_t>(indices[j * N + i]);
+      // Guard against out-of-range indices (H7): the modulo would otherwise wrap an
+      // OOB index into a valid-looking offset and corrupt an unrelated gradient cell.
+      if (idx < -mshape[j] || idx >= mshape[j]) {
+        valid = false;
+        break;
+      }
+      offset += strides[j] * ((idx + mshape[j]) % mshape[j]);
     }
+    if (!valid)
+      continue;
     for (index_t j = 0; j < K; ++j) {
       out[offset + j] += data[i * K + j];
     }

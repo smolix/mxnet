@@ -582,7 +582,15 @@ struct backward_gather_nd_gpu {
                                   const IType* indices) {
     index_t offset = 0;
     for (index_t j = 0; j < M; ++j) {
-      offset += strides[j] * (static_cast<int>(indices[j * N + i] + mshape[j]) % mshape[j]);
+      const index_t idx = static_cast<index_t>(indices[j * N + i]);
+      // Guard against out-of-range indices (H7). Without this, idx outside
+      // [-mshape, mshape-1] gets wrapped by the modulo into a *valid-looking*
+      // offset and silently corrupts an unrelated cell's gradient. Drop the
+      // contribution instead, matching scatter_nd's OOB policy.
+      if (idx < -mshape[j] || idx >= mshape[j]) {
+        return;
+      }
+      offset += strides[j] * ((idx + mshape[j]) % mshape[j]);
     }
     for (index_t j = 0; j < K; ++j) {
       atomicAdd(out + (offset + j), data[i * K + j]);
@@ -991,10 +999,20 @@ NNVM_REGISTER_OP(gather_nd)
                                        [](const NodeAttrs&, const bool) { return false; })
     .set_attr<FCompute>("FCompute<gpu>", GatherNDForwardGPU);
 
-NNVM_REGISTER_OP(scatter_nd).set_attr<FCompute>("FCompute<gpu>", ScatterNDForward<gpu>);
+// scatter_nd validates its indices on-device and copies a flag back to the host
+// (D2H + cudaStreamSynchronize in GatherNDCheckBoundGPU), which is illegal while a
+// CUDA graph is being captured. Exclude it from capture, like gather_nd above.
+NNVM_REGISTER_OP(scatter_nd)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FCompute>("FCompute<gpu>", ScatterNDForward<gpu>);
 
 NNVM_REGISTER_OP(_backward_gather_nd).set_attr<FCompute>("FCompute<gpu>", GatherNDBackward<gpu>);
 
-NNVM_REGISTER_OP(_scatter_set_nd).set_attr<FCompute>("FCompute<gpu>", ScatterSetNDForward<gpu>);
+// _scatter_set_nd dispatches through ScatterNDForward, inheriting the same host sync.
+NNVM_REGISTER_OP(_scatter_set_nd)
+    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
+                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FCompute>("FCompute<gpu>", ScatterSetNDForward<gpu>);
 }  // namespace op
 }  // namespace mxnet

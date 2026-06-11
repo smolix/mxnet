@@ -110,7 +110,9 @@ inline bool SetFlushDenorms(bool value) {
 
 inline void ApplyConfiguredFlushDenormsToCurrentThread() {
 #if MXNET_SUPPORT_FTZ_DAZ
-  const int configured = ConfiguredFlushDenorms().load();
+  // Relaxed: this runs per executed op; a seq_cst full barrier here is needless
+  // (the value is a simple monotonic config flag, default -1 = no-op). (M16)
+  const int configured = ConfiguredFlushDenorms().load(std::memory_order_relaxed);
   if (configured >= 0) {
     ApplyFlushDenormsToCurrentThread(configured != 0);
   }

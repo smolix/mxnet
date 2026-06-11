@@ -51,11 +51,16 @@ using std::isnan;
 #endif
 
 template <typename xpu>
-int get_num_threads(const int N);
+int get_num_threads(const index_t N);
 
 #ifdef __CUDACC__
-#define CUDA_KERNEL_LOOP(i, n) \
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < (n); i += blockDim.x * gridDim.x)
+// index_t (int64) loop variable + stride so element counts above 2^31 are not
+// truncated (M8, sibling of the Kernel::Launch fix). `n` may be int or index_t;
+// the comparison promotes to index_t.
+#define CUDA_KERNEL_LOOP(i, n)                                                  \
+  for (index_t i = static_cast<index_t>(blockIdx.x) * blockDim.x + threadIdx.x; \
+       i < (n);                                                                 \
+       i += static_cast<index_t>(blockDim.x) * gridDim.x)
 
 inline cudaDeviceProp cuda_get_device_prop() {
   int device;
@@ -68,13 +73,16 @@ inline cudaDeviceProp cuda_get_device_prop() {
 /*!
  * \brief Get the number of blocks for cuda kernel given N
  */
-inline int cuda_get_num_blocks(const int N) {
+inline int cuda_get_num_blocks(const index_t N) {
   using namespace mshadow::cuda_impl;
-  return std::min(kMaxGridNum, (N + kBaseThreadNum - 1) / kBaseThreadNum);
+  // Compute in 64-bit so a large N is not truncated; the grid dim is capped at
+  // kMaxGridNum and fits int (M8).
+  return static_cast<int>(
+      std::min<index_t>(kMaxGridNum, (N + kBaseThreadNum - 1) / kBaseThreadNum));
 }
 
 template <>
-inline int get_num_threads<gpu>(const int N) {
+inline int get_num_threads<gpu>(const index_t N) {
   using namespace mshadow::cuda_impl;
   return kBaseThreadNum * cuda_get_num_blocks(N);
 }
@@ -82,7 +90,7 @@ inline int get_num_threads<gpu>(const int N) {
 #endif  // __CUDACC__
 
 template <>
-inline int get_num_threads<cpu>(const int N) {
+inline int get_num_threads<cpu>(const index_t N) {
   return engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 }
 
@@ -1174,15 +1182,17 @@ struct Kernel<OP, cpu> {
 
 #ifdef __CUDACC__
 template <typename OP, typename... Args>
-__global__ void mxnet_generic_kernel(int N, Args... args) {
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += blockDim.x * gridDim.x) {
+__global__ void mxnet_generic_kernel(index_t N, Args... args) {
+  const index_t stride = static_cast<index_t>(blockDim.x) * gridDim.x;
+  for (index_t i = static_cast<index_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < N; i += stride) {
     OP::Map(i, args...);
   }
 }
 
 template <typename OP, typename... Args>
-__global__ void mxnet_generic_kernel_ex(int N, Args... args) {
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += blockDim.x * gridDim.x) {
+__global__ void mxnet_generic_kernel_ex(index_t N, Args... args) {
+  const index_t stride = static_cast<index_t>(blockDim.x) * gridDim.x;
+  for (index_t i = static_cast<index_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < N; i += stride) {
     OP::Map(i, 1, args...);
   }
 }
@@ -1191,22 +1201,26 @@ template <typename OP>
 struct Kernel<OP, gpu> {
   /*! \brief Launch GPU kernel */
   template <typename... Args>
-  inline static void Launch(mshadow::Stream<gpu>* s, int N, Args... args) {
+  inline static void Launch(mshadow::Stream<gpu>* s, index_t N, Args... args) {
     if (0 == N)
       return;
     using namespace mshadow::cuda_impl;
-    int ngrid = std::min(kMaxGridNum, (N + kBaseThreadNum - 1) / kBaseThreadNum);
+    // Compute the grid extent in 64-bit so element counts above 2^31 are not
+    // truncated; the launch grid dim itself is bounded by kMaxGridNum and fits int.
+    const int ngrid = static_cast<int>(
+        std::min<index_t>(kMaxGridNum, (N + kBaseThreadNum - 1) / kBaseThreadNum));
     mxnet_generic_kernel<OP, Args...>
         <<<ngrid, kBaseThreadNum, 0, mshadow::Stream<gpu>::GetStream(s)>>>(N, args...);
     MSHADOW_CUDA_POST_KERNEL_CHECK(mxnet_generic_kernel);
   }
 
   template <typename... Args>
-  inline static void LaunchEx(mshadow::Stream<gpu>* s, const int N, Args... args) {
+  inline static void LaunchEx(mshadow::Stream<gpu>* s, const index_t N, Args... args) {
     if (0 == N)
       return;
     using namespace mshadow::cuda_impl;
-    int ngrid = std::min(kMaxGridNum, (N + kBaseThreadNum - 1) / kBaseThreadNum);
+    const int ngrid = static_cast<int>(
+        std::min<index_t>(kMaxGridNum, (N + kBaseThreadNum - 1) / kBaseThreadNum));
     mxnet_generic_kernel_ex<OP, Args...>
         <<<ngrid, kBaseThreadNum, 0, mshadow::Stream<gpu>::GetStream(s)>>>(N, args...);
     MSHADOW_CUDA_POST_KERNEL_CHECK(mxnet_generic_kernel_ex);

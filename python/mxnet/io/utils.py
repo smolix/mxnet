@@ -53,9 +53,9 @@ def _init_data(data, allow_empty, default_name):
         if not isinstance(v, (NDArray, h5py.Dataset) if h5py else NDArray):
             try:
                 data[k] = array(v)
-            except:
+            except Exception as e:
                 raise TypeError((f"Invalid type '{type(v)}' for {k}, ") +
-                                "should be NDArray, numpy.ndarray or h5py.Dataset")
+                                "should be NDArray, numpy.ndarray or h5py.Dataset") from e
 
     return list(sorted(data.items()))
 

@@ -118,6 +118,10 @@ inline void CountSketchForward(const Tensor<gpu, 2, DType>& out,
   const DType* in_ptr = in.dptr_;
   const DType* h_ptr  = h.dptr_;
   const DType* s_ptr  = s.dptr_;
+  // Run on the engine's stream (not the default stream) so the engine's per-op
+  // stream sync covers these kernels; this lets us drop the per-iteration
+  // cudaDeviceSynchronize() that previously serialized the whole device (H6).
+  cudaStream_t stream = mshadow::Stream<gpu>::GetStream(out.stream_);
   int upper_bound     = n_samples / processing_batch_size;
   if (n_samples % processing_batch_size == 0) {
     upper_bound = upper_bound - 1;
@@ -131,16 +135,16 @@ inline void CountSketchForward(const Tensor<gpu, 2, DType>& out,
     // to make number of threads the same as input
     const int threads_per_block = min(THREADS_PER_BLOCK, nthreads);
     int nblocks                 = (nthreads + threads_per_block - 1) / threads_per_block;
-    mshadow::cuda_impl::sketch_forward_kernel<DType><<<nblocks, threads_per_block>>>(nthreads,
-                                                                       out_ptr + bstart * out_dim,
-                                                                       h_ptr,
-                                                                       s_ptr,
-                                                                       in_ptr + bstart * in_dim,
-                                                                       batchlen,
-                                                                       in_dim,
-                                                                       out_dim);
-    cudaError_t err = cudaDeviceSynchronize();
-    CHECK_EQ(err, cudaSuccess) << "Error occured! CUDA: " << cudaGetErrorString(err);
+    mshadow::cuda_impl::sketch_forward_kernel<DType>
+        <<<nblocks, threads_per_block, 0, stream>>>(nthreads,
+                                                    out_ptr + bstart * out_dim,
+                                                    h_ptr,
+                                                    s_ptr,
+                                                    in_ptr + bstart * in_dim,
+                                                    batchlen,
+                                                    in_dim,
+                                                    out_dim);
+    MSHADOW_CUDA_POST_KERNEL_CHECK(sketch_forward_kernel);
     bstart = (i + 1) * batchlen;
   }
 }
@@ -158,7 +162,10 @@ inline void CountSketchBackward(const Tensor<gpu, 2, DType>& in_grad,
   const DType* out_grad_ptr = out_grad.dptr_;
   const DType* h_ptr        = h.dptr_;
   const DType* s_ptr        = s.dptr_;
-  int upper_bound           = n_samples / processing_batch_size;
+  // Run on the engine's stream so the engine's per-op sync covers these kernels
+  // and the per-iteration cudaDeviceSynchronize() can be dropped (H6).
+  cudaStream_t stream = mshadow::Stream<gpu>::GetStream(in_grad.stream_);
+  int upper_bound     = n_samples / processing_batch_size;
   if (n_samples % processing_batch_size == 0) {
     upper_bound = upper_bound - 1;
   }
@@ -172,7 +179,7 @@ inline void CountSketchBackward(const Tensor<gpu, 2, DType>& in_grad,
     const int threads_per_block = min(THREADS_PER_BLOCK, nthreads);
     int nblocks                 = (nthreads + threads_per_block - 1) / threads_per_block;
     mshadow::cuda_impl::sketch_backward_kernel<DType>
-        <<<nblocks, threads_per_block>>>(nthreads,
+        <<<nblocks, threads_per_block, 0, stream>>>(nthreads,
                                          in_grad_ptr + bstart * in_dim,
                                          h_ptr,
                                          s_ptr,
@@ -180,8 +187,7 @@ inline void CountSketchBackward(const Tensor<gpu, 2, DType>& in_grad,
                                          batchlen,
                                          in_dim,
                                          out_dim);
-    cudaError_t err = cudaDeviceSynchronize();
-    CHECK_EQ(err, cudaSuccess) << "Error occured! CUDA: " << cudaGetErrorString(err);
+    MSHADOW_CUDA_POST_KERNEL_CHECK(sketch_backward_kernel);
     bstart = (i + 1) * batchlen;
   }
 }

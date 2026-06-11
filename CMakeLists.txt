@@ -646,11 +646,10 @@ if(USE_OPENMP)
       set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -openmp:experimental")
       set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -openmp:experimental")
     endif()
-    if(NOT BLAS STREQUAL "MKL")
-      # Linker flags for Intel OMP are already set in case MKL is used. Only set if not MKL
-      set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
-      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
-    endif()
+    # NOTE: CMake's FindOpenMP defines OpenMP_<lang>_FLAGS and the imported target
+    # OpenMP::OpenMP_CXX, but never an OpenMP_EXE_LINKER_FLAGS variable, so the old
+    # set() calls here expanded to nothing. Linking is handled by appending
+    # OpenMP::OpenMP_CXX to mxnet_LINKER_LIBS below.
     if(TARGET OpenMP::OpenMP_CXX)
       list(APPEND mxnet_LINKER_LIBS OpenMP::OpenMP_CXX)
     else()
@@ -731,8 +730,10 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/dmlc-core/cmake)
   set_target_properties(dmlc PROPERTIES CXX_CLANG_TIDY "")  # don't lint 3rdparty dependency
 endif()
 
-FILE(GLOB_RECURSE SOURCE "src/*.cc" "src/*.h" "include/*.h")
-FILE(GLOB_RECURSE CUDA "src/*.cu" "src/*.cuh")
+# CONFIGURE_DEPENDS: re-glob at build time so adding/removing a source file
+# triggers a reconfigure instead of silently producing a stale incremental build.
+FILE(GLOB_RECURSE SOURCE CONFIGURE_DEPENDS "src/*.cc" "src/*.h" "include/*.h")
+FILE(GLOB_RECURSE CUDA CONFIGURE_DEPENDS "src/*.cu" "src/*.cuh")
 
 if(NOT (USE_OPERATOR_TUNING AND USE_OPENMP))
   list(REMOVE_ITEM SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/operator/operator_tune.cc")
@@ -844,6 +845,34 @@ if(USE_CUDA)
     if((arch_str MATCHES ".*sm_[0-9]+"))
       string( REGEX REPLACE  ".*sm_([0-9]+)" "\\1" arch_code ${arch_str} )
       list(APPEND arch_code_list ${arch_code})
+    endif()
+  endforeach()
+
+  # H4: fail loudly if the toolkit silently dropped an explicitly requested numeric
+  # arch (e.g. sm_90/sm_120 on a CUDA older than 11.8/12.8). CUDA_SELECT_NVCC_ARCH_FLAGS
+  # filters unknown arches out, so without this check the wheel would ship with no
+  # kernel image / no PTX fallback and fail at runtime ("no kernel image is available").
+  set(arch_ptx_list)
+  foreach(arch_str ${CUDA_ARCH_FLAGS})
+    if(arch_str MATCHES ".*compute_[0-9]+")
+      string(REGEX REPLACE ".*compute_([0-9]+)" "\\1" ptx_code ${arch_str})
+      list(APPEND arch_ptx_list ${ptx_code})
+    endif()
+  endforeach()
+  foreach(req_arch ${MXNET_CUDA_ARCH})
+    # Only validate explicit numeric requests like "8.9" or "12.0+PTX" -- skip the
+    # toolkit-defined sets (Auto/Common/All) and NAME forms (Ampere/Hopper/...).
+    if(req_arch MATCHES "^[0-9]+\\.[0-9]+")
+      string(REGEX REPLACE "^([0-9]+)\\.([0-9]+).*" "\\1\\2" req_code "${req_arch}")
+      list(FIND arch_code_list "${req_code}" _sm_idx)
+      list(FIND arch_ptx_list "${req_code}" _ptx_idx)
+      if(_sm_idx EQUAL -1 AND _ptx_idx EQUAL -1)
+        message(FATAL_ERROR
+          "Requested CUDA arch '${req_arch}' (sm_${req_code}) produced no -gencode flags. "
+          "Your CUDA toolkit (version ${CUDAToolkit_VERSION}) is too old to know this "
+          "architecture, so the binary would have no kernel image for it. Upgrade CUDA or "
+          "set MXNET_CUDA_ARCH to architectures your toolkit supports.")
+      endif()
     endif()
   endforeach()
 

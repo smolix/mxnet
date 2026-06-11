@@ -211,7 +211,7 @@ run_shard cpu_unittest \
 # test_operator.py — biggest CPU surface, run with stricter caps.
 run_shard cpu_test_operator \
     "CPU test_operator.py (big surface)" -- \
-    tests/python/unittest/test_operator.py -v -n 4
+    tests/python/unittest/test_operator.py -v -n "$PARALLEL_CPU"
 
 # test_random.py — separated to keep order-sensitive bus error (FS12) isolated.
 run_shard cpu_test_random \

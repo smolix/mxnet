@@ -6463,8 +6463,12 @@ def test_np_randn():
 
 @use_np
 @requires_lapack
-# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
-# @pytest.mark.skip(reason='Test hangs. Tracked in #18144')
+# Re-enabled 2026-06-11 after a real fix for apache/mxnet#18144: multivariate_normal
+# no longer routes through the `mvn_fallback` CustomOp (whose Python forward ran on a
+# separate thread pool and deadlocked against the engine inside a CachedOp graph). It
+# is now a direct op composition (cholesky + N(0,1) + einsum), so there is no
+# custom-op pool to deadlock. Verified: the previously-hanging hybridized loop now
+# completes, and this test passes.
 def test_np_multivariate_normal():
     class TestMultivariateNormal(HybridBlock):
         def __init__(self, size=None):

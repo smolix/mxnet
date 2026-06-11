@@ -101,6 +101,12 @@ with_cython = False
 if '--with-cython' in sys.argv:
     with_cython = True
     sys.argv.remove('--with-cython')
+elif os.environ.get('MXNET_WITH_CYTHON', '').strip().lower() in ('1', 'true', 'yes', 'on'):
+    # Honor an env var too: `python -m build` does not forward custom argv to
+    # setup.py, so the wheel build (tools/build_cleanup_wheel.sh) needs this to
+    # compile the _cy3 fast path. config_cython() still degrades gracefully if
+    # Cython is unavailable. (M15: without this the wheel ships ctypes-only.)
+    with_cython = True
 
 # We can not import `mxnet.info.py` in setup.py directly since mxnet/__init__.py
 # Will be invoked which introduces dependences

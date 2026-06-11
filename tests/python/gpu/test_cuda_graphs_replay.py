@@ -401,6 +401,56 @@ def test_cuda_graphs_dropout_rng_under_replay():
     assert off == on, f"graphs-on dropout RNG diverged from graphs-off:\noff={off}\non={on}"
 
 
+# An op that performs a host-blocking D2H sync (ephemeral getrf/getri allocs in
+# _linalg_inverse), deliberately bulked BETWEEN capturable elementwise ops so it
+# lands inside a captured segment. Before the capture-exclusion fix this aborts
+# with "operation not permitted when stream is capturing" (CUDA error 900).
+_INVERSE_WORKLOAD = r"""
+import mxnet as mx
+from mxnet import np, npx, gluon
+npx.set_np()
+dev = mx.gpu(0)
+class Net(gluon.HybridBlock):
+    def forward(self, x):
+        a = x * 2.0 + 1.0
+        b = np.linalg.inv(a)        # ephemeral alloc + host sync, must be excluded
+        c = b * 3.0
+        d = np.tanh(c) + 0.5
+        return d
+net = Net()
+net.hybridize(static_alloc=True, static_shape=True)
+x = np.tile(np.eye(6, device=dev).reshape(1, 6, 6), (16, 1, 1))
+for _ in range(15):
+    y = net(x)
+y.wait_to_read(); npx.waitall()
+print("RESULT", round(float(y.sum()), 4))
+print("WORKLOAD_OK")
+"""
+
+
+@pytest.mark.serial
+def test_cuda_graphs_linalg_inverse_excluded_default_on():
+    """_linalg_inverse does ephemeral allocs + a host sync (getrf/getri), illegal
+    under capture. It must be excluded from capture so a static net that bulks it
+    between capturable ops runs cleanly under the default-on regime and matches
+    graphs-off exactly (regression for C2)."""
+    def result(runner):
+        r = runner({"MXNET_CUDA_GRAPHS_VERIFY": "1", "MXNET_CUDA_GRAPHS_VERBOSE": "1"},
+                   code=_INVERSE_WORKLOAD)
+        out = r.stdout + r.stderr
+        assert r.returncode == 0, f"inverse capture aborted:\n{out[-3000:]}"
+        assert "WORKLOAD_OK" in r.stdout, f"workload did not finish:\n{out[-3000:]}"
+        assert "operation not permitted when stream is capturing" not in out, \
+            f"_linalg_inverse was captured (not excluded):\n{out[-3000:]}"
+        assert "differential-replay MISMATCH" not in out, f"mismatch:\n{out[-3000:]}"
+        line = [ln for ln in r.stdout.splitlines() if ln.startswith("RESULT")][0]
+        return float(line.split()[1])
+
+    on = result(_run_default)                                   # capture on by default
+    off = result(lambda e, code: _run({**e, "MXNET_ENABLE_CUDA_GRAPHS": "0"}, code=code))
+    assert abs(on - off) <= 1e-3, f"graphs-on {on} vs graphs-off {off}"
+
+
 @pytest.mark.serial
 def test_cuda_graphs_capture_summary_emitted():
     """Verbose mode emits the per-segment capture summary (Phase 1 observability)."""

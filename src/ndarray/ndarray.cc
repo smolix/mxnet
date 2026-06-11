@@ -482,14 +482,18 @@ struct NDArrayDLManager {
 
 DLManagedTensor* NDArray::ToDLPack() const {
   CHECK(!is_none()) << "NDArray is not initialized";
-  NDArrayDLManager* dlmanager(new NDArrayDLManager);
+  // M17: own the manager via unique_ptr until the no-throw hand-off. The setup
+  // below (handle copy, data()/dltensor()) can throw; a bare `new` would leak it
+  // on that path. release() transfers ownership to the caller, who must invoke
+  // the deleter (the standard DLPack contract).
+  std::unique_ptr<NDArrayDLManager> dlmanager(new NDArrayDLManager);
   dlmanager->handle             = *this;
   dlmanager->tensor.dl_tensor   = dlmanager->handle.data().dltensor();
-  dlmanager->tensor.manager_ctx = dlmanager;
-  dlmanager->tensor.deleter     = [](DLManagedTensor* dlmanager) {
-    delete static_cast<NDArrayDLManager*>(dlmanager->manager_ctx);
+  dlmanager->tensor.manager_ctx = dlmanager.get();
+  dlmanager->tensor.deleter     = [](DLManagedTensor* dlm) {
+    delete static_cast<NDArrayDLManager*>(dlm->manager_ctx);
   };
-  return &(dlmanager->tensor);
+  return &(dlmanager.release()->tensor);
 }
 
 NDArray NDArray::FromDLPack(const DLManagedTensor* tensor, bool transient_handle) {
@@ -2408,9 +2412,15 @@ void NDArray::SyncCopyToCPU(void* data, size_t size) const {
     RunContext rctx{this->ctx(), nullptr, nullptr};
     NDArray src = *this;
 #if MXNET_USE_ONEDNN == 1
-    this->Reorder2DefaultAsync();
-    this->WaitToRead();
-    src = *this;
+    // Only reorder when the data is actually in a oneDNN layout (M11). The
+    // unconditional reorder added an engine push + a second WaitToRead round-trip
+    // to every .asnumpy() on the common default-layout path, and mutated the
+    // source layout as a side effect of a logically read-only copy.
+    if (this->IsDNNLData()) {
+      this->Reorder2DefaultAsync();
+      this->WaitToRead();
+      src = *this;
+    }
 #endif
     ndarray::Copy<cpu, cpu>(src.data(), &dst, Context::CPU(), Context::CPU(), rctx);
   } else {

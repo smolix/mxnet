@@ -172,6 +172,20 @@ class PooledStorageManager : public StorageManager, public BucketingStrategy, pu
       // allocator instead of growing the pool unboundedly. Trades a
       // cudaFree call for bounded steady-state pool size.
       SET_DEVICE(device_store, contextHelper_, handle.ctx, true);
+#if MXNET_USE_CUDA
+      // M13: this chunk may still have in-flight reader/writer kernels recorded
+      // against it. The normal pooled-reuse path waits on handle.sync_obj before
+      // handing the buffer out again; this direct-free branch must do the same, or
+      // we cudaFree device memory the GPU is still using (use-after-free).
+      if (dev_type_ == Context::kGPU) {
+        for (auto ev : handle.sync_obj.events) {
+          auto valid_ev = ev.lock();
+          if (valid_ev) {
+            MSHADOW_CUDA_CALL(cudaEventSynchronize(*valid_ev));
+          }
+        }
+      }
+#endif
       contextHelper_->Free(handle.dptr);
       SET_GPU_PROFILER(profilerGPU, contextHelper_);
       GPU_PROFILER_ON_FREE(profilerGPU, handle.dptr);
@@ -228,7 +242,10 @@ class PooledStorageManager : public StorageManager, public BucketingStrategy, pu
 template <typename BucketingStrategy, typename StoringMethod>
 void PooledStorageManager<BucketingStrategy, StoringMethod>::Alloc(Storage::Handle* handle,
                                                                    bool failsafe) {
-  std::lock_guard<std::mutex> lock(Storage::Get()->GetMutex(dev_type_));
+  // unique_lock (not lock_guard) so the OOM-retry path below can release the
+  // per-device storage mutex while it sleeps/syncs -- otherwise no other thread
+  // could Free() memory back to relieve the very OOM we are waiting out (H10).
+  std::unique_lock<std::mutex> lock(Storage::Get()->GetMutex(dev_type_));
   const auto bucket_id = BucketingStrategy::get_bucket(handle->size);
   size_t roundSize     = 0;
   auto reuse_pool      = StoringMethod::GetMemStorage(bucket_id);
@@ -262,12 +279,18 @@ void PooledStorageManager<BucketingStrategy, StoringMethod>::Alloc(Storage::Hand
           // sleeping. cudaDeviceSynchronize itself does not error after
           // a failed cudaMalloc; if it does, propagate that as the real
           // failure rather than the OOM.
+          // Release the storage mutex across the sync+sleep so other threads can
+          // Free() chunks back to the device/pool meanwhile (H10). Pool state
+          // (used_memory_, the cache) is only touched again after re-locking.
+          lock.unlock();
           cudaError_t sync_err = cudaDeviceSynchronize();
           if (sync_err != cudaSuccess && sync_err != cudaErrorMemoryAllocation) {
             cudaGetLastError();
+            lock.lock();
             break;  // a real CUDA error; fall through to FATAL with original e
           }
           std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+          lock.lock();
           // Flush our own pool again — a Free() may have landed in the cache
           // while we slept.
           ReleaseAllNoLock(false);
@@ -291,6 +314,22 @@ void PooledStorageManager<BucketingStrategy, StoringMethod>::Alloc(Storage::Hand
       }
 #endif
       if (e) {
+#if MXNET_USE_CUDA
+        // Defense-in-depth for CUDA graphs (H2): a fresh cudaMalloc is illegal while
+        // a stream is capturing and returns error 900 here. Surface an actionable
+        // message instead of the cryptic "operation not permitted when stream is
+        // capturing" -- some op in the captured segment requested a runtime-sized
+        // allocation that warm-up could not predict.
+        if (dev_type_ == Context::kGPU && e == cudaErrorStreamCaptureUnsupported) {
+          cudaGetLastError();
+          LOG(FATAL) << "Storage::Alloc of " << roundSize
+                     << " bytes was attempted while a CUDA graph is capturing. An op in "
+                        "the captured segment requested a fresh device allocation whose "
+                        "size depends on runtime data (so warm-up could not pre-size it). "
+                        "Exclude that op from CUDA graphs (FIsCUDAGraphsCompatible=false) "
+                        "or pre-size its workspace.";
+        }
+#endif
         const std::string err(
 #if MXNET_USE_CUDA
             dev_type_ == Context::kGPU ? cudaGetErrorString(static_cast<cudaError_t>(e)) :

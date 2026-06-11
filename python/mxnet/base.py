@@ -45,7 +45,7 @@ except NameError:
     long = int
 # pylint: enable=pointless-statement
 
-integer_types = (int, long, _np.int32, _np.int64)
+integer_types = (int, long, _np.integer)
 numeric_types = (float, int, long, _np.generic)
 string_types = basestring,
 error_types = {}
@@ -59,7 +59,9 @@ _MAX_VALUE_FLOAT32_REPRESENT_ = 16_777_216
 
 # this function is needed for python3
 # to convert ctypes.char_p .value back to python str
-py_str = lambda x: x.decode('utf-8')
+# Guard against a NULL char_p (e.g. MXGetLastError() before any error was set),
+# which would otherwise raise AttributeError from inside an error handler.
+py_str = lambda x: x.decode('utf-8') if x is not None else ''
 
 
 def data_dir_default():

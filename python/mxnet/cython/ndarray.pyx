@@ -38,7 +38,7 @@ cdef class NDArrayBase:
         if handle is None:
             self.chandle = NULL
         else:
-            if isinstance(handle, (int, long)):
+            if isinstance(handle, int):
                 ptr = handle
             else:
                 ptr = handle.value
@@ -61,8 +61,25 @@ cdef class NDArrayBase:
         self.cwritable = writable
         self._alive = True
 
+    def __del__(self):
+        # tp_finalize: PEP 442 runs this during cyclic-GC collection, mirroring
+        # the ctypes NDArrayBase.__del__. Without it, an NDArray caught in a
+        # reference cycle only frees its backend handle at __dealloc__ (refcount
+        # 0), which never happens while gc holds the cycle -- leaking the handle
+        # and tripping the test suite's leak detector. Idempotent with
+        # __dealloc__ via the NULL-after-free guard.
+        if self.chandle != NULL:
+            CALL(MXNDArrayFree(self.chandle))
+            self.chandle = NULL
+        self._alive = False
+
     def __dealloc__(self):
-        CALL(MXNDArrayFree(self.chandle))
+        # chandle may be NULL if __init__/__setstate__ raised before it was set
+        # (e.g. the __reduce__/unpickle path constructs with None), or if __del__
+        # already freed it during cycle collection; don't double-free NULL.
+        if self.chandle != NULL:
+            CALL(MXNDArrayFree(self.chandle))
+            self.chandle = NULL
         self._alive = False
 
     def __reduce__(self):

@@ -216,12 +216,15 @@ uint32_t parse_npy_header_len(std::ifstream& strm) {
   CHECK(major_version == 0x01 || major_version == 0x02) << "Unsupported npy major version";
   CHECK(strm.get() == 0x00) << "Unsupported npy minor version";
 
-  uint32_t header_len = 0;
-  header_len += strm.get();
-  header_len += strm.get() >> 8;
+  // Little-endian header length. NOTE: the bytes must be shifted LEFT into place;
+  // the previous code shifted strm.get() (a 0..255 byte) RIGHT, which is always 0,
+  // so only the low byte was read and headers longer than 255 bytes were truncated
+  // (corrupting every validation done on the header). (M20)
+  uint32_t header_len = static_cast<uint32_t>(strm.get());
+  header_len |= static_cast<uint32_t>(strm.get()) << 8;
   if (major_version == 0x02) {
-    header_len += strm.get() >> 16;
-    header_len += strm.get() >> 24;
+    header_len |= static_cast<uint32_t>(strm.get()) << 16;
+    header_len |= static_cast<uint32_t>(strm.get()) << 24;
   }
   return header_len;
 }
@@ -230,6 +233,9 @@ std::tuple<int, int, std::vector<dim_t>> parse_npy_header_descr(const std::strin
   // Fortran order
   std::string::size_type loc = header.find("fortran_order");
   CHECK_NE(loc, std::string::npos) << "failed to find NPY header keyword: 'fortran_order'";
+  // Bounds-check before the fixed-offset read so a crafted/truncated header cannot
+  // over-read (M20). substr() would throw on pos>size(), but guard explicitly.
+  CHECK_LE(loc + 16 + 4, header.size()) << "malformed NPY header (fortran_order)";
   bool fortran_order = (header.substr(loc + 16, 4) == "True" ? true : false);
 
   // Shape
@@ -242,7 +248,17 @@ std::tuple<int, int, std::vector<dim_t>> parse_npy_header_descr(const std::strin
   std::smatch sm;
   std::vector<dim_t> shape;
   while (std::regex_search(shape_str, sm, num_regex)) {
-    shape.push_back(std::stoi(sm[0].str()));
+    // Validate each dim and the running product against overflow (M20): a crafted
+    // header could otherwise yield a huge/negative element count fed to allocation
+    // and downstream indexing. stoll (not stoi) + explicit checks; throws on >INT64.
+    const int64_t dim = std::stoll(sm[0].str());
+    CHECK_GE(dim, 0) << "invalid negative dimension in NPY header";
+    int64_t product = 1;
+    for (dim_t d : shape)
+      product *= d;
+    CHECK(dim == 0 || product <= (std::numeric_limits<int64_t>::max() / dim))
+        << "NPY header shape overflows int64 element count";
+    shape.push_back(static_cast<dim_t>(dim));
     shape_str = sm.suffix().str();
   }
 
@@ -250,6 +266,8 @@ std::tuple<int, int, std::vector<dim_t>> parse_npy_header_descr(const std::strin
   // byte order code | stands for not applicable.
   loc = header.find("descr");
   CHECK_NE(loc, std::string::npos) << "failed to find NPY header keyword: 'descr'";
+  // Bounds-check the fixed-offset read so a crafted header cannot OOB-read (M20).
+  CHECK_LT(loc + 9, header.size()) << "malformed NPY header (descr)";
   // May use https://github.com/numpy/numpy/blob/38275835/numpy/core/src/multiarray/ctors.c#L365
   CHECK(header[loc + 9] == MXNET_BYTEORDER_CHAR || header[loc + 9] == '|')
       << "Loading files with non-native endianness "
@@ -553,6 +571,11 @@ std::pair<std::vector<NDArray>, std::vector<std::string>> load_arrays(
     entry_name.resize(filename_length);  // filename_length includes the \0 terminator
     CHECK_EQ(filename_length,
              mz_zip_reader_get_filename(&archive, i, entry_name.data(), filename_length));
+    // A ".npy" entry name is >= 4 chars plus the NUL terminator that
+    // filename_length counts. Guard so the size()-1 / size()-4 arithmetic below
+    // cannot underflow on a crafted zero-length / too-short entry name (M20).
+    if (entry_name.size() < 5)
+      continue;
     std::string_view entry_name_v{entry_name.data(), entry_name.size() - 1};  // -1 due to \0
     if (entry_name_v.substr(entry_name_v.size() - 4).compare(".npy") != 0)
       continue;  // only .npy

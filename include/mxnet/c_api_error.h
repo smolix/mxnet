@@ -25,6 +25,7 @@
  *  C_API_ERROR.H FOR BACKWARDS COMPATIBILITY REASONS. DO NOT RELY ON THIS FILE
  *  WHEN WRITING NEW CODE.
  */
+#include <stdexcept>
 #include <string>
 
 #ifndef MXNET_C_API_ERROR_H_
@@ -39,22 +40,33 @@
 #define MX_API_BEGIN() \
   try {                \
     on_enter_api(__FUNCTION__);
-#define MX_API_END()                       \
-  }                                        \
-  catch (const std::exception& _except_) { \
-    on_exit_api();                         \
-    return MXAPIHandleException(_except_); \
-  }                                        \
-  on_exit_api();                           \
+#define MX_API_END()                                                        \
+  }                                                                         \
+  catch (const std::exception& _except_) {                                  \
+    on_exit_api();                                                          \
+    return MXAPIHandleException(_except_);                                  \
+  }                                                                         \
+  catch (...) { /* never let a non-std throw cross the extern "C" boundary */ \
+    on_exit_api();                                                          \
+    return MXAPIHandleException(                                            \
+        std::runtime_error("unknown non-std::exception thrown across C API")); \
+  }                                                                         \
+  on_exit_api();                                                            \
   return 0;  // NOLINT(*)
-#define MX_API_END_HANDLE_ERROR(Finalize)  \
-  }                                        \
-  catch (const std::exception& _except_) { \
-    Finalize;                              \
-    on_exit_api();                         \
-    return MXAPIHandleException(_except_); \
-  }                                        \
-  on_exit_api();                           \
+#define MX_API_END_HANDLE_ERROR(Finalize)                                   \
+  }                                                                         \
+  catch (const std::exception& _except_) {                                  \
+    Finalize;                                                               \
+    on_exit_api();                                                          \
+    return MXAPIHandleException(_except_);                                  \
+  }                                                                         \
+  catch (...) {                                                             \
+    Finalize;                                                               \
+    on_exit_api();                                                          \
+    return MXAPIHandleException(                                            \
+        std::runtime_error("unknown non-std::exception thrown across C API")); \
+  }                                                                         \
+  on_exit_api();                                                            \
   return 0;  // NOLINT(*)
 
 /*!

@@ -1127,9 +1127,9 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         else:
             try:
                 value_nd = array(value, device=self.device, dtype=self.dtype)
-            except:
+            except Exception as e:
                 raise TypeError('mxnet.np.ndarray does not support assignment with non-array-like '
-                                'object {} of type {}'.format(value, type(value)))
+                                'object {} of type {}'.format(value, type(value))) from e
 
         # For advanced indexing setitem, if there is None in indices, we need to squeeze the
         # assigned value_nd since None is also ignored in slicing the original array.

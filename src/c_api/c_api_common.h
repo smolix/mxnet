@@ -55,7 +55,17 @@
 
 using namespace mxnet;
 
-/*! \brief entry to to easily hold returning information */
+/*!
+ * \brief entry to easily hold returning information
+ *
+ * LIFETIME CONTRACT (L11): every `const char**`, handle array, and shape pointer
+ * a C-API function returns to the caller actually points into the fields of this
+ * per-thread singleton (e.g. `ret_str.c_str()`, `ret_vec_charp.data()`,
+ * `ret_handles.data()`, `*_shape_data*`). Those pointers stay valid only until
+ * the NEXT MXNet C-API call ON THE SAME THREAD reuses and overwrites this entry.
+ * Callers (language bindings) MUST copy the data out before making another API
+ * call on that thread; they must not retain the pointers across calls.
+ */
 template <typename dtype = int>
 struct MXAPIThreadLocalEntry {
   /*! \brief result holder for returning string */

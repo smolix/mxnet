@@ -66,12 +66,19 @@ fi
 
 jobs="${MXNET_BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 64)}"
 echo "==> Refreshing CMake metadata"
+# Explicit release arch set so the wheel always covers Ampere (sm_80/86),
+# Ada (sm_89, the validation host), Hopper (sm_90) and Blackwell (sm_100/sm_120
+# + PTX) regardless of any cached value. Requires CUDA >= 12.8 for sm_100/120
+# (the fork targets CUDA 13); CMakeLists FATALs if an arch yields no gencode (H4).
+RELEASE_CUDA_ARCH="${MXNET_CUDA_ARCH:-8.0;8.6;8.9;9.0;10.0;12.0+PTX}"
+echo "==> MXNET_CUDA_ARCH: $RELEASE_CUDA_ARCH"
 cmake -S . -B build \
     -DUSE_CUDA=ON \
     -DUSE_CUDNN=ON \
     -DUSE_NCCL=ON \
     -DUSE_ONEDNN=ON \
-    -DUSE_OPENCV=ON
+    -DUSE_OPENCV=ON \
+    -DMXNET_CUDA_ARCH="$RELEASE_CUDA_ARCH"
 echo "==> Building libmxnet.so with $jobs jobs"
 cmake --build build --target mxnet --parallel "$jobs"
 
@@ -182,14 +189,25 @@ fi
 echo "==> Building wheel"
 rm -rf dist build_wheel
 mkdir -p dist
+# MXNET_WITH_CYTHON=1 compiles the _cy3 fast path (setup.py honors the env var
+# since `python -m build` does not forward --with-cython). Without it the wheel
+# ships ctypes-only and every imperative op pays the slow marshaling cost (M15).
+# The cython NDArrayBase now has a __del__ finalizer (PEP 442) matching the
+# ctypes class, so NDArrays in reference cycles free their handle on cyclic-GC
+# collection (no leak). Requires Cython in the (no-isolation) build env;
+# config_cython() degrades to ctypes if Cython is absent.
 (cd python && \
     MXNET_PACKAGE_VERSION="$VERSION" \
     MXNET_SETUP_EXCLUDE_ONNX=1 \
     MXNET_SETUP_ENABLE_OPENCV_DEPS="$OPENCV_DEPS_FLAG" \
     MXNET_SETUP_ENABLE_CUDA_DEPS=1 \
+    MXNET_WITH_CYTHON=1 \
     "$PYTHON_BIN" -m build --wheel --no-isolation --outdir ../dist)
 
-WHEEL=$(ls -1 dist/*.whl | head -n1)
+# Pick the most recently built wheel (-1t), not the lexically-first (-1): if a
+# stale wheel from a prior version is still in dist/, lexical order could select
+# it and we would validate/ship the wrong artifact (H17).
+WHEEL=$(ls -1t dist/*.whl 2>/dev/null | head -n1)
 if [ -z "$WHEEL" ]; then
     echo "No wheel produced" >&2
     exit 3

@@ -54,7 +54,8 @@ set -uo pipefail
 # Tunables
 # ----------------------------------------------------------------------
 REPO_URL="${REPO_URL:-https://github.com/smolix/mxnet.git}"
-BRANCH="${BRANCH:-cleanup/p0-p1-p2-20260522}"
+# Default to the long-lived branch; a dated feature branch rots once merged/deleted.
+BRANCH="${BRANCH:-master}"
 SRC_DIR="${SRC_DIR:-$HOME/mxnet-fp16-test}"
 REPORT_DIR="${REPORT_DIR:-$SRC_DIR/report-$(date -u +%Y%m%dT%H%M%SZ)}"
 PARALLEL_BUILD_JOBS="${PARALLEL_BUILD_JOBS:-4}"   # 6-core Ryzen: leave 2 for the OS
@@ -332,7 +333,7 @@ if [ $GPU_ONLY -eq 0 ]; then
 fi
 
 # --- GPU FP16 lane --------------------------------------------------------
-if [ $CPU_ONLY -eq 0 ] && [ "$(nvidia-smi -L | wc -l)" -gt 0 ]; then
+if [ $CPU_ONLY -eq 0 ] && [ "$(nvidia-smi -L 2>/dev/null | grep -c '^GPU ')" -gt 0 ]; then
     run_one gpu_amp "GPU AMP / fp16 cast hygiene" -- \
         tests/python/gpu/test_amp.py -v
     if [ -f tests/python/gpu/test_amp_init.py ]; then

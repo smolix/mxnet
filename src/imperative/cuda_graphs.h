@@ -28,6 +28,7 @@
 #include <mxnet/base.h>
 #include <vector>
 #include <string>
+#include <atomic>
 #include <map>
 #include <set>
 #include <sstream>
@@ -383,13 +384,13 @@ class CudaGraphsSubSegExec {
     graph_exec_.reset(cuda_graph_exec, CudaGraphExecDeleter());
 
     // At this point we have a CUDA Graph executor
-    static int num_graph_creations = 0;
-    graph_exec_id_                 = num_graph_creations++;
+    static std::atomic<size_t> num_graph_creations{0};
+    graph_exec_id_                 = num_graph_creations.fetch_add(1, std::memory_order_relaxed);
 
     static size_t max_log_entries = dmlc::GetEnv("MXNET_CUDA_GRAPHS_MAX_LOG_ENTRIES", 0);
     if (graph_exec_id_ < max_log_entries) {
       LOG(INFO) << "Created CUDA graph " << graph_exec_id_;
-      if (num_graph_creations == max_log_entries)
+      if (graph_exec_id_ + 1 == max_log_entries)
         LOG(INFO) << "Further CUDA graph creation log messages are suppressed.";
     }
     // Create a .dot file for graph visualization if requested
@@ -428,6 +429,10 @@ class CudaGraphsSubSegExec {
                     double atol,
                     bool verbose,
                     const std::string& seg) {
+    // L5: the raw cudaMalloc/cudaFree/sync below must target the segment's
+    // device. Without this guard a multi-GPU capture would scratch-allocate on
+    // whatever device happens to be current. Restored on scope exit.
+    common::cuda::DeviceStore device_store(rctx.ctx.dev_id);
     struct Buf {
       void* ptr     = nullptr;
       size_t bytes  = 0;

@@ -408,13 +408,22 @@ void NumpyLpNormGradCompute(const nnvm::NodeAttrs& attrs,
       mshadow_op::nrmlp_grad* mapper_instance = nullptr;
 #ifdef __CUDACC__
       cudaStream_t copy_stream = mshadow::Stream<gpu>::GetStream(s);
-      cudaMalloc(reinterpret_cast<void**>(&mapper_instance), sizeof(mshadow_op::nrmlp_grad));
+      // Check the alloc and guarantee the free even if the reduce below throws (M6).
+      MSHADOW_CUDA_CALL(cudaMalloc(reinterpret_cast<void**>(&mapper_instance),
+                                   sizeof(mshadow_op::nrmlp_grad)));
+      struct CudaFreeGuard {
+        void* p;
+        ~CudaFreeGuard() {
+          if (p)
+            cudaFree(p);
+        }
+      } mapper_guard{mapper_instance};
       MSHADOW_CUDA_CALL(cudaMemcpyAsync(mapper_instance,
                       &host_mapper,
                       sizeof(mshadow_op::nrmlp_grad),
                       cudaMemcpyHostToDevice,
                       copy_stream));
-      cudaStreamSynchronize(copy_stream);
+      MSHADOW_CUDA_CALL(cudaStreamSynchronize(copy_stream));
 #else
       mapper_instance = &host_mapper;
 #endif
@@ -432,9 +441,7 @@ void NumpyLpNormGradCompute(const nnvm::NodeAttrs& attrs,
               ctx, small, inputs, req, outputs, mapper_instance);
         }
       });
-#ifdef __CUDACC__
-      cudaFree(mapper_instance);
-#endif
+      // mapper_instance is freed by mapper_guard (RAII) on scope exit (M6).
     }
   } else {  // matrix norm should switch to matrix norm op
     LOG(FATAL) << "Case handled in matrix norm compute.";

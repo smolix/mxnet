@@ -23,8 +23,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
+
+
+def _require_checksum() -> bool:
+    """True when an un-pinned download must be treated as a hard error.
+
+    Set MXNET_DEPS_REQUIRE_CHECKSUM=1 in release/CD so a missing pin fails the
+    build instead of silently fetching an unverified archive.
+    """
+    return os.environ.get("MXNET_DEPS_REQUIRE_CHECKSUM", "").strip().lower() in (
+        "1", "true", "yes", "on")
 
 
 def _manifest_path() -> Path:
@@ -73,11 +84,12 @@ def verify_sha256(path: Path, expected_sha256: str, source: str) -> None:
 def verify_archive_if_pinned(path: Path, url: str) -> str | None:
     expected_sha256 = expected_sha256_for_url(url)
     if expected_sha256 is None:
-        print(
-            f"Warning: no pinned SHA256 checksum for {url}; archive will not be checksum-verified.",
-            file=sys.stderr,
-            flush=True,
-        )
+        msg = (f"no pinned SHA256 checksum for {url}; archive cannot be "
+               f"checksum-verified. Add it to {_manifest_path()}.")
+        if _require_checksum():
+            raise SystemExit(
+                f"Error: {msg} (MXNET_DEPS_REQUIRE_CHECKSUM is set)")
+        print(f"Warning: {msg}", file=sys.stderr, flush=True)
         return None
     verify_sha256(path, expected_sha256, url)
     return expected_sha256

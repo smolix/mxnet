@@ -438,8 +438,12 @@ fixed-size items.
         return equal(self, other)
 
     def __hash__(self):
-        """Default hash function."""
-        return id(self)//16
+        # __eq__ is element-wise (returns an NDArray, not a bool), so an
+        # identity-based hash violates the hash/eq contract and makes NDArray
+        # unsafe as a dict/set key. Match the numpy frontend (multiarray.ndarray)
+        # and make NDArray unhashable rather than silently mis-hashing.
+        raise NotImplementedError("mxnet.ndarray.NDArray is not hashable; "
+                                  "its __eq__ is element-wise")
 
     def __ne__(self, other):
         """x.__ne__(y) <=> x!=y <=> mx.nd.not_equal(x, y) """
@@ -802,9 +806,9 @@ fixed-size items.
         else:
             try:
                 value_nd = array(value, ctx=self.device, dtype=self.dtype)
-            except:
+            except Exception as e:
                 raise TypeError('{} does not support assignment with non-array-like '
-                                'object {} of type {}'.format(self.__class__, value, type(value)))
+                                'object {} of type {}'.format(self.__class__, value, type(value))) from e
 
         # For setitem, if there is None in indices, we need to squeeze the assigned value_nd
         # since None is also ignored in slicing the  original array.
@@ -1386,9 +1390,9 @@ fixed-size items.
         if not isinstance(source_array, np.ndarray):
             try:
                 source_array = np.array(source_array, dtype=self.dtype)
-            except:
+            except Exception as e:
                 raise TypeError('array must consist of array-like data,' +
-                                f'type {str(type(array))} is not supported')
+                                f'type {str(type(source_array))} is not supported') from e
         source_array = np.asarray(source_array, dtype=self.dtype, order='C')
         if source_array.shape != self.shape:
             raise ValueError(f'Shape inconsistent: expected {str(source_array.shape)} vs got {str(self.shape)}')

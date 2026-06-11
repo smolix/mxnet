@@ -814,8 +814,8 @@ def _prepare_src_array(source_array, dtype):
     if not isinstance(source_array, NDArray) and not isinstance(source_array, np.ndarray):
         try:
             source_array = np.array(source_array, dtype=dtype)
-        except:
-            raise TypeError('values must be array like object')
+        except Exception as e:
+            raise TypeError('values must be array like object') from e
     return source_array
 
 def _prepare_default_dtype(src_array, dtype):

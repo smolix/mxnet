@@ -113,6 +113,21 @@ void CubGlobalSumReduce(const OpContext& ctx,
   // + a double result slot.
   size_t temp_bytes = 0;
   cub::DeviceReduce::Sum(nullptr, temp_bytes, it, static_cast<double*>(nullptr), total, stream);
+
+  // M1: CubGlobalSumReduceWorkspaceBytes sizes the (possibly caller-supplied)
+  // workspace with a double->double query, on the assumption that CUB's temp
+  // storage depends only on the accumulator and element count, not the input
+  // iterator's value type. Verify that invariant against the transform_iterator
+  // we actually reduce over, so a future CCCL that sizes temp storage by
+  // iterator fails loudly here instead of silently overflowing the workspace.
+  size_t temp_bytes_dbl = 0;
+  cub::DeviceReduce::Sum(nullptr, temp_bytes_dbl, static_cast<double*>(nullptr),
+                         static_cast<double*>(nullptr), total, stream);
+  CHECK_LE(temp_bytes, temp_bytes_dbl)
+      << "CUB DeviceReduce temp storage depends on the input iterator type; "
+      << "CubGlobalSumReduceWorkspaceBytes under-allocates (iterator=" << temp_bytes
+      << " B, double=" << temp_bytes_dbl << " B). Update the sizing helper.";
+
   const size_t result_off = ((temp_bytes + sizeof(double) - 1) / sizeof(double)) * sizeof(double);
   const size_t needed     = result_off + sizeof(double);
 

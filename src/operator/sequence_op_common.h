@@ -45,6 +45,11 @@ typename std::enable_if<std::is_integral<RType>::value>::type inline IndexTensor
                                             cudaMemcpyDeviceToHost,
                                             data.stream_->stream_);
   CHECK_EQ(cuda_status, cudaSuccess) << "cuda memcpy label error";
+  // The copy is async on the op's stream; must synchronize before reading the host
+  // buffer (M9). Relying on default-stream semantics is wrong for non-default
+  // streams and could read stale/garbage sequence lengths.
+  CHECK_EQ(cudaStreamSynchronize(data.stream_->stream_), cudaSuccess)
+      << "cuda stream sync error";
   for (size_t i = 0; i < max_seq_len; ++i) {
     (*index_vec)[i] = static_cast<RType>(std::lround(temp_index[i]));
   }

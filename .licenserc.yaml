@@ -114,6 +114,7 @@ header:
     - 'sparse_thrust3_bench.md'
     - 'storage_pool_bench.md'
     - 'BUG_AUDIT.md'
+    - 'freshissues.md'
     - 'CUDA_GRAPHS_PLAN.md'
     - 'CUDA_GRAPHS_PROGRESS.md'
     - 'multi-output-ops-bug-audit.md'

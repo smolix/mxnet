@@ -56,6 +56,12 @@ template <typename T>
 void InvalidateOutputs(const std::vector<T>* pArrs, const std::vector<OpReqType>& reqs) {
   auto arrs = *pArrs;
   for (size_t i = 0; i < arrs.size(); i++) {
+    // Only kWriteTo outputs are overwritten by the op, so only their stale DNNL
+    // shadow must be invalidated. Upstream also invalidated kNullOp, but a
+    // kNullOp output is left untouched — its existing (possibly DNNL-formatted)
+    // data stays valid, and dropping it here was a source of the oneDNN
+    // request/callback lifetime bugs (commit b26ff5b3f). kAddTo accumulates into
+    // the existing buffer and likewise must keep its layout. (L6)
     if (reqs[i] == kWriteTo)
       pntr(arrs[i])->InvalidateDNNLData();
   }

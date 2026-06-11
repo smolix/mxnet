@@ -267,41 +267,36 @@ ThreadedOpr* ThreadedEngine::NewOperator(ThreadedEngine::AsyncFn fn,
                  mutable_vars.end(),
                  ret->mutable_vars.begin(),
                  ThreadedVar::CastFromBase);
-  if (ENGINE_DEBUG != 0) {
-    CheckDuplicate(const_vars, mutable_vars);
-  }
+  // L13: always-on. Duplicate vars otherwise surface as a nondeterministic
+  // engine hang in release builds (ENGINE_DEBUG=0) instead of a clear fatal.
+  CheckDuplicate(const_vars, mutable_vars);
   return ret;
 }
 
 void ThreadedEngine::CheckDuplicate(std::vector<VarHandle> const& const_vars,
                                     std::vector<VarHandle> const& mutable_vars) {
-  // Check for duplicates.
-  auto use                 = const_vars;
-  auto mutate              = mutable_vars;
-  const size_t use_size    = use.size();
-  const size_t mutate_size = mutate.size();
-  std::sort(use.begin(), use.end());
-  std::sort(mutate.begin(), mutate.end());
-  for (std::size_t i = 0; i < use_size; ++i) {
-    if (i != 0 && use.at(i) == use.at(i - 1)) {
-      LOG(FATAL) << "duplicate items found in `const_vars`";
+  // Allocation-free O(n^2) duplicate detection. Per-op var counts are tiny
+  // (typically a handful), so this is cheap enough to run on every push; the
+  // previous sort-based version copied both vectors and so was gated to debug
+  // builds (L13). Behaviour is identical: a duplicate var is a hard error.
+  const size_t use_size    = const_vars.size();
+  const size_t mutate_size = mutable_vars.size();
+  for (size_t i = 0; i < use_size; ++i) {
+    for (size_t j = i + 1; j < use_size; ++j) {
+      if (const_vars[i] == const_vars[j])
+        LOG(FATAL) << "duplicate items found in `const_vars`";
     }
   }
-  for (std::size_t i = 0; i < mutate_size; ++i) {
-    if (i != 0 && mutate.at(i) == mutate.at(i - 1)) {
-      LOG(FATAL) << "duplicate items found in `mutable_vars`";
+  for (size_t i = 0; i < mutate_size; ++i) {
+    for (size_t j = i + 1; j < mutate_size; ++j) {
+      if (mutable_vars[i] == mutable_vars[j])
+        LOG(FATAL) << "duplicate items found in `mutable_vars`";
     }
   }
-  std::size_t j = 0;
-  for (std::size_t i = 0; i < use_size; ++i) {
-    while (j < mutate_size && mutate.at(j) < use.at(i)) {
-      ++j;
-    }
-    if (j == mutate_size) {
-      break;
-    }
-    if (mutate.at(j) == use.at(i)) {
-      LOG(FATAL) << "duplicate items found between `const_vars` and `mutable_vars`";
+  for (size_t i = 0; i < use_size; ++i) {
+    for (size_t j = 0; j < mutate_size; ++j) {
+      if (const_vars[i] == mutable_vars[j])
+        LOG(FATAL) << "duplicate items found between `const_vars` and `mutable_vars`";
     }
   }
 }
@@ -582,14 +577,14 @@ inline void ThreadedEngine::OnComplete(ThreadedOpr* threaded_opr) {
   // could execute right after we mark all vars as complete, so if
   // threaded_opr is not temporary, its value is not reliable
   // anymore start from here.
-  int npending = 0;
-  {
-    std::unique_lock<std::mutex> lock{finished_m_};
-    npending = --pending_;
-  }
+  // L12: pending_ is atomic, so the decrement needs no lock on the common path.
+  // Only the 0-transition must synchronize with WaitForAll: acquiring finished_m_
+  // there closes the lost-wakeup window between a waiter's predicate check and its
+  // cv.wait(). For npending > 0 we skip the mutex entirely.
+  const int npending = --pending_;
   CHECK_GE(npending, 0);
   if (npending == 0) {
-    // no need to grab lock when notify.
+    std::lock_guard<std::mutex> lock{finished_m_};
     finished_cv_.notify_all();
   }
 
@@ -645,10 +640,16 @@ static inline void AddEventHelper(std::unordered_map<cudaStream_t, EventInfo>* e
 }
 
 static inline bool IsEngineAsync() {
+  // L14: must match CreateEngine()'s parsing exactly -- the "Async" tag is only
+  // honored as a SUFFIX there (it is stripped to pick the base engine). Matching
+  // it as a bare substring here diverged: a value like "AsyncThreadedEngine"
+  // builds a non-async engine yet would report async, enabling the GPU
+  // dependency path against an engine that never set it up.
   std::string type = dmlc::GetEnv("MXNET_ENGINE_TYPE", std::string(""));
-  std::string async_engine_tag("Async");
+  const std::string async_engine_tag("Async");
   auto tag_pos = type.find(async_engine_tag);
-  return tag_pos != std::string::npos;
+  return tag_pos != std::string::npos &&
+         tag_pos + async_engine_tag.length() == type.length();
 }
 
 void ThreadedEngine::OnStartCPU(Engine* engine, void* opr_block, const dmlc::Error* error) {
@@ -709,6 +710,11 @@ void ThreadedEngine::OnStartCPU(Engine* engine, void* opr_block, const dmlc::Err
       MSHADOW_CUDA_CALL(cudaStreamSynchronize(ei.stream));
     } else if (auto ev = ei.event.lock()) {
       MSHADOW_CUDA_CALL(cudaEventSynchronize(*ev));
+      // TOCTOU guard (see OnStartGPU): if the slot was lapped between the check
+      // and the wait, host-sync the recorded stream as a correct backstop.
+      if (ei.pool != nullptr && ei.pool->IsLapped(ei.pool_index)) {
+        MSHADOW_CUDA_CALL(cudaStreamSynchronize(ei.stream));
+      }
     }
   }
 }
@@ -790,6 +796,13 @@ void ThreadedEngine::OnStartGPU(Engine* engine, void* sync_info, const dmlc::Err
       MSHADOW_CUDA_CALL(cudaStreamSynchronize(ei.stream));
     } else if (auto ev = ei.event.lock()) {
       MSHADOW_CUDA_CALL(cudaStreamWaitEvent(worker_stream->stream_, *ev, 0));
+      // TOCTOU guard: another worker may have lapped the slot (re-recording the
+      // event for an unrelated op) between the IsLapped() check above and the
+      // wait we just queued. If so, the queued wait may target the wrong record;
+      // add the coarse-but-correct host sync of the recorded stream as a backstop.
+      if (ei.pool != nullptr && ei.pool->IsLapped(ei.pool_index)) {
+        MSHADOW_CUDA_CALL(cudaStreamSynchronize(ei.stream));
+      }
     }
   }
 }
@@ -818,7 +831,7 @@ void ThreadedEngine::OnCompleteGPU(Engine* engine, void* sync_info, const dmlc::
     std::lock_guard<std::mutex> l(sync_obj.mutex);
     // If some reader event is already recorded on the same stream,
     // we want to replace ourselves by it
-    int i;
+    size_t i;
     for (i = 0; i < sync_obj.reader_events.size(); ++i) {
       auto stream = sync_obj.reader_events[i].stream;
       if (stream == worker_stream->stream_) {

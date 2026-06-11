@@ -1724,8 +1724,12 @@ void BatchDotForward_(const nnvm::NodeAttrs& attrs,
         // batch_dot historically used full fp32 (mshadow cublasSgemmStridedBatched,
         // default math). Preserve that as the DEFAULT (no precision regression);
         // TF32 is opt-in via MXNET_CUDA_ALLOW_TENSOR_CORE=1 (default off here, so
-        // an unset env keeps full fp32). Fresh read so it is honored at runtime.
-        if (dmlc::GetEnv("MXNET_CUDA_ALLOW_TENSOR_CORE", false)) {
+        // an unset env keeps full fp32). Cache the env read once (M16): getenv +
+        // string parse on every batch_dot call is needless hot-path overhead, and
+        // the rest of the GEMM stack does not honor mid-process changes anyway.
+        static const bool allow_tensor_core =
+            dmlc::GetEnv("MXNET_CUDA_ALLOW_TENSOR_CORE", false);
+        if (allow_tensor_core) {
           linalg_batch_gemm(
               mlhs, mrhs, out, gemm_alpha, gemm_beta, param.transpose_a, param.transpose_b, s);
         } else {

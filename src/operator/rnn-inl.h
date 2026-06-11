@@ -700,8 +700,6 @@ class RNNOp {
 
       if (rnn_desc_)     CUDNN_CALL_NONFATAL(cudnnDestroyRNNDescriptor(rnn_desc_));
       if (dropout_desc_) CUDNN_CALL_NONFATAL(cudnnDestroyDropoutDescriptor(dropout_desc_));
-      if (dgrad_sync_event_created_)
-        CUDA_CALL(cudaEventDestroy(dgrad_sync_event_));
 
       if (init_cudnn_) {
         init_cudnn_ = false;
@@ -1139,7 +1137,6 @@ class RNNOp {
                                        temp_space.dptr_,
                                        reserve_space_byte_,
                                        reserve_space_.dptr));
-    SyncDgrad();
     if (req[rnn_enum::kParams] != kNullOp) {
       // dw zeroed above when req != kAddTo; v8 always uses ADD-grad mode
       CUDNN_CALL(cudnnRNNBackwardWeights_v8(s->dnn_handle_,
@@ -1287,7 +1284,6 @@ class RNNOp {
       cudnnDataType_t dtype_with_fallback_ =
           (dtype_ == CUDNN_DATA_HALF) ? CUDNN_DATA_FLOAT : dtype_;
       cudnnRNNAlgo_t rnn_algo = CUDNN_RNN_ALGO_STANDARD;
-      dgrad_sync_needed_      = (rnn_algo == CUDNN_RNN_ALGO_STANDARD) && param_.bidirectional;
       // cudnn_tensor_core_ is disabled (see ctor); use default math for v8.
       cudnnMathType_t math_type = CUDNN_DEFAULT_MATH;
       CUDNN_CALL(cudnnSetRNNDescriptor_v8(
@@ -1362,14 +1358,6 @@ class RNNOp {
   size_t reserve_cpu_space_size_, temp_cpu_space_size_;
   NDArray reserve_cpu_space_, temp_cpu_space_;
 
-#if MXNET_USE_CUDNN == 1 && defined(__CUDACC__)
-  // cuDNN versions up to and including v7.6.4 did not sync a last dgrad kernel back to the main
-  // cudnn handle's stream (non-persistant algo, bidirectional only).  No longer needed on cuDNN 9
-  // but kept as a harmless no-op for symmetry.
-  inline void SyncDgrad() {
-  }
-#endif  // MXNET_USE_CUDNN == 1 && defined(__CUDACC__)
-
 #if MXNET_USE_CUDNN == 1
   cudnnDataType_t dtype_;
   bool init_cudnn_;
@@ -1394,10 +1382,6 @@ class RNNOp {
 
   // Allow TensorCore algo policy
   bool cudnn_tensor_core_;
-
-  cudaEvent_t dgrad_sync_event_;
-  bool dgrad_sync_event_created_ = false;
-  bool dgrad_sync_needed_        = false;
 #endif  // MXNET_USE_CUDNN
 };      //  class RNNOp
 

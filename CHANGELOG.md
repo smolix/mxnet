@@ -60,6 +60,54 @@ notes rather than artifact provenance.
   CUDA wheel policy unless all OpenCV shared libraries are bundled, and a clear
   distinction between raw `linux_x86_64` wheels and any future manylinux claim.
 
+### Code-review hardening — user-visible changes
+
+A from-scratch code review (`freshissues.md`) drove a batch of correctness,
+safety, and robustness fixes. Most are internal (capture-safety guards, 64-bit
+index discipline, exception safety, RAII, lock-free engine paths, build/tooling).
+The user-facing ones:
+
+- **`NDArray` is now unhashable.** Legacy `mx.nd.NDArray` sets `__hash__ = None`
+  (matching the `mx.np` frontend), because equality is element-wise. Using an
+  `NDArray` as a dict key or set member now raises `TypeError` instead of hashing
+  by object identity. Use `id(arr)` explicitly if you need identity keying.
+- **NumPy integer scalars accepted as indices/integer args.** `integer_types`
+  now includes `numpy.integer`, so `np.int8`/`np.int16`/`np.uint*` scalars work
+  where they previously raised. Strictly widens accepted input.
+- **BatchNorm running statistics update in the training-mode forward pass**
+  (PyTorch-style). A forward-only training pass now advances `running_mean` /
+  `running_var`; previously the update happened during backward.
+- **Out-of-bounds index semantics.** `gather_nd` backward now *drops* OOB indices
+  instead of silently wrapping them (modulo); `index_add` / `index_update` skip
+  OOB indices in-kernel and no longer pay a per-call host validation+sync by
+  default. Set `MXNET_INDEX_BOUNDS_CHECK=1` to restore the eager host-side
+  bounds check (raises on OOB).
+- **Quantized `elemwise_mul` int32 output rounds to nearest** (`nearbyint`)
+  instead of truncating toward zero; float output is unchanged.
+- **`histogram` fp16 bin placement near an edge** now matches NumPy/CPU.
+- **npy/npz loading rejects malformed/crafted archives** with graceful errors
+  instead of undefined behavior (hardens `.npz` / `.params` loading of untrusted
+  input).
+- **Cleaner error propagation.** Array-coercion paths no longer swallow
+  `KeyboardInterrupt` / `SystemExit` and now chain the original cause
+  (`raise ... from e`).
+- **Engine config.** Pushing an op with duplicate dependency vars now raises a
+  clear fatal error in release builds (previously a nondeterministic hang). The
+  `MXNET_ENGINE_TYPE` `Async` tag is honored only as a suffix, matching engine
+  construction.
+
+### Performance
+
+- **Cython fast path restored.** The `_cy3` Cython extension never compiled —
+  `cython/ndarray.pyx` used the Python-2 name `long`, so `cythonize` errored and
+  every build (including shipped wheels) silently fell back to the slow ctypes
+  marshaling path for *every* imperative op. Fixed the compile, and gave the
+  cython `NDArrayBase` a `__del__` finalizer (PEP 442) matching the ctypes class
+  so NDArrays in reference cycles free their backend handle on cyclic-GC
+  collection (the missing finalizer otherwise leaked handles). The wheel now
+  builds with `MXNET_WITH_CYTHON=1`, dropping per-op dispatch to the Cython fast
+  path — a measurable speedup for op-heavy / small-op eager workloads.
+
 ---
 
 ## 2.0.0+cu13.bw.20260518 — 2026-05-18

@@ -486,7 +486,6 @@ def test_issue_19628_gpu_ctcloss_accepts_fp16_predictions():
     assert_subprocess_ok(proc)
 
 
-@issue_xfail(19659, "hybridized boolean_mask backward lacks required backward inputs")
 def test_issue_19659_hybrid_boolean_mask_backward_runs():
     import mxnet as mx
     from mxnet import nd

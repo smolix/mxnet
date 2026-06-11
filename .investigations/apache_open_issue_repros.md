@@ -29,14 +29,14 @@ Current counts:
 
 - Runtime/static-verified executable repros: 227 total: 53 from the
   original open GitHub issue/PR scan and 174 from the similar-bug sweep.
-  In the current worktree, 61 are fixed regression tests and 166 remain
-  expected-failing repros: 2 original open issues plus 164 similar-pattern
+  In the current worktree, 62 are fixed regression tests and 165 remain
+  expected-failing repros: 1 original open issue plus 164 similar-pattern
   candidates still pending fixes.
 - Fixed in current worktree: issues #21176, #21119, #21111, #20936, #20657, #20605, #20577, #21156,
   #16427, #13945, #20391, #16402, #18300, #21146, #19423, #19458,
   #19422, #12286, #14695, #13953, #8817, #20180, #20076,
   #20046, #20044, #20037, #19860, #19852, #19785, #19753,
-  #19686, #19683, #19021, #18919, #18770, #18669, #18563, #18078, #17936,
+  #19686, #19683, #19659, #19021, #18919, #18770, #18669, #18563, #18078, #17936,
   #17698, #13193, #11774, and #8430; PRs #21217, #21044,
   #20491, #18792, #18583, and #17209; plus GPU issue #19628
   and symbol issue #19647.
@@ -61,7 +61,9 @@ Current counts:
   repros were added, the selected Halley/Sagan batch passed as expected with
   66 xfailed, 142 deselected, and 2 warnings in 422.40s; the selected
   Anscombe/Aristotle sparse/numeric batch passed as expected with 19 xfailed,
-  208 deselected, and 2 warnings in 2.59s.
+  208 deselected, and 2 warnings in 2.59s. Focused #19659 verification passed
+  against `build/libmxnet.so` with 1 passed and 2 warnings in 0.26s under
+  `--runxfail`.
 ## Fix Progress
 
 Active batch started 2026-06-11:
@@ -73,7 +75,7 @@ Active batch started 2026-06-11:
   #19686, #19683, #19021, PR #21217, #20936, #20037, #8430,
   #19423, #19458, #18919, #18770, PR #18792, #18563, #18078,
   #13193, #19628, #18669, #11774, #19647, #19860, #21146,
-  #19852, #21176, #21119, #21111, and #20605.
+  #19852, #21176, #21119, #21111, #20605, and #19659.
 - Checkpoint: the full open-issue repro suite passed at 10 fixed bugs
   with 10 passed, 43 xfailed, 3 warnings in 42.23s; it passed again
   at 22 fixed repros with 22 passed, 31 xfailed, 3 warnings in 41.97s,
@@ -92,7 +94,7 @@ Active batch started 2026-06-11:
   #18919, and #18770 as strict XPASS before their markers were removed;
   the 40-fix checkpoint run found #19628, #18669, and #11774 as strict
   XPASS before their markers were removed.
-- The 61 fixed tests are normal regression tests in
+- The 62 fixed tests are normal regression tests in
   tests/python/unittest/test_apache_open_issue_repros.py. The remaining 164
   similar-bug sweep tests are strict expected-failing repros in the same file
   and must stay as tests before any corresponding fixes are attempted.
@@ -185,7 +187,7 @@ namespace in `tests/python/unittest/test_apache_open_issue_repros.py`.
 | issue #19785 | `test_issue_19785_groupnorm_zero_groups_is_python_error_not_abort` | Fixed in current worktree; `GroupNorm(num_groups=0)` raises a Python `ValueError`. |
 | issue #19753 | `test_issue_19753_topk_indices_are_integer_typed` | Fixed in current worktree; `topk` index outputs are returned with integer dtype. |
 | issue #19628 | `test_issue_19628_gpu_ctcloss_accepts_fp16_predictions` | Fixed in current worktree; GPU `CTCLoss` accepts FP16 predictions without the internal dtype mismatch. |
-| issue #19659 | `test_issue_19659_hybrid_boolean_mask_backward_runs` | Hybridized `boolean_mask` backward fails because required backward inputs are missing. |
+| issue #19659 | `test_issue_19659_hybrid_boolean_mask_backward_runs` | Fixed in current worktree; cached-op backward allows zero-output-gradient subgraphs that depend only on saved inputs/outputs. |
 | issue #19686 | `test_issue_19686_selfatt_qk_rejects_zero_heads_cleanly` | Fixed in current worktree; zero attention heads are rejected before backend dispatch. |
 | issue #19683 | `test_issue_19683_arange_like_repeat_zero_is_safe` | Fixed in current worktree; non-positive `repeat` is rejected before backend dispatch. |
 | issue #19647 | `test_issue_19647_optimize_for_missing_backend_raises` | Fixed in current worktree; missing optimization backends raise instead of returning a symbol after logging. |

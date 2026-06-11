@@ -1225,7 +1225,7 @@ void CachedOpBackward(const OpStatePtr& state_ptr,
   const std::vector<bool>& save_outputs = s.op->save_outputs();
   size_t bwd_in_dep                     = s.op->num_inputs();
   size_t bwd_out_dep                    = s.op->num_outputs();
-  CHECK(s.op->num_backward_inputs() > bwd_in_dep + bwd_out_dep);
+  CHECK_GE(s.op->num_backward_inputs(), bwd_in_dep + bwd_out_dep);
   size_t bwd_ograd_dep = s.op->num_backward_inputs() - bwd_in_dep - bwd_out_dep;
 
   // Find inputs, outputs and ograds

@@ -6463,13 +6463,12 @@ def test_np_randn():
 
 @use_np
 @requires_lapack
-# Re-skipped 2026-06-11. The 2026-05-17 re-enable ("5/5 pass" audit) was premature:
-# under the full sharded suite this still deadlocks intermittently. The fault dump
-# shows multiple `mvn_fallback` CustomOp worker threads stuck in forward ->
-# linalg.cholesky (potrf) — the classic CustomOp-thread/engine/GPU-sync deadlock of
-# upstream #18144. Isolated runs pass (timing-dependent), so it slips audits but
-# hangs a long suite. Needs a real CustomOp/engine fix before re-enabling.
-@pytest.mark.skip(reason='Hangs intermittently: mvn_fallback CustomOp cholesky deadlock (apache/mxnet#18144)')
+# Re-enabled 2026-06-11 after a real fix for apache/mxnet#18144: multivariate_normal
+# no longer routes through the `mvn_fallback` CustomOp (whose Python forward ran on a
+# separate thread pool and deadlocked against the engine inside a CachedOp graph). It
+# is now a direct op composition (cholesky + N(0,1) + einsum), so there is no
+# custom-op pool to deadlock. Verified: the previously-hanging hybridized loop now
+# completes, and this test passes.
 def test_np_multivariate_normal():
     class TestMultivariateNormal(HybridBlock):
         def __init__(self, size=None):

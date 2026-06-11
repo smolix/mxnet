@@ -161,13 +161,23 @@ on 64 cores → the 20-min faulthandler timeout. Measured on `build-g` (`test_op
 
 **Cython validation (M14-reverted build):** 18,329 GPU tests passed across 3 shards, **0
 leaks** (the `__del__` fix holds suite-wide), 0 failures. The 4th shard hung on
-`test_np_multivariate_normal` — root-caused as upstream **apache/mxnet#18144**: the
-`mvn_fallback` CustomOp runs `linalg.cholesky` (potrf) on a custom-op worker thread, and the
-fault dump shows multiple such threads deadlocked in forward→cholesky (CustomOp-thread /
-engine / GPU-sync deadlock). Pre-existing and unrelated to the shipping changes — it passes
-3/3 in isolation (timing-dependent), which is how the fork's 2026-05-17 "5/5 pass" re-enable
-slipped it through. **Re-skipped** with the #18144 reference (the re-enable was premature);
-the cython fast path itself is validated (18,329 tests + isolation repros).
+`test_np_multivariate_normal` — **apache/mxnet#18144, now fixed (not skipped).**
+
+*Root cause:* `np.random.multivariate_normal` was implemented as the `mvn_fallback`
+**CustomOp**, whose Python `forward` (cholesky + N(0,1) + einsum) runs on a separate custom-op
+thread pool. Executed inside a CachedOp graph (the `hybridize` / deferred-compute path) the
+pool deadlocks against the engine. Reproduced deterministically: a hybridized mvn loop hangs
+at ~6 iterations sitting at **0% CPU** (lock deadlock), while a pure-imperative loop runs
+2,400 ops clean — so the trigger is the CachedOp path, not raw load. (ptrace was restricted, so
+diagnosis used the faulthandler Python dump + the architecture.)
+
+*Fix:* reimplemented `multivariate_normal` (ndarray path) as a **direct op composition**
+(`mean + cholesky(cov) @ N(0,1)`) — no CustomOp, no thread pool, so nothing to deadlock; it
+traces into the CachedOp graph as ordinary ops. Verified: the hybridized reproducer now
+completes all 60 iterations and the (re-enabled) test passes in 1.6 s. The legacy
+explicit-**symbol** path still routes through the fallback op (symbol shapes aren't concrete;
+rarely used in 2.0) — noted as follow-up. The cython fast path is validated (18,329 tests +
+isolation repros).
 
 Portable test runner added: `tools/run_gpu_shards.sh` + `tools/pytest_gpu_shard_plugin.py`
 (supports `GPU_IDS="0 2 3"` to target specific GPUs; caps OMP threads + passive wait policy

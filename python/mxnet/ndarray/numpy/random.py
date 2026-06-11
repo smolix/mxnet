@@ -528,7 +528,38 @@ def multivariate_normal(mean, cov, size=None, check_valid=None, tol=None):
     size = _normalize_size(size)
     mean = _as_parameter_array(mean)
     cov = _as_parameter_array(cov)
-    return _npi.mvn_fallback(mean, cov, size=size)
+    # Implemented as a direct op composition (Cholesky factor + standard normal +
+    # einsum) instead of the legacy `_npi.mvn_fallback` CustomOp. The CustomOp ran
+    # its Python forward on a separate thread pool, and executing it inside a
+    # CachedOp graph (the hybridize / deferred-compute path) deadlocks the
+    # custom-op pool against the engine — apache/mxnet#18144. Composition computes
+    # the identical result (mean + cholesky(cov) @ N(0,1)) with no custom-op pool.
+    from ... import numpy as _mxnp  # mxnet.numpy; lazy import avoids a cycle
+    loc_shape = mean.shape
+    cov_shape = cov.shape
+    if len(loc_shape) < 1:
+        raise ValueError("mean must be at least 1 dimensional")
+    if len(cov_shape) < 2:
+        raise ValueError("cov must be at least 2 dimensional")
+    if cov_shape[-1] != cov_shape[-2]:
+        raise ValueError("the last two dimensions of the parameter cov have to be the same, "
+                         "whereas the shape of cov is {}".format(cov_shape))
+    if cov_shape[-1] != loc_shape[-1]:
+        raise ValueError("mean and cov must have same length. The shape of mean is {} "
+                         "but the shape of cov is {}".format(loc_shape[-1:], cov_shape[-2:]))
+    # cov must be factored in at least fp32: potrf is unstable/unsupported in fp16.
+    if cov.dtype == np.float16:
+        scale = _mxnp.linalg.cholesky(cov.astype(np.float32)).astype(np.float16)
+    else:
+        scale = _mxnp.linalg.cholesky(cov)
+    # Output (batch) shape, matching the old infer_shape: [size +] broadcast of the
+    # mean batch shape with the cov batch shape (cov_shape minus its last dim).
+    out_shape = np.broadcast(np.empty(loc_shape), np.empty(cov_shape[:-1])).shape
+    if size is not None:
+        size = (size,) if np.isscalar(size) else tuple(size)
+        out_shape = size + out_shape
+    noise = _mxnp.random.normal(0, 1, size=out_shape, dtype=mean.dtype, device=mean.device)
+    return mean + _mxnp.einsum('...jk,...k->...j', scale, noise)
 
 
 @wrap_ctx_to_device_func

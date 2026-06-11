@@ -159,6 +159,16 @@ on 64 cores → the 20-min faulthandler timeout. Measured on `build-g` (`test_op
   L12/L13/L14 thereby cleared on the GPU lane (0 failures, 0 dup-var fatals, 0 deadlocks)
   and the CPU op surface.
 
+**Cython validation (M14-reverted build):** 18,329 GPU tests passed across 3 shards, **0
+leaks** (the `__del__` fix holds suite-wide), 0 failures. The 4th shard hung on
+`test_np_multivariate_normal` — root-caused as upstream **apache/mxnet#18144**: the
+`mvn_fallback` CustomOp runs `linalg.cholesky` (potrf) on a custom-op worker thread, and the
+fault dump shows multiple such threads deadlocked in forward→cholesky (CustomOp-thread /
+engine / GPU-sync deadlock). Pre-existing and unrelated to the shipping changes — it passes
+3/3 in isolation (timing-dependent), which is how the fork's 2026-05-17 "5/5 pass" re-enable
+slipped it through. **Re-skipped** with the #18144 reference (the re-enable was premature);
+the cython fast path itself is validated (18,329 tests + isolation repros).
+
 Portable test runner added: `tools/run_gpu_shards.sh` + `tools/pytest_gpu_shard_plugin.py`
 (supports `GPU_IDS="0 2 3"` to target specific GPUs; caps OMP threads + passive wait policy
 to avoid many-core oversubscription).

@@ -6463,8 +6463,13 @@ def test_np_randn():
 
 @use_np
 @requires_lapack
-# Re-enabled 2026-05-17 — audited 5/5 pass on Blackwell + cuDNN 9 + oneDNN v3.
-# @pytest.mark.skip(reason='Test hangs. Tracked in #18144')
+# Re-skipped 2026-06-11. The 2026-05-17 re-enable ("5/5 pass" audit) was premature:
+# under the full sharded suite this still deadlocks intermittently. The fault dump
+# shows multiple `mvn_fallback` CustomOp worker threads stuck in forward ->
+# linalg.cholesky (potrf) — the classic CustomOp-thread/engine/GPU-sync deadlock of
+# upstream #18144. Isolated runs pass (timing-dependent), so it slips audits but
+# hangs a long suite. Needs a real CustomOp/engine fix before re-enabling.
+@pytest.mark.skip(reason='Hangs intermittently: mvn_fallback CustomOp cholesky deadlock (apache/mxnet#18144)')
 def test_np_multivariate_normal():
     class TestMultivariateNormal(HybridBlock):
         def __init__(self, size=None):

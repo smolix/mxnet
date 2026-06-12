@@ -3662,14 +3662,14 @@ def test_np_bitwise_shift(func, low, high, ndim):
         assert mx_out.shape == np_out.shape
         assert_almost_equal(mx_out.asnumpy(), np_out, rtol=1e-3, atol=1e-5)
 
-        assertRaises(TypeError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, where=False)
-        assertRaises(TypeError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, subok=False)
-        assertRaises(TypeError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, dtype=onp.int8)
+        assertRaises(NotImplementedError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, where=False)
+        assertRaises(NotImplementedError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, subok=False)
+        assertRaises(NotImplementedError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, dtype=onp.int8)
         assertRaises(TypeError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, dtype="abcdefg")
-        assertRaises(TypeError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, casting='safe')
+        assertRaises(NotImplementedError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, casting='safe')
         assertRaises(TypeError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, casting='mxnet')
-        assertRaises(TypeError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, order='C')
-        assertRaises(TypeError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, order='mxnet')
+        assertRaises(NotImplementedError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, order='C')
+        assertRaises(NotImplementedError, getattr(np, "bitwise_" + func), mx_test_data1, mx_test_data2, order='mxnet')
 
     shape = random.choice([rand_shape_nd(ndim, dim=3), (1, 0, 2)])
     for shape in [rand_shape_nd(ndim, dim=3), (1, 0, 2)]:
@@ -12760,7 +12760,6 @@ def test_np_unravel_index(ishape, rshape, dtype, hybridize):
     # Test imperative once again
     mx_out = np.unravel_index(x, rshape)
     np_out = onp.unravel_index(x.asnumpy(), rshape)
-    print(np_out)
     assert len(mx_out) == len(np_out)
     for elem_mx, elem_np in zip(mx_out, np_out):
         assert elem_mx.asnumpy().shape == elem_np.shape

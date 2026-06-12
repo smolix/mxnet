@@ -20,7 +20,7 @@
 """Namespace for numpy operators used in Gluon dispatched by F=ndarray."""
 
 import numpy as _np
-from ...base import numeric_types, integer_types
+from ...base import numeric_types, integer_types, MXNetError
 from ...util import _sanity_check_params, set_module
 from ...util import wrap_np_unary_func, wrap_np_binary_func, _check_same_device
 from ...util import is_np_default_dtype, dtype_from_number
@@ -184,6 +184,10 @@ def _normalize_axes(axes):
 
 
 def _reshape_view(a, shape):
+    if isinstance(shape, (tuple, list)):
+        shape = tuple(shape)
+        if 0 in shape:
+            return _api_internal.reshape(a, shape, False, 'C')
     if hasattr(a, 'reshape_view'):
         return a.reshape_view(shape)
     return a.reshape(shape)
@@ -195,7 +199,12 @@ def _normalize_squeeze_axis(axis, ndim):
     if isinstance(axis, _np.ndarray):
         axis = axis.tolist()
     if isinstance(axis, (integer_types, _np.integer)):
-        axis = (int(axis),)
+        axis = int(axis)
+        if ndim == 0:
+            if axis in (-1, 0):
+                return tuple()
+            raise _np.AxisError(axis, ndim=ndim)
+        axis = (axis,)
     elif isinstance(axis, (tuple, list)):
         axis = tuple(axis)
     else:
@@ -212,7 +221,7 @@ def _normalize_squeeze_axis(axis, ndim):
             raise _np.AxisError(ax, ndim=ndim)
         ax = ax + ndim if ax < 0 else ax
         if ax in normalized:
-            raise ValueError("repeated axis")
+            raise MXNetError("duplicate value in axis")
         normalized.append(ax)
     return tuple(normalized)
 
@@ -6493,6 +6502,14 @@ def ravel(x, order='C'):
     raise TypeError('type {} not supported'.format(str(type(x))))
 
 
+def _unravel_index_output_tuple(indices, shape):
+    coords = _api_internal.unravel_index(indices, shape)
+    if indices.shape == ():
+        shape_ndim = 1 if isinstance(shape, int) else len(shape)
+        return tuple(coords[i] for i in range(shape_ndim))
+    return tuple(coords)
+
+
 @set_module('mxnet.ndarray.numpy')
 def unravel_index(indices, shape, order='C'): # pylint: disable=redefined-outer-name
     """
@@ -6525,9 +6542,9 @@ def unravel_index(indices, shape, order='C'): # pylint: disable=redefined-outer-
         if isinstance(indices, numeric_types):
             return _np.unravel_index(indices, shape)
         if isinstance(indices, NDArray):
-            return tuple(_api_internal.unravel_index(indices, shape))
+            return _unravel_index_output_tuple(indices, shape)
         if isinstance(indices, (list, tuple, _np.ndarray)):
-            return tuple(_api_internal.unravel_index(_as_np_ndarray(indices), shape))
+            return _unravel_index_output_tuple(_as_np_ndarray(indices), shape)
         raise TypeError('Do not support type {} as indices.'.format(str(type(indices))))
     raise NotImplementedError('Do not support column-major (Fortran-style) order at this moment')
 
@@ -9193,9 +9210,12 @@ def squeeze(x, axis=None):
                         'cannot select an axis to squeeze out which has size not equal to one')
             newshape = tuple(dim for ax, dim in enumerate(shape) if ax not in axes)
         if newshape == x.shape:
-            return x
+            from ... import autograd as _autograd  # pylint: disable=import-outside-toplevel
+            from ... import _deferred_compute as _dc  # pylint: disable=import-outside-toplevel
+            if not _autograd.is_recording() and not _dc.is_deferred_compute():
+                return x
         return _reshape_view(x, newshape)
-    return _api_internal.squeeze(x, axis)
+    return _api_internal.reshape(_api_internal.squeeze(x, axis), -2, False, 'C')
 
 # pylint: disable=redefined-outer-name
 @set_module('mxnet.ndarray.numpy')

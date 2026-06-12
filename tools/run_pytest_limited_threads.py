@@ -20,6 +20,26 @@
 
 import os
 import sys
+from pathlib import Path
+
+
+def _use_current_checkout_by_default():
+    if os.environ.get("MXNET_TEST_USE_INSTALLED_MXNET") == "1":
+        return
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_python = str(repo_root / "python")
+    if repo_python not in sys.path:
+        sys.path.insert(0, repo_python)
+    pythonpath = os.environ.get("PYTHONPATH", "")
+    pythonpath_entries = [entry for entry in pythonpath.split(os.pathsep) if entry]
+    if repo_python not in pythonpath_entries:
+        os.environ["PYTHONPATH"] = os.pathsep.join([repo_python] + pythonpath_entries)
+    built_lib = repo_root / "build" / "libmxnet.so"
+    if built_lib.exists():
+        os.environ.setdefault("MXNET_LIBRARY_PATH", str(built_lib))
+
+
+_use_current_checkout_by_default()
 
 
 def _enable_cpu_only_collection():

@@ -221,6 +221,27 @@ namespace in `tests/python/unittest/test_apache_open_issue_repros.py`.
   sparse ndarray tests. These are suite-found failures pending focused reruns and
   shared-root-cause triage; they are not yet added to the runtime-verified bug
   repro count.
+- Current-code Python sweep follow-up: `tools/run_pytest_limited_threads.py`
+  now defaults to importing `/home/smola/mxnet/python`, loading
+  `/home/smola/mxnet/build/libmxnet.so`, and exporting the same `PYTHONPATH` for
+  subprocess-backed tests. This prevents focused pytest runs from accidentally
+  testing a stale installed wheel against the latest native library.
+- Suite-found NumPy failures fixed or resolved against latest code:
+  `test_np_squeeze` now preserves autograd/deferred-compute graph edges for
+  no-op squeezes and handles literal zero dimensions through NumPy reshape;
+  scalar-input `np.unravel_index` now returns 0-D MXNet NumPy NDArrays instead
+  of Python ints; `test_np_bitwise_shift` now follows the shared ufunc wrapper
+  contract by expecting `NotImplementedError` for legal but unsupported kwargs.
+  Verification: the focused seven-test sample passed, and the full
+  `test_np_unravel_index` plus `test_np_bitwise_shift` parameterized selection
+  passed with 446 passed and 2 warnings in 53.15s.
+- Focused reruns against latest code narrowed the still-reproduced Python
+  failures to static-memory backward shape metadata
+  (`shape_num_unknown_nodes != 0`), trainer updater state placement
+  (`cpu_pinned(0)` vs `cpu(0)` for `sgd_mom_update`), and the static-shape
+  subgraph paramless-data binding repro. Representative CachedOp/cuDNN
+  BatchNorm, OpenCV/image, sparse, profiler, GPU index-bounds, and optimizer
+  hang-suspect selections passed in the current-code rerun.
 
 ## Runtime/API-Verified Repros
 

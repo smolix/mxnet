@@ -1583,6 +1583,60 @@ def test_similar_layernorm_large_finite_input_is_finite(hybridize):
     assert onp.isfinite(out.asnumpy()).all()
 
 
+@pytest.mark.parametrize("hybridize", [False, True])
+def test_similar_layernorm_invalid_negative_axis_is_rejected(hybridize):
+    import mxnet as mx
+    from mxnet import npx
+
+    npx.set_np()
+    layer = mx.gluon.nn.LayerNorm(axis=-3)
+    layer.initialize(ctx=mx.cpu())
+    if hybridize:
+        layer.hybridize()
+    data = mx.np.ones((2, 3), ctx=mx.cpu())
+    with pytest.raises((ValueError, mx.base.MXNetError), match="axis|Channel"):
+        layer(data).wait_to_read()
+
+
+def test_similar_layernorm_disabled_affine_params_stay_nondifferentiable():
+    import mxnet as mx
+
+    layer = mx.gluon.nn.LayerNorm(in_channels=3, center=False, scale=False)
+    assert layer.gamma.grad_req == "null"
+    assert layer.beta.grad_req == "null"
+    layer.gamma.grad_req = "write"
+    layer.beta.grad_req = "write"
+    assert layer.gamma.grad_req == "null"
+    assert layer.beta.grad_req == "null"
+
+
+def test_similar_layernorm_visible_stats_are_computed_without_primary_output():
+    import mxnet as mx
+    import numpy as onp
+
+    data = mx.sym.var("data")
+    gamma = mx.sym.var("gamma")
+    beta = mx.sym.var("beta")
+    outputs = mx.sym.LayerNorm(data=data, gamma=gamma, beta=beta, axis=-1, output_mean_var=True)
+
+    for output_index, expected in [
+            (1, onp.array([[2.0], [5.0]], dtype="float32")),
+            (2, onp.sqrt(onp.array([[2.0 / 3.0], [2.0 / 3.0]], dtype="float32") + 1e-5)),
+    ]:
+        exe = outputs[output_index]._simple_bind(
+            ctx=mx.cpu(),
+            type_dict={"data": "float32", "gamma": "float32", "beta": "float32"},
+            data=(2, 3),
+            gamma=(3,),
+            beta=(3,),
+        )
+        exe.arg_dict["data"][:] = mx.nd.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        exe.arg_dict["gamma"][:] = 1
+        exe.arg_dict["beta"][:] = 0
+        exe.forward(is_train=False)[0].wait_to_read()
+        onp.testing.assert_allclose(exe.outputs[0].asnumpy(), expected, rtol=1e-5, atol=1e-6)
+
+
 @pytest.mark.parametrize("kind", ["batchnorm", "syncbatchnorm"])
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_batchnorm_training_large_finite_is_finite(kind, hybridize):
@@ -1608,6 +1662,117 @@ def test_similar_batchnorm_training_large_finite_is_finite(kind, hybridize):
     out.wait_to_read()
     assert onp.isfinite(out.asnumpy()).all()
     assert onp.isfinite(data.grad.asnumpy()).all()
+
+
+@pytest.mark.parametrize("kind", ["batchnorm", "syncbatchnorm"])
+def test_similar_batchnorm_large_finite_updates_unscaled_running_stats(kind):
+    import mxnet as mx
+    import numpy as onp
+    from mxnet import autograd
+    from mxnet import npx
+
+    npx.set_np()
+    if kind == "batchnorm":
+        layer = mx.gluon.nn.BatchNorm(in_channels=1, momentum=0.0)
+    else:
+        layer = mx.gluon.nn.SyncBatchNorm(in_channels=1, momentum=0.0, num_devices=1)
+    layer.initialize(ctx=mx.cpu())
+    data = mx.np.array([[[[1.0e19], [2.0e19]]]], dtype="float32")
+    with autograd.record(train_mode=True):
+        out = layer(data)
+        loss = out.sum()
+    loss.backward()
+    out.wait_to_read()
+    onp.testing.assert_allclose(layer.running_mean.data().asnumpy(), onp.array([1.5e19], dtype="float32"))
+    onp.testing.assert_allclose(layer.running_var.data().asnumpy(), onp.array([2.5e37], dtype="float32"), rtol=1e-5)
+
+
+def test_similar_batchnorm_fix_gamma_does_not_mutate_gamma_input():
+    import mxnet as mx
+    import numpy as onp
+
+    data = mx.nd.array([[[1.0], [2.0], [3.0]]])
+    gamma = mx.nd.array([5.0, 6.0, 7.0])
+    beta = mx.nd.zeros((3,))
+    moving_mean = mx.nd.array([0.1, 0.2, 0.3])
+    moving_var = mx.nd.array([1.0, 1.5, 2.0])
+    outputs = mx.nd.BatchNorm(
+        data,
+        gamma,
+        beta,
+        moving_mean,
+        moving_var,
+        fix_gamma=True,
+        use_global_stats=True,
+        output_mean_var=True,
+        cudnn_off=True,
+    )
+    for out in outputs:
+        out.wait_to_read()
+    onp.testing.assert_allclose(gamma.asnumpy(), onp.array([5.0, 6.0, 7.0], dtype="float32"))
+
+
+@pytest.mark.parametrize("cudnn_off", [False, True])
+def test_similar_gpu_batchnorm_inference_output_mean_var_are_populated(cudnn_off):
+    require_gpus(1)
+    proc = run_python(
+        """
+        import numpy as onp
+        import mxnet as mx
+
+        ctx = mx.gpu(0)
+        data = mx.nd.array([[[1.0], [2.0], [3.0]]], ctx=ctx)
+        gamma = mx.nd.ones((3,), ctx=ctx)
+        beta = mx.nd.zeros((3,), ctx=ctx)
+        moving_mean = mx.nd.array([0.1, 0.2, 0.3], ctx=ctx)
+        moving_var = mx.nd.array([1.0, 1.5, 2.0], ctx=ctx)
+        out, mean, invstd = mx.nd.BatchNorm(
+            data,
+            gamma,
+            beta,
+            moving_mean,
+            moving_var,
+            fix_gamma=False,
+            use_global_stats=True,
+            output_mean_var=True,
+            cudnn_off=%r,
+        )
+        mx.nd.waitall()
+        onp.testing.assert_allclose(mean.asnumpy(), moving_mean.asnumpy(), rtol=1e-6, atol=1e-6)
+        onp.testing.assert_allclose(
+            invstd.asnumpy(),
+            1.0 / onp.sqrt(moving_var.asnumpy() + 1e-3),
+            rtol=1e-6,
+            atol=1e-6,
+        )
+        """ % cudnn_off,
+        timeout=10,
+        extra_env={"CUDA_VISIBLE_DEVICES": "0"},
+    )
+    assert_subprocess_ok(proc)
+
+
+def test_similar_syncbatchnorm_float16_is_rejected_cleanly():
+    import mxnet as mx
+    from mxnet import npx
+
+    npx.set_np()
+    data = mx.np.ones((2, 3, 2, 2), dtype="float16")
+    gamma = mx.np.ones((3,), dtype="float32")
+    beta = mx.np.zeros((3,), dtype="float32")
+    moving_mean = mx.np.zeros((3,), dtype="float32")
+    moving_var = mx.np.ones((3,), dtype="float32")
+    with pytest.raises(mx.base.MXNetError, match="SyncBatchNorm|float16|FP16|unsupported"):
+        npx.sync_batch_norm(
+            data,
+            gamma,
+            beta,
+            moving_mean,
+            moving_var,
+            ndev=1,
+            key="fp16_reject",
+            fix_gamma=False,
+        ).wait_to_read()
 
 
 @pytest.mark.parametrize("hybridize", [False, True])

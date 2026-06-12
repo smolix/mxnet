@@ -567,10 +567,9 @@ class SyncBatchNormProp : public OperatorProperty {
     CHECK_GE(in_type->size(), 1U);
     int dtype = (*in_type)[0];
     CHECK_NE(dtype, -1) << "First input must have specified type";
-    // For float16 input type beta, gamma, mean, and average are stored in float32.
-    // For other input types, these parameters have the same type as input
-    // NOTE: This requirement is from cuDNN (v. 4 and 5)
-    int dtype_param = (dtype == kFloat16) ? kFloat32 : dtype;
+    CHECK_EQ(dtype, kFloat32) << "SyncBatchNorm only supports float32 input; "
+                              << "float16/FP16 and other dtypes are unsupported";
+    int dtype_param = dtype;
     for (size_t i = 1; i < in_type->size(); ++i) {
       if ((*in_type)[i] == -1) {
         (*in_type)[i] = dtype_param;

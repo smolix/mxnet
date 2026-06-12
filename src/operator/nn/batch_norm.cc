@@ -145,29 +145,32 @@ void BatchNormForwardImpl(mshadow::Stream<cpu>*,
 #pragma omp parallel for
   for (int channel = 0; channel < static_cast<int>(channelCount); ++channel) {
     if (is_train_and_not_global_stats) {
-      // compute mean per input
-      mean[channel] = 0;
-      ForEachFast(
-          inputData, channel, [mean, channel](const DType* in_data) { mean[channel] += *in_data; });
-      mean[channel] /= itemCountPerChannel;
+      // Accumulate moments in double so finite float32 inputs do not overflow
+      // while computing variance.
+      double mean_acc = 0.0;
+      ForEachFast(inputData, channel, [&mean_acc](const DType* in_data) {
+        mean_acc += static_cast<double>(*in_data);
+      });
+      mean_acc /= static_cast<double>(itemCountPerChannel);
+      mean[channel] = static_cast<AccReal>(mean_acc);
 
-      // compute variance per input
-      const AccReal thisMean = mean[channel];
-      var[channel]           = 0;
-      ForEachFast(inputData, channel, [var, thisMean, channel](const DType* current_in_data) {
-        const AccReal current = *current_in_data;
-        var[channel] += (current - thisMean) * (current - thisMean);
+      double var_acc = 0.0;
+      ForEachFast(inputData, channel, [&var_acc, mean_acc](const DType* current_in_data) {
+        const double current = static_cast<double>(*current_in_data);
+        const double centered = current - mean_acc;
+        var_acc += centered * centered;
       });
 
-      const AccReal sum = var[channel];
-      const AccReal variance = sum / itemCountPerChannel;
+      const double variance_acc = var_acc / static_cast<double>(itemCountPerChannel);
+      const AccReal thisMean = mean[channel];
+      const AccReal variance = static_cast<AccReal>(variance_acc);
       runningMeanDataPtr[channel] =
           runningMeanDataPtr[channel] * param_.momentum + thisMean * (AccReal(1) - param_.momentum);
       runningVarDataPtr[channel] =
           runningVarDataPtr[channel] * param_.momentum + variance * (AccReal(1) - param_.momentum);
 
       AccReal invstd;
-      if (sum == 0 && param_.eps == 0.0) {
+      if (var_acc == 0.0 && param_.eps == 0.0) {
         // Nobody likes to divide by zero
         invstd = 0;
       } else {
@@ -201,9 +204,6 @@ void BatchNormForwardImpl(mshadow::Stream<cpu>*,
             });
       }
     } else {
-      if (IsBNWriting(req[batchnorm::kGamma])) {
-        w[channel] = AccReal(1);
-      }
       if (IsBNWriting(req[batchnorm::kData])) {
         ForEachFast(inputData,
                     outputData,

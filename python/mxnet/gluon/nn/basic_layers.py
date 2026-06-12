@@ -293,7 +293,10 @@ class Dropout(HybridBlock):
 
 
 def _canonical_axis(axis, ndim):
-    return axis if axis >= 0 else axis + ndim
+    axis = axis if axis >= 0 else axis + ndim
+    if axis < 0 or axis >= ndim:
+        raise ValueError("Channel axis out of range: axis={}".format(axis))
+    return axis
 
 
 def _channel_param_shape(channel_count, axis, ndim):
@@ -329,12 +332,6 @@ def _stable_group_norm(data, gamma, beta, num_groups, epsilon):
     out = out * gamma.astype('float64').reshape(param_shape)
     out = out + beta.astype('float64').reshape(param_shape)
     return out.astype(data.dtype)
-
-
-def _scale_batch_norm_input(x):
-    max_abs = np.max(np.abs(x))
-    scale = np.maximum(max_abs / 1e18, np.ones_like(max_abs))
-    return x / scale
 
 
 @use_np
@@ -434,9 +431,6 @@ class _BatchNorm(HybridBlock):
             with autograd.pause():
                 beta = np.zeros_like(beta)
             beta.attach_grad()
-        if (get_dtype_name(x.dtype) == 'float32' and not self._kwargs['use_global_stats']
-                and (autograd.is_training() or self._active)):
-            x = _scale_batch_norm_input(x)
         return npx.batch_norm(x, gamma, beta, running_mean, running_var,
                               name='fwd', **self._kwargs)
 
@@ -667,10 +661,12 @@ class InstanceNorm(HybridBlock):
         self._epsilon = epsilon
         self.gamma = Parameter('gamma', grad_req='write' if scale else 'null',
                                shape=(in_channels,), init=gamma_initializer,
-                               allow_deferred_init=True)
+                               allow_deferred_init=True,
+                               differentiable=scale)
         self.beta = Parameter('beta', grad_req='write' if center else 'null',
                               shape=(in_channels,), init=beta_initializer,
-                              allow_deferred_init=True)
+                              allow_deferred_init=True,
+                              differentiable=center)
 
     def forward(self, x):
         device = x.device
@@ -779,14 +775,16 @@ class LayerNorm(HybridBlock):
         self._scale = scale
         self.gamma = Parameter('gamma', grad_req='write' if scale else 'null',
                                shape=(in_channels,), init=gamma_initializer,
-                               allow_deferred_init=True)
+                               allow_deferred_init=True,
+                               differentiable=scale)
         self.beta = Parameter('beta', grad_req='write' if center else 'null',
                               shape=(in_channels,), init=beta_initializer,
-                              allow_deferred_init=True)
+                              allow_deferred_init=True,
+                              differentiable=center)
 
     def forward(self, data):
         device = data.device
-        channel_axis = self._axis if self._axis >= 0 else self._axis + data.ndim
+        channel_axis = _canonical_axis(self._axis, data.ndim)
         channel_count = data.shape[channel_axis]
         gamma = self.gamma.data(device) if self._scale else np.ones((channel_count,),
                                                                     dtype=data.dtype,
@@ -799,7 +797,7 @@ class LayerNorm(HybridBlock):
         return npx.layer_norm(data, gamma=gamma, beta=beta, axis=self._axis, eps=self._epsilon)
 
     def infer_shape(self, data, *args):
-        channel_axis = self._axis if self._axis >= 0 else self._axis + data.ndim
+        channel_axis = _canonical_axis(self._axis, data.ndim)
         channel_count = data.shape[channel_axis]
         self.gamma.shape = (channel_count,)
         self.beta.shape = (channel_count,)
@@ -888,10 +886,12 @@ class GroupNorm(HybridBlock):
         self._scale = scale
         self.gamma = Parameter('gamma', grad_req='write' if scale else 'null',
                                shape=(in_channels,), init=gamma_initializer,
-                               allow_deferred_init=True)
+                               allow_deferred_init=True,
+                               differentiable=scale)
         self.beta = Parameter('beta', grad_req='write' if center else 'null',
                               shape=(in_channels,), init=beta_initializer,
-                              allow_deferred_init=True)
+                              allow_deferred_init=True,
+                              differentiable=center)
 
     def forward(self, data):
         device = data.device
@@ -1194,8 +1194,11 @@ class SyncBatchNorm(BatchNorm):
             with autograd.pause():
                 beta = np.zeros_like(beta)
             beta.attach_grad()
-        if (get_dtype_name(x.dtype) == 'float32' and not self._kwargs['use_global_stats']
-                and self._kwargs['ndev'] == 1 and (autograd.is_training() or self._active)):
-            x = _scale_batch_norm_input(x)
+        if self._kwargs['ndev'] == 1:
+            kwargs = dict(self._kwargs)
+            kwargs.pop('ndev')
+            kwargs.pop('key')
+            return npx.batch_norm(x, gamma, beta, running_mean, running_var,
+                                  name='fwd', **kwargs)
         return npx.sync_batch_norm(x, gamma, beta, running_mean, running_var,
                                    name='fwd', **self._kwargs)

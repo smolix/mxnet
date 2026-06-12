@@ -87,6 +87,20 @@ __global__ void FillKernel(DType* data, int size, DType value) {
   }
 }
 
+template <typename DType>
+__global__ void SetInferenceStatsKernel(DType* save_mean,
+                                        DType* save_invstd,
+                                        const DType* moving_mean,
+                                        const DType* moving_var,
+                                        double eps,
+                                        int size) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < size) {
+    save_mean[i] = moving_mean[i];
+    save_invstd[i] = DType(1.0) / sqrt(moving_var[i] + DType(eps));
+  }
+}
+
 inline size_t AlignWorkspaceSize(size_t size) {
   constexpr size_t alignment = 256;
   return ((size + alignment - 1) / alignment) * alignment;
@@ -209,6 +223,17 @@ void CudnnBatchNormForward(const BatchNormParam& param,
                                                          inputs[batchnorm::kInMovingMean].dptr_,
                                                          inputs[batchnorm::kInMovingVar].dptr_,
                                                          param.eps));
+      if (outputs.size() > batchnorm::kVar) {
+        constexpr int threads = 256;
+        const int blocks      = (channel_count + threads - 1) / threads;
+        SetInferenceStatsKernel<DType><<<blocks, threads, 0, mshadow::Stream<gpu>::GetStream(s)>>>(
+            outputs[batchnorm::kMean].dptr<DType>(),
+            outputs[batchnorm::kVar].dptr<DType>(),
+            inputs[batchnorm::kInMovingMean].dptr<DType>(),
+            inputs[batchnorm::kInMovingVar].dptr<DType>(),
+            param.eps,
+            channel_count);
+      }
     }
   })
   // Set the lock on the auxiliary states.

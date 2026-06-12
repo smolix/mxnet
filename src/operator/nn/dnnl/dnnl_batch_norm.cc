@@ -156,12 +156,6 @@ void DNNLBNForward::Execute(const OpContext& ctx,
     if (!param.fix_gamma) {
       memcpy(scale_buf, weight_ptr, copy_size);
       memcpy(shift_buf, bias_ptr, copy_size);
-    } else if (IsBNWriting(req[batchnorm::kGamma])) {
-      for (index_t i = 0; i < channels_; i++) {
-        scale_buf[i]   = 1.0f;
-        weight_ptr[i]  = 1.0f;
-        shift_buf[i]   = bias_ptr[i];
-      }
     } else {
       for (index_t i = 0; i < channels_; i++) {
         scale_buf[i] = 1.0f;

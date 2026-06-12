@@ -193,9 +193,16 @@ namespace in `tests/python/unittest/test_apache_open_issue_repros.py`.
   template now captures the failing executable status in the `else` branch.
   Verification: `build/tests/mxnet_unit_tests --gtest_filter=Engine.RandSumExpr`
   now exits 1 and reports `[FAIL ] engine (exit 1)`.
-- Confirmed native C++ failure still present: `Engine.RandSumExpr` throws from
-  `src/engine/threaded_engine.cc:287` with `duplicate items found in const_vars`.
-  This is the first suite-found product failure to triage after the launcher fix.
+- Native C++ suite-found failure fixed: `Engine.RandSumExpr` was throwing from
+  `src/engine/threaded_engine.cc:287` with `duplicate items found in const_vars`
+  because direct threaded-engine callers could pass duplicate dependency handles
+  that C API/imperative callers already normalized. `ThreadedEngine::NewOperator`
+  now deduplicates dependency vectors before storing/checking them, and
+  `Engine.ThreadedPushAsyncDeduplicatesDirectDependencies` covers duplicate
+  direct read/write dependencies. Verification: the focused engine binary passed
+  `Engine.RandSumExpr` plus the new regression test, and
+  `build/tests/mxnet_unit_tests --gtest_filter=Engine.RandSumExpr` reported all
+  shards passed.
 - Wheel acceptance harness updated so a `cp312` wheel creates a Python 3.12 venv
   automatically and stores scratch/report/cache data under `.tmp/` by default.
   The installed wheel import check passed and reported 4 GPUs plus CUDA, cuDNN,

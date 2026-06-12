@@ -631,6 +631,38 @@ TEST(Engine, PushFuncDeduplicatesReadWriteVars) {
   engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, var);
 }
 
+TEST(Engine, ThreadedPushAsyncDeduplicatesDirectDependencies) {
+  std::vector<mxnet::Engine*> engines = {mxnet::engine::CreateThreadedEnginePooled(),
+                                         mxnet::engine::CreateThreadedEnginePerDevice()};
+
+  for (auto* engine : engines) {
+    auto read_var  = engine->NewVariable();
+    auto write_var = engine->NewVariable();
+    int run_count  = 0;
+    auto fn        = [&run_count](mxnet::RunContext,
+                           mxnet::Engine::CallbackOnStart on_start,
+                           mxnet::Engine::CallbackOnComplete on_complete) {
+      on_start();
+      ++run_count;
+      on_complete();
+    };
+
+    EXPECT_NO_THROW(engine->PushAsync(fn,
+                                      mxnet::Context::CPU(),
+                                      {read_var, read_var, write_var},
+                                      {write_var, write_var},
+                                      mxnet::FnProperty::kNormal,
+                                      0,
+                                      "ThreadedDirectDuplicateDeps"));
+    EXPECT_NO_THROW(engine->WaitForAll());
+    EXPECT_EQ(run_count, 1);
+
+    engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, read_var);
+    engine->DeleteVariable([](mxnet::RunContext) {}, mxnet::Context{}, write_var);
+    EXPECT_NO_THROW(engine->WaitForAll());
+  }
+}
+
 TEST(Engine, PushFuncND) {
   auto ctx = mxnet::Context{};
   std::vector<mxnet::NDArray*> nds;

@@ -38,6 +38,27 @@ def find_optional_library(lib, paths):
             return os.path.abspath(path)
     pytest.skip(f"optional extension library {lib} not built")
 
+def subgraph_library_path():
+    if os.name == 'posix':
+        lib = 'libsubgraph_lib.so'
+        return find_optional_library(lib, [
+            lib,
+            os.path.join(base_path, 'build', lib),
+        ])
+    if os.name == 'nt':
+        lib = 'libsubgraph_lib.dll'
+        return find_optional_library(lib, [
+            os.path.join('windows_package', 'lib', lib),
+        ])
+    pytest.skip('unsupported platform for subgraph extension library')
+
+
+def load_subgraph_library():
+    fname = subgraph_library_path()
+    if not hasattr(mx.nd, 'issue19655_sleep_fill'):
+        mx.library.load(fname)
+    return fname
+
 def test_library_load_accepts_dylib_extension(tmp_path, monkeypatch):
     lib_path = tmp_path / 'libcustomop_lib.dylib'
     lib_path.write_bytes(b'')
@@ -148,23 +169,7 @@ def test_custom_op():
 @pytest.mark.skipif(check_platform(), reason="not all machine types supported")
 @pytest.mark.skipif(is_cd_run(), reason="continuous delivery run - ignoring test")
 def test_subgraph():
-    # possible places to find library file
-    if (os.name=='posix'):
-        lib = 'libsubgraph_lib.so'
-        fname = find_optional_library(lib, [
-            # plain make build, when run in the CI
-            lib,
-            # plain cmake build when run in the CI
-            os.path.join(base_path, 'build', lib),
-        ])
-    elif (os.name=='nt'):
-        lib = 'libsubgraph_lib.dll'
-        fname = find_optional_library(lib, [
-            # plain make build, when run in the CI
-            'windows_package\\lib\\' + lib,
-        ])
-
-    mx.library.load(fname)
+    load_subgraph_library()
 
     # test simple graph with add, exp and log operators, library supports exp/log
     a = mx.sym.var('a')
@@ -237,6 +242,20 @@ def test_subgraph():
     out6 = sym_block4(a_data, b_data)
     # check that result matches one executed by MXNet
     assert_almost_equal(out[0].asnumpy(), out6[0].asnumpy(), rtol=1e-3, atol=1e-3)
+
+@pytest.mark.skipif(check_platform(), reason="not all machine types supported")
+@pytest.mark.skipif(is_cd_run(), reason="continuous delivery run - ignoring test")
+def test_optimize_for_waits_for_extension_backend_args():
+    load_subgraph_library()
+    base = mx.nd.zeros((4,), ctx=mx.cpu())
+    base.wait_to_read()
+    pending = mx.nd.issue19655_sleep_fill(base, delay_ms="1000", fill="7")
+
+    data = mx.sym.var('data')
+    sym = mx.sym.exp(data)
+    sym.optimize_for("issue19655_reader", args={'data': pending}, expected_first="7")
+
+    assert_almost_equal(pending.asnumpy(), np.full((4,), 7.0, dtype=np.float32))
 
 @pytest.mark.skipif(check_platform(['x86_64']), reason="not all machine types supported")
 @pytest.mark.skipif(is_cd_run(), reason="continuous delivery run - ignoring test")

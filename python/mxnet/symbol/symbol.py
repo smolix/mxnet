@@ -50,19 +50,6 @@ __all__ = ["Symbol", "var", "Variable", "Group", "load", "fromjson",
            "pow", "power", "maximum", "minimum", "hypot", "eye", "zeros",
            "ones", "full", "arange", "linspace", "histogram", "split_v2"]
 
-_KNOWN_GRAPH_PASS_BACKENDS = {
-    "BuildSubgraph",
-    "EliminateCommonNodesPass",
-    "LoadLegacyJSON",
-    "MXGradient",
-    "MXPlanMemory",
-    "QuantizeGraph",
-    "ReducePrecision",
-    "RemoveAmpCast",
-    "SetCalibTableToQuantizedGraph",
-}
-
-
 class Symbol(SymbolBase):
     """Symbol is symbolic graph of the mxnet."""
     # disable dictionary storage, also do not have parent type.
@@ -1491,8 +1478,7 @@ class Symbol(SymbolBase):
                      shape_dict=None, type_dict=None, stype_dict=None, skip_infer=False, **kwargs):
         r"""Partitions current symbol and optimizes it for a given backend.
 
-        The backend must have registered the partitioning graph pass in
-        ``SubgraphBackendRegistry``.
+        The backend must be registered as a subgraph backend or as an NNVM graph pass.
 
         Parameters
         ----------
@@ -1532,14 +1518,6 @@ class Symbol(SymbolBase):
         assert isinstance(backend, str)
         assert isinstance(args, dict) or args is None
         assert isinstance(aux, dict) or aux is None
-
-        if backend not in _KNOWN_GRAPH_PASS_BACKENDS:
-            try:
-                self.get_backend_symbol(backend)
-            except MXNetError as err:
-                raise MXNetError(
-                    "Error optimizing for backend {}: backend cannot be found".format(backend)
-                ) from err
 
         if args is None or len(args) == 0:
             args_ = []

@@ -27,24 +27,28 @@ Policy:
 
 Current counts:
 
-- Runtime/static-verified executable bug repros: 231 total: 53 from the
+- Runtime/static-verified executable bug repros: 232 total: 54 from the
   original open GitHub issue/PR scan and 178 from the similar-bug/current-code
-  sweep. In the current worktree, 221 are fixed regression tests and 10 remain
+  sweep. In the current worktree, 222 are fixed regression tests and 10 remain
   expected-failing repros: 1 original open issue plus 9 similar-pattern
-  candidates still pending fixes.
+  candidates still pending fixes. The #19655 repro lives in
+  `tests/python/unittest/test_extensions.py` because it requires a custom
+  extension backend; the other open-issue repros remain in
+  `tests/python/unittest/test_apache_open_issue_repros.py`.
 - Fixed in current worktree: issues #21176, #21119, #21111, #20936, #20657, #20605, #20577, #21156,
   #16427, #13945, #20391, #16402, #18300, #21146, #19423, #19458,
   #19422, #12286, #14695, #13953, #8817, #20180, #20076,
   #20046, #20044, #20037, #19860, #19852, #19785, #19753,
   #19686, #19683, #19659, #19021, #18919, #18770, #18669, #18563, #18078, #17936,
   #17698, #13193, #11774, and #8430; PRs #21217, #21044,
-  #20491, #18792, #18583, and #17209; plus GPU issue #19628
-  and symbol issue #19647. Current-code/similar fixes in this batch also cover
+  #20491, #18792, #18583, and #17209; plus GPU issue #19628,
+  symbol issue #19647, and `optimize_for` issue #19655. Current-code/similar fixes in this batch also cover
   KVStore updater context placement, NCCL updater context placement, dynamic-output
   `simple_bind` allocation, static-shape subgraph paramless-data binding,
-  imperative/cached backward preservation of runtime NumPy scalar shapes, and
-  CPU transformer interleaved matmul optional-gradient requests.
-- Issue-side source/static-only candidates still pending runtime confirmation: 2 (#19655, #20376).
+  imperative/cached backward preservation of runtime NumPy scalar shapes, CPU
+  transformer interleaved matmul optional-gradient requests, and dynamically
+  loaded extension graph-pass dispatch through `Symbol.optimize_for`.
+- Issue-side source/static-only candidates still pending runtime confirmation: 1 (#20376).
 - PR-side source/static-only candidates still pending runtime confirmation: 2 (#20470, #20316).
 - Broad-scan PR candidates not yet verified and not counted as current bugs: 18.
 - Remaining expected-failing repros are all NumPy view/stride contract cases:
@@ -85,7 +89,7 @@ Active batch started 2026-06-11:
   #19686, #19683, #19021, PR #21217, #20936, #20037, #8430,
   #19423, #19458, #18919, #18770, PR #18792, #18563, #18078,
   #13193, #19628, #18669, #11774, #19647, #19860, #21146,
-  #19852, #21176, #21119, #21111, #20605, and #19659.
+  #19852, #21176, #21119, #21111, #20605, #19659, and #19655.
 - Checkpoint: the full open-issue repro suite passed at 10 fixed bugs
   with 10 passed, 43 xfailed, 3 warnings in 42.23s; it passed again
   at 22 fixed repros with 22 passed, 31 xfailed, 3 warnings in 41.97s,
@@ -104,11 +108,12 @@ Active batch started 2026-06-11:
   #18919, and #18770 as strict XPASS before their markers were removed;
   the 40-fix checkpoint run found #19628, #18669, and #11774 as strict
   XPASS before their markers were removed.
-- The 219 fixed tests are normal regression tests in
-  tests/python/unittest/test_apache_open_issue_repros.py. The remaining 9
-  similar-bug sweep tests plus issue #19170 are strict expected-failing repros
-  in the same file and must stay as tests before any corresponding fixes are
-  attempted.
+- The 221 fixed Apache repro tests are normal regression tests in
+  tests/python/unittest/test_apache_open_issue_repros.py. The #19655 custom
+  extension repro is a normal regression test in
+  tests/python/unittest/test_extensions.py. The remaining 9 similar-bug sweep
+  tests plus issue #19170 are strict expected-failing repros in the Apache repro
+  file and must stay as tests before any corresponding fixes are attempted.
 - Patched files so far: python/mxnet/libinfo.py, python/mxnet/recordio.py,
   python/mxnet/gluon/block.py, python/mxnet/gluon/parameter.py,
   python/mxnet/ndarray/ndarray.py, python/mxnet/numpy/multiarray.py,
@@ -134,7 +139,9 @@ Active batch started 2026-06-11:
   src/operator/nn/pool*, src/operator/nn/batch_norm*,
   src/operator/nn/cudnn/cudnn_batch_norm.cu,
   src/operator/nn/dnnl/dnnl_batch_norm.cc,
-  src/operator/nn/layer_norm.cc, and src/operator/contrib/sync_batch_norm*.
+  src/operator/nn/layer_norm.cc, src/operator/contrib/sync_batch_norm*,
+  example/extensions/lib_subgraph/subgraph_lib.cc, and
+  tests/python/unittest/test_extensions.py.
 - Next checkpoint: run the expanded full repro suite again before
   promoting another fixed batch, or sooner if shared/runtime behavior changes.
 - Similar-bug sweep repros added so far: generated symbol/image validation
@@ -156,7 +163,9 @@ Active batch started 2026-06-11:
   normalization, SyncBatchNorm imperative no-affine graph preservation, hybrid CPU RNN
   runtime sequence-length masking, CosineEmbeddingLoss large-vector scaling,
   the remaining Gluon loss infinity/zero-weight numeric edges, and CPU
-  transformer interleaved matmul optional-gradient handling.
+  transformer interleaved matmul optional-gradient handling, extension
+  `optimize_for` argument synchronization, and dynamic extension graph-pass
+  dispatch.
   Native sparse canonicalization and LP-pooling candidates now pass against
   build/libmxnet.so. The BatchNorm/LayerNorm focused audit fixed recent
   Python normalization regressions plus old native/DNNL/CUDA normalization
@@ -240,6 +249,30 @@ only. The full Apache repro suite then passed with 241 passed, 10 xfailed, and
 5 warnings in 393.63s. The fix in `src/operator/contrib/transformer.cc` only
 returns when both output requests are null and reads output TBlob pointers
 inside the matching `req` branches.
+
+## Extension OptimizeFor Backend Audit
+
+2026-06-12 runtime verification promoted issue #19655 out of the source-only
+bucket. A custom extension operator `issue19655_sleep_fill` was added to
+`example/extensions/lib_subgraph/subgraph_lib.cc` so it fills an NDArray after a
+sleep, and a custom partitioner `issue19655_reader` checks the first supplied
+`optimize_for` argument during partition review. The new regression test
+`test_optimize_for_waits_for_extension_backend_args` failed before the fix because
+`MXOptimizeForBackend` exposed the pending NDArray's raw data pointer to the
+extension backend without `WaitToRead()`. The C API now waits on non-null args and
+aux arrays before subgraph backends or graph passes can consume those pointers.
+The focused repro passed after rebuilding: 1 passed, 5 deselected, and 2 warnings
+in 1.73s.
+
+The adjacent extension sweep also found that the existing `test_subgraph` failed
+for dynamically loaded graph passes: Python rejected `backend="addInputPass"`
+with the static subgraph-backend precheck even though the extension had
+registered the graph pass and the C++ `MXOptimizeForBackend` path supports it.
+`Symbol.optimize_for` now lets the C++ backend/graph-pass lookup decide. The
+focused extension pair then passed with 2 passed, 4 deselected, and 3 warnings;
+the full `test_extensions.py` file passed with 4 passed, 2 skipped, and 3
+warnings. The full Apache repro suite against the rebuilt current library then
+passed with 241 passed, 10 xfailed, and 5 warnings in 394.63s.
 
 ## Similar-Bug Sweep Repros
 
@@ -370,6 +403,7 @@ namespace in `tests/python/unittest/test_apache_open_issue_repros.py`.
 | issue #19753 | `test_issue_19753_topk_indices_are_integer_typed` | Fixed in current worktree; `topk` index outputs are returned with integer dtype. |
 | issue #19628 | `test_issue_19628_gpu_ctcloss_accepts_fp16_predictions` | Fixed in current worktree; GPU `CTCLoss` accepts FP16 predictions without the internal dtype mismatch. |
 | issue #19659 | `test_issue_19659_hybrid_boolean_mask_backward_runs` | Fixed in current worktree; cached-op backward allows zero-output-gradient subgraphs that depend only on saved inputs/outputs. |
+| issue #19655 | `test_optimize_for_waits_for_extension_backend_args` | Fixed in current worktree; `MXOptimizeForBackend` waits for supplied args/aux before extension backends or graph passes receive raw data pointers. |
 | issue #19686 | `test_issue_19686_selfatt_qk_rejects_zero_heads_cleanly` | Fixed in current worktree; zero attention heads are rejected before backend dispatch. |
 | issue #19683 | `test_issue_19683_arange_like_repeat_zero_is_safe` | Fixed in current worktree; non-positive `repeat` is rejected before backend dispatch. |
 | issue #19647 | `test_issue_19647_optimize_for_missing_backend_raises` | Fixed in current worktree; missing optimization backends raise instead of returning a symbol after logging. |
@@ -406,7 +440,7 @@ These were source-verified in the scan but still need an executable repro before
 being promoted to the table above.
 
 Issue-side source/static-only candidates still pending a runtime repro:
-`#19655` and `#20376`.
+`#20376`.
 
 PR-side source-verified pending runtime/static API repro:
 
@@ -494,20 +528,17 @@ updated as runtime verification proceeds.
 `#21176`, `#21119`, `#21111`, `#21156`, `#21146`, `#20936`, `#20657`,
 `#20605`, `#20577`, `#20391`, `#20180`, `#20076`, `#20046`, `#20044`,
 `#20037`, `#19860`, `#19852`, `#19785`, `#19753`, `#19686`, `#19683`,
-`#19659`, `#19647`, `#19628`, `#19458`, `#19423`, `#19422`, `#19170`,
+`#19659`, `#19655`, `#19647`, `#19628`, `#19458`, `#19423`, `#19422`, `#19170`,
 `#19021`, `#18919`, `#18770`, `#18669`, `#18563`, `#18300`, `#18078`,
 `#17936`, `#17698`, `#16427`, `#16402`, `#13953`, `#13945`, `#13193`,
 `#12286`, `#11774`, `#8817`, `#8430`, `#14695`.
 
 ### Issues: Source-Verified Only
 
-`#19655`, `#20376`.
+`#20376`.
 
 Notes:
 
-- `#19655` needs a custom `optimize_for` backend to exercise the runtime path.
-  Source still sets graph attrs and calls `PrePartition(...)` without first
-  waiting on the supplied NDArrays.
 - `#20376` is covered by the TensorRT/ONNX conversion source issue also tracked
   as PR `#20470`; the current wheel has no TensorRT runtime, so this remains
   source/static only.

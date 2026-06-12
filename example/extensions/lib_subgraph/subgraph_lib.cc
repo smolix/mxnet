@@ -22,9 +22,11 @@
  * \brief subgraph operator implementation library file
  */
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
-#include <algorithm>
+#include <thread>
 #include <utility>
 #include "mxnet/lib_api.h"
 
@@ -247,6 +249,109 @@ REGISTER_PARTITIONER(myProp)
     .addStrategy("strategy1", "_custom_subgraph_op")
     .setSupportedOps("strategy1", mySupportedOps)
     .setReviewSubgraph("strategy1", myReviewSubgraph);
+
+MXReturnValue issue19655ParseAttrs(const std::unordered_map<std::string, std::string>& attrs,
+                                   int* num_in,
+                                   int* num_out) {
+  *num_in  = 1;
+  *num_out = 1;
+  return MX_SUCCESS;
+}
+
+MXReturnValue issue19655InferType(const std::unordered_map<std::string, std::string>& attrs,
+                                  std::vector<int>* intypes,
+                                  std::vector<int>* outtypes) {
+  if (intypes->size() != 1) {
+    MX_ERROR_MSG << "Expected 1 input to issue19655_sleep_fill";
+    return MX_FAIL;
+  }
+  if (intypes->at(0) != kFloat32) {
+    MX_ERROR_MSG << "Expected issue19655_sleep_fill input to have float32 type";
+    return MX_FAIL;
+  }
+  outtypes->at(0) = intypes->at(0);
+  return MX_SUCCESS;
+}
+
+MXReturnValue issue19655InferShape(const std::unordered_map<std::string, std::string>& attrs,
+                                   std::vector<std::vector<unsigned int> >* inshapes,
+                                   std::vector<std::vector<unsigned int> >* outshapes) {
+  if (inshapes->size() != 1) {
+    MX_ERROR_MSG << "Expected 1 input shape to issue19655_sleep_fill";
+    return MX_FAIL;
+  }
+  outshapes->at(0) = inshapes->at(0);
+  return MX_SUCCESS;
+}
+
+MXReturnValue issue19655SleepFillForward(const std::unordered_map<std::string, std::string>& attrs,
+                                         std::vector<MXTensor>* inputs,
+                                         std::vector<MXTensor>* outputs,
+                                         const OpResource& op_res) {
+  int delay_ms = attrs.count("delay_ms") ? std::stoi(attrs.at("delay_ms")) : 250;
+  float fill   = attrs.count("fill") ? std::stof(attrs.at("fill")) : 7.0f;
+  std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+
+  MXTensor& out = outputs->at(0);
+  float* outp   = out.data<float>();
+  for (int64_t i = 0; i < out.size(); ++i) {
+    outp[i] = fill;
+  }
+  return MX_SUCCESS;
+}
+
+REGISTER_OP(issue19655_sleep_fill)
+    .setForward(issue19655SleepFillForward, "cpu")
+    .setParseAttrs(issue19655ParseAttrs)
+    .setInferType(issue19655InferType)
+    .setInferShape(issue19655InferShape);
+
+MXReturnValue issue19655SupportedOps(const mxnet::ext::Graph* graph,
+                                     std::vector<int>* ids,
+                                     const std::unordered_map<std::string, std::string>& options) {
+  for (int i = 0; i < graph->size(); ++i) {
+    const mxnet::ext::Node* node = graph->getNode(i);
+    if (node->op.compare("exp") == 0) {
+      ids->at(i) = -1;
+    }
+  }
+  return MX_SUCCESS;
+}
+
+MXReturnValue issue19655ReviewSubgraph(const mxnet::ext::Graph* subgraph,
+                                       int subgraph_id,
+                                       bool* accept,
+                                       const std::unordered_map<std::string, std::string>& options,
+                                       std::unordered_map<std::string, std::string>* attrs) {
+  *accept = false;
+  if (options.count("expected_first") == 0) {
+    return MX_SUCCESS;
+  }
+  if (subgraph->inputs.empty() || subgraph->inputs[0]->tensor == nullptr) {
+    MX_ERROR_MSG << "issue19655_reader expected an input tensor";
+    return MX_FAIL;
+  }
+
+  MXTensor* input = subgraph->inputs[0]->tensor;
+  if (input->dtype != kFloat32 || input->size() <= 0) {
+    MX_ERROR_MSG << "issue19655_reader expected a non-empty float32 tensor";
+    return MX_FAIL;
+  }
+
+  float observed = input->data<float>()[0];
+  float expected = std::stof(options.at("expected_first"));
+  if (std::fabs(observed - expected) > 1e-5f) {
+    MX_ERROR_MSG << "issue19655_reader observed stale input " << observed << ", expected "
+                 << expected;
+    return MX_FAIL;
+  }
+  return MX_SUCCESS;
+}
+
+REGISTER_PARTITIONER(issue19655_reader)
+    .addStrategy("strategy1", "_custom_subgraph_op")
+    .setSupportedOps("strategy1", issue19655SupportedOps)
+    .setReviewSubgraph("strategy1", issue19655ReviewSubgraph);
 
 class MySelector : public CustomOpSelector {
  public:

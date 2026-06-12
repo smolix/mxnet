@@ -119,6 +119,7 @@ Examples::
                                         [](const NodeAttrs& attrs) { return 1; })
     .set_attr_parser(ParamParser<InstanceNormParam>)
     .set_attr<mxnet::FInferShape>("FInferShape", InstanceNormShape)
+    .set_attr<nnvm::FInferType>("FInferType", InstanceNormType)
     .set_attr<THasDeterministicOutput>("THasDeterministicOutput", true)
     .set_attr<nnvm::FGradient>("FGradient", InstanceNormGrad{"_backward_instance_norm"})
     .set_attr<FCompute>("FCompute<cpu>", InstanceNormForward<cpu>);
@@ -127,6 +128,7 @@ NNVM_REGISTER_OP(_backward_instance_norm)
     .set_num_inputs(5)
     .set_num_outputs(3)
     .set_attr_parser(ParamParser<InstanceNormParam>)
+    .set_attr<nnvm::FInferType>("FInferType", InstanceNormGradType)
     .set_attr<FResourceRequest>("FResourceRequest",
                                 [](const NodeAttrs& attrs) {
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};

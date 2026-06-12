@@ -174,6 +174,42 @@ void InstanceNormBackward(const nnvm::NodeAttrs& attrs,
              broadcast<0>(gmean, data.shape_) * scale);
 }
 
+inline bool InstanceNormType(const nnvm::NodeAttrs& attrs,
+                             std::vector<int>* in_type,
+                             std::vector<int>* out_type) {
+  CHECK_EQ(in_type->size(), 3U) << "Input:[data, gamma, beta]";
+  CHECK_EQ(out_type->size(), 3U);
+  for (size_t i = 0; i < in_type->size(); ++i) {
+    if ((*in_type)[i] != -1) {
+      CHECK_EQ((*in_type)[i], mshadow::kFloat32)
+          << "InstanceNorm only supports float32 inputs and parameters.";
+    }
+    TYPE_ASSIGN_CHECK(*in_type, i, mshadow::kFloat32);
+  }
+  for (size_t i = 0; i < out_type->size(); ++i) {
+    TYPE_ASSIGN_CHECK(*out_type, i, mshadow::kFloat32);
+  }
+  return true;
+}
+
+inline bool InstanceNormGradType(const nnvm::NodeAttrs& attrs,
+                                 std::vector<int>* in_type,
+                                 std::vector<int>* out_type) {
+  CHECK_EQ(in_type->size(), 5U);
+  CHECK_EQ(out_type->size(), 3U);
+  for (size_t i = 0; i < in_type->size(); ++i) {
+    if ((*in_type)[i] != -1) {
+      CHECK_EQ((*in_type)[i], mshadow::kFloat32)
+          << "InstanceNorm only supports float32 inputs and parameters.";
+    }
+    TYPE_ASSIGN_CHECK(*in_type, i, mshadow::kFloat32);
+  }
+  for (size_t i = 0; i < out_type->size(); ++i) {
+    TYPE_ASSIGN_CHECK(*out_type, i, mshadow::kFloat32);
+  }
+  return true;
+}
+
 inline bool InstanceNormShape(const nnvm::NodeAttrs& attrs,
                               mxnet::ShapeVector* in_shape,
                               mxnet::ShapeVector* out_shape) {

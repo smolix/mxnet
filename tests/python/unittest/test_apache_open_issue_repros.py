@@ -1267,6 +1267,73 @@ def test_similar_groupnorm_large_finite_input_is_finite(hybridize):
     assert onp.isfinite(out.asnumpy()).all()
 
 
+def test_similar_groupnorm_visible_stats_are_computed_without_primary_output():
+    import mxnet as mx
+    import numpy as onp
+
+    data_np = onp.arange(16, dtype="float32").reshape((2, 4, 2))
+    grouped = data_np.reshape((2, 2, 2, 2))
+    expected_mean = grouped.mean(axis=(2, 3))
+    expected_std = onp.sqrt(grouped.var(axis=(2, 3)) + 1e-5)
+    data = mx.sym.var("data")
+    gamma = mx.sym.var("gamma")
+    beta = mx.sym.var("beta")
+    outputs = mx.sym.GroupNorm(
+        data=data, gamma=gamma, beta=beta, num_groups=2, output_mean_var=True
+    )
+
+    for output_index, expected in [(1, expected_mean), (2, expected_std)]:
+        exe = outputs[output_index]._simple_bind(
+            ctx=mx.cpu(),
+            type_dict={"data": "float32", "gamma": "float32", "beta": "float32"},
+            data=data_np.shape,
+            gamma=(4,),
+            beta=(4,),
+        )
+        exe.arg_dict["data"][:] = mx.nd.array(data_np)
+        exe.arg_dict["gamma"][:] = 1
+        exe.arg_dict["beta"][:] = 0
+        exe.forward(is_train=False)[0].wait_to_read()
+        onp.testing.assert_allclose(exe.outputs[0].asnumpy(), expected, rtol=1e-5, atol=1e-6)
+
+
+def test_similar_gpu_groupnorm_visible_stats_are_computed_without_primary_output():
+    require_gpus(1)
+    proc = run_python(
+        """
+        import numpy as onp
+        import mxnet as mx
+
+        data_np = onp.arange(16, dtype="float32").reshape((2, 4, 2))
+        grouped = data_np.reshape((2, 2, 2, 2))
+        expected_mean = grouped.mean(axis=(2, 3))
+        expected_std = onp.sqrt(grouped.var(axis=(2, 3)) + 1e-5)
+        data = mx.sym.var("data")
+        gamma = mx.sym.var("gamma")
+        beta = mx.sym.var("beta")
+        outputs = mx.sym.GroupNorm(
+            data=data, gamma=gamma, beta=beta, num_groups=2, output_mean_var=True
+        )
+        for output_index, expected in [(1, expected_mean), (2, expected_std)]:
+            exe = outputs[output_index]._simple_bind(
+                ctx=mx.gpu(0),
+                type_dict={"data": "float32", "gamma": "float32", "beta": "float32"},
+                data=data_np.shape,
+                gamma=(4,),
+                beta=(4,),
+            )
+            exe.arg_dict["data"][:] = mx.nd.array(data_np, ctx=mx.gpu(0))
+            exe.arg_dict["gamma"][:] = 1
+            exe.arg_dict["beta"][:] = 0
+            exe.forward(is_train=False)[0].wait_to_read()
+            onp.testing.assert_allclose(exe.outputs[0].asnumpy(), expected, rtol=1e-5, atol=1e-6)
+        """,
+        timeout=10,
+        extra_env={"CUDA_VISIBLE_DEVICES": "0"},
+    )
+    assert_subprocess_ok(proc)
+
+
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_cosine_embedding_loss_large_parallel_vectors_is_finite_zero(hybridize):
     import mxnet as mx
@@ -1566,6 +1633,43 @@ def test_similar_sequence_ops_reject_out_of_range_lengths(case, op_name, api):
     assert_subprocess_ok(proc)
 
 
+
+def test_similar_onednn_layernorm_rank5_uses_native_fallback():
+    proc = run_python(
+        """
+        import mxnet as mx
+        import numpy as onp
+
+        data = mx.nd.ones((1024, 1024, 1, 1, 1), dtype="float32")
+        gamma = mx.nd.ones((1,), dtype="float32")
+        beta = mx.nd.zeros((1,), dtype="float32")
+        out = mx.nd.LayerNorm(data, gamma, beta, axis=-1)
+        out.wait_to_read()
+        assert out.shape == data.shape
+        onp.testing.assert_allclose(out.asnumpy(), onp.zeros(data.shape, dtype="float32"), atol=1e-6)
+        """,
+        timeout=20,
+    )
+    assert_subprocess_ok(proc)
+
+
+def test_similar_onednn_layernorm_zero_batch_uses_native_fallback():
+    proc = run_python(
+        """
+        import mxnet as mx
+
+        data = mx.nd.ones((0, 1024), dtype="float32")
+        gamma = mx.nd.ones((1024,), dtype="float32")
+        beta = mx.nd.zeros((1024,), dtype="float32")
+        out = mx.nd.LayerNorm(data, gamma, beta, axis=-1)
+        out.wait_to_read()
+        assert out.shape == data.shape
+        """,
+        timeout=10,
+    )
+    assert_subprocess_ok(proc)
+
+
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_layernorm_large_finite_input_is_finite(hybridize):
     import mxnet as mx
@@ -1610,31 +1714,112 @@ def test_similar_layernorm_disabled_affine_params_stay_nondifferentiable():
     assert layer.beta.grad_req == "null"
 
 
-def test_similar_layernorm_visible_stats_are_computed_without_primary_output():
+@pytest.mark.parametrize("axis", [-1, 0])
+def test_similar_layernorm_visible_stats_are_computed_without_primary_output(axis):
     import mxnet as mx
     import numpy as onp
 
+    data_np = onp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype="float32")
     data = mx.sym.var("data")
     gamma = mx.sym.var("gamma")
     beta = mx.sym.var("beta")
-    outputs = mx.sym.LayerNorm(data=data, gamma=gamma, beta=beta, axis=-1, output_mean_var=True)
+    outputs = mx.sym.LayerNorm(data=data, gamma=gamma, beta=beta, axis=axis, output_mean_var=True)
+    expected_mean = data_np.mean(axis=axis, keepdims=True)
+    expected_std = onp.sqrt(data_np.var(axis=axis, keepdims=True) + 1e-5)
+    gamma_shape = (data_np.shape[axis],)
 
-    for output_index, expected in [
-            (1, onp.array([[2.0], [5.0]], dtype="float32")),
-            (2, onp.sqrt(onp.array([[2.0 / 3.0], [2.0 / 3.0]], dtype="float32") + 1e-5)),
-    ]:
+    for output_index, expected in [(1, expected_mean), (2, expected_std)]:
         exe = outputs[output_index]._simple_bind(
             ctx=mx.cpu(),
             type_dict={"data": "float32", "gamma": "float32", "beta": "float32"},
-            data=(2, 3),
-            gamma=(3,),
-            beta=(3,),
+            data=data_np.shape,
+            gamma=gamma_shape,
+            beta=gamma_shape,
         )
-        exe.arg_dict["data"][:] = mx.nd.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        exe.arg_dict["data"][:] = mx.nd.array(data_np)
         exe.arg_dict["gamma"][:] = 1
         exe.arg_dict["beta"][:] = 0
         exe.forward(is_train=False)[0].wait_to_read()
         onp.testing.assert_allclose(exe.outputs[0].asnumpy(), expected, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("axis", [-1, 0])
+def test_similar_gpu_layernorm_visible_stats_are_computed_without_primary_output(axis):
+    require_gpus(1)
+    proc = run_python(
+        """
+        import numpy as onp
+        import mxnet as mx
+
+        axis = %r
+        data_np = onp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype="float32")
+        data = mx.sym.var("data")
+        gamma = mx.sym.var("gamma")
+        beta = mx.sym.var("beta")
+        outputs = mx.sym.LayerNorm(data=data, gamma=gamma, beta=beta, axis=axis, output_mean_var=True)
+        expected_mean = data_np.mean(axis=axis, keepdims=True)
+        expected_std = onp.sqrt(data_np.var(axis=axis, keepdims=True) + 1e-5)
+        gamma_shape = (data_np.shape[axis],)
+        for output_index, expected in [(1, expected_mean), (2, expected_std)]:
+            exe = outputs[output_index]._simple_bind(
+                ctx=mx.gpu(0),
+                type_dict={"data": "float32", "gamma": "float32", "beta": "float32"},
+                data=data_np.shape,
+                gamma=gamma_shape,
+                beta=gamma_shape,
+            )
+            exe.arg_dict["data"][:] = mx.nd.array(data_np, ctx=mx.gpu(0))
+            exe.arg_dict["gamma"][:] = 1
+            exe.arg_dict["beta"][:] = 0
+            exe.forward(is_train=False)[0].wait_to_read()
+            onp.testing.assert_allclose(exe.outputs[0].asnumpy(), expected, rtol=1e-5, atol=1e-6)
+        """ % axis,
+        timeout=10,
+        extra_env={"CUDA_VISIBLE_DEVICES": "0"},
+    )
+    assert_subprocess_ok(proc)
+
+
+
+def test_similar_syncbatchnorm_reinitializes_shared_buffers_for_new_channel_shape():
+    require_gpus(1)
+    proc = run_python(
+        """
+        import mxnet as mx
+        from mxnet import autograd
+
+        ctx = mx.gpu(0)
+        def run(channel_count):
+            data = mx.nd.ones((2, channel_count, 2, 2), ctx=ctx)
+            gamma = mx.nd.ones((channel_count,), ctx=ctx)
+            beta = mx.nd.zeros((channel_count,), ctx=ctx)
+            moving_mean = mx.nd.zeros((channel_count,), ctx=ctx)
+            moving_var = mx.nd.ones((channel_count,), ctx=ctx)
+            data.attach_grad()
+            gamma.attach_grad()
+            beta.attach_grad()
+            with autograd.record():
+                out = mx.nd.contrib.SyncBatchNorm(
+                    data,
+                    gamma,
+                    beta,
+                    moving_mean,
+                    moving_var,
+                    ndev=1,
+                    key="shape_reuse_regression",
+                    fix_gamma=False,
+                )
+                loss = out.sum()
+            loss.backward()
+            mx.nd.waitall()
+
+        run(2)
+        run(3)
+        """,
+        timeout=10,
+        extra_env={"CUDA_VISIBLE_DEVICES": "0"},
+    )
+    assert_subprocess_ok(proc)
 
 
 @pytest.mark.parametrize("kind", ["batchnorm", "syncbatchnorm"])
@@ -1773,6 +1958,18 @@ def test_similar_syncbatchnorm_float16_is_rejected_cleanly():
             key="fp16_reject",
             fix_gamma=False,
         ).wait_to_read()
+
+
+
+@pytest.mark.parametrize("dtype", ["float16", "float64"])
+def test_similar_instancenorm_rejects_unsupported_dtype_cleanly(dtype):
+    import mxnet as mx
+
+    data = mx.nd.ones((1, 2, 2), dtype=dtype)
+    gamma = mx.nd.ones((2,), dtype=dtype)
+    beta = mx.nd.zeros((2,), dtype=dtype)
+    with pytest.raises(mx.base.MXNetError, match="InstanceNorm|float32"):
+        mx.nd.InstanceNorm(data, gamma, beta).wait_to_read()
 
 
 @pytest.mark.parametrize("hybridize", [False, True])

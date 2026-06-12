@@ -467,14 +467,19 @@ void LayerNormCompute<gpu>(const nnvm::NodeAttrs& attrs,
                            const std::vector<OpReqType>& req,
                            const std::vector<TBlob>& outputs) {
   const LayerNormParam& param = nnvm::get<LayerNormParam>(attrs.parsed);
-  if (req[0] == kNullOp)
+  const bool write_output = req[layernorm::kOut] != kNullOp;
+  if (!write_output && req[layernorm::kMean] == kNullOp && req[layernorm::kStd] == kNullOp)
     return;
-  CHECK_NE(req[0], kAddTo);
+  if (write_output)
+    CHECK_NE(req[layernorm::kOut], kAddTo);
   int axis = param.axis;
   if (axis < 0) {
     axis += static_cast<int>(inputs[0].ndim());
   }
   CHECK(axis >= 0 && axis < inputs[0].ndim()) << "Channel axis out of range: " << param.axis;
+  if (!write_output) {
+    return LayerNormComputeGeneral<gpu>(attrs, ctx, inputs, req, outputs);
+  }
   if (axis == inputs[0].ndim() - 1) {
     // Try to use the accelerated CUDA kernels
     bool safe_acc = dmlc::GetEnv("MXNET_SAFE_ACCUMULATION", true);

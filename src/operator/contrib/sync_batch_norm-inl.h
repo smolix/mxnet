@@ -92,26 +92,40 @@ class SharedND {
   }
 
   ~SharedND() {
-    if (data_inited_)
+    if (data_inited_) {
+      for (int i = 0; i < num_devices_; i++) {
+        mshadow::FreeSpace(&data_[i]);
+      }
       mshadow::FreeSpace(&mean_);
+    }
     delete[] flag_;
     delete[] data_;
   }
 
   void Init(mshadow::Shape<1> shape) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!data_inited_) {
-      for (int i = 0; i < num_devices_; i++) {
-        data_[i] = mshadow::NewTensor<cpu, real_t>(shape, 0.0f);
+    if (data_inited_) {
+      if (data_[0].shape_[0] == shape[0]) {
+        return;
       }
-      mean_        = mshadow::NewTensor<cpu, real_t>(shape, 0.0f);
-      data_inited_ = true;
+      for (int i = 0; i < num_devices_; i++) {
+        mshadow::FreeSpace(&data_[i]);
+      }
+      mshadow::FreeSpace(&mean_);
+      memset(flag_, false, num_devices_ * sizeof(bool));
+      mean_ready_  = false;
+      data_inited_ = false;
     }
+    for (int i = 0; i < num_devices_; i++) {
+      data_[i] = mshadow::NewTensor<cpu, real_t>(shape, 0.0f);
+    }
+    mean_        = mshadow::NewTensor<cpu, real_t>(shape, 0.0f);
+    data_inited_ = true;
   }
 
   T* Retrieve(mshadow::Shape<1> shape, int index) {
     // Retrieve a pointer for copying values
-    if (!data_inited_) {
+    if (!data_inited_ || data_[0].shape_[0] != shape[0]) {
       Init(shape);
     }
     if (flag_[index] == false) {

@@ -96,9 +96,11 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
   using namespace mxnet_op;
   const GroupNormParam& param = nnvm::get<GroupNormParam>(attrs.parsed);
   const int num_groups        = param.num_groups;
-  if (req[0] == kNullOp)
+  const bool write_output     = req[groupnorm::kOut] != kNullOp;
+  if (!write_output && req[groupnorm::kMean] == kNullOp && req[groupnorm::kStd] == kNullOp)
     return;
-  CHECK_NE(req[0], kAddTo);
+  if (write_output)
+    CHECK_NE(req[groupnorm::kOut], kAddTo);
 
   Stream<xpu>* s                  = ctx.get_stream<xpu>();
   const TBlob& data               = inputs[groupnorm::kData];
@@ -133,8 +135,18 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
   Tensor<xpu, 1, char> workspace;
 
   size_t reduce_workspace_size =
-      broadcast::ReduceWorkspaceSize(s, red_dst_shape, req[0], red_src_shape);
-  size_t workspace_size = reduce_workspace_size;
+      broadcast::ReduceWorkspaceSize(s, red_dst_shape, kWriteTo, red_src_shape);
+  auto pad_workspace_bytes = [](size_t num_bytes) {
+    const size_t alignment = sizeof(double);
+    return num_bytes + (alignment - num_bytes % alignment) % alignment;
+  };
+  const size_t output_temp_offset = write_output ? reduce_workspace_size :
+      pad_workspace_bytes(reduce_workspace_size);
+  const size_t output_temp_bytes = write_output ? 0 :
+      pad_workspace_bytes(outputs[groupnorm::kOut].Size() *
+                          mshadow::mshadow_sizeof(outputs[groupnorm::kOut].type_flag_));
+  const size_t moment_offset = pad_workspace_bytes(output_temp_offset + output_temp_bytes);
+  size_t workspace_size      = moment_offset;
 #if defined(__CUDACC__)
   const bool use_fp32_moments = data.type_flag_ == mshadow::kFloat16;
   const size_t moment_bytes   = mean.Size() * sizeof(float);
@@ -146,14 +158,22 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
 
   workspace = ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(workspace_size), s);
 
-#if defined(__CUDACC__)
   TBlob output_work = outputs[groupnorm::kOut];
+  if (!write_output) {
+    output_work = TBlob(workspace.dptr_ + output_temp_offset,
+                        outputs[groupnorm::kOut].shape_,
+                        outputs[groupnorm::kOut].dev_mask(),
+                        outputs[groupnorm::kOut].type_flag_,
+                        outputs[groupnorm::kOut].dev_id());
+  }
+
+#if defined(__CUDACC__)
   TBlob mean_work   = mean;
   TBlob std_work    = std;
   TBlob mean_reduce = mean_;
   TBlob std_reduce  = std_;
   if (use_fp32_moments) {
-    char* fp32_workspace = workspace.dptr_ + reduce_workspace_size;
+    char* fp32_workspace = workspace.dptr_ + moment_offset;
     mean_work = TBlob(fp32_workspace,
                       mean.shape_,
                       mean.dev_mask(),
@@ -179,7 +199,7 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
   MSHADOW_REAL_TYPE_SWITCH(data.type_flag_, DType, {
     BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
       broadcast::Reduce<mshadow_op::sum, NDim, DType, mshadow_op::identity, true>(
-          s, mean_, req[0], workspace, data_);
+          s, mean_, kWriteTo, workspace, data_);
     });
   });
 #else
@@ -207,7 +227,7 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
 #if !defined(__CUDACC__)
   const TBlob& mean_grp   = mean.reshape(moments_shape);
   const TBlob& std_grp    = std.reshape(moments_shape);
-  const TBlob& output_grp = outputs[groupnorm::kOut].reshape(temp_data_shape);
+  const TBlob& output_grp = output_work.reshape(temp_data_shape);
 #else
   const TBlob mean_grp   = mean_work.reshape(moments_shape);
   const TBlob std_grp    = std_work.reshape(moments_shape);
@@ -233,7 +253,7 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
   MSHADOW_REAL_TYPE_SWITCH(output_grp.type_flag_, DType, {
     BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
       broadcast::Reduce<mshadow_op::sum, NDim, DType, mshadow_op::square, true>(
-          s, std_, req[0], workspace, centered_out);
+          s, std_, kWriteTo, workspace, centered_out);
     });
   });
 #else
@@ -252,58 +272,60 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
                                                  scalar<DType>(param.eps));
   });
 
-  // Calculate data = data / std
+  if (write_output) {
+    // Calculate data = data / std
 #if !defined(__CUDACC__)
-  BinaryBroadcastCompute<xpu, mshadow_op::div>(
-      attrs, ctx, {output_grp, std_grp}, {kWriteTo}, {output_grp});
+    BinaryBroadcastCompute<xpu, mshadow_op::div>(
+        attrs, ctx, {output_grp, std_grp}, {kWriteTo}, {output_grp});
 #else
-  BinaryBroadcastRTCCompute{"div"}(  // NOLINT
-      attrs,
-      ctx,
-      {output_grp, std_grp},
-      {kWriteTo},
-      {output_grp});
+    BinaryBroadcastRTCCompute{"div"}(  // NOLINT
+        attrs,
+        ctx,
+        {output_grp, std_grp},
+        {kWriteTo},
+        {output_grp});
 #endif  // !defined(__CUDACC__)
 
-#if !defined(__CUDACC__)
-  const TBlob& output = outputs[groupnorm::kOut];
-#else
-  const TBlob& output = output_work;
-#endif
-  mxnet::TShape new_param_shape(data_shape.ndim(), 1);
-  new_param_shape[1] = data_shape[1];
+    const TBlob output = output_work;
+    mxnet::TShape new_param_shape(data_shape.ndim(), 1);
+    new_param_shape[1] = data_shape[1];
 
-  const TBlob& gamma = inputs[groupnorm::kGamma].reshape(new_param_shape);
-  const TBlob& beta  = inputs[groupnorm::kBeta].reshape(new_param_shape);
+    const TBlob& gamma = inputs[groupnorm::kGamma].reshape(new_param_shape);
+    const TBlob& beta  = inputs[groupnorm::kBeta].reshape(new_param_shape);
 
 #if !defined(__CUDACC__)
-  // Calculate data = data * gamma
-  BinaryBroadcastCompute<xpu, op::mshadow_op::mul>(
-      attrs, ctx, {output, gamma}, {kWriteTo}, {output});
-  // Calculate data = data + beta
-  BinaryBroadcastCompute<xpu, op::mshadow_op::plus>(
-      attrs, ctx, {output, beta}, {kWriteTo}, {output});
+    // Calculate data = data * gamma
+    BinaryBroadcastCompute<xpu, op::mshadow_op::mul>(
+        attrs, ctx, {output, gamma}, {kWriteTo}, {output});
+    // Calculate data = data + beta
+    BinaryBroadcastCompute<xpu, op::mshadow_op::plus>(
+        attrs, ctx, {output, beta}, {kWriteTo}, {output});
 #else
-  // Calculate data = data * gamma
-  BinaryBroadcastRTCCompute{"mul"}(  // NOLINT
-      attrs,
-      ctx,
-      {output, gamma},
-      {kWriteTo},
-      {output});
-  // Calculate data = data + beta
-  BinaryBroadcastRTCCompute{"add"}(  // NOLINT
-      attrs,
-      ctx,
-      {output, beta},
-      {kWriteTo},
-      {output});
+    // Calculate data = data * gamma
+    BinaryBroadcastRTCCompute{"mul"}(  // NOLINT
+        attrs,
+        ctx,
+        {output, gamma},
+        {kWriteTo},
+        {output});
+    // Calculate data = data + beta
+    BinaryBroadcastRTCCompute{"add"}(  // NOLINT
+        attrs,
+        ctx,
+        {output, beta},
+        {kWriteTo},
+        {output});
+#endif  // !defined(__CUDACC__)
+  }
+#if defined(__CUDACC__)
   if (use_fp32_moments) {
-    GroupNormCopyFloatToHalfGpu(s, output_work, outputs[groupnorm::kOut]);
+    if (write_output) {
+      GroupNormCopyFloatToHalfGpu(s, output_work, outputs[groupnorm::kOut]);
+    }
     GroupNormCopyFloatToHalfGpu(s, mean_work, outputs[groupnorm::kMean]);
     GroupNormCopyFloatToHalfGpu(s, std_work, outputs[groupnorm::kStd]);
   }
-#endif  // !defined(__CUDACC__)
+#endif  // defined(__CUDACC__)
 }
 
 /*

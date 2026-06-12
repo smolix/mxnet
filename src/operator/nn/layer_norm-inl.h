@@ -112,9 +112,11 @@ void LayerNormComputeGeneral(const nnvm::NodeAttrs& attrs,
   using namespace mshadow;
   using namespace mshadow::expr;
   const LayerNormParam& param = nnvm::get<LayerNormParam>(attrs.parsed);
-  if (req[0] == kNullOp)
+  const bool write_output = req[layernorm::kOut] != kNullOp;
+  if (!write_output && req[layernorm::kMean] == kNullOp && req[layernorm::kStd] == kNullOp)
     return;
-  CHECK_NE(req[0], kAddTo);
+  if (write_output)
+    CHECK_NE(req[layernorm::kOut], kAddTo);
   int axis = GetRealAxis(param.axis, inputs[0].ndim());
   CHECK(axis >= 0 && axis < inputs[0].ndim()) << "Channel axis out of range: " << param.axis;
   CHECK_EQ(inputs.size(), 3U);
@@ -139,8 +141,18 @@ void LayerNormComputeGeneral(const nnvm::NodeAttrs& attrs,
   // Initialize the workspace
   Tensor<xpu, 1, char> workspace;
   size_t reduce_workspace_size =
-      broadcast::ReduceWorkspaceSize(s, mean_data.shape_, req[0], in_data.shape_);
-  size_t workspace_size = reduce_workspace_size;
+      broadcast::ReduceWorkspaceSize(s, mean_data.shape_, kWriteTo, in_data.shape_);
+  auto pad_workspace_bytes = [](size_t num_bytes) {
+    const size_t alignment = sizeof(double);
+    return num_bytes + (alignment - num_bytes % alignment) % alignment;
+  };
+  const size_t out_temp_offset = write_output ? reduce_workspace_size :
+      pad_workspace_bytes(reduce_workspace_size);
+  const size_t out_temp_bytes = write_output ? 0 :
+      pad_workspace_bytes(outputs[layernorm::kOut].Size() *
+                          mshadow::mshadow_sizeof(outputs[layernorm::kOut].type_flag_));
+  const size_t moment_offset = pad_workspace_bytes(out_temp_offset + out_temp_bytes);
+  size_t workspace_size      = moment_offset;
 #if defined(__CUDACC__)
   const bool use_fp32_moments = inputs[0].type_flag_ == mshadow::kFloat16;
   const size_t moment_bytes   = outputs[layernorm::kMean].Size() * sizeof(float);
@@ -150,6 +162,14 @@ void LayerNormComputeGeneral(const nnvm::NodeAttrs& attrs,
   }
 #endif
   workspace = ctx.requested[0].get_space_typed<xpu, 1, char>(Shape1(workspace_size), s);
+  TBlob out_work = outputs[layernorm::kOut];
+  if (!write_output) {
+    out_work = TBlob(workspace.dptr_ + out_temp_offset,
+                     outputs[layernorm::kOut].shape_,
+                     outputs[layernorm::kOut].dev_mask(),
+                     outputs[layernorm::kOut].type_flag_,
+                     outputs[layernorm::kOut].dev_id());
+  }
 
 #if !defined(__CUDACC__)
   bool safe_acc = dmlc::GetEnv("MXNET_SAFE_ACCUMULATION", true);
@@ -165,10 +185,10 @@ void LayerNormComputeGeneral(const nnvm::NodeAttrs& attrs,
     BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
       if (!safe_acc) {
         broadcast::Reduce<mshadow_op::sum, NDim, DType, mshadow_op::identity, false>(
-            s, mean_data, req[0], workspace, in_data);
+            s, mean_data, kWriteTo, workspace, in_data);
       } else {
         broadcast::Reduce<mshadow_op::sum, NDim, DType, mshadow_op::identity, true>(
-            s, mean_data, req[0], workspace, in_data);
+            s, mean_data, kWriteTo, workspace, in_data);
       }
       Tensor<xpu, 1, DType> mean_data_tensor = mean_data.FlatTo1D<xpu, DType>(s);
       mean_data_tensor /= scalar<DType>(channel_size);
@@ -176,40 +196,41 @@ void LayerNormComputeGeneral(const nnvm::NodeAttrs& attrs,
   });
   // Calculate data = data - mean
   BinaryBroadcastCompute<xpu, op::mshadow_op::minus>(
-      attrs, ctx, {inputs[0], outputs[layernorm::kMean]}, {kWriteTo}, {outputs[0]});
+      attrs, ctx, {inputs[0], outputs[layernorm::kMean]}, {kWriteTo}, {out_work});
   // Calculate std
-  const TBlob centered_out = outputs[0].reshape(red_src_shape);
+  const TBlob centered_out = out_work.reshape(red_src_shape);
   MSHADOW_REAL_TYPE_SWITCH(outputs[0].type_flag_, DType, {
     BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
       if (!safe_acc) {
         broadcast::Reduce<mshadow_op::sum, NDim, DType, mshadow_op::square, false>(
-            s, std_data, req[0], workspace, centered_out);
+            s, std_data, kWriteTo, workspace, centered_out);
       } else {
         broadcast::Reduce<mshadow_op::sum, NDim, DType, mshadow_op::square, true>(
-            s, std_data, req[0], workspace, centered_out);
+            s, std_data, kWriteTo, workspace, centered_out);
       }
       Tensor<xpu, 1, DType> std_data_tensor = std_data.FlatTo1D<xpu, DType>(s);
       std_data_tensor = F<mshadow_op::square_root>(std_data_tensor / scalar<DType>(channel_size) +
                                                    scalar<DType>(param.eps));
     });
   });
-  // Calculate data = data / std
-  BinaryBroadcastCompute<xpu, mshadow_op::div>(
-      attrs, ctx, {outputs[0], outputs[layernorm::kStd]}, {kWriteTo}, {outputs[0]});
-  // Calculate data = data * gamma
-  BinaryBroadcastCompute<xpu, mshadow_op::mul>(
-      attrs, ctx, {outputs[0], gamma}, {kWriteTo}, {outputs[0]});
-  // Calculate data = data + beta
-  BinaryBroadcastCompute<xpu, mshadow_op::plus>(
-      attrs, ctx, {outputs[0], beta}, {kWriteTo}, {outputs[0]});
+  if (write_output) {
+    // Calculate data = data / std
+    BinaryBroadcastCompute<xpu, mshadow_op::div>(
+        attrs, ctx, {out_work, outputs[layernorm::kStd]}, {kWriteTo}, {out_work});
+    // Calculate data = data * gamma
+    BinaryBroadcastCompute<xpu, mshadow_op::mul>(
+        attrs, ctx, {out_work, gamma}, {kWriteTo}, {out_work});
+    // Calculate data = data + beta
+    BinaryBroadcastCompute<xpu, mshadow_op::plus>(
+        attrs, ctx, {out_work, beta}, {kWriteTo}, {out_work});
+  }
 #else
-  TBlob out_work         = outputs[layernorm::kOut];
   TBlob mean_work        = outputs[layernorm::kMean];
   TBlob std_work         = outputs[layernorm::kStd];
   TBlob mean_reduce_data = mean_data;
   TBlob std_reduce_data  = std_data;
   if (use_fp32_moments) {
-    char* fp32_workspace = workspace.dptr_ + reduce_workspace_size;
+    char* fp32_workspace = workspace.dptr_ + moment_offset;
     mean_work = TBlob(fp32_workspace,
                       outputs[layernorm::kMean].shape_,
                       outputs[layernorm::kMean].dev_mask(),
@@ -255,29 +276,33 @@ void LayerNormComputeGeneral(const nnvm::NodeAttrs& attrs,
     std_data_tensor = F<mshadow_op::square_root>(std_data_tensor / scalar<DType>(channel_size) +
                                                  scalar<DType>(param.eps));
   });
-  // Calculate data = data / std
-  BinaryBroadcastRTCCompute{"div"}(  // NOLINT
-      attrs,
-      ctx,
-      {out_work, std_work},
-      {kWriteTo},
-      {out_work});
-  // Calculate data = data * gamma
-  BinaryBroadcastRTCCompute{"mul"}(  // NOLINT
-      attrs,
-      ctx,
-      {out_work, gamma},
-      {kWriteTo},
-      {out_work});
-  // Calculate data = data + beta
-  BinaryBroadcastRTCCompute{"add"}(  // NOLINT
-      attrs,
-      ctx,
-      {out_work, beta},
-      {kWriteTo},
-      {out_work});
+  if (write_output) {
+    // Calculate data = data / std
+    BinaryBroadcastRTCCompute{"div"}(  // NOLINT
+        attrs,
+        ctx,
+        {out_work, std_work},
+        {kWriteTo},
+        {out_work});
+    // Calculate data = data * gamma
+    BinaryBroadcastRTCCompute{"mul"}(  // NOLINT
+        attrs,
+        ctx,
+        {out_work, gamma},
+        {kWriteTo},
+        {out_work});
+    // Calculate data = data + beta
+    BinaryBroadcastRTCCompute{"add"}(  // NOLINT
+        attrs,
+        ctx,
+        {out_work, beta},
+        {kWriteTo},
+        {out_work});
+  }
   if (use_fp32_moments) {
-    LayerNormCopyFloatToHalfGpu(s, out_work, outputs[layernorm::kOut]);
+    if (write_output) {
+      LayerNormCopyFloatToHalfGpu(s, out_work, outputs[layernorm::kOut]);
+    }
     LayerNormCopyFloatToHalfGpu(s, mean_work, outputs[layernorm::kMean]);
     LayerNormCopyFloatToHalfGpu(s, std_work, outputs[layernorm::kStd]);
   }

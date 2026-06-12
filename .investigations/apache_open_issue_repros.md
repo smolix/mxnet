@@ -157,12 +157,14 @@ Active batch started 2026-06-11:
   Python normalization regressions plus old native/DNNL/CUDA normalization
   bugs: invalid Gluon LayerNorm axis validation, disabled LayerNorm affine
   parameter differentiability, BatchNorm large-finite running-stat semantics,
-  CPU/DNNL `fix_gamma=True` input-gamma mutation, CPU LayerNorm last-axis
-  stats-only output requests, SyncBatchNorm unsupported dtype rejection, and
+  CPU/DNNL `fix_gamma=True` input-gamma mutation, CPU/generic/GPU LayerNorm
+  stats-only output requests, CPU/GPU GroupNorm stats-only output requests,
+  oneDNN LayerNorm fallback for unsupported stats ranks and zero-leading
+  dimensions, SyncBatchNorm shared-buffer shape reinitialization, InstanceNorm
+  dtype validation, SyncBatchNorm unsupported dtype rejection, and
   cuDNN/native-CUDA BatchNorm inference mean/invstd population including the
   native CUDA vector tail. Cached-hybrid no-affine BatchNorm graph cases remain
-  xfailed; generic/GPU LayerNorm stats-only output requests are a newly found
-  latent variant still outstanding. One high-level mx.image.random_crop(..., interp=10)
+  xfailed. One high-level mx.image.random_crop(..., interp=10)
   validation candidate was removed from the bug count because the documented
   mx.image helper accepts 10 as random interpolation, unlike the generated
   NDArray/Symbol image wrappers.
@@ -185,13 +187,31 @@ Active batch started 2026-06-11:
   failed later with an internal TBlob mismatch; cuDNN BatchNorm inference did
   not populate visible `mean`/`var`; native CUDA BatchNorm inference tied stats
   writes to a vectorized data loop and could miss channels or touch the tensor
-  tail; CPU last-axis LayerNorm returned zeros when only visible mean/std were
-  requested. Regression coverage was added under `test_similar_*` in
-  `tests/python/unittest/test_apache_open_issue_repros.py`.
-- Latent old bugs found but not yet fixed: generic/GPU LayerNorm stats-only
-  output requests still have the same primary-output `kNullOp` early-return
-  pattern outside the CPU last-axis fast path; cached-hybrid no-affine
-  BatchNorm/SyncBatchNorm graph preservation remains outstanding.
+  tail; CPU last-axis plus generic/GPU LayerNorm returned zeros when only
+  visible mean/std were requested; CPU/GPU GroupNorm had the same
+  primary-output `kNullOp` early-return bug for visible mean/std requests;
+  oneDNN LayerNorm selected the oneDNN path for rank-5 stats tensors and
+  zero-leading-dimension inputs it could not handle; SyncBatchNorm reused
+  same-key CPU shared buffers across incompatible channel shapes; and
+  InstanceNorm accepted non-float32 inputs until the hard-coded `real_t` compute
+  path failed with a generic TBlob dtype mismatch. Regression coverage was
+  added under
+  `test_similar_*` in `tests/python/unittest/test_apache_open_issue_repros.py`.
+  After rebuilding `libmxnet.so` from current sources, focused LayerNorm
+  stats-only CPU/GPU verification passed with 4 passed, 238 deselected, and 2
+  warnings; focused GroupNorm stats-only CPU/GPU verification passed with 2
+  passed, 242 deselected, and 2 warnings; the oneDNN LayerNorm / SyncBatchNorm
+  shape-reuse / InstanceNorm dtype validation slice passed with 5 passed, 244
+  deselected, and 2 warnings; the broader normalization repro slice passed with
+  35 passed, 2 xfailed, 212 deselected, and 2 warnings. A targeted cuDNN
+  BatchNorm backward high-level autograd probe with only gamma grad requested
+  passed, and compute-sanitizer reported 0 errors, so that audit candidate is
+  not counted as verified. Current repro collection count is 249 tests. The
+  full repro suite against the rebuilt current library passed with 237 passed,
+  12 xfailed, and 5 warnings in 394.54s.
+- Latent old bugs found but not yet fixed: cached-hybrid no-affine
+  BatchNorm/SyncBatchNorm graph preservation remains outstanding as two strict
+  xfails.
 
 ## Similar-Bug Sweep Repros
 
@@ -224,7 +244,7 @@ namespace in `tests/python/unittest/test_apache_open_issue_repros.py`.
   `--runxfail`. The recursive Halley/Sagan batch then verified with 66 xfailed,
   142 deselected, and 2 warnings in 422.40s; the recursive Anscombe/Aristotle
   batch verified with 19 xfailed, 208 deselected, and 2 warnings in 2.59s.
-  Parent-checkout verification of the current promotion batch reported 15 passed, 212 deselected for validation wrappers; 3 passed, 217 deselected, 7 xfailed for the generated validation-wrapper split; 5 passed, 212 deselected, 10 xfailed for view-contract cases; 71 passed, 156 deselected for cross-device wrappers; and 4 passed, 209 deselected, 14 xfailed for the partial numeric-stability promotion. Focused dynamic_unroll int32 valid_length verification passed with 3 passed, 224 deselected, and 2 warnings in 0.49s under --runxfail. After removing the xfail marker, the same focused slice passed normally with 3 passed, 224 deselected, and 2 warnings in 0.48s. Focused loss/cosine numeric verification passed with 14 passed, 213 deselected, and 2 warnings in 1.43s under --runxfail; after removing the xfail markers, the same focused slice passed normally with 14 passed, 213 deselected, and 2 warnings in 1.59s. Focused GroupNorm large-finite verification passed with 2 passed, 225 deselected, and 2 warnings in 0.31s under --runxfail; after removing the xfail marker, the same focused slice passed normally with 2 passed, 225 deselected, and 2 warnings in 0.34s. Focused no-affine BatchNorm verification now reports 1 passed, 224 deselected, 2 xfailed, and 2 warnings in 1.01s after splitting the remaining cached-hybrid xfails. Focused wrapper/SequenceLast/SequenceReverse verification used the installed wheel library because build/libmxnet.so was absent: the promoted subset passed under --runxfail with 13 passed, 214 deselected, and 2 warnings in 38.66s; the full focused slice then passed normally with 13 passed, 213 deselected, 1 xfailed, and 2 warnings in 42.00s. Focused hybrid CPU RNN sequence-length verification passed with 3 passed, 224 deselected, and 2 warnings in 0.50s under --runxfail; after removing the xfail marker, the same focused slice passed normally with 3 passed, 224 deselected, and 2 warnings in 0.47s. Full repro checkpoint against local Python sources plus the installed wheel library passed with 193 passed, 34 xfailed, and 3 warnings in 380.45s before removing the documented mx.image.random_crop interp=10 non-bug candidate from the bug repro count. After that removal, the generated-wrapper validation slice passed with 9 passed, 217 deselected, and 2 warnings in 26.76s. Focused BatchNorm/SyncBatchNorm large-finite verification now passes normally with 4 passed, 222 deselected, and 2 warnings in 0.79s. Focused native sparse/storage verification against build/libmxnet.so passes normally with 11 passed, 215 deselected, and 2 warnings in 1.57s. Focused LP pooling verification against build/libmxnet.so passed under --runxfail with 1 passed, 225 deselected, and 2 warnings in 0.20s, and then passed normally with 1 passed, 225 deselected, and 2 warnings in 0.23s. Current audited focused verification passed after rebuilding: static-memory pair 2 passed; scalar-backward/simple_bind/static-shape repros 3 passed; Gluon trainer 1 passed; NCCL updater 1 passed. BatchNorm/LayerNorm audit verification passed after rebuilding: 8 focused CPU repros passed, 2 focused GPU BatchNorm inference-stat repros passed, and compute-sanitizer reported 0 errors for the native CUDA small-tail inference case. Collection count is now 239 total repro tests, 227 normal, and 12 xfailed.
+  Parent-checkout verification of the current promotion batch reported 15 passed, 212 deselected for validation wrappers; 3 passed, 217 deselected, 7 xfailed for the generated validation-wrapper split; 5 passed, 212 deselected, 10 xfailed for view-contract cases; 71 passed, 156 deselected for cross-device wrappers; and 4 passed, 209 deselected, 14 xfailed for the partial numeric-stability promotion. Focused dynamic_unroll int32 valid_length verification passed with 3 passed, 224 deselected, and 2 warnings in 0.49s under --runxfail. After removing the xfail marker, the same focused slice passed normally with 3 passed, 224 deselected, and 2 warnings in 0.48s. Focused loss/cosine numeric verification passed with 14 passed, 213 deselected, and 2 warnings in 1.43s under --runxfail; after removing the xfail markers, the same focused slice passed normally with 14 passed, 213 deselected, and 2 warnings in 1.59s. Focused GroupNorm large-finite verification passed with 2 passed, 225 deselected, and 2 warnings in 0.31s under --runxfail; after removing the xfail marker, the same focused slice passed normally with 2 passed, 225 deselected, and 2 warnings in 0.34s. Focused no-affine BatchNorm verification now reports 1 passed, 224 deselected, 2 xfailed, and 2 warnings in 1.01s after splitting the remaining cached-hybrid xfails. Focused wrapper/SequenceLast/SequenceReverse verification used the installed wheel library because build/libmxnet.so was absent: the promoted subset passed under --runxfail with 13 passed, 214 deselected, and 2 warnings in 38.66s; the full focused slice then passed normally with 13 passed, 213 deselected, 1 xfailed, and 2 warnings in 42.00s. Focused hybrid CPU RNN sequence-length verification passed with 3 passed, 224 deselected, and 2 warnings in 0.50s under --runxfail; after removing the xfail marker, the same focused slice passed normally with 3 passed, 224 deselected, and 2 warnings in 0.47s. Full repro checkpoint against local Python sources plus the installed wheel library passed with 193 passed, 34 xfailed, and 3 warnings in 380.45s before removing the documented mx.image.random_crop interp=10 non-bug candidate from the bug repro count. After that removal, the generated-wrapper validation slice passed with 9 passed, 217 deselected, and 2 warnings in 26.76s. Focused BatchNorm/SyncBatchNorm large-finite verification now passes normally with 4 passed, 222 deselected, and 2 warnings in 0.79s. Focused native sparse/storage verification against build/libmxnet.so passes normally with 11 passed, 215 deselected, and 2 warnings in 1.57s. Focused LP pooling verification against build/libmxnet.so passed under --runxfail with 1 passed, 225 deselected, and 2 warnings in 0.20s, and then passed normally with 1 passed, 225 deselected, and 2 warnings in 0.23s. Current audited focused verification passed after rebuilding: static-memory pair 2 passed; scalar-backward/simple_bind/static-shape repros 3 passed; Gluon trainer 1 passed; NCCL updater 1 passed. BatchNorm/LayerNorm audit verification passed after rebuilding: 8 focused CPU repros passed, 2 focused GPU BatchNorm inference-stat repros passed, and compute-sanitizer reported 0 errors for the native CUDA small-tail inference case. Collection count is now 249 total repro tests, 237 normal, and 12 xfailed.
 
 
 ## Build/Test Sweep Checkpoint

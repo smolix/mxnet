@@ -623,6 +623,31 @@ def wrap_np_unary_func(func):
     return _wrap_np_unary_func
 
 
+def _check_same_device(*values, **kwargs):
+    func_name = kwargs.get("func_name", "operands")
+    first_device = [None]
+
+    def visit(value):
+        if value is None:
+            return
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                visit(item)
+            return
+
+        device = getattr(value, "device", None)
+        if device is None:
+            return
+        if first_device[0] is None:
+            first_device[0] = device
+        elif device != first_device[0]:
+            raise ValueError(
+                "operands for {} must be on the same device/context, got {} and {}"
+                .format(func_name, first_device[0], device))
+
+    for value in values:
+        visit(value)
+
 def wrap_np_binary_func(func):
     """A convenience decorator for wrapping numpy-compatible binary ufuncs to provide uniform
     error handling.
@@ -650,12 +675,7 @@ def wrap_np_binary_func(func):
                         raise NotImplementedError("{}={} is not implemented yet".format(key, str(value)))
                     # otherwise raise TypeError with not understood error message
                     raise TypeError("{} {} not understood".format(key, value))
-        dev1 = getattr(x1, "device", None)
-        dev2 = getattr(x2, "device", None)
-        if dev1 is not None and dev2 is not None and dev1 != dev2:
-            raise ValueError(
-                "operands for {} must be on the same device/context, got {} and {}"
-                .format(func.__name__, dev1, dev2))
+        _check_same_device(x1, x2, func_name=func.__name__)
         return func(x1, x2, out=out)
     return _wrap_np_binary_func
 

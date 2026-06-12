@@ -152,6 +152,98 @@ inline void CopyGeometryBlobs(mshadow::Stream<xpu>* s,
   }
 }
 
+
+template <typename DType>
+inline bool SparseRowHasNonZero(const DType* data, const size_t row_length) {
+  for (size_t i = 0; i < row_length; ++i) {
+    if (!(data[i] == DType(0))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename DType, typename IType>
+inline void CompactRowSparseZeros(mshadow::Stream<cpu>* s, const NDArray& output) {
+  if (!output.storage_initialized()) {
+    return;
+  }
+  const size_t row_count = output.aux_shape(rowsparse::kIdx).Size();
+  if (row_count == 0) {
+    return;
+  }
+  const TBlob data_blob = output.data();
+  const size_t row_length =
+      static_cast<size_t>(data_blob.shape_.ProdShape(1, data_blob.shape_.ndim()));
+  DType* data = data_blob.dptr<DType>();
+  IType* idx  = output.aux_data(rowsparse::kIdx).dptr<IType>();
+  size_t write = 0;
+  for (size_t read = 0; read < row_count; ++read) {
+    DType* src_row = data + read * row_length;
+    if (!SparseRowHasNonZero(src_row, row_length)) {
+      continue;
+    }
+    if (write != read) {
+      DType* dst_row = data + write * row_length;
+      for (size_t col = 0; col < row_length; ++col) {
+        dst_row[col] = src_row[col];
+      }
+      idx[write] = idx[read];
+    }
+    ++write;
+  }
+  output.set_aux_shape(rowsparse::kIdx, mshadow::Shape1(write));
+}
+
+template <typename DType, typename IType, typename CType>
+inline void CompactCsrZeros(mshadow::Stream<cpu>* s, const NDArray& output) {
+  if (!output.storage_initialized()) {
+    return;
+  }
+  const size_t num_rows = static_cast<size_t>(output.shape()[0]);
+  DType* data           = output.data().dptr<DType>();
+  IType* idx            = output.aux_data(csr::kIdx).dptr<IType>();
+  CType* indptr         = output.aux_data(csr::kIndPtr).dptr<CType>();
+  size_t write          = 0;
+  CType row_start       = indptr[0];
+  for (size_t row = 0; row < num_rows; ++row) {
+    const CType row_end = indptr[row + 1];
+    indptr[row]         = static_cast<CType>(write);
+    for (CType read = row_start; read < row_end; ++read) {
+      if (!(data[read] == DType(0))) {
+        if (write != static_cast<size_t>(read)) {
+          data[write] = data[read];
+          idx[write]  = idx[read];
+        }
+        ++write;
+      }
+    }
+    row_start = row_end;
+  }
+  indptr[num_rows] = static_cast<CType>(write);
+  output.set_aux_shape(csr::kIdx, mshadow::Shape1(write));
+}
+
+inline void CompactSparseZeros(mshadow::Stream<cpu>* s, const NDArray& output) {
+  if (output.storage_type() == kRowSparseStorage) {
+    MSHADOW_TYPE_SWITCH(output.dtype(), DType, {
+      MSHADOW_IDX_TYPE_SWITCH(output.aux_type(rowsparse::kIdx), IType, {
+        CompactRowSparseZeros<DType, IType>(s, output);
+      });
+    });
+  } else if (output.storage_type() == kCSRStorage) {
+    MSHADOW_TYPE_SWITCH(output.dtype(), DType, {
+      MSHADOW_IDX_TYPE_SWITCH(output.aux_type(csr::kIdx), IType, {
+        MSHADOW_IDX_TYPE_SWITCH(output.aux_type(csr::kIndPtr), CType, {
+          CompactCsrZeros<DType, IType, CType>(s, output);
+        });
+      });
+    });
+  }
+}
+
+inline void CompactSparseZeros(mshadow::Stream<gpu>* s, const NDArray& output) {}
+
 }  // namespace
 
 class OpBase {
@@ -342,6 +434,7 @@ class UnaryOp : public OpBase {
         << "Operation requires a sparse output storage type";
     if (inputs[0].storage_shape().Size()) {
       MapToFCompute<xpu>(attrs, ctx, inputs, req, outputs, Compute<xpu, OP>);
+      CompactSparseZeros(ctx.get_stream<xpu>(), outputs[0]);
     }
   }
 
@@ -381,6 +474,7 @@ class UnaryOp : public OpBase {
         << "Operation requires a sparse output storage type";
     if (inputs[0].storage_shape().Size()) {
       MapToFCompute<cpu>(attrs, ctx, inputs, req, outputs, MKL_Compute<OP, MKL_OP>);
+      CompactSparseZeros(ctx.get_stream<cpu>(), outputs[0]);
     }
   }
 #endif

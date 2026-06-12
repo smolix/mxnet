@@ -41,7 +41,7 @@ from ..dlpack import ndarray_to_dlpack_for_read, ndarray_to_dlpack_for_write
 from ..dlpack import ndarray_from_dlpack, ndarray_from_numpy
 from ..runtime import Features
 from ..device import Device, current_device
-from ..util import is_np_array
+from ..util import is_np_array, _check_same_device
 from . import _internal
 from . import op
 from ._internal import NDArrayBase
@@ -3688,6 +3688,8 @@ def _ufunc_helper(lhs, rhs, fn_array, fn_scalar, lfn_scalar, rfn_scalar=None):
     elif isinstance(rhs, numeric_types):
         return lfn_scalar(lhs, float(rhs))
     elif isinstance(rhs, NDArray):
+        if isinstance(lhs, NDArray):
+            _check_same_device(lhs, rhs, func_name="operands")
         return fn_array(lhs, rhs)
     else:
         raise TypeError(f'type {str(type(rhs))} not supported')

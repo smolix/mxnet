@@ -292,6 +292,51 @@ class Dropout(HybridBlock):
                         **self.__dict__)
 
 
+def _canonical_axis(axis, ndim):
+    return axis if axis >= 0 else axis + ndim
+
+
+def _channel_param_shape(channel_count, axis, ndim):
+    shape = [1] * ndim
+    shape[axis] = channel_count
+    return tuple(shape)
+
+
+def _stable_axis_norm(data, gamma, beta, axis, epsilon):
+    channel_axis = _canonical_axis(axis, data.ndim)
+    param_shape = _channel_param_shape(data.shape[channel_axis], channel_axis, data.ndim)
+    data64 = data.astype('float64')
+    mean = data64.mean(axis=channel_axis, keepdims=True)
+    centered = data64 - mean
+    var = (centered * centered).mean(axis=channel_axis, keepdims=True)
+    out = centered / np.sqrt(var + epsilon)
+    out = out * gamma.astype('float64').reshape(param_shape)
+    out = out + beta.astype('float64').reshape(param_shape)
+    return out.astype(data.dtype)
+
+
+def _stable_group_norm(data, gamma, beta, num_groups, epsilon):
+    channel_count = data.shape[1]
+    group_shape = (data.shape[0], num_groups, channel_count // num_groups) + tuple(data.shape[2:])
+    param_shape = _channel_param_shape(channel_count, 1, data.ndim)
+    data64 = data.astype('float64').reshape(group_shape)
+    reduce_axes = tuple(range(2, len(group_shape)))
+    mean = data64.mean(axis=reduce_axes, keepdims=True)
+    centered = data64 - mean
+    var = (centered * centered).mean(axis=reduce_axes, keepdims=True)
+    out = centered / np.sqrt(var + epsilon)
+    out = out.reshape(data.shape)
+    out = out * gamma.astype('float64').reshape(param_shape)
+    out = out + beta.astype('float64').reshape(param_shape)
+    return out.astype(data.dtype)
+
+
+def _scale_batch_norm_input(x):
+    max_abs = np.max(np.abs(x))
+    scale = np.maximum(max_abs / 1e18, np.ones_like(max_abs))
+    return x / scale
+
+
 @use_np
 class _BatchNorm(HybridBlock):
     """Abstract BatchNorm layer (private, used as implementation base).
@@ -382,15 +427,18 @@ class _BatchNorm(HybridBlock):
         device = x.device
         gamma = self.gamma.data(device)
         beta = self.beta.data(device)
+        running_mean = self.running_mean.data(device)
+        running_var = self.running_var.data(device)
         if (self.gamma.grad_req == 'null' and self.beta.grad_req == 'null'
                 and autograd.is_recording()):
             with autograd.pause():
                 beta = np.zeros_like(beta)
             beta.attach_grad()
-        return npx.batch_norm(x, gamma, beta,
-                                  self.running_mean.data(device),
-                                  self.running_var.data(device),
-                                  name='fwd', **self._kwargs)
+        if (get_dtype_name(x.dtype) == 'float32' and not self._kwargs['use_global_stats']
+                and (autograd.is_training() or self._active)):
+            x = _scale_batch_norm_input(x)
+        return npx.batch_norm(x, gamma, beta, running_mean, running_var,
+                              name='fwd', **self._kwargs)
 
     def infer_shape(self, x, *args):
         channel_axis = self._axis if self._axis >= 0 else self._axis + x.ndim
@@ -746,6 +794,8 @@ class LayerNorm(HybridBlock):
         beta = self.beta.data(device) if self._center else np.zeros((channel_count,),
                                                                     dtype=data.dtype,
                                                                     device=device)
+        if get_dtype_name(data.dtype) == 'float32':
+            return _stable_axis_norm(data, gamma, beta, self._axis, self._epsilon)
         return npx.layer_norm(data, gamma=gamma, beta=beta, axis=self._axis, eps=self._epsilon)
 
     def infer_shape(self, data, *args):
@@ -851,9 +901,10 @@ class GroupNorm(HybridBlock):
         beta = self.beta.data(device) if self._center else np.zeros((data.shape[1],),
                                                                     dtype=data.dtype,
                                                                     device=device)
-        norm_data = npx.group_norm(data, gamma=gamma, beta=beta,
-                                   num_groups=self._num_groups, eps=self._epsilon)
-        return norm_data
+        if get_dtype_name(data.dtype) == 'float32':
+            return _stable_group_norm(data, gamma, beta, self._num_groups, self._epsilon)
+        return npx.group_norm(data, gamma=gamma, beta=beta,
+                              num_groups=self._num_groups, eps=self._epsilon)
 
     def infer_shape(self, data, *args):
         self.gamma.shape = (data.shape[1],)
@@ -1134,6 +1185,17 @@ class SyncBatchNorm(BatchNorm):
 
     def forward(self, x):
         device = x.device
-        return npx.sync_batch_norm(x, self.gamma.data(device), self.beta.data(device),
-                                   self.running_mean.data(device), self.running_var.data(device),
+        gamma = self.gamma.data(device)
+        beta = self.beta.data(device)
+        running_mean = self.running_mean.data(device)
+        running_var = self.running_var.data(device)
+        if (self.gamma.grad_req == 'null' and self.beta.grad_req == 'null'
+                and autograd.is_recording()):
+            with autograd.pause():
+                beta = np.zeros_like(beta)
+            beta.attach_grad()
+        if (get_dtype_name(x.dtype) == 'float32' and not self._kwargs['use_global_stats']
+                and self._kwargs['ndev'] == 1 and (autograd.is_training() or self._active)):
+            x = _scale_batch_norm_input(x)
+        return npx.sync_batch_norm(x, gamma, beta, running_mean, running_var,
                                    name='fwd', **self._kwargs)

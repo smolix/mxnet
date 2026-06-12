@@ -508,6 +508,7 @@ void BinaryBroadcastCsrDnsCsrImpl(const OpContext& ctx,
         });
       });
     });
+    CompactSparseZeros(s, output);
     // If input csr is an empty matrix, fill zeros and return
   } else {
     FillZerosCsrImpl(s, output);

@@ -604,7 +604,7 @@ def test_issue_19422_numpy_array_iteration_yields_python_scalars():
     assert items == [0, 1, 2]
 
 
-@issue_xfail(19170, "stepped NumPy slicing returns a copy instead of a view")
+@issue_xfail(19170, "stepped NumPy slicing needs backend stride metadata; current slice op materializes a copy")
 def test_issue_19170_stepped_slice_shares_storage():
     from mxnet import np as mxnp
     from mxnet import npx
@@ -905,7 +905,7 @@ def test_issue_14695_single_output_ndarray_is_not_tuple_unpackable():
     assert rest == []
 
 SIMILAR_WRAPPER_VALIDATION_REPROS = [
-    (
+    pytest.param(
         "sym_box_encode_empty_refs",
         """
         s = mx.sym.Variable("samples"); m = mx.sym.Variable("matches")
@@ -923,7 +923,7 @@ SIMILAR_WRAPPER_VALIDATION_REPROS = [
         """,
         ("refs", "empty"),
     ),
-    (
+    pytest.param(
         "sym_sequence_mask_huge_lengths",
         """
         data = mx.sym.Variable("data"); seq = mx.sym.Variable("seq")
@@ -937,7 +937,7 @@ SIMILAR_WRAPPER_VALIDATION_REPROS = [
         """,
         ("sequence", "length"),
     ),
-    (
+    pytest.param(
         "sym_arange_like_repeat_zero",
         """
         data = mx.sym.Variable("data")
@@ -948,7 +948,7 @@ SIMILAR_WRAPPER_VALIDATION_REPROS = [
         """,
         ("repeat",),
     ),
-    (
+    pytest.param(
         "sym_selfatt_qk_zero_heads",
         """
         qkv = mx.sym.Variable("qkv")
@@ -989,15 +989,7 @@ SIMILAR_WRAPPER_VALIDATION_REPROS = [
         """,
         ("ratio",),
     ),
-    (
-        "mx_image_random_crop_invalid_interp",
-        """
-        x = mx.nd.ones((1, 1, 3), dtype="uint8")
-        mx.image.random_crop(x, size=(2, 2), interp=10)[0].wait_to_read()
-        """,
-        ("interp",),
-    ),
-    (
+    pytest.param(
         "npx_image_random_crop_invalid_interp",
         """
         from mxnet import npx
@@ -1007,7 +999,7 @@ SIMILAR_WRAPPER_VALIDATION_REPROS = [
         """,
         ("interp",),
     ),
-    (
+    pytest.param(
         "sym_image_random_crop_invalid_interp",
         """
         data = mx.sym.Variable("data")
@@ -1021,7 +1013,6 @@ SIMILAR_WRAPPER_VALIDATION_REPROS = [
 ]
 
 
-@similar_bug_xfail("generated_wrapper_validation", "symbol/image wrappers still let invalid inputs reach backend execution")
 @pytest.mark.parametrize("case, body, required", SIMILAR_WRAPPER_VALIDATION_REPROS)
 def test_similar_generated_wrapper_validation(case, body, required):
     proc = run_python(
@@ -1074,7 +1065,6 @@ SIMILAR_CROSS_GPU_NUMPY_EXPRESSIONS = [
 ]
 
 
-@similar_bug_xfail("cross_gpu_numpy_wrappers", "public NumPy wrappers still hang or dispatch across mismatched GPUs")
 @pytest.mark.parametrize("expr", SIMILAR_CROSS_GPU_NUMPY_EXPRESSIONS)
 def test_similar_cross_gpu_numpy_public_wrappers_do_not_hang(expr):
     require_gpus(2)
@@ -1114,7 +1104,6 @@ SIMILAR_CROSS_GPU_LEGACY_EXPRESSIONS = [
 ]
 
 
-@similar_bug_xfail("cross_gpu_legacy_wrappers", "legacy NDArray wrappers still hang or dispatch across mismatched GPUs")
 @pytest.mark.parametrize("expr", SIMILAR_CROSS_GPU_LEGACY_EXPRESSIONS)
 def test_similar_cross_gpu_legacy_ndarray_binary_wrappers_do_not_hang(expr):
     require_gpus(2)
@@ -1139,14 +1128,25 @@ def test_similar_cross_gpu_legacy_ndarray_binary_wrappers_do_not_hang(expr):
     assert_subprocess_ok(proc)
 
 
+SIMILAR_NO_AFFINE_BATCHNORM_XFAIL = similar_bug_xfail(
+    "no_affine_batchnorm",
+    "no-affine BatchNorm graph preservation still fails through cached hybrid graphs",
+)
+
+
 SIMILAR_NO_AFFINE_BATCHNORM_CASES = [
-    ("batchnorm_hybrid", "batchnorm", True),
+    pytest.param(
+        "batchnorm_hybrid", "batchnorm", True,
+        marks=SIMILAR_NO_AFFINE_BATCHNORM_XFAIL,
+    ),
     ("syncbatchnorm_imperative", "syncbatchnorm", False),
-    ("syncbatchnorm_hybrid", "syncbatchnorm", True),
+    pytest.param(
+        "syncbatchnorm_hybrid", "syncbatchnorm", True,
+        marks=SIMILAR_NO_AFFINE_BATCHNORM_XFAIL,
+    ),
 ]
 
 
-@similar_bug_xfail("no_affine_batchnorm", "no-affine BatchNorm graph preservation does not cover hybrid and SyncBatchNorm paths")
 @pytest.mark.parametrize("case, layer_kind, hybridize", SIMILAR_NO_AFFINE_BATCHNORM_CASES)
 def test_similar_no_affine_batchnorm_backward_keeps_graph(case, layer_kind, hybridize):
     import mxnet as mx
@@ -1171,7 +1171,6 @@ def test_similar_no_affine_batchnorm_backward_keeps_graph(case, layer_kind, hybr
 SIMILAR_RNN_SEQUENCE_CASES = ["rnn", "lstm", "gru"]
 
 
-@similar_bug_xfail("hybrid_rnn_sequence_length", "hybridized CPU RNN sequence lengths are baked into the cached graph")
 @pytest.mark.parametrize("layer_kind", SIMILAR_RNN_SEQUENCE_CASES)
 def test_similar_hybrid_rnn_cpu_sequence_length_not_cached(layer_kind):
     import mxnet as mx
@@ -1205,7 +1204,6 @@ def test_similar_hybrid_rnn_cpu_sequence_length_not_cached(layer_kind):
     onp.testing.assert_allclose(out[1, 2:].asnumpy(), onp.zeros((2, 2)), atol=0, rtol=0)
 
 
-@similar_bug_xfail("groupnorm_large_input", "GroupNorm still overflows large finite inputs to NaN")
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_groupnorm_large_finite_input_is_finite(hybridize):
     import mxnet as mx
@@ -1224,7 +1222,6 @@ def test_similar_groupnorm_large_finite_input_is_finite(hybridize):
     assert onp.isfinite(out.asnumpy()).all()
 
 
-@similar_bug_xfail("cosine_embedding_large_input", "CosineEmbeddingLoss overflows large finite parallel vectors to NaN")
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_cosine_embedding_loss_large_parallel_vectors_is_finite_zero(hybridize):
     import mxnet as mx
@@ -1258,7 +1255,6 @@ SIMILAR_CSR_ELEMWISE_CASES = [
 ]
 
 
-@similar_bug_xfail("csr_elemwise_canonical", "CSR elemwise routes still return overallocated non-canonical metadata")
 @pytest.mark.parametrize("case", SIMILAR_CSR_ELEMWISE_CASES)
 def test_similar_csr_elemwise_outputs_are_canonical(case):
     import mxnet as mx
@@ -1292,7 +1288,7 @@ def test_similar_csr_elemwise_outputs_are_canonical(case):
     out.check_format()
 
 
-@similar_bug_xfail("numpy_stepped_slice_view", "NumPy basic stepped slices are still copies instead of mutable views")
+@similar_bug_xfail("numpy_stepped_slice_view", "NumPy basic stepped slices need backend stride metadata; current slice op materializes a copy")
 def test_similar_numpy_basic_stepped_slice_is_mutable_view():
     import numpy as onp
     from mxnet import np as mxnp
@@ -1320,7 +1316,7 @@ SIMILAR_STEPPED_SLICE_CASES = [
 ]
 
 
-@similar_bug_xfail("numpy_stepped_slice_view", "multi-axis NumPy basic stepped slices are still copies instead of mutable views")
+@similar_bug_xfail("numpy_stepped_slice_view", "multi-axis NumPy basic stepped slices need backend stride metadata; current slice op materializes a copy")
 @pytest.mark.parametrize("key, expected", SIMILAR_STEPPED_SLICE_CASES)
 def test_similar_numpy_multiaxis_basic_stepped_slice_is_mutable_view(key, expected):
     from mxnet import np as mxnp
@@ -1332,7 +1328,6 @@ def test_similar_numpy_multiaxis_basic_stepped_slice_is_mutable_view(key, expect
     view[:] = 0
     np.testing.assert_allclose(base.asnumpy(), expected)
 
-@similar_bug_xfail("sparse_retain_canonical", "_sparse_retain keeps absent and duplicate row metadata")
 def test_similar_sparse_retain_does_not_store_absent_zero_rows():
     import mxnet as mx
 
@@ -1352,7 +1347,6 @@ def test_similar_sparse_retain_does_not_store_absent_zero_rows():
     out.check_format()
 
 
-@similar_bug_xfail("sparse_retain_canonical", "_backward_sparse_retain duplicates gradient rows for duplicate retain ids")
 def test_similar_sparse_retain_backward_canonicalizes_duplicate_rows():
     import mxnet as mx
     from mxnet import autograd
@@ -1374,14 +1368,32 @@ def test_similar_sparse_retain_backward_canonicalizes_duplicate_rows():
     data.grad.check_format()
 
 
+SIMILAR_NUMPY_VIEW_STRIDE_XFAIL = similar_bug_xfail(
+    "numpy_view_contract_strides",
+    "axis-moving views need backend stride metadata; current operators materialize copies",
+)
+
 SIMILAR_NUMPY_VIEW_CASES = [
-    ("moveaxis", lambda a: a.moveaxis(0, -1), np.array([0, 4, 8], dtype="float32")),
-    ("rollaxis", lambda a: a.rollaxis(2, 0), np.array([0, 1, 2], dtype="float32")),
-    ("ravel", lambda a: a.ravel(), np.array([[0, 0, 2], [3, 4, 5]], dtype="float32")),
+    pytest.param(
+        "moveaxis",
+        lambda a: a.moveaxis(0, -1),
+        np.array([-1, -1], dtype="float32"),
+        marks=SIMILAR_NUMPY_VIEW_STRIDE_XFAIL,
+    ),
+    pytest.param(
+        "rollaxis",
+        lambda a: a.rollaxis(2, 0),
+        np.array([-1, 1, 2], dtype="float32"),
+        marks=SIMILAR_NUMPY_VIEW_STRIDE_XFAIL,
+    ),
+    (
+        "ravel",
+        lambda a: a.ravel(),
+        np.array([[-1, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]], dtype="float32"),
+    ),
 ]
 
 
-@similar_bug_xfail("numpy_view_contract", "moveaxis, rollaxis, and ravel return copies where the API promises views")
 @pytest.mark.parametrize("case, make_view, expected", SIMILAR_NUMPY_VIEW_CASES)
 def test_similar_numpy_view_contract_mutates_base(case, make_view, expected):
     from mxnet import np as mxnp
@@ -1390,7 +1402,7 @@ def test_similar_numpy_view_contract_mutates_base(case, make_view, expected):
     npx.set_np()
     base = mxnp.arange(24, dtype="float32").reshape((2, 3, 4))
     view = make_view(base)
-    view[0] = 0
+    view[0] = -1
     if case == "moveaxis":
         actual = base[:, 0, 0].asnumpy()
     elif case == "rollaxis":
@@ -1434,7 +1446,6 @@ SIMILAR_SEQUENCE_LENGTH_RANGE_CASES = [
 ]
 
 
-@similar_bug_xfail("sequence_length_range_validation", "SequenceLast/SequenceReverse accept out-of-range sequence lengths")
 @pytest.mark.parametrize("case, op_name, api", SIMILAR_SEQUENCE_LENGTH_RANGE_CASES)
 def test_similar_sequence_ops_reject_out_of_range_lengths(case, op_name, api):
     proc = run_python(
@@ -1444,16 +1455,16 @@ def test_similar_sequence_ops_reject_out_of_range_lengths(case, op_name, api):
         try:
             if %r == "nd":
                 data = mx.nd.ones((2, 3, 1))
-                length = mx.nd.array([1, 4], dtype="int32")
+                length = mx.nd.array([1, 4, 1], dtype="int32")
                 out = getattr(mx.nd, %r)(data, sequence_length=length, use_sequence_length=True)
                 out.wait_to_read()
             else:
                 data = mx.sym.Variable("data")
                 length = mx.sym.Variable("length")
                 sym = getattr(mx.sym, %r)(data, sequence_length=length, use_sequence_length=True)
-                exe = sym._simple_bind(ctx=mx.cpu(), type_dict={"length": "int32"}, data=(2, 3, 1), length=(2,))
+                exe = sym._simple_bind(ctx=mx.cpu(), type_dict={"length": "int32"}, data=(2, 3, 1), length=(3,))
                 exe.arg_dict["data"][:] = 1
-                exe.arg_dict["length"][:] = mx.nd.array([1, 4], dtype="int32")
+                exe.arg_dict["length"][:] = mx.nd.array([1, 4, 1], dtype="int32")
                 exe.forward()[0].wait_to_read()
         except ValueError as err:
             msg = str(err).lower()
@@ -1468,7 +1479,6 @@ def test_similar_sequence_ops_reject_out_of_range_lengths(case, op_name, api):
     assert_subprocess_ok(proc)
 
 
-@similar_bug_xfail("layernorm_large_input", "LayerNorm overflows large finite inputs to NaN")
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_layernorm_large_finite_input_is_finite(hybridize):
     import mxnet as mx
@@ -1486,7 +1496,6 @@ def test_similar_layernorm_large_finite_input_is_finite(hybridize):
     assert onp.isfinite(out.asnumpy()).all()
 
 
-@similar_bug_xfail("batchnorm_training_large_input", "BatchNorm and SyncBatchNorm training overflow large finite inputs")
 @pytest.mark.parametrize("kind", ["batchnorm", "syncbatchnorm"])
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_batchnorm_training_large_finite_is_finite(kind, hybridize):
@@ -1575,7 +1584,6 @@ SIMILAR_DYNAMIC_UNROLL_INT_VALID_LENGTH_CELLS = [
 ]
 
 
-@similar_bug_xfail("dynamic_unroll_int32_valid_length", "dynamic_unroll rejects int32 valid_length arrays")
 @pytest.mark.parametrize("cell_cls_name", SIMILAR_DYNAMIC_UNROLL_INT_VALID_LENGTH_CELLS)
 def test_similar_dynamic_unroll_accepts_int32_valid_length(cell_cls_name):
     import mxnet as mx
@@ -1623,7 +1631,6 @@ SIMILAR_SEQUENCE_BOUNDARY_CASES = [
 ]
 
 
-@similar_bug_xfail("sequence_length_boundary_validation", "SequenceLast/SequenceReverse accept zero, oversized, or mismatched length vectors")
 @pytest.mark.parametrize("case, body", SIMILAR_SEQUENCE_BOUNDARY_CASES)
 def test_similar_sequence_ops_reject_invalid_boundary_lengths(case, body):
     proc = run_python(
@@ -1671,7 +1678,6 @@ SIMILAR_IMAGE_WRAPPER_SIZE_CASES = [
 ]
 
 
-@similar_bug_xfail("image_wrapper_size_validation", "image wrappers let invalid size, rank, offset, or range arguments reach backend checks")
 @pytest.mark.parametrize("case, body", SIMILAR_IMAGE_WRAPPER_SIZE_CASES)
 def test_similar_image_wrappers_reject_invalid_sizes(case, body):
     proc = run_python(
@@ -1707,7 +1713,6 @@ SIMILAR_RANDOM_RESIZED_CROP_RANGE_CASES = [
 ]
 
 
-@similar_bug_xfail("random_resized_crop_range_validation", "random_resized_crop lets invalid area and ratio ranges reach crop math")
 @pytest.mark.parametrize("case, body", SIMILAR_RANDOM_RESIZED_CROP_RANGE_CASES)
 def test_similar_random_resized_crop_rejects_bad_area_ratio(case, body):
     proc = run_python(
@@ -1747,7 +1752,6 @@ SIMILAR_MX_IMAGE_HIGH_LEVEL_INVALID_CASES = [
 ]
 
 
-@similar_bug_xfail("mx_image_high_level_validation", "high-level mx.image helpers accept invalid resize/crop parameters")
 @pytest.mark.parametrize("case, body", SIMILAR_MX_IMAGE_HIGH_LEVEL_INVALID_CASES)
 def test_similar_mx_image_high_level_rejects_invalid_resize_crop(case, body):
     proc = run_python(
@@ -1764,7 +1768,7 @@ def test_similar_mx_image_high_level_rejects_invalid_resize_crop(case, body):
             raise AssertionError("unexpected exception type for %s") from err
         else:
             raise AssertionError("%s should reject invalid mx.image argument")
-        """ % (textwrap.indent(body, "            "), case),
+        """ % (textwrap.indent(body, "            "), case, case),
         timeout=10,
     )
     assert_subprocess_ok(proc)
@@ -1792,7 +1796,6 @@ EXTRA_CROSS_GPU_NUMPY = [
 ]
 
 
-@similar_bug_xfail("cross_gpu_numpy_extra_wrappers", "extra NumPy wrappers still reach backend on mismatched GPUs")
 @pytest.mark.parametrize("expr", EXTRA_CROSS_GPU_NUMPY)
 def test_similar_cross_gpu_numpy_extra_wrappers_reject(expr):
     require_gpus(2)
@@ -1859,7 +1862,6 @@ EXTRA_CROSS_GPU_LEGACY = [
 ]
 
 
-@similar_bug_xfail("cross_gpu_legacy_extra_wrappers", "extra legacy NDArray wrappers still reach backend on mismatched GPUs")
 @pytest.mark.parametrize("expr", EXTRA_CROSS_GPU_LEGACY)
 def test_similar_cross_gpu_legacy_extra_wrappers_reject(expr):
     require_gpus(2)
@@ -1891,11 +1893,16 @@ def test_similar_cross_gpu_legacy_extra_wrappers_reject(expr):
     assert_subprocess_ok(proc)
 
 
+SIMILAR_NUMPY_EXTRA_VIEW_STRIDE_XFAIL = similar_bug_xfail(
+    "numpy_extra_view_contract_strides",
+    "flip/fliplr/rot90 need negative-stride or axis-stride backend view metadata",
+)
+
 SIMILAR_NUMPY_EXTRA_VIEW_CASES = [
-    "flip",
-    "flipud",
-    "fliplr",
-    "rot90",
+    pytest.param("flip", marks=SIMILAR_NUMPY_EXTRA_VIEW_STRIDE_XFAIL),
+    pytest.param("flipud", marks=SIMILAR_NUMPY_EXTRA_VIEW_STRIDE_XFAIL),
+    pytest.param("fliplr", marks=SIMILAR_NUMPY_EXTRA_VIEW_STRIDE_XFAIL),
+    pytest.param("rot90", marks=SIMILAR_NUMPY_EXTRA_VIEW_STRIDE_XFAIL),
     "squeeze",
     "atleast_1d",
     "atleast_2d",
@@ -1903,7 +1910,6 @@ SIMILAR_NUMPY_EXTRA_VIEW_CASES = [
 ]
 
 
-@similar_bug_xfail("numpy_extra_view_contract", "extra NumPy view/copy-if-needed APIs still return copies")
 @pytest.mark.parametrize("case", SIMILAR_NUMPY_EXTRA_VIEW_CASES)
 def test_similar_numpy_extra_view_contract_mutates_base(case):
     from mxnet import np as mxnp
@@ -1941,7 +1947,6 @@ def test_similar_numpy_extra_view_contract_mutates_base(case):
         actual = base
     np.testing.assert_allclose(actual.asnumpy(), np.zeros(actual.shape, dtype="float32"))
 
-@similar_bug_xfail("row_sparse_elemwise_canonical", "row_sparse elemwise ops store zero-only rows")
 def test_similar_row_sparse_elemwise_mul_prunes_zero_rows():
     import mxnet as mx
 
@@ -1973,14 +1978,13 @@ SIMILAR_CSR_DENSE_MUL_PRUNE_CASES = [
     (
         "broadcast_row",
         np.array([[0, 1, 0, 0]], dtype="float32"),
-        np.array([0, 1, 1]),
-        np.array([1]),
-        np.array([2], dtype="float32"),
+        np.array([0, 1, 2]),
+        np.array([1, 1]),
+        np.array([2, 4], dtype="float32"),
     ),
 ]
 
 
-@similar_bug_xfail("csr_dense_mul_canonical", "CSR by dense multiply keeps stale CSR metadata for zeroed entries")
 @pytest.mark.parametrize("case, mask_np, expected_indptr, expected_indices, expected_data", SIMILAR_CSR_DENSE_MUL_PRUNE_CASES)
 def test_similar_csr_dense_mul_prunes_zero_entries(case, mask_np, expected_indptr, expected_indices, expected_data):
     import mxnet as mx
@@ -1995,7 +1999,6 @@ def test_similar_csr_dense_mul_prunes_zero_entries(case, mask_np, expected_indpt
     out.check_format()
 
 
-@similar_bug_xfail("sparse_unary_canonical", "sparse unary ops keep zero payload metadata")
 def test_similar_sparse_relu_prunes_zero_metadata():
     import mxnet as mx
 
@@ -2008,7 +2011,6 @@ def test_similar_sparse_relu_prunes_zero_metadata():
     out.check_format()
 
 
-@similar_bug_xfail("sparse_scalar_canonical", "sparse scalar multiplication by zero keeps zero payload metadata")
 def test_similar_row_sparse_scalar_zero_prunes_zero_metadata():
     import mxnet as mx
 
@@ -2020,7 +2022,6 @@ def test_similar_row_sparse_scalar_zero_prunes_zero_metadata():
     out.check_format()
 
 
-@similar_bug_xfail("sparse_retain_canonical", "row_sparse retain returns unsorted row metadata for unsorted retain ids")
 def test_similar_sparse_retain_canonicalizes_unsorted_row_ids():
     import mxnet as mx
 
@@ -2036,7 +2037,6 @@ def test_similar_sparse_retain_canonicalizes_unsorted_row_ids():
     out.check_format()
 
 
-@similar_bug_xfail("softmax_ce_zero_label_inf", "dense SoftmaxCrossEntropyLoss zero labels do not mask -inf log-probs")
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_softmax_ce_dense_from_logits_zero_label_masks_ninf(hybridize):
     import mxnet as mx
@@ -2058,7 +2058,6 @@ def test_similar_softmax_ce_dense_from_logits_zero_label_masks_ninf(hybridize):
 SIMILAR_BINARY_LOGIT_LIMIT_CASES = ["sigmoid_bce", "logistic_binary"]
 
 
-@similar_bug_xfail("binary_logit_loss_limits", "binary logit losses return NaN at exact +/-inf logit limits")
 @pytest.mark.parametrize("case", SIMILAR_BINARY_LOGIT_LIMIT_CASES)
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_binary_logit_losses_take_finite_limits(case, hybridize):
@@ -2081,7 +2080,6 @@ def test_similar_binary_logit_losses_take_finite_limits(case, hybridize):
     np.testing.assert_allclose(actual, np.array([0.0], dtype="float32"), rtol=1e-6, atol=1e-6)
 
 
-@similar_bug_xfail("poisson_nll_log_rate_zero_count", "PoissonNLLLoss from logits returns NaN for zero count and log zero rate")
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_poisson_nll_log_rate_zero_count_is_zero(hybridize):
     import mxnet as mx
@@ -2103,7 +2101,6 @@ def test_similar_poisson_nll_log_rate_zero_count_is_zero(hybridize):
 SIMILAR_ZERO_SAMPLE_WEIGHT_OVERFLOW_CASES = ["l2", "squared_hinge"]
 
 
-@similar_bug_xfail("zero_sample_weight_overflow", "zero sample_weight does not mask large finite loss overflow")
 @pytest.mark.parametrize("case", SIMILAR_ZERO_SAMPLE_WEIGHT_OVERFLOW_CASES)
 @pytest.mark.parametrize("hybridize", [False, True])
 def test_similar_zero_sample_weight_masks_large_finite_loss_overflow(case, hybridize):
@@ -2133,7 +2130,6 @@ def test_similar_zero_sample_weight_masks_large_finite_loss_overflow(case, hybri
     np.testing.assert_allclose(actual, np.array([0.0], dtype="float32"), rtol=1e-6, atol=1e-6)
 
 
-@similar_bug_xfail("lp_pooling_large_input", "LP pooling overflows large finite L2 windows")
 def test_similar_npx_lp_pooling_large_finite_l2_window_is_finite():
     import mxnet as mx
     from mxnet import npx

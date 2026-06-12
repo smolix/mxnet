@@ -37,6 +37,21 @@ struct PoolingTypes<mshadow::half::half_t> {
 };
 
 template <typename DType, int p>
+struct PoolingAccumTypes {
+  typedef typename PoolingTypes<DType>::AccType AccType;
+};
+
+template <int p>
+struct PoolingAccumTypes<float, p> {
+  typedef double AccType;
+};
+
+template <>
+struct PoolingAccumTypes<float, 1> {
+  typedef float AccType;
+};
+
+template <typename DType, int p>
 struct a_pow_p {
   static MSHADOW_XINLINE DType Map(const DType a) {
     return mshadow_op::power::Map(a, DType(p));

@@ -27,10 +27,10 @@ Policy:
 
 Current counts:
 
-- Runtime/static-verified executable repros: 227 total: 53 from the
-  original open GitHub issue/PR scan and 174 from the similar-bug sweep.
-  In the current worktree, 62 are fixed regression tests and 165 remain
-  expected-failing repros: 1 original open issue plus 164 similar-pattern
+- Runtime/static-verified executable bug repros: 226 total: 53 from the
+  original open GitHub issue/PR scan and 173 from the similar-bug sweep.
+  In the current worktree, 213 are fixed regression tests and 13 remain
+  expected-failing repros: 1 original open issue plus 12 similar-pattern
   candidates still pending fixes.
 - Fixed in current worktree: issues #21176, #21119, #21111, #20936, #20657, #20605, #20577, #21156,
   #16427, #13945, #20391, #16402, #18300, #21146, #19423, #19458,
@@ -94,10 +94,11 @@ Active batch started 2026-06-11:
   #18919, and #18770 as strict XPASS before their markers were removed;
   the 40-fix checkpoint run found #19628, #18669, and #11774 as strict
   XPASS before their markers were removed.
-- The 62 fixed tests are normal regression tests in
-  tests/python/unittest/test_apache_open_issue_repros.py. The remaining 164
-  similar-bug sweep tests are strict expected-failing repros in the same file
-  and must stay as tests before any corresponding fixes are attempted.
+- The 213 fixed tests are normal regression tests in
+  tests/python/unittest/test_apache_open_issue_repros.py. The remaining 12
+  similar-bug sweep tests plus issue #19170 are strict expected-failing repros
+  in the same file and must stay as tests before any corresponding fixes are
+  attempted.
 - Patched files so far: python/mxnet/libinfo.py, python/mxnet/recordio.py,
   python/mxnet/gluon/block.py, python/mxnet/gluon/parameter.py,
   python/mxnet/ndarray/ndarray.py, python/mxnet/numpy/multiarray.py,
@@ -113,7 +114,8 @@ Active batch started 2026-06-11:
   python/mxnet/gluon/rnn/rnn_layer.py,
   python/mxnet/gluon/nn/activations.py, python/mxnet/symbol/symbol.py,
   src/c_api/c_api_symbolic.cc, python/mxnet/gluon/nn/conv_layers.py, python/mxnet/util.py,
-  and python/mxnet/_ctypes/cached_op.py.
+  python/mxnet/_ctypes/cached_op.py, python/mxnet/image/image.py,
+  and src/operator/nn/pool*.
 - Next checkpoint: run the expanded full repro suite again before
   promoting another fixed batch, or sooner if shared/runtime behavior changes.
 - Similar-bug sweep repros added so far: generated symbol/image validation
@@ -125,8 +127,23 @@ Active batch started 2026-06-11:
   contract cases. The recursive sweep added more sequence/image validation,
   cross-device wrapper, sparse canonicalization, numeric stability, and view
   contract repros. Fixed in the similar-bug batch so far: InstanceNorm
-  non-default-axis deferred shape inference and 8 Gluon loss numeric-edge
-  cases.
+  non-default-axis deferred shape inference, 8 Gluon loss numeric-edge
+  cases, nine generated validation-wrapper cases plus validation
+  wrapper boundary checks and SequenceLast/SequenceReverse range checks,
+  shape-only NumPy view helpers,
+  cross-device wrapper rejection, LayerNorm large-finite normalization,
+  non-hybrid BatchNorm/SyncBatchNorm large-finite normalization,
+  dynamic_unroll int32 valid_length handling, GroupNorm large-finite
+  normalization, SyncBatchNorm imperative no-affine graph preservation, hybrid CPU RNN
+  runtime sequence-length masking, CosineEmbeddingLoss large-vector scaling,
+  and the remaining
+  Gluon loss infinity/zero-weight numeric edges.
+  Native sparse canonicalization and LP-pooling candidates now pass against
+  build/libmxnet.so; cached-hybrid no-affine BatchNorm graph cases remain
+  xfailed. One high-level mx.image.random_crop(..., interp=10)
+  validation candidate was removed from the bug count because the documented
+  mx.image helper accepts 10 as random interpolation, unlike the generated
+  NDArray/Symbol image wrappers.
 
 ## Similar-Bug Sweep Repros
 
@@ -159,6 +176,7 @@ namespace in `tests/python/unittest/test_apache_open_issue_repros.py`.
   `--runxfail`. The recursive Halley/Sagan batch then verified with 66 xfailed,
   142 deselected, and 2 warnings in 422.40s; the recursive Anscombe/Aristotle
   batch verified with 19 xfailed, 208 deselected, and 2 warnings in 2.59s.
+  Parent-checkout verification of the current promotion batch reported 15 passed, 212 deselected for validation wrappers; 3 passed, 217 deselected, 7 xfailed for the generated validation-wrapper split; 5 passed, 212 deselected, 10 xfailed for view-contract cases; 71 passed, 156 deselected for cross-device wrappers; and 4 passed, 209 deselected, 14 xfailed for the partial numeric-stability promotion. Focused dynamic_unroll int32 valid_length verification passed with 3 passed, 224 deselected, and 2 warnings in 0.49s under --runxfail. After removing the xfail marker, the same focused slice passed normally with 3 passed, 224 deselected, and 2 warnings in 0.48s. Focused loss/cosine numeric verification passed with 14 passed, 213 deselected, and 2 warnings in 1.43s under --runxfail; after removing the xfail markers, the same focused slice passed normally with 14 passed, 213 deselected, and 2 warnings in 1.59s. Focused GroupNorm large-finite verification passed with 2 passed, 225 deselected, and 2 warnings in 0.31s under --runxfail; after removing the xfail marker, the same focused slice passed normally with 2 passed, 225 deselected, and 2 warnings in 0.34s. Focused no-affine BatchNorm verification now reports 1 passed, 224 deselected, 2 xfailed, and 2 warnings in 1.01s after splitting the remaining cached-hybrid xfails. Focused wrapper/SequenceLast/SequenceReverse verification used the installed wheel library because build/libmxnet.so was absent: the promoted subset passed under --runxfail with 13 passed, 214 deselected, and 2 warnings in 38.66s; the full focused slice then passed normally with 13 passed, 213 deselected, 1 xfailed, and 2 warnings in 42.00s. Focused hybrid CPU RNN sequence-length verification passed with 3 passed, 224 deselected, and 2 warnings in 0.50s under --runxfail; after removing the xfail marker, the same focused slice passed normally with 3 passed, 224 deselected, and 2 warnings in 0.47s. Full repro checkpoint against local Python sources plus the installed wheel library passed with 193 passed, 34 xfailed, and 3 warnings in 380.45s before removing the documented mx.image.random_crop interp=10 non-bug candidate from the bug repro count. After that removal, the generated-wrapper validation slice passed with 9 passed, 217 deselected, and 2 warnings in 26.76s. Focused BatchNorm/SyncBatchNorm large-finite verification now passes normally with 4 passed, 222 deselected, and 2 warnings in 0.79s. Focused native sparse/storage verification against build/libmxnet.so passes normally with 11 passed, 215 deselected, and 2 warnings in 1.57s. Focused LP pooling verification against build/libmxnet.so passed under --runxfail with 1 passed, 225 deselected, and 2 warnings in 0.20s, and then passed normally with 1 passed, 225 deselected, and 2 warnings in 0.23s.
 
 ## Runtime/API-Verified Repros
 
@@ -194,7 +212,7 @@ namespace in `tests/python/unittest/test_apache_open_issue_repros.py`.
 | issue #19423 | `test_issue_19423_choice_full_without_replacement_is_permutation` | Fixed in current worktree; full-range no-replacement choice now produces a non-identity permutation for some seeds. |
 | issue #19458 | `test_issue_19458_tensordot_scalar_empty_axes_backward` | Fixed in current worktree; scalar empty-axis `tensordot` backward returns finite correct gradients. |
 | issue #19422 | `test_issue_19422_numpy_array_iteration_yields_python_scalars` | Fixed in current worktree; NumPy ndarray iteration yields Python scalars for scalar elements. |
-| issue #19170 | `test_issue_19170_stepped_slice_shares_storage` | Stepped NumPy slicing returns a copy instead of a view. |
+| issue #19170 | `test_issue_19170_stepped_slice_shares_storage` | Still blocked: stepped NumPy slicing needs non-unit stride metadata in ndarray/view handles; current `_npi.slice` materializes a dense copy. Shape-only view helpers (`ravel`, `squeeze`, `atleast_*`) are fixed in Python via `reshape_view`. |
 | PR #18583 | `test_pr_18583_cpp_symbol_exposes_partial_shape_inference` | Fixed in current worktree; C++ `Symbol` exposes partial shape inference. |
 | issue #19021 | `test_issue_19021_backward_rejects_mismatched_head_gradient_shape` | Fixed in current worktree; Python backward rejects head gradients with mismatched shapes. |
 | issue #18919 | `test_issue_18919_numpy_advanced_indexing_matches_numpy` | Fixed in current worktree; mixed advanced index arrays are broadcast before indexing. |

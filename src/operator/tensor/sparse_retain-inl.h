@@ -25,6 +25,7 @@
 #define MXNET_OPERATOR_TENSOR_SPARSE_RETAIN_INL_H_
 
 #include <mxnet/operator_util.h>
+#include <algorithm>
 #include <vector>
 #include <utility>
 #include "./init_op.h"
@@ -294,6 +295,112 @@ struct SparseRetainCopyRetainedRowsFromDnsPerRow {
   }
 };
 
+
+template <typename DType>
+inline bool SparseRetainRowHasNonZero(const DType* row, const size_t row_length) {
+  for (size_t i = 0; i < row_length; ++i) {
+    if (!(row[i] == DType(0))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename IType>
+std::vector<index_t> SparseRetainSortedUniqueRows(const TBlob& idx_data) {
+  const IType* idx = idx_data.dptr<IType>();
+  std::vector<index_t> rows;
+  rows.reserve(idx_data.Size());
+  for (index_t i = 0; i < idx_data.Size(); ++i) {
+    rows.emplace_back(static_cast<index_t>(idx[i]));
+  }
+  std::sort(rows.begin(), rows.end());
+  rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+  return rows;
+}
+
+inline void SparseRetainOpForwardRspImpl(mshadow::Stream<cpu>* s,
+                                  const NDArray& input_nd,
+                                  const TBlob& idx_data,
+                                  const OpReqType req,
+                                  NDArray* output_nd) {
+  if (req == kNullOp)
+    return;
+  CHECK_EQ(req, kWriteTo) << "SparseRetainOpForwardRspImpl only support req = kWriteTo now";
+  CHECK_EQ(input_nd.storage_type(), kRowSparseStorage)
+      << "SparseRetainOpForwardRspImpl operator only takes row sparse NDArray as input";
+  CHECK_EQ(output_nd->storage_type(), kRowSparseStorage)
+      << "SparseRetainOpForwardRspImpl operator only outputs row sparse NDArray";
+
+  MSHADOW_TYPE_SWITCH(idx_data.type_flag_, IType, {
+    SparseRetainValidateIndices<IType>(s, idx_data, input_nd.shape()[0]);
+  });
+
+  if (!input_nd.storage_initialized() || idx_data.Size() == 0U || input_nd.shape()[0] == 0) {
+    FillZerosRspImpl(s, *output_nd);
+    return;
+  }
+
+  std::vector<index_t> retain_rows;
+  MSHADOW_TYPE_SWITCH(idx_data.type_flag_, IType, {
+    retain_rows = SparseRetainSortedUniqueRows<IType>(idx_data);
+  });
+  if (retain_rows.empty()) {
+    FillZerosRspImpl(s, *output_nd);
+    return;
+  }
+
+  const TBlob input_data = input_nd.data();
+  const TBlob input_idx  = input_nd.aux_data(rowsparse::kIdx);
+  const size_t row_length =
+      static_cast<size_t>(input_data.shape_.ProdShape(1, input_data.shape_.ndim()));
+
+  MSHADOW_TYPE_SWITCH(input_data.type_flag_, DType, {
+    MSHADOW_IDX_TYPE_SWITCH(input_idx.type_flag_, RType, {
+      const RType* in_idx = input_idx.dptr<RType>();
+      const DType* in_data = input_data.dptr<DType>();
+      const size_t input_rows = input_idx.Size();
+      std::vector<size_t> input_positions;
+      std::vector<index_t> output_rows;
+      input_positions.reserve(retain_rows.size());
+      output_rows.reserve(retain_rows.size());
+      size_t input_pos = 0;
+      for (const index_t row : retain_rows) {
+        while (input_pos < input_rows && static_cast<index_t>(in_idx[input_pos]) < row) {
+          ++input_pos;
+        }
+        if (input_pos < input_rows && static_cast<index_t>(in_idx[input_pos]) == row) {
+          const DType* src_row = in_data + input_pos * row_length;
+          if (SparseRetainRowHasNonZero(src_row, row_length)) {
+            input_positions.emplace_back(input_pos);
+            output_rows.emplace_back(row);
+          }
+        }
+      }
+      if (output_rows.empty()) {
+        FillZerosRspImpl(s, *output_nd);
+        return;
+      }
+
+      output_nd->CheckAndAlloc({mshadow::Shape1(output_rows.size())});
+      TBlob output_data = output_nd->data();
+      TBlob output_idx = output_nd->aux_data(rowsparse::kIdx);
+      DType* out_data = output_data.dptr<DType>();
+      MSHADOW_IDX_TYPE_SWITCH(output_idx.type_flag_, OType, {
+        OType* out_idx = output_idx.dptr<OType>();
+        for (size_t i = 0; i < output_rows.size(); ++i) {
+          out_idx[i] = static_cast<OType>(output_rows[i]);
+          const DType* src_row = in_data + input_positions[i] * row_length;
+          DType* dst_row = out_data + i * row_length;
+          for (size_t col = 0; col < row_length; ++col) {
+            dst_row[col] = src_row[col];
+          }
+        }
+      });
+    });
+  });
+}
+
 template <typename xpu>
 void SparseRetainOpForwardRspImpl(mshadow::Stream<xpu>* s,
                                   const NDArray& input_nd,
@@ -392,11 +499,11 @@ void SparseRetainOpForwardEx(const nnvm::NodeAttrs& attrs,
       << "sparse_retain operator only takes default NDArray as its index array";
   if (inputs[sr::kArr].storage_type() == kRowSparseStorage) {
     NDArray output_nd = outputs[sr::kOut];
-    SparseRetainOpForwardRspImpl<xpu>(ctx.get_stream<xpu>(),
-                                      inputs[sr::kArr],
-                                      inputs[sr::kIdx].data(),
-                                      req[sr::kOut],
-                                      &output_nd);
+    SparseRetainOpForwardRspImpl(ctx.get_stream<xpu>(),
+                                 inputs[sr::kArr],
+                                 inputs[sr::kIdx].data(),
+                                 req[sr::kOut],
+                                 &output_nd);
   } else {
     LOG(FATAL) << "sparse_retain op only supports row-sparse ndarrays as input";
   }
@@ -421,6 +528,106 @@ struct SparseRetainRspGradKernel {
   }
 };
 
+
+inline void SparseRetainOpBackwardRspImpl(mshadow::Stream<cpu>* s,
+                                   const std::vector<NDArray>& inputs,
+                                   const std::vector<OpReqType>& req,
+                                   const std::vector<NDArray>& outputs) {
+  const TBlob idx_data = inputs[sr::kIdx].data();
+  const TBlob out_grad_data = inputs[sr::kOut].data();
+  MSHADOW_TYPE_SWITCH(idx_data.type_flag_, IType, {
+    SparseRetainValidateIndices<IType>(s, idx_data, out_grad_data.shape_[0]);
+  });
+  if (idx_data.Size() == 0U) {
+    FillZerosRspImpl(s, outputs[sr::kArr]);
+    return;
+  }
+
+  std::vector<index_t> retain_rows;
+  MSHADOW_TYPE_SWITCH(idx_data.type_flag_, IType, {
+    retain_rows = SparseRetainSortedUniqueRows<IType>(idx_data);
+  });
+  if (retain_rows.empty()) {
+    FillZerosRspImpl(s, outputs[sr::kArr]);
+    return;
+  }
+
+  const size_t row_length =
+      static_cast<size_t>(out_grad_data.shape_.ProdShape(1, out_grad_data.shape_.ndim()));
+  NDArray in_grad_nd = outputs[sr::kArr];
+
+  MSHADOW_TYPE_SWITCH(out_grad_data.type_flag_, DType, {
+    const DType* out_grad = out_grad_data.dptr<DType>();
+    std::vector<index_t> output_rows;
+    output_rows.reserve(retain_rows.size());
+    for (const index_t row : retain_rows) {
+      const DType* src_row = out_grad + static_cast<size_t>(row) * row_length;
+      if (SparseRetainRowHasNonZero(src_row, row_length)) {
+        output_rows.emplace_back(row);
+      }
+    }
+    if (output_rows.empty()) {
+      FillZerosRspImpl(s, outputs[sr::kArr]);
+      return;
+    }
+
+    in_grad_nd.CheckAndAlloc({mshadow::Shape1(output_rows.size())});
+    TBlob in_grad_data = in_grad_nd.data();
+    TBlob in_grad_idx = in_grad_nd.aux_data(rowsparse::kIdx);
+    DType* grad_data = in_grad_data.dptr<DType>();
+    MSHADOW_IDX_TYPE_SWITCH(in_grad_idx.type_flag_, RType, {
+      RType* grad_idx = in_grad_idx.dptr<RType>();
+      for (size_t i = 0; i < output_rows.size(); ++i) {
+        grad_idx[i] = static_cast<RType>(output_rows[i]);
+        const DType* src_row = out_grad + static_cast<size_t>(output_rows[i]) * row_length;
+        DType* dst_row = grad_data + i * row_length;
+        for (size_t col = 0; col < row_length; ++col) {
+          dst_row[col] = src_row[col];
+        }
+      }
+    });
+  });
+}
+
+template <typename xpu>
+void SparseRetainOpBackwardRspImpl(mshadow::Stream<xpu>* s,
+                                   const std::vector<NDArray>& inputs,
+                                   const std::vector<OpReqType>& req,
+                                   const std::vector<NDArray>& outputs) {
+  using namespace mxnet_op;
+  const TBlob idx_data      = inputs[sr::kIdx].data();
+  const TBlob out_grad_data = inputs[sr::kOut].data();
+  MSHADOW_TYPE_SWITCH(idx_data.type_flag_, IType, {
+    SparseRetainValidateIndices<IType>(s, idx_data, out_grad_data.shape_[0]);
+  });
+  if (idx_data.Size() == 0U) {
+    FillZerosRspImpl(s, outputs[sr::kArr]);
+    return;
+  }
+
+  NDArray in_grad_nd = outputs[sr::kArr];
+  in_grad_nd.CheckAndAlloc({mshadow::Shape1(idx_data.Size())});
+  TBlob in_grad_data    = in_grad_nd.data();
+  TBlob in_grad_idx     = in_grad_nd.aux_data(rowsparse::kIdx);
+  const auto row_length = out_grad_data.shape_.ProdShape(1, out_grad_data.shape_.ndim());
+
+  MSHADOW_TYPE_SWITCH(out_grad_data.type_flag_, DType, {
+    MSHADOW_IDX_TYPE_SWITCH(in_grad_idx.type_flag_, RType, {
+      MSHADOW_TYPE_SWITCH(idx_data.type_flag_, IType, {
+        MXNET_ASSIGN_REQ_SWITCH(req[sr::kArr], req_type, {
+          mxnet_op::Kernel<SparseRetainRspGradKernel<req_type>, xpu>::Launch(s,
+                                                                             in_grad_idx.Size(),
+                                                                             in_grad_data.dptr<DType>(),
+                                                                             in_grad_idx.dptr<RType>(),
+                                                                             out_grad_data.dptr<DType>(),
+                                                                             idx_data.dptr<IType>(),
+                                                                             row_length);
+        });
+      });
+    });
+  });
+}
+
 template <typename xpu>
 void SparseRetainOpBackwardEx(const nnvm::NodeAttrs& attrs,
                               const OpContext& ctx,
@@ -443,40 +650,7 @@ void SparseRetainOpBackwardEx(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(outputs[sr::kArr].storage_type(), kRowSparseStorage)
       << "sparse_retain backward only outputs row sparse NDArray as grad of input";
 
-  using namespace mxnet_op;
-  using namespace mshadow;
-  Stream<xpu>* s       = ctx.get_stream<xpu>();
-  const TBlob idx_data      = inputs[sr::kIdx].data();
-  const TBlob out_grad_data = inputs[sr::kOut].data();
-  MSHADOW_TYPE_SWITCH(idx_data.type_flag_, IType, {
-    SparseRetainValidateIndices<IType>(s, idx_data, out_grad_data.shape_[0]);
-  });
-  if (idx_data.Size() == 0U) {
-    FillZerosRspImpl(s, outputs[sr::kArr]);
-    return;
-  }
-
-  NDArray in_grad_nd = outputs[sr::kArr];
-  in_grad_nd.CheckAndAlloc({mshadow::Shape1(idx_data.Size())});
-  TBlob in_grad_data    = in_grad_nd.data();
-  TBlob in_grad_idx     = in_grad_nd.aux_data(rowsparse::kIdx);
-  const auto row_length = out_grad_data.shape_.ProdShape(1, out_grad_data.shape_.ndim());
-
-  MSHADOW_TYPE_SWITCH(out_grad_data.type_flag_, DType, {      // output data type
-    MSHADOW_IDX_TYPE_SWITCH(in_grad_idx.type_flag_, RType, {  // row index data type
-      MSHADOW_TYPE_SWITCH(idx_data.type_flag_, IType, {       // index array data type
-        MXNET_ASSIGN_REQ_SWITCH(req[sr::kArr], req_type, {
-          Kernel<SparseRetainRspGradKernel<req_type>, xpu>::Launch(s,
-                                                                   in_grad_idx.Size(),
-                                                                   in_grad_data.dptr<DType>(),
-                                                                   in_grad_idx.dptr<RType>(),
-                                                                   out_grad_data.dptr<DType>(),
-                                                                   idx_data.dptr<IType>(),
-                                                                   row_length);
-        });
-      });
-    });
-  });
+  SparseRetainOpBackwardRspImpl(ctx.get_stream<xpu>(), inputs, req, outputs);
 }
 
 }  // namespace op

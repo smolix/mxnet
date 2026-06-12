@@ -48,6 +48,80 @@ from .. util import is_np_array
 from ..ndarray.numpy import _internal as _npi
 
 
+
+def _to_int_param(value, name):
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("{} must be an integer".format(name)) from None
+    if isinstance(value, float) and result != value:
+        raise ValueError("{} must be an integer".format(name))
+    return result
+
+
+def _validate_positive_int(value, name):
+    value = _to_int_param(value, name)
+    if value <= 0:
+        raise ValueError("{} must be greater than 0".format(name))
+    return value
+
+
+def _validate_image_ndim(src):
+    ndim = len(src.shape)
+    if ndim not in (3, 4):
+        raise ValueError("image dimension must be 3 or 4, but got {}".format(ndim))
+
+
+def _validate_size(size, name="size"):
+    if isinstance(size, np.ndarray):
+        size = size.tolist()
+    if not isinstance(size, (list, tuple)) or len(size) != 2:
+        raise ValueError("{} must be a tuple/list of (width, height)".format(name))
+    return (_validate_positive_int(size[0], "width"),
+            _validate_positive_int(size[1], "height"))
+
+
+def _validate_crop_bounds(src, x0, y0, w, h):
+    _validate_image_ndim(src)
+    x0 = _to_int_param(x0, "x offset")
+    y0 = _to_int_param(y0, "y offset")
+    w = _validate_positive_int(w, "width")
+    h = _validate_positive_int(h, "height")
+    if x0 < 0:
+        raise ValueError("x offset must be non-negative")
+    if y0 < 0:
+        raise ValueError("y offset must be non-negative")
+    src_h = src.shape[-3]
+    src_w = src.shape[-2]
+    if x0 + w > src_w:
+        raise ValueError("x offset plus width exceeds input width")
+    if y0 + h > src_h:
+        raise ValueError("y offset plus height exceeds input height")
+    return x0, y0, w, h
+
+
+def _validate_float_pair(value, name, lower=None, upper=None, strictly_positive=False):
+    if isinstance(value, numeric_types):
+        value = (value, 1.0)
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError("{} range must contain two values".format(name))
+    try:
+        low, high = float(value[0]), float(value[1])
+    except (TypeError, ValueError):
+        raise ValueError("{} range values must be numeric".format(name)) from None
+    if low > high:
+        raise ValueError("{} range lower bound must not exceed upper bound".format(name))
+    if strictly_positive and low <= 0:
+        raise ValueError("{} range values must be greater than 0".format(name))
+    if lower is not None and low < lower:
+        raise ValueError("{} range values must be at least {}".format(name, lower))
+    if upper is not None and high > upper:
+        raise ValueError("{} range values must be at most {}".format(name, upper))
+    return low, high
+
+
 def imread(filename, *args, **kwargs):
     """Read and decode an image to an NDArray.
 
@@ -147,6 +221,16 @@ def imresize(src, w, h, *args, **kwargs):
     >>> new_image
     <NDArray 240x360x3 @cpu(0)>
     """
+    _validate_image_ndim(src)
+    w = _validate_positive_int(w, "width")
+    h = _validate_positive_int(h, "height")
+    sizes = (src.shape[-3], src.shape[-2], h, w)
+    if args:
+        if "interp" in kwargs:
+            raise TypeError("interp was specified both positionally and by keyword")
+        args = (_get_interp_method(args[0], sizes),) + args[1:]
+    else:
+        kwargs["interp"] = _get_interp_method(kwargs.pop("interp", 1), sizes)
     resize_fn = _npi.cvimresize if is_np_array() else _internal._cvimresize
     return resize_fn(src, w, h, *args, **kwargs)
 
@@ -408,7 +492,9 @@ def resize_short(src, size, interp=2):
     >>> new_image
     <NDArray 2321x3482x3 @cpu(0)>
     """
-    h, w, _ = src.shape
+    _validate_image_ndim(src)
+    size = _validate_positive_int(size, "size")
+    h, w = src.shape[-3], src.shape[-2]
     if h > w:
         new_h, new_w = size * h // w, size
     else:
@@ -441,6 +527,9 @@ def fixed_crop(src, x0, y0, w, h, size=None, interp=2):
     NDArray
         An `NDArray` containing the cropped image.
     """
+    x0, y0, w, h = _validate_crop_bounds(src, x0, y0, w, h)
+    if size is not None:
+        size = _validate_size(size)
     out = src[y0:y0+h, x0:x0+w]
     if size is not None and (w, h) != size:
         sizes = (h, w, size[1], size[0])
@@ -477,7 +566,9 @@ def random_crop(src, size, interp=2):
     (20, 21, 100, 100)
     """
 
-    h, w, _ = src.shape
+    _validate_image_ndim(src)
+    size = _validate_size(size)
+    h, w = src.shape[-3], src.shape[-2]
     new_w, new_h = scale_down((w, h), size)
 
     x0 = random.randint(0, w - new_w)
@@ -526,7 +617,9 @@ def center_crop(src, size, interp=2):
     (1241, 910, 1000, 500)
     """
 
-    h, w, _ = src.shape
+    _validate_image_ndim(src)
+    size = _validate_size(size)
+    h, w = src.shape[-3], src.shape[-2]
     new_w, new_h = scale_down((w, h), size)
 
     x0 = int((w - new_w) / 2)
@@ -585,17 +678,17 @@ def random_size_crop(src, size, area, ratio, interp=2, **kwargs):
         original image and (width, height) are the dimensions of the cropped image.
 
     """
-    h, w, _ = src.shape
-    src_area = h * w
-
+    _validate_image_ndim(src)
+    size = _validate_size(size)
     if 'min_area' in kwargs:
         warnings.warn('`min_area` is deprecated. Please use `area` instead.',
                       DeprecationWarning)
         area = kwargs.pop('min_area')
     assert not kwargs, "unexpected keyword arguments for `random_size_crop`."
-
-    if isinstance(area, numeric_types):
-        area = (area, 1.0)
+    area = _validate_float_pair(area, "area", lower=0.0, upper=1.0, strictly_positive=True)
+    ratio = _validate_float_pair(ratio, "ratio", strictly_positive=True)
+    h, w = src.shape[-3], src.shape[-2]
+    src_area = h * w
     for _ in range(10):
         target_area = random.uniform(area[0], area[1]) * src_area
         log_ratio = (np.log(ratio[0]), np.log(ratio[1]))

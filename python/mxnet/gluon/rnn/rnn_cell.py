@@ -1499,7 +1499,10 @@ def dynamic_unroll(cell, inputs, begin_state, drop_inputs=0, drop_outputs=0,
         for s in states:
             zeros.append(np.zeros(s.shape))
         states = list(_as_list(states))
-        states.append(np.zeros((1)))
+        counter_kwargs = {'dtype': valid_length.dtype}
+        if hasattr(valid_length, 'device'):
+            counter_kwargs['device'] = valid_length.device
+        states.append(np.zeros((1,), **counter_kwargs))
         class loop_body(HybridBlock):
             """Loop body for foreach operator"""
             def __init__(self, cell):

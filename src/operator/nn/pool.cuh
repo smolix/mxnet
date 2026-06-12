@@ -207,7 +207,7 @@ __global__ void pool_sum_1d_gpu_kernel(const int nthreads, const DType* in_data,
                                        const int stride_w, const int pad_w, DType* out_data,
                                        const bool get_avg = false,
                                        const bool count_include_pad = true) {
-  using AccType = typename PoolingTypes<DType>::AccType;
+  using AccType = typename PoolingAccumTypes<DType, p>::AccType;
   CUDA_KERNEL_LOOP(index, nthreads) {
     const bool nwc_layout = layout == mshadow::kNWC;
     const int idx = nwc_layout ? (index / channels) : index;
@@ -246,7 +246,7 @@ __global__ void pool_sum_2d_gpu_kernel(const int nthreads, const DType* in_data,
                                        const int pad_h, const int pad_w, DType* out_data,
                                        const bool get_avg = false,
                                        const bool count_include_pad = true) {
-  using AccType = typename PoolingTypes<DType>::AccType;
+  using AccType = typename PoolingAccumTypes<DType, p>::AccType;
   CUDA_KERNEL_LOOP(index, nthreads) {
     const bool nhwc_layout = layout == mshadow::kNHWC;
     const int idx = nhwc_layout ? (index / channels) : index;
@@ -294,7 +294,7 @@ __global__ void pool_sum_3d_gpu_kernel(const int nthreads, const DType* in_data,
                                        const int pad_d, const int pad_h, const int pad_w,
                                        DType* out_data, const bool get_avg = false,
                                        const bool count_include_pad = true) {
-  using AccType = typename PoolingTypes<DType>::AccType;
+  using AccType = typename PoolingAccumTypes<DType, p>::AccType;
   CUDA_KERNEL_LOOP(index, nthreads) {
     const bool ndhwc_layout = layout == mshadow::kNDHWC;
     const int idx = ndhwc_layout ? (index / channels) : index;

@@ -25,7 +25,7 @@ from ._internal import NDArrayBase, _imperative_invoke # pylint: disable=unused-
 from ..ndarray_doc import _build_doc
 
 from ..base import mx_uint, check_call, _LIB, py_str, _init_op_module, _Null, _is_np_op, _output_is_list, MXNetError  # pylint: disable=unused-import
-from ..util import use_np_shape  # pylint: disable=unused-import
+from ..util import use_np_shape, _check_same_device  # pylint: disable=unused-import
 
 
 def _verify_all_np_ndarrays(op_name, func_name, args, out):
@@ -112,6 +112,138 @@ def _verify_all_legacy_ndarrays(op_name, func_name, args, out):
                             .format(op_name, func_name))
 
 
+
+def _is_true_param(value):
+    return value is True or str(value).lower() == "true"
+
+
+def _to_int_param(value, name):
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("{} must be an integer".format(name)) from None
+    if isinstance(value, float) and result != value:
+        raise ValueError("{} must be an integer".format(name))
+    return result
+
+
+def _tuple_param(value, name):
+    if isinstance(value, _np.ndarray):
+        value = value.tolist()
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    return (value,)
+
+
+def _validate_positive_int(value, name):
+    value = _to_int_param(value, name)
+    if value <= 0:
+        raise ValueError("{} must be greater than 0".format(name))
+    return value
+
+
+def _validate_size_param(value, name="size", allow_single=True):
+    values = _tuple_param(value, name)
+    valid_lengths = (1, 2) if allow_single else (2,)
+    if len(values) not in valid_lengths:
+        raise ValueError("{} must contain {} positive dimension values".format(
+            name, "one or two" if allow_single else "two"))
+    return tuple(_validate_positive_int(v, "{} dimension".format(name)) for v in values)
+
+
+def _validate_float_pair(value, name, lower=None, upper=None, strictly_positive=False):
+    values = _tuple_param(value, name)
+    if len(values) != 2:
+        raise ValueError("{} range must contain two values".format(name))
+    try:
+        low, high = float(values[0]), float(values[1])
+    except (TypeError, ValueError):
+        raise ValueError("{} range values must be numeric".format(name)) from None
+    if low > high:
+        raise ValueError("{} range lower bound must not exceed upper bound".format(name))
+    if strictly_positive and low <= 0:
+        raise ValueError("{} range values must be greater than 0".format(name))
+    if lower is not None and low < lower:
+        raise ValueError("{} range values must be at least {}".format(name, lower))
+    if upper is not None and high > upper:
+        raise ValueError("{} range values must be at most {}".format(name, upper))
+    return low, high
+
+
+def _validate_image_shape(data, op_name):
+    ndim = len(data.shape)
+    if ndim not in (3, 4):
+        raise ValueError("{} expects input image dimension to be 3 or 4, but got {}".format(
+            op_name, ndim))
+
+
+def _validate_image_crop(data, x, y, width, height):
+    _validate_image_shape(data, "image crop")
+    x = _to_int_param(x, "x offset")
+    y = _to_int_param(y, "y offset")
+    width = _validate_positive_int(width, "width")
+    height = _validate_positive_int(height, "height")
+    if x < 0:
+        raise ValueError("x offset must be non-negative")
+    if y < 0:
+        raise ValueError("y offset must be non-negative")
+    src_h = data.shape[-3]
+    src_w = data.shape[-2]
+    if x + width > src_w:
+        raise ValueError("x offset plus width exceeds input width")
+    if y + height > src_h:
+        raise ValueError("y offset plus height exceeds input height")
+
+
+def _validate_interp_param(interp):
+    interp_id = _to_int_param(interp, "interp")
+    if interp_id not in (0, 1, 2, 3, 4):
+        raise ValueError("Unknown interp method {}".format(interp))
+    return interp_id
+
+
+def _validate_image_random_crop_params(get_param):
+    interp = get_param("interp")
+    if interp is not None:
+        _validate_interp_param(interp)
+    _validate_size_param((get_param("width"), get_param("height")),
+                         "crop size", allow_single=False)
+    _validate_float_pair(get_param("xrange", (0.0, 1.0)), "xrange", lower=0.0, upper=1.0)
+    _validate_float_pair(get_param("yrange", (0.0, 1.0)), "yrange", lower=0.0, upper=1.0)
+
+
+def _validate_sequence_length(data, sequence_length, axis, op_name):
+    if len(data.shape) <= 1:
+        raise ValueError("{} data shape must have rank 2 or greater".format(op_name))
+    axis = _to_int_param(axis, "axis")
+    if op_name in ("SequenceReverse", "_npx_sequence_reverse") and axis != 0:
+        raise ValueError("SequenceReverse only supports axis 0")
+    if axis not in (0, 1):
+        raise ValueError("{} axis must be 0 or 1".format(op_name))
+    expected_batch = data.shape[0] if axis else data.shape[1]
+    max_length = data.shape[axis]
+    if len(sequence_length.shape) != 1 or sequence_length.shape[0] != expected_batch:
+        raise ValueError("sequence_length shape must be ({},), got {}".format(
+            expected_batch, sequence_length.shape))
+    lengths = sequence_length.asnumpy()
+    if lengths.size and ((lengths <= 0).any() or (lengths > max_length).any()):
+        raise ValueError("sequence_length values must be in range [1, {}]".format(max_length))
+
+
+def _validate_image_random_resized_crop_params(get_param):
+    _validate_size_param((get_param("width"), get_param("height")),
+                         "resize crop size", allow_single=False)
+    _validate_float_pair(get_param("area", (0.08, 1.0)), "area",
+                         lower=0.0, upper=1.0, strictly_positive=True)
+    _validate_float_pair(get_param("ratio", (3.0 / 4.0, 4.0 / 3.0)), "ratio",
+                         strictly_positive=True)
+    interp = get_param("interp")
+    if interp is not None:
+        _validate_interp_param(interp)
+    max_trial = get_param("max_trial")
+    if max_trial is not None:
+        _validate_positive_int(max_trial, "max_trial")
+
 def _imperative_invoke_checked(handle, ndargs, param_keys, param_vals,
                                out, is_np_op, output_is_list, op_name):
     def get_param(name, default=None):
@@ -121,14 +253,38 @@ def _imperative_invoke_checked(handle, ndargs, param_keys, param_vals,
             return default
 
     if op_name in ("_image_resize", "_npx__image_resize"):
+        if ndargs:
+            _validate_image_shape(ndargs[0], "image resize")
+        _validate_size_param(get_param("size"), "size")
         interp = get_param("interp")
         if interp is not None:
-            try:
-                interp_id = int(interp)
-            except (TypeError, ValueError):
-                raise ValueError("interp must be an integer") from None
-            if interp_id not in (0, 1, 2, 3, 4):
-                raise ValueError("Unknown interp method {}".format(interp))
+            _validate_interp_param(interp)
+
+    if op_name in ("_image_crop", "_npx__image_crop") and ndargs:
+        _validate_image_crop(ndargs[0],
+                             get_param("x"),
+                             get_param("y"),
+                             get_param("width"),
+                             get_param("height"))
+
+    if op_name in ("_image_random_crop", "_npx__image_random_crop"):
+        if ndargs:
+            _validate_image_shape(ndargs[0], "image random_crop")
+        _validate_image_random_crop_params(get_param)
+
+    if op_name in ("_image_random_resized_crop", "_npx__image_random_resized_crop"):
+        if ndargs:
+            _validate_image_shape(ndargs[0], "image random_resized_crop")
+        _validate_image_random_resized_crop_params(get_param)
+
+    if op_name in ("SequenceLast", "SequenceReverse", "_npx_sequence_last",
+                   "_npx_sequence_reverse"):
+        use_sequence_length = get_param("use_sequence_length", False)
+        if _is_true_param(use_sequence_length):
+            if len(ndargs) < 2:
+                raise ValueError("{} requires sequence_length when use_sequence_length=True".format(
+                    op_name))
+            _validate_sequence_length(ndargs[0], ndargs[1], get_param("axis", 0), op_name)
 
     if op_name == "_npx_gammaln" and ndargs and _np.issubdtype(ndargs[0].dtype, _np.integer):
         ndargs = list(ndargs)
@@ -164,6 +320,8 @@ def _imperative_invoke_checked(handle, ndargs, param_keys, param_vals,
         repeat = get_param("repeat", 1)
         if int(repeat) <= 0:
             raise ValueError("repeat must be positive")
+
+    _check_same_device(ndargs, func_name=op_name)
 
     try:
         result = _imperative_invoke(handle, ndargs, param_keys, param_vals,

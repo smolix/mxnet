@@ -193,19 +193,22 @@ class _RNNLayer(HybridBlock):
             sequence_length_device = sequence_length.to_device(device)
 
         rnn_params = self.rnn_param.data(device)
-        if self._use_sequence_length and device.device_type == 'cpu':
+        if self._use_sequence_length and device.device_type == 'cpu' and not self._active:
             rnn = self._forward_cpu_sequence_length(
                 inputs, rnn_params, rnn_args_device, sequence_length_device)
         else:
             rnn = npx.rnn(inputs, rnn_params, *rnn_args_device,
                           sequence_length=sequence_length_device,
-                          use_sequence_length=self._use_sequence_length,
+                          use_sequence_length=(self._use_sequence_length and device.device_type != 'cpu'),
                           state_size=self._hidden_size, projection_size=self._projection_size,
                           num_layers=self._num_layers, bidirectional=self._dir == 2,
                           p=self._dropout, state_outputs=True, mode=self._mode,
                           lstm_state_clip_min=self._lstm_state_clip_min,
                           lstm_state_clip_max=self._lstm_state_clip_max,
                           lstm_state_clip_nan=self._lstm_state_clip_nan)
+            if self._use_sequence_length and device.device_type == 'cpu':
+                rnn = self._mask_cpu_sequence_outputs(rnn, sequence_length_device, inputs.shape[0],
+                                                      inputs.shape[1], device)
 
         if self._mode == 'lstm':
             outputs, states = rnn[0], [rnn[1], rnn[2]]
@@ -216,6 +219,13 @@ class _RNNLayer(HybridBlock):
             outputs = np.swapaxes(outputs, 0, 1)
 
         return outputs, states
+
+    def _mask_cpu_sequence_outputs(self, rnn, sequence_length, seq_len, batch_size, device):
+        outputs = rnn[0]
+        steps = np.arange(seq_len, dtype=sequence_length.dtype, device=device).reshape((seq_len, 1, 1))
+        lengths = sequence_length.reshape((1, batch_size, 1))
+        outputs = outputs * (steps < lengths).astype(outputs.dtype)
+        return (outputs,) + tuple(rnn[1:])
 
     def _forward_cpu_sequence_length(self, inputs, rnn_params, states, sequence_length):
         seq_len, batch_size = inputs.shape[0], inputs.shape[1]

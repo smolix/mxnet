@@ -1946,6 +1946,10 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
         """
         return super(ndarray, self).reshape(*shape, **kwargs)
 
+    def ravel(self, order='C'):
+        """Return a contiguous flattened array."""
+        return ravel(self, order=order)
+
     def zeros_like(self, *args, **kwargs):
         """Convenience fluent method for :py:func:`zeros_like`.
 
@@ -3674,6 +3678,7 @@ def divide(x1, x2, out=None, **kwargs):
 
 
 @set_module('mxnet.numpy')
+@wrap_np_binary_func
 def true_divide(x1, x2, out=None):
     """Returns a true division of the inputs, element-wise.
 
@@ -13344,6 +13349,7 @@ def sum(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=N
 
 
 @set_module('mxnet.numpy')
+@wrap_np_binary_func
 def bitwise_left_shift(x1, x2, out=None):
     r"""
     Shift the bits of and integer to the left. Bits are shifted to the left by
@@ -13379,6 +13385,7 @@ def bitwise_left_shift(x1, x2, out=None):
 
 
 @set_module('mxnet.numpy')
+@wrap_np_binary_func
 def bitwise_right_shift(x1, x2, out=None):
     r"""
     Shift the bits of and integer to the right. Bits are shifted to the right by

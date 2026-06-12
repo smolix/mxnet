@@ -956,6 +956,10 @@ inline bool CheckAndInferShape(nnvm::Graph* p_g,
   if (node_range.second > node_range.first) {
     g.attrs["node_range"] = std::make_shared<dmlc::any>(node_range);
   }
+  if (entry_range.second > entry_range.first) {
+    g.attrs["entry_range"] = std::make_shared<dmlc::any>(entry_range);
+  }
+  g.attrs["__mxnet_imperative_shape_attrs_are_numpy"] = std::make_shared<dmlc::any>(true);
   if (use_inputs) {
     g = exec::InferShape(std::move(g), std::move(shapes));
   } else {
@@ -1003,8 +1007,8 @@ inline bool CheckAndInferType(nnvm::Graph* p_g,
   if (node_range.second > node_range.first) {
     g.attrs["node_range"] = std::make_shared<dmlc::any>(node_range);
   }
-  if (node_range.second > node_range.first) {
-    g.attrs["node_range"] = std::make_shared<dmlc::any>(node_range);
+  if (entry_range.second > entry_range.first) {
+    g.attrs["entry_range"] = std::make_shared<dmlc::any>(entry_range);
   }
   if (use_inputs) {
     g = exec::InferType(std::move(g), std::move(dtypes));
@@ -1058,6 +1062,9 @@ inline bool CheckAndInferStorageType(nnvm::Graph* p_g,
   g.attrs.erase("storage_type_inputs");
   if (node_range.second > node_range.first) {
     g.attrs["node_range"] = std::make_shared<dmlc::any>(node_range);
+  }
+  if (entry_range.second > entry_range.first) {
+    g.attrs["entry_range"] = std::make_shared<dmlc::any>(entry_range);
   }
   if (use_inputs) {
     g = exec::InferStorageType(std::move(g), std::move(storage_types));

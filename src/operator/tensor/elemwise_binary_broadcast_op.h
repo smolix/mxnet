@@ -85,6 +85,36 @@ inline bool BinaryBroadcastShape(const nnvm::NodeAttrs& attrs,
   return BinaryBroadcastShapeCommon(attrs, in_attrs, out_attrs);
 }
 
+inline bool BinaryBroadcastBackwardShape(const nnvm::NodeAttrs& attrs,
+                                         mxnet::ShapeVector* in_attrs,
+                                         mxnet::ShapeVector* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 3U);
+  CHECK_EQ(out_attrs->size(), 2U);
+  if (shape_is_known(in_attrs->at(1))) {
+    SHAPE_ASSIGN_CHECK(*out_attrs, 0, in_attrs->at(1));
+  } else if (shape_is_known(out_attrs->at(0))) {
+    SHAPE_ASSIGN_CHECK(*in_attrs, 1, out_attrs->at(0));
+  }
+  if (shape_is_known(in_attrs->at(2))) {
+    SHAPE_ASSIGN_CHECK(*out_attrs, 1, in_attrs->at(2));
+  } else if (shape_is_known(out_attrs->at(1))) {
+    SHAPE_ASSIGN_CHECK(*in_attrs, 2, out_attrs->at(1));
+  }
+
+  if (!shape_is_known(in_attrs->at(0)) &&
+      mxnet::ndim_is_known(in_attrs->at(1)) && mxnet::ndim_is_known(in_attrs->at(2))) {
+    mxnet::ShapeVector operand_shapes{in_attrs->at(1), in_attrs->at(2)};
+    mxnet::ShapeVector broadcast_shape{in_attrs->at(0)};
+    BinaryBroadcastShapeCommon(attrs, &operand_shapes, &broadcast_shape);
+    if (shape_is_known(broadcast_shape[0])) {
+      SHAPE_ASSIGN_CHECK(*in_attrs, 0, broadcast_shape[0]);
+    }
+  }
+
+  return shape_is_known(in_attrs->at(0)) && shape_is_known(out_attrs->at(0)) &&
+         shape_is_known(out_attrs->at(1));
+}
+
 inline bool BinaryBroadcastMulStorageType(const nnvm::NodeAttrs& attrs,
                                           const int dev_mask,
                                           DispatchMode* dispatch_mode,

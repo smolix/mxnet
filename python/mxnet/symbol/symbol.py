@@ -1759,28 +1759,49 @@ class Symbol(SymbolBase):
         assert isinstance(grad_req, (str, dict))
         # infer shape
         arg_shapes, _, aux_shapes = self.infer_shape(**kwargs)
+        partial_shape = arg_shapes is None
+        if partial_shape:
+            arg_shapes, _, aux_shapes = self.infer_shape_partial(**kwargs)
+
         type_dict = {} if type_dict is None else type_dict
-        arg_dtypes, _, _ = None, None, None
+        arg_dtypes, aux_dtypes = None, None
         try:
             arg_dtypes, _, aux_dtypes = self.infer_type(**type_dict)
+            if arg_dtypes is None:
+                arg_dtypes, _, aux_dtypes = self.infer_type_partial(**type_dict)
         except Exception: # pylint: disable=broad-except
             pass
-        args = [None] * len(arg_shapes) if arg_shapes else []
-        aux_states = [None] * len(aux_shapes) if aux_shapes else []
 
         arg_names = self.list_arguments()
         aux_names = self.list_auxiliary_states()
+        args = [None] * len(arg_names)
+        aux_states = [None] * len(aux_names)
+
+        def known_shape(name, shape):
+            if shape is None:
+                return False
+            if not partial_shape or name in kwargs:
+                return True
+            if len(shape) == 0:
+                return False
+            if is_np_shape():
+                return -1 not in shape
+            return 0 not in shape
 
         from ..ndarray import zeros as nd_zeros
         if arg_shapes:
             for i, shape in enumerate(arg_shapes):
-                if arg_dtypes:
+                if not known_shape(arg_names[i], shape):
+                    continue
+                if arg_dtypes and arg_dtypes[i]:
                     args[i] = nd_zeros(shape, dtype=arg_dtypes[i])
                 else:
                     args[i] = nd_zeros(shape)
         if aux_shapes:
             for i, shape in enumerate(aux_shapes):
-                if aux_dtypes:
+                if not known_shape(aux_names[i], shape):
+                    continue
+                if aux_dtypes and aux_dtypes[i]:
                     aux_states[i] = nd_zeros(shape, dtype=aux_dtypes[i])
                 else:
                     aux_states[i] = nd_zeros(shape)
@@ -1789,11 +1810,22 @@ class Symbol(SymbolBase):
             for name, stype in stype_dict.items():
                 if name in arg_names:
                     index = arg_names.index(name)
-                    args[index] = args[index].tostype(stype)
+                    if args[index] is not None:
+                        args[index] = args[index].tostype(stype)
                 else:
                     assert name in aux_names
                     index = aux_names.index(name)
-                    aux_states[index] = aux_states[index].totype(stype)
+                    if aux_states[index] is not None:
+                        aux_states[index] = aux_states[index].totype(stype)
+
+        use_partial_bind = partial_shape and (any(arg is None for arg in args) or
+                                             any(aux is None for aux in aux_states))
+        executor_args = args
+        executor_aux_states = aux_states
+        if use_partial_bind:
+            executor_args = {name: arg for name, arg in zip(arg_names, args) if arg is not None}
+            executor_aux_states = {name: aux for name, aux in zip(aux_names, aux_states)
+                                   if aux is not None}
 
         with _profiler_scope("symbol:arg_grad:"):
             if grad_req == 'null':
@@ -1801,11 +1833,14 @@ class Symbol(SymbolBase):
             elif isinstance(grad_req, dict):
                 args_grad = {}
                 for i, name in enumerate(arg_names):
-                    if grad_req[name] != 'null':
+                    if grad_req[name] != 'null' and args[i] is not None:
                         args_grad[name] = args[i].copy()
+            elif use_partial_bind:
+                args_grad = {name: arg.copy() for name, arg in zip(arg_names, args)
+                             if arg is not None}
             else:
                 args_grad = [x.copy() for x in args]
-        return Executor(self, ctx, args, args_grad, grad_req, aux_states)
+        return Executor(self, ctx, executor_args, args_grad, grad_req, executor_aux_states)
 
     def _bind(self, ctx, args, args_grad=None, grad_req='write',
               aux_states=None, static_alloc=False):

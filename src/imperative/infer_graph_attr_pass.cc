@@ -32,6 +32,10 @@
 namespace mxnet {
 namespace exec {
 
+namespace {
+constexpr const char* kInternalShapeAttrsAreNumpy = "__mxnet_imperative_shape_attrs_are_numpy";
+}  // namespace
+
 template <typename AttrType, typename FInfer>
 bool ApplyOpInferAttr(const nnvm::Graph& g,
                       const FInfer& finfer,
@@ -635,6 +639,11 @@ nnvm::Graph InferShapeAttr(nnvm::Graph&& ret,
     CHECK_LE(entry_end, idx.num_node_entries());
     ret.attrs.erase("entry_range");
   }
+  bool internal_shape_attrs_are_numpy = false;
+  if (ret.attrs.count(kInternalShapeAttrsAreNumpy)) {
+    internal_shape_attrs_are_numpy = ret.GetAttr<bool>(kInternalShapeAttrsAreNumpy);
+    ret.attrs.erase(kInternalShapeAttrsAreNumpy);
+  }
   // populate the node attribute vector
   if (dispatch_mode_name != nullptr) {
     if (ret.attrs.count(dispatch_mode_name) != 0) {
@@ -650,7 +659,7 @@ nnvm::Graph InferShapeAttr(nnvm::Graph&& ret,
   std::vector<int> is_dynamic(rshape.size(), 0);
 
   // convert to numpy compatible shape to use operator's infer shape function
-  if (!Imperative::Get()->is_np_shape()) {
+  if (!Imperative::Get()->is_np_shape() && !internal_shape_attrs_are_numpy) {
     common::ConvertToNumpyShape(&rshape);
   }
 
@@ -673,7 +682,7 @@ nnvm::Graph InferShapeAttr(nnvm::Graph&& ret,
         if (it != inode.source->attrs.dict.end()) {
           std::istringstream is(it->second);
           CHECK(is >> rshape[out_ent_id]) << "Invalid attribute";
-          if (!Imperative::Get()->is_np_shape()) {
+          if (!Imperative::Get()->is_np_shape() && !internal_shape_attrs_are_numpy) {
             common::ConvertToNumpyShape(&rshape[out_ent_id]);
           }
         }

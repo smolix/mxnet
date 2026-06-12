@@ -87,6 +87,13 @@ def require_gpus(count):
         pytest.skip("requires {} GPUs, found {}".format(count, available))
 
 
+def require_nccl():
+    import mxnet as mx
+
+    if not mx.runtime.Features().is_enabled("NCCL"):
+        pytest.skip("MXNet was built without NCCL")
+
+
 def assert_subprocess_ok(proc):
     assert proc.returncode == 0, (
         "returncode={}\nstdout:\n{}\nstderr:\n{}".format(
@@ -161,6 +168,44 @@ def test_issue_21119_cross_gpu_binary_op_does_not_hang():
         """,
         timeout=10,
         extra_env={"CUDA_VISIBLE_DEVICES": "0,1"},
+    )
+    assert_subprocess_ok(proc)
+
+
+def test_similar_nccl_updater_cpu_gradient_matches_gpu_weight_context():
+    require_nccl()
+    require_gpus(1)
+    proc = run_python(
+        """
+        import mxnet as mx
+
+        seen = []
+        mismatch = []
+
+        def updater(key, grad, weight):
+            contexts = (str(grad.context), str(weight.context))
+            seen.append(contexts)
+            if grad.context != weight.context:
+                mismatch.append(contexts)
+            weight[:] = weight
+
+        kv = mx.kv.create("nccl")
+        key = 1
+        shape = (4,)
+
+        kv.init(key, mx.nd.zeros(shape, mx.gpu(0)))
+        kv.push(key, [mx.nd.ones(shape, mx.gpu(0))])
+        mx.nd.waitall()
+
+        kv._set_updater(updater)
+        kv.push(key, [mx.nd.ones(shape, mx.cpu())])
+        mx.nd.waitall()
+
+        assert seen, "updater did not run"
+        assert not mismatch, "updater contexts: {}".format(seen)
+        """,
+        timeout=10,
+        extra_env={"CUDA_VISIBLE_DEVICES": "0"},
     )
     assert_subprocess_ok(proc)
 
@@ -1373,16 +1418,29 @@ SIMILAR_NUMPY_VIEW_STRIDE_XFAIL = similar_bug_xfail(
     "axis-moving views need backend stride metadata; current operators materialize copies",
 )
 
+
+def _numpy_moveaxis_view(a):
+    from mxnet import np as mxnp
+
+    return mxnp.moveaxis(a, 0, -1)
+
+
+def _numpy_rollaxis_view(a):
+    from mxnet import np as mxnp
+
+    return mxnp.rollaxis(a, 2, 0)
+
+
 SIMILAR_NUMPY_VIEW_CASES = [
     pytest.param(
         "moveaxis",
-        lambda a: a.moveaxis(0, -1),
+        _numpy_moveaxis_view,
         np.array([-1, -1], dtype="float32"),
         marks=SIMILAR_NUMPY_VIEW_STRIDE_XFAIL,
     ),
     pytest.param(
         "rollaxis",
-        lambda a: a.rollaxis(2, 0),
+        _numpy_rollaxis_view,
         np.array([-1, 1, 2], dtype="float32"),
         marks=SIMILAR_NUMPY_VIEW_STRIDE_XFAIL,
     ),
@@ -1412,15 +1470,25 @@ def test_similar_numpy_view_contract_mutates_base(case, make_view, expected):
     np.testing.assert_allclose(actual, expected)
 
 
-@similar_bug_xfail("static_shape_subgraph_paramless_data", "static_shape subgraph treats a paramless data input as a parameter")
+def test_similar_simple_bind_dynamic_output_allocates_known_argument_arrays():
+    import mxnet as mx
+
+    data = mx.sym.var("data")
+    sym = mx.sym.contrib.boolean_mask(data, mx.sym.ones_like(data) > 0)
+    exe = sym._simple_bind(ctx=mx.cpu(), data=(2,))
+    assert exe.arg_dict["data"] is not None
+    assert exe.arg_dict["data"].shape == (2,)
+    exe.arg_dict["data"][:] = mx.nd.array([1.0, 2.0])
+    out = exe.forward()[0]
+    out.wait_to_read()
+    assert out.shape == (2,)
+
+
 def test_similar_static_shape_subgraph_does_not_treat_paramless_data_as_param():
     proc = run_python(
         """
         import mxnet as mx
-        from mxnet import np as mxnp
-        from mxnet import npx
 
-        npx.set_np()
         data = mx.sym.var("data")
         sym = mx.sym.contrib.boolean_mask(data, mx.sym.ones_like(data) > 0)
         opt = sym.optimize_for(
@@ -1428,7 +1496,7 @@ def test_similar_static_shape_subgraph_does_not_treat_paramless_data_as_param():
             backend_opts={"input_shape": "(2,)", "param_indices": "[]"},
         )
         exe = opt._simple_bind(ctx=mx.cpu(), data=(2,))
-        exe.arg_dict["data"][:] = mxnp.array([1.0, 2.0])
+        exe.arg_dict["data"][:] = mx.nd.array([1.0, 2.0])
         out = exe.forward()[0]
         out.wait_to_read()
         assert out.shape == (2,)
@@ -1436,6 +1504,25 @@ def test_similar_static_shape_subgraph_does_not_treat_paramless_data_as_param():
         timeout=10,
     )
     assert_subprocess_ok(proc)
+
+
+def test_similar_backward_preserves_numpy_scalar_runtime_shape_in_legacy_mode():
+    import mxnet as mx
+
+    mx.npx.reset_np()
+    with mx.util.np_shape(True), mx.util.np_array(True):
+        x = mx.np.ones((2, 3))
+        scale = mx.np.array(2.0)
+        x.attach_grad()
+        scale.attach_grad()
+        with mx.autograd.record():
+            y = x / scale
+        head_grad = mx.np.ones_like(y)
+
+    assert not mx.util.is_np_shape()
+    mx.autograd.backward(y, head_grads=head_grad)
+    assert scale.grad.shape == ()
+    np.testing.assert_allclose(scale.grad.asnumpy(), np.array(-1.5, dtype=np.float32))
 
 
 SIMILAR_SEQUENCE_LENGTH_RANGE_CASES = [

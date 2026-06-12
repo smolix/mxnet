@@ -254,6 +254,10 @@ class KVStoreLocal : public KVStore {
         if (merged.ctx().dev_mask() != cpu::kDevMask && local.ctx().dev_mask() == cpu::kDevMask) {
           local = local.Copy(merged.ctx());
         }
+        NDArray merged_for_update = merged;
+        if (merged_for_update.ctx() != local.ctx()) {
+          merged_for_update = merged_for_update.Copy(local.ctx());
+        }
         // call the updater with string keys
         // if string keys are used and str_updater_ is available
         // otherwise fallback to updater_ which uses int key interface
@@ -262,9 +266,9 @@ class KVStoreLocal : public KVStore {
           // after all language bindings picks up string interface changes
           const std::string& str_key = reverse_str_key_dict_[key];
           // TODO(haibin) avoid reverse key lookup if use_str_key
-          str_updater_(str_key, merged, &local);
+          str_updater_(str_key, merged_for_update, &local);
         } else {
-          updater_(key, merged, &local);
+          updater_(key, merged_for_update, &local);
         }
       } else {
         if (merged.storage_type() != local.storage_type()) {

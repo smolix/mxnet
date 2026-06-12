@@ -36,6 +36,12 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+LOCAL_TMP_BASE=${MXNET_LOCAL_TMP:-$REPO_ROOT/.tmp}
+mkdir -p "$LOCAL_TMP_BASE"
+export TMPDIR=${TMPDIR:-$LOCAL_TMP_BASE}
+export UV_CACHE_DIR=${UV_CACHE_DIR:-$LOCAL_TMP_BASE/uv-cache}
+mkdir -p "$TMPDIR" "$UV_CACHE_DIR"
+
 WHEEL="${1:-}"
 if [ -z "$WHEEL" ]; then
     WHEEL=$(ls -1t dist/mxnet-*.whl 2>/dev/null | head -n1)
@@ -48,7 +54,7 @@ fi
 WHEEL=$(readlink -f "$WHEEL")
 WHEEL_NAME=$(basename "$WHEEL")
 
-REPORT_DIR="${REPORT_DIR:-$REPO_ROOT/wheel-test-$(date -u +%Y%m%dT%H%M%SZ)}"
+REPORT_DIR="${REPORT_DIR:-$LOCAL_TMP_BASE/wheel-test-$(date -u +%Y%m%dT%H%M%SZ)}"
 VENV_DIR="${VENV_DIR:-$REPORT_DIR/.venv}"
 mkdir -p "$REPORT_DIR/shards"
 exec > >(tee -a "$REPORT_DIR/run.log") 2>&1
@@ -69,6 +75,17 @@ PARALLEL_GPU=${PARALLEL_GPU:-4}
 PARALLEL_QUANT=${PARALLEL_QUANT:-1}
 TIMEOUT_SHARD_MIN=${TIMEOUT_SHARD_MIN:-30}
 
+WHEEL_TEST_PYTHON=${WHEEL_TEST_PYTHON:-}
+if [ -z "$WHEEL_TEST_PYTHON" ]; then
+    case "$WHEEL_NAME" in
+        *-cp312-*) WHEEL_TEST_PYTHON=python3.12 ;;
+        *-cp311-*) WHEEL_TEST_PYTHON=python3.11 ;;
+        *-cp310-*) WHEEL_TEST_PYTHON=python3.10 ;;
+        *-cp39-*) WHEEL_TEST_PYTHON=python3.9 ;;
+        *) WHEEL_TEST_PYTHON=python3 ;;
+    esac
+fi
+
 # Pytest invocations should NOT install xdist via pip-install-on-the-fly.
 export PYTEST_ADDOPTS="-p no:faulthandler --tb=short --color=no --durations=20"
 
@@ -77,6 +94,7 @@ log "Wheel: $WHEEL"
 log "Wheel size: $(du -h "$WHEEL" | cut -f1)"
 log "Report dir: $REPORT_DIR"
 log "Venv: $VENV_DIR"
+log "Python for venv: $WHEEL_TEST_PYTHON"
 
 # ----------------------------------------------------------------------
 # Stage 1: fresh venv + wheel install
@@ -84,14 +102,14 @@ log "Venv: $VENV_DIR"
 section "Create fresh venv"
 rm -rf "$VENV_DIR"
 if command -v uv >/dev/null 2>&1; then
-    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}" uv venv --python python3 "$VENV_DIR"
+    UV_CACHE_DIR="$UV_CACHE_DIR" uv venv --python "$WHEEL_TEST_PYTHON" "$VENV_DIR"
 else
-    python3 -m venv "$VENV_DIR"
+    "$WHEEL_TEST_PYTHON" -m venv "$VENV_DIR"
 fi
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 if command -v uv >/dev/null 2>&1; then
-    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}" uv pip install --python "$VENV_DIR/bin/python" --upgrade pip wheel setuptools
+    UV_CACHE_DIR="$UV_CACHE_DIR" uv pip install --python "$VENV_DIR/bin/python" --upgrade pip wheel setuptools
 else
     python -m pip install --upgrade pip wheel setuptools
 fi
@@ -101,7 +119,7 @@ section "Install wheel + test dependencies (clean venv)"
 # nvidia-cudnn-cu13, nvidia-nccl-cu13).  Pip resolves them here, ensuring the
 # install path the wheel describes actually works on this host.
 if command -v uv >/dev/null 2>&1; then
-    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}" uv pip install --python "$VENV_DIR/bin/python" "$WHEEL"
+    UV_CACHE_DIR="$UV_CACHE_DIR" uv pip install --python "$VENV_DIR/bin/python" "$WHEEL"
 else
     python -m pip install "$WHEEL"
 fi
@@ -113,7 +131,7 @@ fi
 # the file instead of running it, which makes acceptance summaries
 # unreadable.  matplotlib covers a handful of plotting-adjacent nodes.
 if command -v uv >/dev/null 2>&1; then
-    UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}" uv pip install --python "$VENV_DIR/bin/python" pytest pytest-xdist pytest-timeout scipy matplotlib
+    UV_CACHE_DIR="$UV_CACHE_DIR" uv pip install --python "$VENV_DIR/bin/python" pytest pytest-xdist pytest-timeout scipy matplotlib
 else
     python -m pip install pytest pytest-xdist pytest-timeout scipy matplotlib
 fi

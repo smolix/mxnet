@@ -178,6 +178,43 @@ namespace in `tests/python/unittest/test_apache_open_issue_repros.py`.
   batch verified with 19 xfailed, 208 deselected, and 2 warnings in 2.59s.
   Parent-checkout verification of the current promotion batch reported 15 passed, 212 deselected for validation wrappers; 3 passed, 217 deselected, 7 xfailed for the generated validation-wrapper split; 5 passed, 212 deselected, 10 xfailed for view-contract cases; 71 passed, 156 deselected for cross-device wrappers; and 4 passed, 209 deselected, 14 xfailed for the partial numeric-stability promotion. Focused dynamic_unroll int32 valid_length verification passed with 3 passed, 224 deselected, and 2 warnings in 0.49s under --runxfail. After removing the xfail marker, the same focused slice passed normally with 3 passed, 224 deselected, and 2 warnings in 0.48s. Focused loss/cosine numeric verification passed with 14 passed, 213 deselected, and 2 warnings in 1.43s under --runxfail; after removing the xfail markers, the same focused slice passed normally with 14 passed, 213 deselected, and 2 warnings in 1.59s. Focused GroupNorm large-finite verification passed with 2 passed, 225 deselected, and 2 warnings in 0.31s under --runxfail; after removing the xfail marker, the same focused slice passed normally with 2 passed, 225 deselected, and 2 warnings in 0.34s. Focused no-affine BatchNorm verification now reports 1 passed, 224 deselected, 2 xfailed, and 2 warnings in 1.01s after splitting the remaining cached-hybrid xfails. Focused wrapper/SequenceLast/SequenceReverse verification used the installed wheel library because build/libmxnet.so was absent: the promoted subset passed under --runxfail with 13 passed, 214 deselected, and 2 warnings in 38.66s; the full focused slice then passed normally with 13 passed, 213 deselected, 1 xfailed, and 2 warnings in 42.00s. Focused hybrid CPU RNN sequence-length verification passed with 3 passed, 224 deselected, and 2 warnings in 0.50s under --runxfail; after removing the xfail marker, the same focused slice passed normally with 3 passed, 224 deselected, and 2 warnings in 0.47s. Full repro checkpoint against local Python sources plus the installed wheel library passed with 193 passed, 34 xfailed, and 3 warnings in 380.45s before removing the documented mx.image.random_crop interp=10 non-bug candidate from the bug repro count. After that removal, the generated-wrapper validation slice passed with 9 passed, 217 deselected, and 2 warnings in 26.76s. Focused BatchNorm/SyncBatchNorm large-finite verification now passes normally with 4 passed, 222 deselected, and 2 warnings in 0.79s. Focused native sparse/storage verification against build/libmxnet.so passes normally with 11 passed, 215 deselected, and 2 warnings in 1.57s. Focused LP pooling verification against build/libmxnet.so passed under --runxfail with 1 passed, 225 deselected, and 2 warnings in 0.20s, and then passed normally with 1 passed, 225 deselected, and 2 warnings in 0.23s.
 
+
+## Build/Test Sweep Checkpoint
+
+2026-06-12 clean rebuild and wheel sweep checkpoint:
+
+- Clean CMake rebuild completed for wheel tag `2.0.0+cu13.bw.20260609.1`
+  with CUDA, cuDNN, NCCL, oneDNN, OpenCV, int64 tensor sizes, and the CUDA
+  architectures used by the latest `smolix/mxnet` wheel. The built artifact is
+  `dist/mxnet-2.0.0+cu13.bw.20260609.1-cp312-cp312-linux_x86_64.whl`.
+- C++ unit launcher bug found and fixed: `tests/run_unit_test_shards.sh.in`
+  captured `$?` after the surrounding `if` statement, so a failed shard printed
+  `[FAIL] ... (exit 0)` and the launcher could still report success. The
+  template now captures the failing executable status in the `else` branch.
+  Verification: `build/tests/mxnet_unit_tests --gtest_filter=Engine.RandSumExpr`
+  now exits 1 and reports `[FAIL ] engine (exit 1)`.
+- Confirmed native C++ failure still present: `Engine.RandSumExpr` throws from
+  `src/engine/threaded_engine.cc:287` with `duplicate items found in const_vars`.
+  This is the first suite-found product failure to triage after the launcher fix.
+- Wheel acceptance harness updated so a `cp312` wheel creates a Python 3.12 venv
+  automatically and stores scratch/report/cache data under `.tmp/` by default.
+  The installed wheel import check passed and reported 4 GPUs plus CUDA, cuDNN,
+  NCCL, oneDNN, and OpenCV enabled.
+- Wheel sweep status before stopping a hung shard: `cpu_xop19`,
+  `cpu_optimized_validation`, `cpu_optimizer`, `cpu_gluon_parameter`,
+  `cpu_layer_norm`, and `cpu_group_norm` passed. The broad `cpu_unittest` shard
+  stopped advancing at 98% and was terminated as hung after recording 145 unique
+  failed/error test ids in `.tmp/wheel-test-20260612T034239Z/shards/cpu_unittest.log`.
+  The partial failures cluster as: 107 NumPy operator failures, 8 Gluon failures,
+  7 OpenCV/image failures, 4 tricky GPU index-update/add failures, 3 trainer
+  failures, 2 profiler failures, 2 concurrency/lifetime failures, 2 subgraph
+  failures, and single failures/errors in apache-open-issue repro, deferred
+  compute, exception handling, control flow, metric, ndarray order, NumPy
+  interoperability, NumPy loss, NumPy ndarray indexing, sparse model load, and
+  sparse ndarray tests. These are suite-found failures pending focused reruns and
+  shared-root-cause triage; they are not yet added to the runtime-verified bug
+  repro count.
+
 ## Runtime/API-Verified Repros
 
 | GitHub item | Test | Current symptom |

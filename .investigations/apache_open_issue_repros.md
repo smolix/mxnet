@@ -312,12 +312,15 @@ kernels and CUDA registrations already supported the affine uint8 math and range
 copy paths. Python `quantize_model` GPU support was fixed by keeping generated
 min/max arrays on the same device as their source params and by running calibration
 `SymbolBlock` inputs on the requested calibration device instead of forcing CPU.
-Focused verification for each promoted bucket passed under `--runxfail`, then
-passed normally after marker removal. The full GPU quantization wrapper file now
-reports 50 passed, 3 xfailed, and 11 warnings; the same file under `--runxfail`
-reports 3 failed, 50 passed, and 11 warnings, confirming there are no stale GPU
-quantization xfails left in that wrapper. The remaining 3 xfails are separate work
-items: GPU quantized elemwise_mul and GPU RNN quantization / quantized_rnn support.
+The calibrated GPU quantized elemwise_mul xfail was fixed with a CUDA registration
+that reads input range scalars on device, computes the calibrated int8 output with
+saturation, and writes calibration min/max range outputs on device. Focused
+verification for each promoted bucket passed under `--runxfail`, then passed
+normally after marker removal. The full GPU quantization wrapper file now reports
+51 passed, 2 xfailed, and 11 warnings; the same file under `--runxfail` reports
+2 failed, 51 passed, and 11 warnings, confirming there are no stale GPU
+quantization xfails left in that wrapper. The remaining 2 xfails are the linked
+GPU RNN quantization / quantized_rnn support work items.
 
 ## Similar-Bug Sweep Repros
 

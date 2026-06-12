@@ -1561,6 +1561,54 @@ def test_similar_static_shape_subgraph_does_not_treat_paramless_data_as_param():
     assert_subprocess_ok(proc)
 
 
+def test_similar_transformer_selfatt_valatt_computes_second_input_grad_when_first_is_null():
+    import mxnet as mx
+
+    qkv = mx.sym.Variable("qkv")
+    att = mx.sym.Variable("att")
+    out = mx.sym.contrib.interleaved_matmul_selfatt_valatt(qkv, att, heads=1)
+    exe = out._simple_bind(
+        ctx=mx.cpu(),
+        qkv=(2, 1, 3),
+        att=(1, 2, 2),
+        grad_req={"qkv": "null", "att": "write"},
+        type_dict={"qkv": "float32", "att": "float32"},
+    )
+    exe.arg_dict["qkv"][:] = mx.nd.array([[[1.0, 2.0, 10.0]], [[3.0, 4.0, 20.0]]])
+    exe.arg_dict["att"][:] = mx.nd.array([[[1.0, 0.0], [0.0, 1.0]]])
+    exe.forward(is_train=True)
+    exe.backward(mx.nd.ones_like(exe.outputs[0]))
+
+    np.testing.assert_allclose(
+        exe.grad_dict["att"].asnumpy(),
+        np.array([[[10.0, 20.0], [10.0, 20.0]]], dtype="float32"),
+    )
+
+
+def test_similar_transformer_encdec_qk_computes_second_input_grad_when_first_is_null():
+    import mxnet as mx
+
+    query = mx.sym.Variable("query")
+    kv = mx.sym.Variable("kv")
+    out = mx.sym.contrib.interleaved_matmul_encdec_qk(query, kv, heads=1)
+    exe = out._simple_bind(
+        ctx=mx.cpu(),
+        query=(2, 1, 1),
+        kv=(2, 1, 2),
+        grad_req={"query": "null", "kv": "write"},
+        type_dict={"query": "float32", "kv": "float32"},
+    )
+    exe.arg_dict["query"][:] = mx.nd.array([[[3.0]], [[5.0]]])
+    exe.arg_dict["kv"][:] = mx.nd.array([[[7.0, 100.0]], [[11.0, 200.0]]])
+    exe.forward(is_train=True)
+    exe.backward(mx.nd.ones_like(exe.outputs[0]))
+
+    np.testing.assert_allclose(
+        exe.grad_dict["kv"].asnumpy(),
+        np.array([[[8.0, 0.0]], [[8.0, 0.0]]], dtype="float32"),
+    )
+
+
 def test_similar_backward_preserves_numpy_scalar_runtime_shape_in_legacy_mode():
     import mxnet as mx
 

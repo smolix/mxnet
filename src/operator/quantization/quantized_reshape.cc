@@ -24,28 +24,9 @@
 
 #include <utility>
 #include "quantized_reshape-inl.h"
-#include "quantized_range_utils.h"
 
 namespace mxnet {
 namespace op {
-
-void QuantizedReshapeCompute(const nnvm::NodeAttrs& attrs,
-                             const OpContext& ctx,
-                             const std::vector<TBlob>& inputs,
-                             const std::vector<OpReqType>& req,
-                             const std::vector<TBlob>& outputs) {
-  CHECK_EQ(inputs.size(), 3U);
-  CHECK_EQ(outputs.size(), 3U);
-  CHECK_EQ(req.size(), 3U);
-
-  if (req[0] != kWriteInplace)
-    UnaryOp::IdentityCompute<cpu>(attrs, ctx, inputs, req, outputs);
-
-  AssignQuantizedRangeOutput(
-      outputs[1].dptr<float>(), inputs[1].dptr<float>(), req[1], "quantized_reshape");
-  AssignQuantizedRangeOutput(
-      outputs[2].dptr<float>(), inputs[2].dptr<float>(), req[2], "quantized_reshape");
-}
 
 #define MXNET_OPERATOR_REGISTER_QUANTIZED_RESHAPE(name)                                      \
   NNVM_REGISTER_OP(name)                                                                     \
@@ -66,7 +47,7 @@ void QuantizedReshapeCompute(const nnvm::NodeAttrs& attrs,
           [](const NodeAttrs& attrs) {                                                       \
             return std::vector<std::pair<int, int> >{{0, 0}, {1, 1}, {2, 2}};                \
           })                                                                                 \
-      .set_attr<FCompute>("FCompute<cpu>", QuantizedReshapeCompute)                          \
+      .set_attr<FCompute>("FCompute<cpu>", QuantizedReshapeCompute<cpu>)                          \
       .set_attr<FResourceRequest>(                                                           \
           "FResourceRequest",                                                                \
           [](const NodeAttrs& n) {                                                           \

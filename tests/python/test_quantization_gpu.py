@@ -46,8 +46,6 @@ def _xfail_unsupported_gpu_quantization(func):
     )(func)
 
 
-test_calibrated_quantize_v2_bfloat16_to_int8 = _xfail_unsupported_gpu_quantization(
-    test_calibrated_quantize_v2_bfloat16_to_int8)
 test_quantize_uint8_uses_affine_range = _xfail_unsupported_gpu_quantization(
     test_quantize_uint8_uses_affine_range)
 test_quantize_uint8_saturates_out_of_range_values = _xfail_unsupported_gpu_quantization(
@@ -63,7 +61,6 @@ test_requantize_uint8_uses_affine_range = _xfail_unsupported_gpu_quantization(
 test_quantized_elemwise_mul_calibrated_int8_saturates = _xfail_unsupported_gpu_quantization(
     test_quantized_elemwise_mul_calibrated_int8_saturates)
 test_quantized_transpose = _xfail_unsupported_gpu_quantization(test_quantized_transpose)
-test_quantized_reshape = _xfail_unsupported_gpu_quantization(test_quantized_reshape)
 test_quantize_model = _xfail_unsupported_gpu_quantization(test_quantize_model)
 test_rnn_quantization = _xfail_unsupported_gpu_quantization(test_rnn_quantization)
 test_quantized_rnn = _xfail_unsupported_gpu_quantization(test_quantized_rnn)

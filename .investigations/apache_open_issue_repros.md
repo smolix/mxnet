@@ -27,27 +27,30 @@ Policy:
 
 Current counts:
 
-- Runtime/static-verified executable bug repros: 232 total: 54 from the
+- Runtime/static-verified executable bug repros: 233 total: 55 from the
   original open GitHub issue/PR scan and 178 from the similar-bug/current-code
-  sweep. In the current worktree, 222 are fixed regression tests and 10 remain
+  sweep. In the current worktree, 223 are fixed regression tests and 10 remain
   expected-failing repros: 1 original open issue plus 9 similar-pattern
   candidates still pending fixes. The #19655 repro lives in
   `tests/python/unittest/test_extensions.py` because it requires a custom
-  extension backend; the other open-issue repros remain in
-  `tests/python/unittest/test_apache_open_issue_repros.py`.
+  extension backend; the #18575 control-flow repro lives in
+  `tests/python/unittest/test_contrib_control_flow.py`; the other open-issue
+  repros remain in `tests/python/unittest/test_apache_open_issue_repros.py`.
 - Fixed in current worktree: issues #21176, #21119, #21111, #20936, #20657, #20605, #20577, #21156,
   #16427, #13945, #20391, #16402, #18300, #21146, #19423, #19458,
   #19422, #12286, #14695, #13953, #8817, #20180, #20076,
   #20046, #20044, #20037, #19860, #19852, #19785, #19753,
-  #19686, #19683, #19659, #19021, #18919, #18770, #18669, #18563, #18078, #17936,
+  #19686, #19683, #19659, #19021, #18919, #18770, #18669, #18575, #18563, #18078, #17936,
   #17698, #13193, #11774, and #8430; PRs #21217, #21044,
   #20491, #18792, #18583, and #17209; plus GPU issue #19628,
-  symbol issue #19647, and `optimize_for` issue #19655. Current-code/similar fixes in this batch also cover
+  symbol issue #19647, `optimize_for` issue #19655, and control-flow issue
+  #18575. Current-code/similar fixes in this batch also cover
   KVStore updater context placement, NCCL updater context placement, dynamic-output
   `simple_bind` allocation, static-shape subgraph paramless-data binding,
   imperative/cached backward preservation of runtime NumPy scalar shapes, CPU
-  transformer interleaved matmul optional-gradient requests, and dynamically
-  loaded extension graph-pass dispatch through `Symbol.optimize_for`.
+  transformer interleaved matmul optional-gradient requests, legacy while-loop
+  autograd recording isolation, and dynamically loaded extension graph-pass
+  dispatch through `Symbol.optimize_for`.
 - Issue-side source/static-only candidates still pending runtime confirmation: 1 (#20376).
 - PR-side source/static-only candidates still pending runtime confirmation: 2 (#20470, #20316).
 - Broad-scan PR candidates not yet verified and not counted as current bugs: 18.
@@ -89,7 +92,7 @@ Active batch started 2026-06-11:
   #19686, #19683, #19021, PR #21217, #20936, #20037, #8430,
   #19423, #19458, #18919, #18770, PR #18792, #18563, #18078,
   #13193, #19628, #18669, #11774, #19647, #19860, #21146,
-  #19852, #21176, #21119, #21111, #20605, #19659, and #19655.
+  #19852, #21176, #21119, #21111, #20605, #19659, #19655, and #18575.
 - Checkpoint: the full open-issue repro suite passed at 10 fixed bugs
   with 10 passed, 43 xfailed, 3 warnings in 42.23s; it passed again
   at 22 fixed repros with 22 passed, 31 xfailed, 3 warnings in 41.97s,
@@ -104,7 +107,11 @@ Active batch started 2026-06-11:
   PR #21217, #20936, #20037, #8430, #19423, #19458, #18919,
   and #18770 passed focused --runxfail verification. PR #18792, #13193, #18563, #18078, #19628, #18669, and
   #11774, #19647, #19860, #21146, #19852, #21176, #21119, and #21111 also passed focused
-  --runxfail verification after the 36-fix checkpoint. The full 32-fix checkpoint run found #19423, #19458,
+  --runxfail verification after the 36-fix checkpoint. Issue #18575 passed focused
+  --runxfail verification, then the xfail marker was removed and the promoted
+  test plus the full legacy control-flow test file passed normally after
+  disabling autograd recording for legacy while-loop bookkeeping copies while
+  preserving per-iteration body recording. The full 32-fix checkpoint run found #19423, #19458,
   #18919, and #18770 as strict XPASS before their markers were removed;
   the 40-fix checkpoint run found #19628, #18669, and #11774 as strict
   XPASS before their markers were removed.
@@ -130,6 +137,7 @@ Active batch started 2026-06-11:
   python/mxnet/gluon/nn/activations.py, python/mxnet/symbol/symbol.py,
   src/imperative/cached_op.cc, src/imperative/cached_op.h,
   src/imperative/imperative_utils.h, src/imperative/infer_graph_attr_pass.cc,
+  src/operator/control_flow.cc, tests/python/unittest/test_contrib_control_flow.py,
   src/kvstore/kvstore_local.h, src/kvstore/kvstore_nccl.h,
   src/operator/numpy/np_true_divide.cc, src/operator/subgraph/static_shape_subgraph_property.cc,
   src/operator/tensor/elemwise_binary_broadcast_op.h,
@@ -140,8 +148,9 @@ Active batch started 2026-06-11:
   src/operator/nn/cudnn/cudnn_batch_norm.cu,
   src/operator/nn/dnnl/dnnl_batch_norm.cc,
   src/operator/nn/layer_norm.cc, src/operator/contrib/sync_batch_norm*,
-  example/extensions/lib_subgraph/subgraph_lib.cc, and
-  tests/python/unittest/test_extensions.py.
+  example/extensions/lib_subgraph/subgraph_lib.cc,
+  src/operator/quantization/quantized_reshape*, tests/python/test_quantization_gpu.py,
+  and tests/python/unittest/test_extensions.py.
 - Next checkpoint: run the expanded full repro suite again before
   promoting another fixed batch, or sooner if shared/runtime behavior changes.
 - Similar-bug sweep repros added so far: generated symbol/image validation
@@ -273,6 +282,36 @@ focused extension pair then passed with 2 passed, 4 deselected, and 3 warnings;
 the full `test_extensions.py` file passed with 4 passed, 2 skipped, and 3
 warnings. The full Apache repro suite against the rebuilt current library then
 passed with 241 passed, 10 xfailed, and 5 warnings in 394.63s.
+
+## Non-Apache Xfail Sweep
+
+2026-06-12 non-Windows xfail review found three locally addressable buckets
+outside the Apache repro file: issue #18575 in control-flow, GPU quantization
+xfails, and the remaining Apache NumPy view/stride xfails. The Blackwell-only
+large-channel convolution xfail is not reproducible on this machine; the GPUs are
+RTX 4090 / compute capability 8.9, not sm_120.
+
+The #18575 control-flow xfail failed under `--runxfail` with an autograd safety
+check while recording the outer `_cachedop`: native while-loop bookkeeping had
+already attached autograd metadata to the outer `_while_loop` outputs. The fix in
+`src/operator/control_flow.cc` disables autograd recording around the legacy
+while-loop condition/bookkeeping copies while preserving body recording through
+`LoopState::Forward`. Focused verification passed under `--runxfail`, then passed
+normally after removing the marker; the full control-flow file passed with 6
+passed and 2 warnings.
+
+For GPU quantization, `test_calibrated_quantize_v2_bfloat16_to_int8` was a stale
+xfail and already passed. `test_quantized_reshape` was fixed by adding GPU
+registration and a device-templated quantized reshape implementation that copies
+int8/uint8 payloads and range scalars on the active device. Focused verification
+passed with 2 tests under `--runxfail`, then passed normally after marker
+removal. The full GPU quantization wrapper file now reports 42 passed, 11 xfailed,
+and 4 warnings; the same file under `--runxfail` reports 11 failed, 42 passed,
+and 4 warnings, confirming there are no stale GPU quantization xfails left in
+that wrapper. The remaining 11 xfails are separate work items: GPU uint8
+quantize/quantize_v2/requantize support, GPU quantized elemwise_mul, GPU
+quantized transpose, Python `quantize_model` GPU min/max device handling, and GPU
+RNN quantization / quantized_rnn support.
 
 ## Similar-Bug Sweep Repros
 
@@ -529,7 +568,7 @@ updated as runtime verification proceeds.
 `#20605`, `#20577`, `#20391`, `#20180`, `#20076`, `#20046`, `#20044`,
 `#20037`, `#19860`, `#19852`, `#19785`, `#19753`, `#19686`, `#19683`,
 `#19659`, `#19655`, `#19647`, `#19628`, `#19458`, `#19423`, `#19422`, `#19170`,
-`#19021`, `#18919`, `#18770`, `#18669`, `#18563`, `#18300`, `#18078`,
+`#19021`, `#18919`, `#18770`, `#18669`, `#18575`, `#18563`, `#18300`, `#18078`,
 `#17936`, `#17698`, `#16427`, `#16402`, `#13953`, `#13945`, `#13193`,
 `#12286`, `#11774`, `#8817`, `#8430`, `#14695`.
 
@@ -626,7 +665,7 @@ Notes:
 `#19574`, `#19556`, `#19498`, `#19333`, `#19231`, `#19218`, `#19159`,
 `#19155`, `#19073`, `#19066`, `#19056`, `#19024`, `#19019`, `#18923`,
 `#18834`, `#18806`, `#18776`, `#18751`, `#18743`, `#18699`, `#18659`,
-`#18643`, `#18617`, `#18584`, `#18575`, `#18476`, `#18466`, `#18265`,
+`#18643`, `#18617`, `#18584`, `#18476`, `#18466`, `#18265`,
 `#18254`, `#18253`, `#18209`, `#18198`, `#18165`, `#18135`, `#18024`,
 `#17981`, `#17960`, `#17931`, `#17898`, `#17888`, `#17840`, `#17836`,
 `#17833`, `#17829`, `#17814`, `#17810`, `#17782`, `#17744`, `#17703`,

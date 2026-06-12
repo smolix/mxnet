@@ -19,6 +19,7 @@
 
 #include <mxnet/io.h>
 #include <mxnet/base.h>
+#include <mxnet/imperative.h>
 #include <mxnet/ndarray.h>
 #include <mxnet/operator.h>
 #include <mxnet/operator_util.h>
@@ -33,6 +34,23 @@
 
 namespace mxnet {
 namespace op {
+
+namespace {
+
+class AutogradRecordingGuard {
+ public:
+  explicit AutogradRecordingGuard(bool recording)
+      : previous_(Imperative::Get()->set_is_recording(recording)) {}
+
+  ~AutogradRecordingGuard() {
+    Imperative::Get()->set_is_recording(previous_);
+  }
+
+ private:
+  bool previous_;
+};
+
+}  // namespace
 
 struct ForeachParam : public dmlc::Parameter<ForeachParam> {
   int num_args;
@@ -576,6 +594,14 @@ static void WhileLoopComputeExCPU(const OpStatePtr& state_ptr,
   CHECK_EQ(inputs.size() + 2U, (size_t)params.num_args);
   CHECK_EQ(outputs.size(), (size_t)params.num_outputs);
   CHECK_EQ(outputs.size(), req.size());
+
+  // The loop body records per-iteration CachedOp state through LoopState::Forward
+  // when gradients are needed. The control-flow bookkeeping itself (condition
+  // evaluation and copies between iteration buffers and loop outputs) must not
+  // attach autograd metadata to the outer _while_loop outputs before the outer
+  // CachedOp is recorded.
+  AutogradRecordingGuard recording_guard(false);
+
   // construct inputs and outputs for cond
   std::vector<NDArray> cond_inputs, cond_outputs = {NDArray()};
   extract_by_loc(inputs, params.cond_input_locs, &cond_inputs);

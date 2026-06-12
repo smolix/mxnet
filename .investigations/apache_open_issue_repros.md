@@ -309,13 +309,15 @@ the existing GPU transpose kernels and copies min/max scalars on the active devi
 The six GPU uint8 quantize/quantize_v2/requantize xfails were fixed by removing
 obsolete GPU-only fatal guards in the shared device-templated kernels; the same
 kernels and CUDA registrations already supported the affine uint8 math and range
-copy paths. Focused verification for each promoted bucket passed under
-`--runxfail`, then passed normally after marker removal. The full GPU quantization
-wrapper file now reports 49 passed, 4 xfailed, and 4 warnings; the same file under
-`--runxfail` reports 4 failed, 49 passed, and 4 warnings, confirming there are no
-stale GPU quantization xfails left in that wrapper. The remaining 4 xfails are
-separate work items: GPU quantized elemwise_mul, Python `quantize_model` GPU
-min/max device handling, and GPU RNN quantization / quantized_rnn support.
+copy paths. Python `quantize_model` GPU support was fixed by keeping generated
+min/max arrays on the same device as their source params and by running calibration
+`SymbolBlock` inputs on the requested calibration device instead of forcing CPU.
+Focused verification for each promoted bucket passed under `--runxfail`, then
+passed normally after marker removal. The full GPU quantization wrapper file now
+reports 50 passed, 3 xfailed, and 11 warnings; the same file under `--runxfail`
+reports 3 failed, 50 passed, and 11 warnings, confirming there are no stale GPU
+quantization xfails left in that wrapper. The remaining 3 xfails are separate work
+items: GPU quantized elemwise_mul and GPU RNN quantization / quantized_rnn support.
 
 ## Similar-Bug Sweep Repros
 

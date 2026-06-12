@@ -38,7 +38,7 @@ def _gpu_default_device():
 
 def _xfail_unsupported_gpu_quantization(func):
     # Remaining GPU quantization gaps tracked under B4: calibrated elemwise_mul
-    # saturation, quantize_model harness, and RNN quantization.
+    # saturation and RNN quantization.
     return pytest.mark.xfail(
         strict=False,
         reason="GPU quantization path not implemented for this op; deferred (see B4)"
@@ -47,6 +47,5 @@ def _xfail_unsupported_gpu_quantization(func):
 
 test_quantized_elemwise_mul_calibrated_int8_saturates = _xfail_unsupported_gpu_quantization(
     test_quantized_elemwise_mul_calibrated_int8_saturates)
-test_quantize_model = _xfail_unsupported_gpu_quantization(test_quantize_model)
 test_rnn_quantization = _xfail_unsupported_gpu_quantization(test_rnn_quantization)
 test_quantized_rnn = _xfail_unsupported_gpu_quantization(test_quantized_rnn)

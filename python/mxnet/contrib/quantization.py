@@ -47,7 +47,7 @@ def _multilist_iterator(arg, func):
 
     return ret
 
-def _quantize_params(qsym, params, min_max_dict):
+def _quantize_params(qsym, params, min_max_dict, device=None):
     """Given a quantized symbol and a dict of params that have not been quantized,
     generate quantized params. Currently only supports quantizing the arg_params
     with names of `weight` or `bias`, not aux_params. If `qsym` contains symbols
@@ -64,21 +64,29 @@ def _quantize_params(qsym, params, min_max_dict):
     """
     inputs_name = qsym.list_arguments()
     quantized_params = {}
+
+    def as_target_device(arr):
+        return arr.as_in_context(device) if device is not None else arr
+
+    default_device = device
+    if default_device is None and params:
+        default_device = next(iter(params.values())).device
+
     if is_np_array():
         quantize_fn = mx.npx.contrib_quantize
-        min_fn = lambda arr: mx.np.array([mx.np.min(arr)])
-        max_fn = lambda arr: mx.np.array([mx.np.max(arr)])
-        array_cls = mx.np
+        min_fn = lambda arr: mx.np.array([mx.np.min(arr)], device=arr.device)
+        max_fn = lambda arr: mx.np.array([mx.np.max(arr)], device=arr.device)
+        array_fn = lambda values, arr_device: mx.np.array(values, device=arr_device)
     else:
         quantize_fn = mx.nd.contrib.quantize
         min_fn = mx.nd.min
         max_fn = mx.nd.max
-        array_cls = mx.nd
+        array_fn = lambda values, arr_device: mx.nd.array(values, ctx=arr_device)
 
     for name in inputs_name:
         if name.endswith(('weight_quantize', 'bias_quantize')):
             original_name = name[:-len('_quantize')]
-            param = params[original_name]
+            param = as_target_device(params[original_name])
             # pylint: disable=unbalanced-tuple-unpacking
             param_min = min_fn(param)
             param_max = max_fn(param)
@@ -90,15 +98,15 @@ def _quantize_params(qsym, params, min_max_dict):
             quantized_params[name+'_min'] = vmin
             quantized_params[name+'_max'] = vmax
         elif name in params:
-            quantized_params[name] = params[name]
+            quantized_params[name] = as_target_device(params[name])
         elif name.endswith(('_min')):
             output = name[: - len('_min')]
             if output in min_max_dict:
-                quantized_params[name] = array_cls.array([min_max_dict[output][0]])
+                quantized_params[name] = array_fn([min_max_dict[output][0]], default_device)
         elif name.endswith(('_max')):
             output = name[: - len('_min')]
             if output in min_max_dict:
-                quantized_params[name] = array_cls.array([min_max_dict[output][1]])
+                quantized_params[name] = array_fn([min_max_dict[output][1]], default_device)
     return quantized_params
 
 
@@ -369,7 +377,8 @@ def _calibrate_quantized_sym(qsym, min_max_dict):
     return Symbol(calibrated_sym)
 
 
-def _collect_layer_statistics(sym_block, data, collector, num_inputs, num_calib_batches=None, logger=None):
+def _collect_layer_statistics(sym_block, data, collector, num_inputs, num_calib_batches=None,
+                              logger=None, device=cpu()):
     if not isinstance(data, mx.gluon.data.DataLoader):
         raise ValueError(f'Only supports data as a type of DataLoader, while received type {str(type(data))}')
     sym_block.register_op_hook(collector.collect, monitor_all=True)
@@ -377,7 +386,7 @@ def _collect_layer_statistics(sym_block, data, collector, num_inputs, num_calib_
     for batch in data:
         if not isinstance(batch, list):
             batch = [batch]
-        batch = _multilist_iterator(batch, lambda b: b.as_in_context(mx.cpu()))
+        batch = _multilist_iterator(batch, lambda b: b.as_in_context(device))
         sym_block(*batch[:num_inputs])
         num_batches += 1
         if num_calib_batches is not None and num_batches >= num_calib_batches:
@@ -546,7 +555,7 @@ def quantize_model(sym, arg_params, aux_params, data_names=('data',),
         param_dict = arg_params
         param_dict.update(aux_params)
         sym_block = mx.gluon.SymbolBlock(sym, inputs)
-        sym_block.load_dict(param_dict)
+        sym_block.load_dict(param_dict, device=device)
 
         if calib_mode == 'entropy':
             collector = _LayerHistogramCollector(quantized_dtype=quantized_dtype,
@@ -562,7 +571,7 @@ def quantize_model(sym, arg_params, aux_params, data_names=('data',),
                              ' expected `none`, `naive`, or `entropy`')
 
         num_batches = _collect_layer_statistics(sym_block, calib_data, collector,
-                                                len(inputs), num_calib_batches, logger)
+                                                len(inputs), num_calib_batches, logger, device)
         if logger:
             logger.info(f'Collected layer output min/max values from FP32 model using {num_batches} batches')
             logger.info('Performing calibration post collecting operations')

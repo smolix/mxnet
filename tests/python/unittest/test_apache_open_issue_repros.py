@@ -1173,22 +1173,10 @@ def test_similar_cross_gpu_legacy_ndarray_binary_wrappers_do_not_hang(expr):
     assert_subprocess_ok(proc)
 
 
-SIMILAR_NO_AFFINE_BATCHNORM_XFAIL = similar_bug_xfail(
-    "no_affine_batchnorm",
-    "no-affine BatchNorm graph preservation still fails through cached hybrid graphs",
-)
-
-
 SIMILAR_NO_AFFINE_BATCHNORM_CASES = [
-    pytest.param(
-        "batchnorm_hybrid", "batchnorm", True,
-        marks=SIMILAR_NO_AFFINE_BATCHNORM_XFAIL,
-    ),
+    ("batchnorm_hybrid", "batchnorm", True),
     ("syncbatchnorm_imperative", "syncbatchnorm", False),
-    pytest.param(
-        "syncbatchnorm_hybrid", "syncbatchnorm", True,
-        marks=SIMILAR_NO_AFFINE_BATCHNORM_XFAIL,
-    ),
+    ("syncbatchnorm_hybrid", "syncbatchnorm", True),
 ]
 
 

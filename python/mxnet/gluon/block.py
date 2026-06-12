@@ -1078,6 +1078,7 @@ class HybridBlock(Block):
             "Please follow MXNet2.0 Migration Guide to use new APIs.")
         self._cached_graph = ()
         self._cached_op = None
+        self._cached_op_recording_zero_arg_indices = ()
         self._out_format = None
         self._in_format = None
         self._called_infer_shape_already = False
@@ -1127,6 +1128,51 @@ class HybridBlock(Block):
             dc.clear(flatten_out)
             self._cached_graph = symbol_inputs, symbol_outputs
         return self._cached_graph
+
+    @staticmethod
+    def _no_affine_batch_norm_beta_indices(sym, input_names, params):
+        """Find disabled BatchNorm beta inputs that must anchor recorded CachedOps."""
+        batch_norm_ops = {'BatchNorm', '_contrib_SyncBatchNorm'}
+        input_name_to_index = {name: i for i, name in enumerate(input_names)}
+        beta_indices = set()
+
+        def _node_name(nodes, entry):
+            try:
+                node = nodes[entry[0]]
+            except (IndexError, TypeError):
+                return None
+            if node.get('op') != 'null':
+                return None
+            return node.get('name')
+
+        try:
+            nodes = json.loads(sym.tojson())['nodes']
+        except (KeyError, TypeError, ValueError):
+            return ()
+
+        for node in nodes:
+            if node.get('op') not in batch_norm_ops:
+                continue
+            attrs = node.get('attrs', {})
+            if str(attrs.get('fix_gamma', '0')).lower() not in ('1', 'true'):
+                continue
+            inputs = node.get('inputs', [])
+            if len(inputs) < 3:
+                continue
+
+            gamma_name = _node_name(nodes, inputs[1])
+            beta_name = _node_name(nodes, inputs[2])
+            gamma = params.get(gamma_name)
+            beta = params.get(beta_name)
+            if gamma is None or beta is None or beta_name not in input_name_to_index:
+                continue
+            if gamma.grad_req != 'null' or beta.grad_req != 'null':
+                continue
+            if getattr(gamma, '_differentiable', True) or getattr(beta, '_differentiable', True):
+                continue
+            beta_indices.add(input_name_to_index[beta_name])
+
+        return tuple(sorted(beta_indices))
 
     def _build_cache(self, *args, update_graph=True):
         data, out = self._get_graph(*args)
@@ -1201,6 +1247,8 @@ class HybridBlock(Block):
                 self._cached_graph = data, out
 
         input_names = out.list_inputs()
+        self._cached_op_recording_zero_arg_indices = HybridBlock._no_affine_batch_norm_beta_indices(
+            out, input_names, params)
         data_indices = []
         param_indices = []
 
@@ -1298,8 +1346,19 @@ class HybridBlock(Block):
                                  .format(fmt, self._in_format))
 
         args_without_none = [ele for ele in args if ele is not None]
-        cargs = [args_without_none[i] if is_arg else i.data()
-                 for is_arg, name, i in self._cached_op_args]
+        zero_arg_indices = self._cached_op_recording_zero_arg_indices
+        zero_recording_args = bool(zero_arg_indices) and autograd.is_recording()
+        cargs = []
+        for i, (is_arg, name, arg) in enumerate(self._cached_op_args):
+            carg = args_without_none[arg] if is_arg else arg.data()
+            if zero_recording_args and i in zero_arg_indices:
+                with autograd.pause():
+                    if self._cached_op.is_np_sym:
+                        carg = _mx_np.zeros_like(carg)
+                    else:
+                        carg = ndarray.zeros_like(carg)
+                carg.attach_grad()
+            cargs.append(carg)
         out = self._cached_op(*cargs)
         if isinstance(out, NDArray):
             out = [out]
@@ -1396,6 +1455,7 @@ class HybridBlock(Block):
     def _clear_cached_op(self):
         self._cached_graph = ()
         self._cached_op = None
+        self._cached_op_recording_zero_arg_indices = ()
         self._first_forward = True
 
     def register_child(self, block, name=None):

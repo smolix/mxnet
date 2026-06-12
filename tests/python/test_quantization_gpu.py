@@ -37,26 +37,14 @@ def _gpu_default_device():
 
 
 def _xfail_unsupported_gpu_quantization(func):
-    # Remaining GPU quantization gaps tracked under B4: uint8 range semantics,
-    # calibrated elemwise_mul saturation, quantize_model harness, and RNN quantization.
+    # Remaining GPU quantization gaps tracked under B4: calibrated elemwise_mul
+    # saturation, quantize_model harness, and RNN quantization.
     return pytest.mark.xfail(
         strict=False,
         reason="GPU quantization path not implemented for this op; deferred (see B4)"
     )(func)
 
 
-test_quantize_uint8_uses_affine_range = _xfail_unsupported_gpu_quantization(
-    test_quantize_uint8_uses_affine_range)
-test_quantize_uint8_saturates_out_of_range_values = _xfail_unsupported_gpu_quantization(
-    test_quantize_uint8_saturates_out_of_range_values)
-test_quantize_v2_uint8_uses_affine_range = _xfail_unsupported_gpu_quantization(
-    test_quantize_v2_uint8_uses_affine_range)
-test_quantize_v2_uint8_saturates_out_of_range_values = _xfail_unsupported_gpu_quantization(
-    test_quantize_v2_uint8_saturates_out_of_range_values)
-test_quantize_v2_quantized_passthrough_reports_exact_ranges = _xfail_unsupported_gpu_quantization(
-    test_quantize_v2_quantized_passthrough_reports_exact_ranges)
-test_requantize_uint8_uses_affine_range = _xfail_unsupported_gpu_quantization(
-    test_requantize_uint8_uses_affine_range)
 test_quantized_elemwise_mul_calibrated_int8_saturates = _xfail_unsupported_gpu_quantization(
     test_quantized_elemwise_mul_calibrated_int8_saturates)
 test_quantize_model = _xfail_unsupported_gpu_quantization(test_quantize_model)

@@ -306,14 +306,16 @@ registration and a device-templated quantized reshape implementation that copies
 int8/uint8 payloads and range scalars on the active device. `test_quantized_transpose`
 was fixed by sharing the CPU type/shape wrapper with a GPU registration that calls
 the existing GPU transpose kernels and copies min/max scalars on the active device.
-Focused verification passed under `--runxfail`, then passed normally after marker
-removal. The full GPU quantization wrapper file now reports 43 passed, 10 xfailed,
-and 4 warnings; the same file under `--runxfail` reports 10 failed, 43 passed,
-and 4 warnings, confirming there are no stale GPU quantization xfails left in
-that wrapper. The remaining 10 xfails are separate work items: GPU uint8
-quantize/quantize_v2/requantize support, GPU quantized elemwise_mul, Python
-`quantize_model` GPU min/max device handling, and GPU RNN quantization /
-quantized_rnn support.
+The six GPU uint8 quantize/quantize_v2/requantize xfails were fixed by removing
+obsolete GPU-only fatal guards in the shared device-templated kernels; the same
+kernels and CUDA registrations already supported the affine uint8 math and range
+copy paths. Focused verification for each promoted bucket passed under
+`--runxfail`, then passed normally after marker removal. The full GPU quantization
+wrapper file now reports 49 passed, 4 xfailed, and 4 warnings; the same file under
+`--runxfail` reports 4 failed, 49 passed, and 4 warnings, confirming there are no
+stale GPU quantization xfails left in that wrapper. The remaining 4 xfails are
+separate work items: GPU quantized elemwise_mul, Python `quantize_model` GPU
+min/max device handling, and GPU RNN quantization / quantized_rnn support.
 
 ## Similar-Bug Sweep Repros
 

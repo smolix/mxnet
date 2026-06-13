@@ -261,9 +261,18 @@ void Profiler::SetContinuousProfileDump(bool continuous_dump, float delay_in_sec
     std::shared_ptr<dmlc::ThreadGroup::Thread> old_thread =
         thread_group_->thread_by_name(TIMER_THREAD_NAME);
     if (old_thread && old_thread->is_shutdown_requested()) {
-      // This should never happen unless someone is doing something malicious
-      // At any rate, wait for its shutdown to complete
-      if (old_thread->joinable()) {
+      // A previous timer thread was asked to stop but is still finishing. Wait
+      // for its shutdown to complete before launching a replacement.
+      // NOTE: the DumpProfileTimer thread is launched auto-remove (it removes
+      // itself from the group when it exits), and joinable()/join() assert
+      // auto_remove_ == false -- so they must NOT be called on it. Check
+      // is_auto_remove() first (it does not assert): only join a genuinely
+      // joinable (non-auto-remove) thread; for the auto-remove timer, poll
+      // until it removes itself from the group. Without this guard, a profiler
+      // reconfigure sequence (enable -> disable -> re-enable continuous dump)
+      // that catches the old timer mid-shutdown aborts MXSetProcessProfilerConfig
+      // with "Check failed: auto_remove_ == false".
+      if (!old_thread->is_auto_remove() && old_thread->joinable()) {
         old_thread->join();
       } else {
         do {

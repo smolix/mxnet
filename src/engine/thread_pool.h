@@ -80,9 +80,13 @@ class ThreadPool {
     }
   }
 
- private:
   /*!
-   * \brief Wait for all started threads to signal that they're ready
+   * \brief Wait for all started threads to signal that they're ready.
+   * \note Public so a caller that constructs the pool with wait=false can defer
+   *  this blocking wait to *outside* any lock it holds (see
+   *  ThreadedEnginePerDevice: GPU worker init does CUDA stream creation, which
+   *  must not run while LazyAllocArray::create_mutex_ is held).  Idempotent once
+   *  all workers have signalled (each ManualEvent stays signalled).
    */
   void WaitForReady() {
     for (const std::shared_ptr<dmlc::ManualEvent>& ptr : ready_events_) {
@@ -90,6 +94,7 @@ class ThreadPool {
     }
   }
 
+ private:
   /*!
    * \brief Worker threads.
    */

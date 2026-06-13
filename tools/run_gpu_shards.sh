@@ -143,7 +143,9 @@ for shard in $(seq 0 $((NSHARDS - 1))); do
   line="$(grep -E "passed|failed|error" "$f" | tail -1)"
   exitc="$(grep -oE "SHARD_${shard}_EXIT=[0-9]+" "$f" | tail -1)"
   echo "shard $shard (GPU ${GPU_LIST[$shard]}): ${line:-<no summary>}   [$exitc]"
-  echo "$line" | grep -qE "failed|error" && bad=1
+  # Require a numeric prefix so "xfailed"/"xpassed"/"deselected" do not trip the
+  # failure detector; only "<N> failed" / "<N> error[s]" count as real failures.
+  echo "$line" | grep -qE "[0-9]+ (failed|error)" && bad=1
   [ "$exitc" != "SHARD_${shard}_EXIT=0" ] && bad=1
 done
 echo "=== OVERALL: $([ "$bad" -eq 0 ] && echo PASS || echo FAIL) ==="

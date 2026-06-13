@@ -39,6 +39,13 @@
 namespace mxnet {
 namespace op {
 
+#if MXNET_USE_CUDA
+OpStatePtr CreateQuantizedRnnGPUState(const nnvm::NodeAttrs& attrs,
+                                      const Context ctx,
+                                      const mxnet::ShapeVector& in_shapes,
+                                      const std::vector<int>& in_types);
+#endif
+
 uint32_t QuantizedRnnNumInputs(const NodeAttrs& attrs) {
   const RNNParam& param = nnvm::get<RNNParam>(attrs.parsed);
   CHECK_EQ(param.mode, rnn_enum::kLstm)
@@ -211,6 +218,13 @@ OpStatePtr CreateQuantizedRnnState(const nnvm::NodeAttrs& attrs,
   const RNNParam& param = nnvm::get<RNNParam>(attrs.parsed);
   CHECK_EQ(param.mode, rnn_enum::kLstm) << "Quantized RNN operator only supports LSTM mode.";
   OpStatePtr state = OpStatePtr();
+  if (ctx.dev_type == kGPU) {
+#if MXNET_USE_CUDA
+    return CreateQuantizedRnnGPUState(attrs, ctx, in_shapes, in_types);
+#else
+    LOG(FATAL) << "Quantized RNN on GPU requires MXNet to be built with CUDA.";
+#endif
+  }
 #if MXNET_USE_ONEDNN == 1
   const int data_type   = in_types[quantized_rnn::kData];
   const int weight_type = in_types[quantized_rnn::kParams];
@@ -280,7 +294,8 @@ static std::vector<ResourceRequest> QuantizedRnnResourceEx(const NodeAttrs& attr
   std::vector<ResourceRequest> request;
   if (dev_mask == kGPU) {
 #if MXNET_USE_CUDNN == 1
-    LOG(FATAL) << "Currently, quantized RNN is not supported on the GPU platform.";
+    request.emplace_back(ResourceRequest::kTempSpace);
+    request.emplace_back(ResourceRequest::kCuDNNDropoutDesc);
 #endif
   } else {
 #if MXNET_USE_ONEDNN == 1

@@ -351,10 +351,15 @@ class Parameter(object):
         with autograd.pause(), dc.context(False):
             if data is None:
                 if is_np_array():
-                    kwargs = {'shape': self.shape, 'dtype': self.dtype, 'device': cpu()}
+                    # NumPy/Gluon2.0 does not support sparse-storage parameter
+                    # DATA (it would silently fall back to dense). Sparse
+                    # gradients (grad_stype) are supported separately in
+                    # _init_grad. Reject a non-default data stype clearly here.
                     if self._stype != 'default':
-                        raise ValueError("Currently stype {} is not supported in NumPy interface and Gluon2.0"
-                                         .format(self._stype))
+                        raise ValueError(
+                            "Currently stype {} is not supported in NumPy interface and Gluon2.0"
+                            .format(self._stype))
+                    kwargs = {'shape': self.shape, 'dtype': self.dtype, 'device': cpu()}
                     zeros_fn = _mx_np.zeros
                 else:
                     kwargs = {'shape': self.shape, 'dtype': self.dtype, 'ctx': cpu()}
@@ -385,10 +390,7 @@ class Parameter(object):
             self._grad = None
             return
 
-        if is_np_array():
-            if self._grad_stype != 'default':
-                raise ValueError("Currently stype {} is not supported in NumPy interface and Gluon2.0"
-                                 .format(self._grad_stype))
+        if is_np_array() and self._grad_stype == 'default':
             self._grad = [_mx_np.zeros(shape=i.shape, dtype=i.dtype, device=i.device)
                           for i in self._data]
         else:
@@ -668,7 +670,7 @@ class Parameter(object):
             if self._var_name is None:  # _var_name is set manually in SymbolBlock.import
                 # The variable name is required by the storage profiler.
                 self._var_name = self._uuid.replace('-', '_') + '_' + self._name
-            self._var = symbol.var(self._var_name, shape=self.shape, dtype=self.dtype,
+            self._var = symbol.var(self._var_name, shape=self.shape,
                                    lr_mult=self.lr_mult, wd_mult=self.wd_mult,
                                    init=self.init, stype=self._stype)
             if is_np_array():

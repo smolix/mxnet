@@ -189,6 +189,14 @@ def _package_data():
         'lib/*.so',
         'lib/*.so.*',
         'lib/*.dylib',
+        # C/C++ headers bundled under mxnet/include/ so libinfo.find_include_path()
+        # resolves to a real path inside the installed wheel (apache/mxnet#20936)
+        # and downstream custom-operator builds can compile against them. The
+        # build script stages include/{mxnet,nnvm,dlpack,dmlc,mshadow} here.
+        'include/**/*.h',
+        'include/**/*.hpp',
+        'include/**/*.cuh',
+        'include/**/*',
     ] + bundled_libs}
 
 

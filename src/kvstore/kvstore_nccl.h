@@ -151,15 +151,19 @@ class KVStoreNCCL : public KVStoreLocal {
       auto& merged   = *(merged_ptrs[i]);
       NDArray& local = *(local_ptrs[i]);
       if (updater_ != nullptr) {
+        NDArray merged_for_update = merged;
+        if (merged_for_update.ctx() != local.ctx()) {
+          merged_for_update = merged_for_update.Copy(local.ctx());
+        }
         // call the updater with string keys
         // if string keys are used and str_updater_ is available
         // otherwise fallback to updater_ which uses int key interface
         if (key_type_ == kStringKey && str_updater_ != nullptr) {
           // after all language bindings picks up string interface changes
           const std::string& str_key = reverse_str_key_dict_[key];
-          str_updater_(str_key, merged, &local);
+          str_updater_(str_key, merged_for_update, &local);
         } else {
-          updater_(key, merged, &local);
+          updater_(key, merged_for_update, &local);
         }
       } else {
         local = merged;

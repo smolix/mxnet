@@ -235,6 +235,10 @@ def _parse_head(heads, head_grads):
     else:
         msg = "heads and head_grads must be lists of the same length: {} vs. {}"
         assert len(heads) == len(head_grads), msg.format(len(heads), len(head_grads))
+        for head, grad in zip(heads, head_grads):
+            if grad is not None and grad.shape != head.shape:
+                raise ValueError("head gradient shape {} does not match output shape {}".format(
+                    grad.shape, head.shape))
         hgrad_handles = c_array(NDArrayHandle,
                                 [i.handle if i is not None else NDArrayHandle(0)
                                  for i in head_grads])

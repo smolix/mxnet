@@ -623,6 +623,51 @@ def wrap_np_unary_func(func):
     return _wrap_np_unary_func
 
 
+_CPU_DEVICE_FAMILY = ('cpu', 'cpu_pinned', 'cpu_shared')
+
+
+def _devices_are_compatible(dev_a, dev_b):
+    """Return True if two devices can be mixed in a single operator call.
+
+    The backend dispatches by device mask, so the CPU-family contexts
+    (``cpu``, ``cpu_pinned``, ``cpu_shared``) are all host memory and are
+    mutually compatible even though they compare unequal as ``Device`` objects.
+    Only genuinely different compute devices (e.g. ``cpu`` vs ``gpu`` or two
+    different GPU ids) must be rejected. This mirrors the native check in
+    ``imperative_utils.h`` rather than being stricter than it.
+    """
+    type_a = getattr(dev_a, "device_type", None)
+    type_b = getattr(dev_b, "device_type", None)
+    if type_a in _CPU_DEVICE_FAMILY and type_b in _CPU_DEVICE_FAMILY:
+        return True
+    return dev_a == dev_b
+
+
+def _check_same_device(*values, **kwargs):
+    func_name = kwargs.get("func_name", "operands")
+    first_device = [None]
+
+    def visit(value):
+        if value is None:
+            return
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                visit(item)
+            return
+
+        device = getattr(value, "device", None)
+        if device is None:
+            return
+        if first_device[0] is None:
+            first_device[0] = device
+        elif not _devices_are_compatible(first_device[0], device):
+            raise ValueError(
+                "operands for {} must be on the same device/context, got {} and {}"
+                .format(func_name, first_device[0], device))
+
+    for value in values:
+        visit(value)
+
 def wrap_np_binary_func(func):
     """A convenience decorator for wrapping numpy-compatible binary ufuncs to provide uniform
     error handling.
@@ -650,6 +695,7 @@ def wrap_np_binary_func(func):
                         raise NotImplementedError("{}={} is not implemented yet".format(key, str(value)))
                     # otherwise raise TypeError with not understood error message
                     raise TypeError("{} {} not understood".format(key, value))
+        _check_same_device(x1, x2, func_name=func.__name__)
         return func(x1, x2, out=out)
     return _wrap_np_binary_func
 

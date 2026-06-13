@@ -42,11 +42,13 @@ run_one() {
   IFS='|' read -r name exe <<< "${entry}"
   local log="${log_dir}/${name}.log"
   echo "[START] ${name}"
+  local status
   if "${exe}" "$@" >"${log}" 2>&1; then
     echo "[ OK  ] ${name}"
     return 0
+  else
+    status="$?"
   fi
-  local status="$?"
   echo "[FAIL ] ${name} (exit ${status})"
   echo "----- ${name} log -----"
   cat "${log}"

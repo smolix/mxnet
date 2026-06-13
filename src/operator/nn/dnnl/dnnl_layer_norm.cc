@@ -43,11 +43,14 @@ bool SupportDNNLLayerNorm(const LayerNormParam& param, const std::vector<NDArray
   // the shape is better for oneDNN or native implementation.
   auto ShapeBetterForDNNL = [](const mxnet::TShape& shape) {
     constexpr size_t shapeLimit = 1024;
+    if (shape.ndim() == 0 || shape[0] == 0 || shape.Size() == 0) {
+      return false;
+    }
     return shape.Size() / shape[0] >= shapeLimit && shape[0] >= shapeLimit;
   };
 
   return (ShapeBetterForDNNL(shape) && GetRealAxis(param.axis, shape.ndim()) == shape.ndim() - 1) &&
-         SupportDNNL<2, 5, DNNLTypeMode::FloatTypes>(inputs[layernorm::kData]) &&
+         SupportDNNL<2, 4, DNNLTypeMode::FloatTypes>(inputs[layernorm::kData]) &&
          inputs[layernorm::kGamma].dtype() == mshadow::kFloat32 &&
          inputs[layernorm::kBeta].dtype() == mshadow::kFloat32;
 }

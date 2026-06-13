@@ -79,9 +79,10 @@ bool LayerNormCPU(const nnvm::NodeAttrs& attrs,
   CHECK_EQ(inputs.size(), 3U);
   CHECK_EQ(outputs.size(), 3U);
 
+  const bool write_output = req[layernorm::kOut] != kNullOp;
   switch (req[layernorm::kOut]) {
     case kNullOp:
-      return true;
+      break;
     case kWriteTo:
       break;
     case kWriteInplace:
@@ -96,13 +97,19 @@ bool LayerNormCPU(const nnvm::NodeAttrs& attrs,
     return false;
   }
   MSHADOW_REAL_TYPE_SWITCH(inputs[layernorm::kData].type_flag_, DType, {
+    std::vector<DType> out_tmp;
+    DType* out_ptr = outputs[layernorm::kOut].dptr<DType>();
+    if (!write_output) {
+      out_tmp.resize(outputs[layernorm::kOut].Size());
+      out_ptr = out_tmp.data();
+    }
     LayerNormCPUKernel<DType>(inputs[layernorm::kData].shape_[axis],
                               outputs[layernorm::kMean].Size(),
                               param.eps,
                               inputs[layernorm::kData].dptr<DType>(),
                               inputs[layernorm::kGamma].dptr<DType>(),
                               inputs[layernorm::kBeta].dptr<DType>(),
-                              outputs[layernorm::kOut].dptr<DType>(),
+                              out_ptr,
                               outputs[layernorm::kMean].dptr<DType>(),
                               outputs[layernorm::kStd].dptr<DType>());
   });
@@ -117,8 +124,12 @@ bool LayerNormComputeMKL(const nnvm::NodeAttrs& attrs,
                          const std::vector<TBlob>& outputs) {
   using namespace mshadow;
   const LayerNormParam& param = nnvm::get<LayerNormParam>(attrs.parsed);
+  // A null primary-output request can still require the mean/std statistics
+  // outputs, which this MKL fast path does not populate. Decline the
+  // optimization so the general LayerNorm path (which honours stats-only
+  // requests) computes mean/std instead of leaving them as zeros.
   if (req[0] == kNullOp)
-    return true;
+    return false;
   CHECK_NE(req[0], kAddTo);
   CHECK_EQ(inputs.size(), 3U);
   int axis = GetRealAxis(param.axis, inputs[0].ndim());

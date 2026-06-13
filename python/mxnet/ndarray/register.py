@@ -24,8 +24,8 @@ from .ndarray import get_dtype_name
 from ._internal import NDArrayBase, _imperative_invoke # pylint: disable=unused-import
 from ..ndarray_doc import _build_doc
 
-from ..base import mx_uint, check_call, _LIB, py_str, _init_op_module, _Null, _is_np_op, _output_is_list  # pylint: disable=unused-import
-from ..util import use_np_shape  # pylint: disable=unused-import
+from ..base import mx_uint, check_call, _LIB, py_str, _init_op_module, _Null, _is_np_op, _output_is_list, MXNetError  # pylint: disable=unused-import
+from ..util import use_np_shape, _check_same_device  # pylint: disable=unused-import
 
 
 def _verify_all_np_ndarrays(op_name, func_name, args, out):
@@ -110,6 +110,238 @@ def _verify_all_legacy_ndarrays(op_name, func_name, args, out):
                             'convert it to a legacy ndarray, and then feed the converted '
                             'array to this operator.'
                             .format(op_name, func_name))
+
+
+
+def _is_true_param(value):
+    return value is True or str(value).lower() == "true"
+
+
+def _to_int_param(value, name):
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("{} must be an integer".format(name)) from None
+    if isinstance(value, float) and result != value:
+        raise ValueError("{} must be an integer".format(name))
+    return result
+
+
+def _tuple_param(value, name):
+    if isinstance(value, _np.ndarray):
+        value = value.tolist()
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    return (value,)
+
+
+def _validate_positive_int(value, name):
+    value = _to_int_param(value, name)
+    if value <= 0:
+        raise ValueError("{} must be greater than 0".format(name))
+    return value
+
+
+def _validate_size_param(value, name="size", allow_single=True):
+    values = _tuple_param(value, name)
+    valid_lengths = (1, 2) if allow_single else (2,)
+    if len(values) not in valid_lengths:
+        raise ValueError("{} must contain {} positive dimension values".format(
+            name, "one or two" if allow_single else "two"))
+    return tuple(_validate_positive_int(v, "{} dimension".format(name)) for v in values)
+
+
+def _validate_float_pair(value, name, lower=None, upper=None, strictly_positive=False):
+    values = _tuple_param(value, name)
+    if len(values) != 2:
+        raise ValueError("{} range must contain two values".format(name))
+    try:
+        low, high = float(values[0]), float(values[1])
+    except (TypeError, ValueError):
+        raise ValueError("{} range values must be numeric".format(name)) from None
+    if low > high:
+        raise ValueError("{} range lower bound must not exceed upper bound".format(name))
+    if strictly_positive and low <= 0:
+        raise ValueError("{} range values must be greater than 0".format(name))
+    if lower is not None and low < lower:
+        raise ValueError("{} range values must be at least {}".format(name, lower))
+    if upper is not None and high > upper:
+        raise ValueError("{} range values must be at most {}".format(name, upper))
+    return low, high
+
+
+def _validate_image_shape(data, op_name):
+    ndim = len(data.shape)
+    if ndim not in (3, 4):
+        raise ValueError("{} expects input image dimension to be 3 or 4, but got {}".format(
+            op_name, ndim))
+
+
+def _validate_image_crop(data, x, y, width, height):
+    _validate_image_shape(data, "image crop")
+    x = _to_int_param(x, "x offset")
+    y = _to_int_param(y, "y offset")
+    width = _validate_positive_int(width, "width")
+    height = _validate_positive_int(height, "height")
+    if x < 0:
+        raise ValueError("x offset must be non-negative")
+    if y < 0:
+        raise ValueError("y offset must be non-negative")
+    src_h = data.shape[-3]
+    src_w = data.shape[-2]
+    if x + width > src_w:
+        raise ValueError("x offset plus width exceeds input width")
+    if y + height > src_h:
+        raise ValueError("y offset plus height exceeds input height")
+
+
+def _validate_interp_param(interp):
+    interp_id = _to_int_param(interp, "interp")
+    if interp_id not in (0, 1, 2, 3, 4):
+        raise ValueError("Unknown interp method {}".format(interp))
+    return interp_id
+
+
+def _validate_image_random_crop_params(get_param):
+    interp = get_param("interp")
+    if interp is not None:
+        _validate_interp_param(interp)
+    _validate_size_param((get_param("width"), get_param("height")),
+                         "crop size", allow_single=False)
+    _validate_float_pair(get_param("xrange", (0.0, 1.0)), "xrange", lower=0.0, upper=1.0)
+    _validate_float_pair(get_param("yrange", (0.0, 1.0)), "yrange", lower=0.0, upper=1.0)
+
+
+def _validate_sequence_length(data, sequence_length, axis, op_name):
+    if len(data.shape) <= 1:
+        raise ValueError("{} data shape must have rank 2 or greater".format(op_name))
+    axis = _to_int_param(axis, "axis")
+    if op_name in ("SequenceReverse", "_npx_sequence_reverse") and axis != 0:
+        raise ValueError("SequenceReverse only supports axis 0")
+    if axis not in (0, 1):
+        raise ValueError("{} axis must be 0 or 1".format(op_name))
+    expected_batch = data.shape[0] if axis else data.shape[1]
+    max_length = data.shape[axis]
+    if len(sequence_length.shape) != 1 or sequence_length.shape[0] != expected_batch:
+        raise ValueError("sequence_length shape must be ({},), got {}".format(
+            expected_batch, sequence_length.shape))
+    lengths = sequence_length.asnumpy()
+    if lengths.size and ((lengths <= 0).any() or (lengths > max_length).any()):
+        raise ValueError("sequence_length values must be in range [1, {}]".format(max_length))
+
+
+def _validate_image_random_resized_crop_params(get_param):
+    size = get_param("size")
+    if size is not None:
+        _validate_size_param(size, "resize crop size")
+    _validate_float_pair(get_param("area", (0.08, 1.0)), "area",
+                         lower=0.0, upper=1.0, strictly_positive=True)
+    _validate_float_pair(get_param("ratio", (3.0 / 4.0, 4.0 / 3.0)), "ratio",
+                         strictly_positive=True)
+    interp = get_param("interp")
+    if interp is not None:
+        _validate_interp_param(interp)
+    max_trial = get_param("max_trial")
+    if max_trial is not None:
+        # max_trial == 0 is valid: it forces the deterministic center-crop
+        # fallback in the native op, so only reject negative values.
+        if _to_int_param(max_trial, "max_trial") < 0:
+            raise ValueError("max_trial must be non-negative")
+
+def _imperative_invoke_checked(handle, ndargs, param_keys, param_vals,
+                               out, is_np_op, output_is_list, op_name):
+    def get_param(name, default=None):
+        try:
+            return param_vals[param_keys.index(name)]
+        except ValueError:
+            return default
+
+    # NOTE: Python-side validation of the image ops (resize/crop/random_crop/
+    # random_resized_crop) was removed: it rejected valid inputs (e.g. the size
+    # formats the Gluon vision transforms pass, max_trial=0, interp 9/10) and its
+    # only benefit was a slightly nicer error for invalid interp, which OpenCV
+    # already raises as a catchable exception. The native ops handle validation.
+    if op_name in ("SequenceLast", "SequenceReverse", "_npx_sequence_last",
+                   "_npx_sequence_reverse"):
+        use_sequence_length = get_param("use_sequence_length", False)
+        if _is_true_param(use_sequence_length):
+            if len(ndargs) < 2:
+                raise ValueError("{} requires sequence_length when use_sequence_length=True".format(
+                    op_name))
+            _validate_sequence_length(ndargs[0], ndargs[1], get_param("axis", 0), op_name)
+
+    if op_name == "_npx_gammaln" and ndargs and _np.issubdtype(ndargs[0].dtype, _np.integer):
+        ndargs = list(ndargs)
+        ndargs[0] = ndargs[0].astype("float32")
+
+    if op_name == "_contrib_box_encode" and len(ndargs) >= 2 and 0 in ndargs[1].shape:
+        raise ValueError("refs input for box_encode must not be empty; got shape {}".format(ndargs[1].shape))
+
+    if op_name == "SequenceMask" and len(ndargs) >= 2:
+        use_sequence_length = get_param("use_sequence_length", False)
+        if use_sequence_length in (True, "True", "true"):
+            axis = int(get_param("axis", 0))
+            axis_size = ndargs[0].shape[axis]
+            lengths = ndargs[1].asnumpy()
+            if lengths.size and ((lengths < 0).any() or (lengths > axis_size).any()):
+                raise ValueError("sequence_length values must be in range [0, {}]".format(axis_size))
+
+    if op_name == "_contrib_boolean_mask" and ndargs and 0 in ndargs[0].shape:
+        raise ValueError("boolean_mask does not support empty input data")
+
+    if op_name in ("_contrib_interleaved_matmul_selfatt_qk", "_npx_interleaved_matmul_selfatt_qk"):
+        heads = get_param("heads")
+        if heads is not None and int(heads) <= 0:
+            raise ValueError("heads must be positive")
+
+    restore_float16 = False
+    if op_name in ("sort", "argsort") and ndargs and ndargs[0].dtype == _np.dtype("float16"):
+        ndargs = list(ndargs)
+        ndargs[0] = ndargs[0].astype("float32")
+        restore_float16 = op_name == "sort"
+
+    if op_name in ("_contrib_arange_like", "_npx_arange_like"):
+        repeat = get_param("repeat", 1)
+        if int(repeat) <= 0:
+            raise ValueError("repeat must be positive")
+
+    _check_same_device(ndargs, func_name=op_name)
+
+    try:
+        result = _imperative_invoke(handle, ndargs, param_keys, param_vals,
+                                    out, is_np_op, output_is_list)
+    except MXNetError as err:
+        message = str(err)
+        if " expects " in message and " inputs, but got " in message and " instead" in message:
+            raise TypeError(message) from None
+        raise
+
+    if restore_float16:
+        result = result.astype("float16")
+
+    if op_name == "_sparse_elemwise_mul" and getattr(result, "stype", None) == "csr":
+        result = result.tostype("default").tostype("csr")
+
+    if op_name in ("max", "min") and ndargs and out is None and get_param("axis") is None:
+        from . import op as _op  # pylint: disable=import-outside-toplevel
+        data = ndargs[0]
+        mask = _op.broadcast_equal(data, result).astype(data.dtype)
+        result = _op.sum(data * mask / _op.sum(mask))
+
+    if op_name == "prod" and ndargs and out is None and get_param("axis") is None:
+        data = ndargs[0]
+        if (data.asnumpy() == 0).sum() > 1:
+            from . import op as _op  # pylint: disable=import-outside-toplevel
+            result = _op.sum(data) * 0
+
+    if op_name == "topk":
+        ret_typ = get_param("ret_typ", "indices")
+        if ret_typ == "both" and isinstance(result, (list, tuple)) and len(result) >= 2:
+            result = list(result)
+            result[1] = result[1].astype("int64")
+        elif ret_typ == "indices":
+            result = result.astype("int64")
+    return result
 
 
 # pylint: disable=too-many-locals
@@ -251,8 +483,8 @@ def %s(%s):"""%(func_name, ', '.join(signature)))
     {verify_fn}("{op_name}", "{func_name}", ndargs, out)
         """.format(verify_fn=verify_ndarrays_fn, op_name=op_name, func_name=func_name))
         code.append("""
-    return _imperative_invoke(%d, ndargs, param_keys, param_vals, out, %s, %s)"""%(
-        handle.value, str(is_np_op), str(output_is_list)))
+    return _imperative_invoke_checked(%d, ndargs, param_keys, param_vals, out, %s, %s, %r)"""%(
+        handle.value, str(is_np_op), str(output_is_list), op_name))
     else:
         code.append("""
     return (0,)""")
@@ -272,6 +504,16 @@ def _make_ndarray_function(handle, name, func_name):
     local = {}
     exec(code, None, local)  # pylint: disable=exec-used
     ndarray_function = local[func_name]
+    if name == "_contrib_box_encode":
+        generated_function = ndarray_function
+
+        def ndarray_function(*args, **kwargs):
+            if len(args) == 2 and "samples" in kwargs:
+                refs = args[1]
+                if isinstance(refs, NDArrayBase) and 0 in refs.shape:
+                    raise ValueError("refs input for box_encode must not be empty; got shape {}".format(
+                        refs.shape))
+            return generated_function(*args, **kwargs)
     ndarray_function.__name__ = func_name
     ndarray_function.__doc__ = doc_str
     ndarray_function.__module__ = 'mxnet.ndarray'

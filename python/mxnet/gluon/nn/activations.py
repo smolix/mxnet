@@ -20,7 +20,7 @@
 """Basic neural network layers."""
 __all__ = ['Activation', 'LeakyReLU', 'PReLU', 'ELU', 'SELU', 'Swish', 'GELU', 'SiLU']
 
-from ... import initializer, npx
+from ... import initializer, np, npx
 from ..block import HybridBlock
 from ..parameter import Parameter
 from ...util import use_np
@@ -247,7 +247,9 @@ class Swish(HybridBlock):
         self._beta = beta
 
     def forward(self, x):
-        return x * npx.sigmoid(self._beta * x)
+        safe_x = np.where(x == 0, np.ones_like(x), x)
+        out = x * npx.sigmoid(self._beta * safe_x)
+        return np.where(x == 0, x, out)
 
 
 @use_np

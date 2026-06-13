@@ -853,6 +853,7 @@ _NP_EXT_OP_IMPLEMENTED_SET = {'_npx_softmax', '_npx_log_softmax', '_npx_masked_s
 _NP_INTERNAL_OP_PREFIX = '_npi_'
 
 _NP_OUTPUT_IS_LIST_OPERATORS = {'_npi_split', '_npi_hsplit'}
+_LEGACY_OUTPUT_IS_LIST_OPERATORS = {"split", "SliceChannel"}
 
 
 def _is_np_op(op_name):
@@ -873,7 +874,7 @@ def _output_is_list(op_name):
     """
     if _is_np_op(op_name):
         return op_name in _NP_OUTPUT_IS_LIST_OPERATORS
-    return False
+    return op_name in _LEGACY_OUTPUT_IS_LIST_OPERATORS
 
 
 def _get_op_submodule_name(op_name, op_name_prefix, submodule_name_list):

@@ -259,7 +259,8 @@ void SetBackwardInputEid(const std::vector<uint32_t>& bwd_in_dep,
 bool CachedOp::SetBackwardGraph(GraphInfo* info,
                                 const std::vector<OpReqType>& reqs,
                                 const std::vector<NDArray*>& inputs,
-                                bool detect_inplace_addto) {
+                                bool detect_inplace_addto,
+                                const std::vector<NDArray*>* cached_forward_arrays) {
   using namespace nnvm;
   using namespace imperative;
   std::lock_guard<std::mutex> lock(mutex_);
@@ -323,12 +324,44 @@ bool CachedOp::SetBackwardGraph(GraphInfo* info,
     g.attrs["addto_entry"] = std::make_shared<nnvm::any>(std::move(addto_entry));
   }
 
-  auto shapes = info->fwd_graph.GetAttr<mxnet::ShapeVector>("shape");
-  shapes.resize(idx.num_node_entries(), mxnet::TShape());
-  auto dtypes = info->fwd_graph.GetAttr<DTypeVector>("dtype");
-  dtypes.resize(idx.num_node_entries(), -1);
-  auto stypes = info->fwd_graph.GetAttr<StorageTypeVector>("storage_type");
-  stypes.resize(idx.num_node_entries(), -1);
+  const auto& fwd_idx = info->fwd_graph.indexed_graph();
+  auto fwd_shapes      = info->fwd_graph.GetAttr<mxnet::ShapeVector>("shape");
+  auto fwd_dtypes      = info->fwd_graph.GetAttr<DTypeVector>("dtype");
+  auto fwd_stypes      = info->fwd_graph.GetAttr<StorageTypeVector>("storage_type");
+
+  mxnet::ShapeVector shapes(idx.num_node_entries(), mxnet::TShape());
+  DTypeVector dtypes(idx.num_node_entries(), -1);
+  StorageTypeVector stypes(idx.num_node_entries(), -1);
+
+  for (uint32_t nid = 0; nid < fwd_idx.num_nodes(); ++nid) {
+    nnvm::ObjectPtr node = fwd_idx[nid].weak_ref.lock();
+    for (uint32_t oid = 0; oid < fwd_idx[nid].source->num_outputs(); ++oid) {
+      nnvm::NodeEntry entry{node, oid, 0};
+      if (!idx.exist(entry.node.get())) {
+        continue;
+      }
+      const size_t fwd_eid  = fwd_idx.entry_id(nid, oid);
+      const size_t full_eid = idx.entry_id(entry);
+      if (fwd_eid < fwd_shapes.size()) {
+        shapes[full_eid] = fwd_shapes[fwd_eid];
+      }
+      if (fwd_eid < fwd_dtypes.size()) {
+        dtypes[full_eid] = fwd_dtypes[fwd_eid];
+      }
+      if (fwd_eid < fwd_stypes.size()) {
+        stypes[full_eid] = fwd_stypes[fwd_eid];
+      }
+      if (cached_forward_arrays != nullptr && full_eid < cached_forward_arrays->size()) {
+        const NDArray* arr = (*cached_forward_arrays)[full_eid];
+        if (arr == nullptr || arr->is_none()) {
+          continue;
+        }
+        shapes[full_eid] = arr->shape();
+        dtypes[full_eid] = arr->dtype();
+        stypes[full_eid] = arr->storage_type();
+      }
+    }
+  }
 
   for (size_t i = 0; i < inputs.size(); ++i) {
     if (info->bwd_input_eid[i] == kEidNotExist) {
@@ -340,16 +373,15 @@ bool CachedOp::SetBackwardGraph(GraphInfo* info,
     stypes[info->bwd_input_eid[i]] = inputs[oi]->storage_type();
   }
 
-  std::pair<uint32_t, uint32_t> node_range, entry_range;
-  node_range  = {num_forward_nodes, idx.num_nodes()};
-  entry_range = {num_forward_entries, idx.num_node_entries()};
+  std::pair<uint32_t, uint32_t> infer_node_range = {0, idx.num_nodes()};
+  std::pair<uint32_t, uint32_t> entry_range      = {num_forward_entries, idx.num_node_entries()};
 
   bool match = true;
-  match &= CheckAndInferShape(&g, std::move(shapes), false, node_range, entry_range);
-  match &= CheckAndInferType(&g, std::move(dtypes), false, node_range, entry_range);
+  match &= CheckAndInferShape(&g, std::move(shapes), false, infer_node_range, entry_range);
+  match &= CheckAndInferType(&g, std::move(dtypes), false, infer_node_range, entry_range);
   exec::DevMaskVector dev_mask(idx.num_nodes(), default_ctx.dev_mask());
   match &= CheckAndInferStorageType(
-      &g, std::move(dev_mask), std::move(stypes), false, node_range, entry_range);
+      &g, std::move(dev_mask), std::move(stypes), false, infer_node_range, entry_range);
 
   if (!match) {
     g.attrs.erase(AddPrefix(BACKWARD, MEM_PLAN));
@@ -676,9 +708,14 @@ static void PrepareOutputs(const nnvm::Graph& g,
       INIT_DETACHED(outputs[i], arrays[eid]);
 
     arrays[eid] = outputs[i];
-    if (arrays[eid]->is_none())
+    if (arrays[eid]->is_none()) {
       arrays[eid]->ReInit(
           static_cast<NDArrayStorageType>(stypes[eid]), shapes[eid], default_ctx, dtypes[eid]);
+    } else if (shape_is_known(shapes[eid])) {
+      const nnvm::NodeAttrs& attrs = idx[idx.outputs()[i].node_id].source->attrs;
+      CHECK_EQ(arrays[eid]->shape(), shapes[eid])
+          << "CachedOp output shape mismatch for " << attrs.name;
+    }
     const nnvm::NodeAttrs& attrs = idx[idx.outputs()[i].node_id].source->attrs;
     outputs[i]->AssignStorageInfo(common::NodeAttrsGetProfilerScope(attrs), attrs.name);
   }
@@ -1021,7 +1058,7 @@ void CachedOp::StaticBackward(const bool retain_graph,
   auto& state = state_ptr.get_state<CachedOpState>();
   std::lock_guard<std::mutex> lock(state.mutex);
 
-  bool match = SetBackwardGraph(&state.info, reqs, inputs, true);
+  bool match = SetBackwardGraph(&state.info, reqs, inputs, true, &state.arrays);
 
   nnvm::Graph& g         = state.info.full_graph;
   const auto& idx        = g.indexed_graph();
@@ -1225,7 +1262,7 @@ void CachedOpBackward(const OpStatePtr& state_ptr,
   const std::vector<bool>& save_outputs = s.op->save_outputs();
   size_t bwd_in_dep                     = s.op->num_inputs();
   size_t bwd_out_dep                    = s.op->num_outputs();
-  CHECK(s.op->num_backward_inputs() > bwd_in_dep + bwd_out_dep);
+  CHECK_GE(s.op->num_backward_inputs(), bwd_in_dep + bwd_out_dep);
   size_t bwd_ograd_dep = s.op->num_backward_inputs() - bwd_in_dep - bwd_out_dep;
 
   // Find inputs, outputs and ograds

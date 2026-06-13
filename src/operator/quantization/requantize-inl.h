@@ -178,11 +178,6 @@ void RequantizeForward(const nnvm::NodeAttrs& attrs,
   Stream<xpu>* s               = ctx.get_stream<xpu>();
   const RequantizeParam& param = nnvm::get<RequantizeParam>(attrs.parsed);
   auto out_type                = GetQuantizeOutputType(param);
-  if (out_type == mshadow::kUint8 && std::is_same<xpu, gpu>::value) {
-    LOG(FATAL) << "currently, uint8 quantization is only supported by CPU, "
-                  "please switch to the context of CPU or int8 data type for GPU.";
-  }
-
   if (param.min_calib_range.has_value() && param.max_calib_range.has_value()) {
     if (out_type == mshadow::kUint8) {
       Kernel<RequantizeKernel, xpu>::Launch(s,

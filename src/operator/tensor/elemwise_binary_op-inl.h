@@ -247,6 +247,7 @@ void ElemwiseBinaryOp::RspRspOp(mshadow::Stream<cpu>* s,
           new_shape[0] -= num_common_rows;
           output.set_aux_shape(rowsparse::kIdx, new_shape);
         }
+        CompactSparseZeros(s, output);
       }
     });
   });
@@ -300,17 +301,20 @@ void ElemwiseBinaryOp::CsrCsrOp(mshadow::Stream<cpu>* s,
   MSHADOW_IDX_TYPE_SWITCH(lhs.aux_type(csr::kIdx), IType, {
     MSHADOW_IDX_TYPE_SWITCH(lhs.aux_type(csr::kIndPtr), CType, {
       MSHADOW_TYPE_SWITCH(output.dtype(), DType, {
-        const size_t alloc_size = nr_cols * sizeof(IType) + 2 * nr_cols * sizeof(DType);
+        const size_t alloc_size = 2 * nr_cols * sizeof(IType) + 2 * nr_cols * sizeof(DType);
 
         Tensor<cpu, 1, uint8_t> workspace =
             ctx.requested[ResourceRequestType::kTempSpace].get_space_typed<cpu, 1, uint8_t>(
                 mshadow::Shape1(alloc_size), s);
 
-        // Allocate temp space and partition into three tensors
+        // Allocate temp space and partition into marker, touched-column, and row-value tensors.
         mshadow::Tensor<cpu, 1, IType> next(reinterpret_cast<IType*>(workspace.dptr_),
                                             Shape1(nr_cols));
+        mshadow::Tensor<cpu, 1, IType> columns(
+            reinterpret_cast<IType*>(workspace.dptr_ + nr_cols * sizeof(IType)), Shape1(nr_cols));
         mshadow::Tensor<cpu, 1, DType> lhs_row(
-            reinterpret_cast<DType*>(workspace.dptr_ + nr_cols * sizeof(IType)), Shape1(nr_cols));
+            reinterpret_cast<DType*>(workspace.dptr_ + 2 * nr_cols * sizeof(IType)),
+            Shape1(nr_cols));
         mshadow::Tensor<cpu, 1, DType> rhs_row;
 
         OpBase::FillDense<IType>(s, next.shape_.Size(), IType(-1), req, next.dptr_);
@@ -341,7 +345,6 @@ void ElemwiseBinaryOp::CsrCsrOp(mshadow::Stream<cpu>* s,
         row_ptr_out[0] = 0;
 
         for (IType i = 0; i < static_cast<IType>(nr_rows); i++) {
-          IType head   = -2;
           IType length = 0;
 
           // add a row of A to lhs_row
@@ -352,8 +355,8 @@ void ElemwiseBinaryOp::CsrCsrOp(mshadow::Stream<cpu>* s,
             lhs_row[col] += data_l[jj];
 
             if (next[col] == -1) {
-              next[col] = head;
-              head      = col;
+              next[col]       = 1;
+              columns[length] = col;
               ++length;
             }
           }
@@ -367,35 +370,34 @@ void ElemwiseBinaryOp::CsrCsrOp(mshadow::Stream<cpu>* s,
               rhs_row[col] += data_r[jj];
 
               if (next[col] == -1) {
-                next[col] = head;
-                head      = col;
+                next[col]       = 1;
+                columns[length] = col;
                 ++length;
               }
             }
           }
 
-          // scan through columns where A or B has
-          // contributed a non-zero entry
+          // scan touched columns in canonical ascending order
+          std::sort(columns.dptr_, columns.dptr_ + length);
           for (IType jj = 0; jj < length; jj++) {
-            const DType result = OP::Map(lhs_row[head], rhs_row[head]);
+            const IType col    = columns[jj];
+            const DType result = OP::Map(lhs_row[col], rhs_row[col]);
 
             if (result != 0) {
-              col_indices_out[nnz] = head;
+              col_indices_out[nnz] = col;
               data_out[nnz]        = result;
               ++nnz;
             }
 
-            const IType temp = head;
-            head             = next[head];
-
-            next[temp]    = -1;
-            lhs_row[temp] = 0;
+            next[col]    = -1;
+            lhs_row[col] = 0;
             if (!same_lhs_rhs)
-              rhs_row[temp] = 0;
+              rhs_row[col] = 0;
           }
 
           row_ptr_out[i + 1] = nnz;
         }
+        output.set_aux_shape(csr::kIdx, mshadow::Shape1(nnz));
       });
     });
   });
@@ -638,6 +640,7 @@ void ElemwiseBinaryOp::DnsCsrCsrOp(const nnvm::NodeAttrs& attrs,
         });
       });
     });
+    CompactSparseZeros(s, output);
   } else {
     FillZerosCsrImpl(s, output);
   }

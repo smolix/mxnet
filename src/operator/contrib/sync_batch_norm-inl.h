@@ -92,26 +92,40 @@ class SharedND {
   }
 
   ~SharedND() {
-    if (data_inited_)
+    if (data_inited_) {
+      for (int i = 0; i < num_devices_; i++) {
+        mshadow::FreeSpace(&data_[i]);
+      }
       mshadow::FreeSpace(&mean_);
+    }
     delete[] flag_;
     delete[] data_;
   }
 
   void Init(mshadow::Shape<1> shape) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!data_inited_) {
-      for (int i = 0; i < num_devices_; i++) {
-        data_[i] = mshadow::NewTensor<cpu, real_t>(shape, 0.0f);
+    if (data_inited_) {
+      if (data_[0].shape_[0] == shape[0]) {
+        return;
       }
-      mean_        = mshadow::NewTensor<cpu, real_t>(shape, 0.0f);
-      data_inited_ = true;
+      for (int i = 0; i < num_devices_; i++) {
+        mshadow::FreeSpace(&data_[i]);
+      }
+      mshadow::FreeSpace(&mean_);
+      memset(flag_, false, num_devices_ * sizeof(bool));
+      mean_ready_  = false;
+      data_inited_ = false;
     }
+    for (int i = 0; i < num_devices_; i++) {
+      data_[i] = mshadow::NewTensor<cpu, real_t>(shape, 0.0f);
+    }
+    mean_        = mshadow::NewTensor<cpu, real_t>(shape, 0.0f);
+    data_inited_ = true;
   }
 
   T* Retrieve(mshadow::Shape<1> shape, int index) {
     // Retrieve a pointer for copying values
-    if (!data_inited_) {
+    if (!data_inited_ || data_[0].shape_[0] != shape[0]) {
       Init(shape);
     }
     if (flag_[index] == false) {
@@ -567,10 +581,9 @@ class SyncBatchNormProp : public OperatorProperty {
     CHECK_GE(in_type->size(), 1U);
     int dtype = (*in_type)[0];
     CHECK_NE(dtype, -1) << "First input must have specified type";
-    // For float16 input type beta, gamma, mean, and average are stored in float32.
-    // For other input types, these parameters have the same type as input
-    // NOTE: This requirement is from cuDNN (v. 4 and 5)
-    int dtype_param = (dtype == kFloat16) ? kFloat32 : dtype;
+    CHECK_EQ(dtype, kFloat32) << "SyncBatchNorm only supports float32 input; "
+                              << "float16/FP16 and other dtypes are unsupported";
+    int dtype_param = dtype;
     for (size_t i = 1; i < in_type->size(); ++i) {
       if ((*in_type)[i] == -1) {
         (*in_type)[i] = dtype_param;

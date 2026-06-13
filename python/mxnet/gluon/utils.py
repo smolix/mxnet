@@ -105,7 +105,22 @@ def split_and_load(data, ctx_list, batch_axis=0, even_split=True):
     """
     array_fn = _mx_np.array if is_np_array() else ndarray.array
     if not isinstance(data, ndarray.NDArray):
-        data = array_fn(data, ctx=ctx_list[0])
+        if len(ctx_list) == 1:
+            data = array_fn(data, ctx=ctx_list[0])
+        else:
+            np_data = np.asarray(data)
+            size = np_data.shape[batch_axis]
+            if even_split and size % len(ctx_list) != 0:
+                raise ValueError(
+                    f"data with shape {str(np_data.shape)} cannot be evenly split into {len(ctx_list)} " \
+                    f"slices along axis {batch_axis}. Use a batch size that is a multiple of " \
+                    f"{len(ctx_list)} or set even_split=False to allow uneven partitioning of data.")
+            n_each_section, extras = divmod(size, len(ctx_list))
+            section_sizes = [0] + (extras * [n_each_section + 1] +
+                                   (len(ctx_list) - extras) * [n_each_section])
+            div_points = np.array(section_sizes).cumsum()
+            slices = np.split(np_data, indices_or_sections=list(div_points[1: -1]), axis=batch_axis)
+            return [array_fn(i, ctx=ctx) for i, ctx in zip(slices, ctx_list)]
     def move_to_device(arr, ctx):
         return arr.to_device(ctx) if isinstance(arr, _mx_np.ndarray) else arr.as_in_context(ctx)
     if len(ctx_list) == 1:

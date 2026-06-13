@@ -17,8 +17,10 @@
 
 """Namespace for ops used in imperative programming."""
 
+import numpy as _np
 from ..ndarray import numpy as _mx_nd_np
 from ..random import seed
+from ..base import integer_types
 from ..util import wrap_ctx_to_device_func
 
 
@@ -28,6 +30,21 @@ __all__ = ["randint", "uniform", "normal", "choice", "rand", "multinomial", "mul
            "shuffle", "randn", "gamma", "beta", "chisquare", "exponential", "lognormal",
            "weibull", "pareto", "power", "rayleigh",
            "seed"]
+
+
+def _choice_size_product(size):
+    if size is None:
+        return 1
+    if isinstance(size, (integer_types, _np.integer)):
+        return int(size)
+    if not isinstance(size, (tuple, list)):
+        return None
+    sample_count = 1
+    for dim in size:
+        if not isinstance(dim, (integer_types, _np.integer)):
+            return None
+        sample_count *= int(dim)
+    return sample_count
 
 
 @wrap_ctx_to_device_func
@@ -563,6 +580,20 @@ def choice(a, size=None, replace=True, p=None, device=None, out=None):
     >>> np.random.choice(5, 3, replace=False, p=[0.1, 0, 0.3, 0.6, 0])
     array([2, 3, 0])
     """
+    sample_count = _choice_size_product(size)
+    if (p is None and not replace and
+            isinstance(a, (integer_types, _np.integer)) and
+            size is not None and sample_count == int(a)):
+        sample = _mx_nd_np.argsort(_mx_nd_np.random.uniform(0.0, 1.0, size=(int(a),),
+                                                            device=device))
+        if not isinstance(size, (integer_types, _np.integer)):
+            sample_shape = tuple(int(dim) for dim in size)
+            if sample_shape != sample.shape:
+                sample = sample.reshape(sample_shape)
+        if out is not None:
+            out[:] = sample
+            return out
+        return sample
     return _mx_nd_np.random.choice(a, size, replace, p, device, out)
 
 

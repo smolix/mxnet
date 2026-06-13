@@ -258,18 +258,23 @@ ThreadedOpr* ThreadedEngine::NewOperator(ThreadedEngine::AsyncFn fn,
   ret->opr_name = opr_name ? std::string(opr_name) : std::string();
   ret->fn       = std::move(fn);
   ret->prop     = prop;
-  ret->const_vars.resize(const_vars.size());
-  ret->mutable_vars.resize(mutable_vars.size());
+  std::vector<VarHandle> dedup_const_vars(const_vars);
+  std::vector<VarHandle> dedup_mutable_vars(mutable_vars);
+  DeduplicateVarHandle(&dedup_const_vars, &dedup_mutable_vars);
+  ret->const_vars.resize(dedup_const_vars.size());
+  ret->mutable_vars.resize(dedup_mutable_vars.size());
   ret->wait = wait;
-  std::transform(
-      const_vars.begin(), const_vars.end(), ret->const_vars.begin(), ThreadedVar::CastFromBase);
-  std::transform(mutable_vars.begin(),
-                 mutable_vars.end(),
+  std::transform(dedup_const_vars.begin(),
+                 dedup_const_vars.end(),
+                 ret->const_vars.begin(),
+                 ThreadedVar::CastFromBase);
+  std::transform(dedup_mutable_vars.begin(),
+                 dedup_mutable_vars.end(),
                  ret->mutable_vars.begin(),
                  ThreadedVar::CastFromBase);
   // L13: always-on. Duplicate vars otherwise surface as a nondeterministic
   // engine hang in release builds (ENGINE_DEBUG=0) instead of a clear fatal.
-  CheckDuplicate(const_vars, mutable_vars);
+  CheckDuplicate(dedup_const_vars, dedup_mutable_vars);
   return ret;
 }
 

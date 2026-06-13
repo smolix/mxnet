@@ -390,7 +390,7 @@ inline void pool_sum_1d_ncw_cpu(const DType* in_data,
                                 DType* out_data,
                                 const bool get_avg           = false,
                                 const bool count_include_pad = true) {
-  using AccType                 = typename PoolingTypes<DType>::AccType;
+  using AccType                 = typename PoolingAccumTypes<DType, p>::AccType;
   const int width               = ishape[2];
   const int pooled_width        = oshape[2];
   const int kernel_w            = kernel[0];
@@ -435,7 +435,7 @@ inline void pool_sum_1d_nwc_cpu(const DType* in_data,
                                 DType* out_data,
                                 const bool get_avg           = false,
                                 const bool count_include_pad = true) {
-  using AccType                 = typename PoolingTypes<DType>::AccType;
+  using AccType                 = typename PoolingAccumTypes<DType, p>::AccType;
   const int width               = ishape[1];
   const int pooled_width        = oshape[1];
   const int kernel_w            = kernel[0];
@@ -483,7 +483,7 @@ inline void pool_sum_2d_nchw_cpu(const DType* in_data,
                                  DType* out_data,
                                  const bool get_avg           = false,
                                  const bool count_include_pad = true) {
-  using AccType    = typename PoolingTypes<DType>::AccType;
+  using AccType    = typename PoolingAccumTypes<DType, p>::AccType;
   const int height = ishape[2], width = ishape[3];
   const int pooled_height = oshape[2], pooled_width = oshape[3];
   const int kernel_h = kernel[0], kernel_w = kernel[1];
@@ -536,7 +536,7 @@ inline void pool_sum_2d_nhwc_cpu(const DType* in_data,
                                  DType* out_data,
                                  const bool get_avg           = false,
                                  const bool count_include_pad = true) {
-  using AccType    = typename PoolingTypes<DType>::AccType;
+  using AccType    = typename PoolingAccumTypes<DType, p>::AccType;
   const int height = ishape[1], width = ishape[2];
   const int pooled_height = oshape[1], pooled_width = oshape[2];
   const int kernel_h = kernel[0], kernel_w = kernel[1];
@@ -594,7 +594,7 @@ inline void pool_sum_3d_ncdhw_cpu(const DType* in_data,
                                   DType* out_data,
                                   const bool get_avg           = false,
                                   const bool count_include_pad = true) {
-  using AccType   = typename PoolingTypes<DType>::AccType;
+  using AccType   = typename PoolingAccumTypes<DType, p>::AccType;
   const int depth = ishape[2], height = ishape[3], width = ishape[4];
   const int pooled_depth = oshape[2], pooled_height = oshape[3], pooled_width = oshape[4];
   const int kernel_d = kernel[0], kernel_h = kernel[1], kernel_w = kernel[2];
@@ -657,7 +657,7 @@ inline void pool_sum_3d_ndhwc_cpu(const DType* in_data,
                                   DType* out_data,
                                   const bool get_avg           = false,
                                   const bool count_include_pad = true) {
-  using AccType   = typename PoolingTypes<DType>::AccType;
+  using AccType   = typename PoolingAccumTypes<DType, p>::AccType;
   const int depth = ishape[1], height = ishape[2], width = ishape[3];
   const int pooled_depth = oshape[1], pooled_height = oshape[2], pooled_width = oshape[3];
   const int kernel_d = kernel[0], kernel_h = kernel[1], kernel_w = kernel[2];

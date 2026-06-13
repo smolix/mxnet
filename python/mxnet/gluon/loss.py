@@ -31,6 +31,10 @@ from ..util import use_np
 from .. import np, npx
 
 
+def _finite_for_logit_loss(pred):
+    return np.nan_to_num(pred, nan=0.0, posinf=88.0, neginf=-88.0)
+
+
 def _apply_weighting(loss, weight=None, sample_weight=None):
     """Apply weighting to loss.
 
@@ -53,11 +57,14 @@ def _apply_weighting(loss, weight=None, sample_weight=None):
         Weighted loss
     """
     if sample_weight is not None:
-        loss = loss * sample_weight
+        loss = np.where(sample_weight == 0, np.zeros_like(loss), loss * sample_weight)
 
     if weight is not None:
         assert isinstance(weight, numeric_types), "weight must be a number"
-        loss = loss * weight
+        if weight == 0:
+            loss = np.zeros_like(loss)
+        else:
+            loss = loss * weight
 
     return loss
 
@@ -147,7 +154,10 @@ class L2Loss(Loss):
 
     def forward(self, pred, label, sample_weight=None):
         label = npx.reshape_like(label, pred)
-        loss = np.square(label - pred)
+        diff = label - pred
+        if sample_weight is not None:
+            diff = diff * (sample_weight != 0).astype(diff.dtype)
+        loss = np.square(diff)
         loss = _apply_weighting(loss, self._weight / 2, sample_weight)
         return _batch_mean(loss, self._batch_axis)
 
@@ -260,16 +270,16 @@ class SigmoidBinaryCrossEntropyLoss(Loss):
     def forward(self, pred, label, sample_weight=None, pos_weight=None):
         label = npx.reshape_like(label, pred)
         if not self._from_sigmoid:
+            pred = _finite_for_logit_loss(pred)
+            zeros = np.zeros_like(pred)
+            pos_loss = npx.activation(-pred, act_type='softrelu')
+            neg_loss = npx.activation(pred, act_type='softrelu')
             if pos_weight is None:
-                # We use the stable formula: max(x, 0) - x * z + log(1 + exp(-abs(x)))
-                loss = npx.relu(pred) - pred * label + \
-                    npx.activation(-np.abs(pred), act_type='softrelu')
+                loss = np.where(label == 0, zeros, label * pos_loss) + \
+                    np.where(label == 1, zeros, (1 - label) * neg_loss)
             else:
-                # We use the stable formula: x - x * z + (1 + z * pos_weight - z) * \
-                #    (log(1 + exp(-abs(x))) + max(-x, 0))
-                log_weight = 1 + np.multiply(pos_weight - 1, label)
-                loss = pred - pred * label + log_weight * \
-                       (npx.activation(-np.abs(pred), act_type='softrelu') + npx.relu(-pred))
+                loss = np.where(label == 0, zeros, pos_weight * label * pos_loss) + \
+                    np.where(label == 1, zeros, (1 - label) * neg_loss)
         else:
             eps = 1e-12
             if pos_weight is None:
@@ -365,6 +375,7 @@ class SoftmaxCrossEntropyLoss(Loss):
             loss = -npx.pick(pred, label, axis=self._axis, keepdims=True)
         else:
             label = npx.reshape_like(label, pred)
+            pred = _finite_for_logit_loss(pred)
             loss = -(pred * label).sum(axis=self._axis, keepdims=True)
         loss = _apply_weighting(loss, self._weight, sample_weight)
         return _batch_mean(loss, self._batch_axis)
@@ -444,7 +455,9 @@ class KLDivLoss(Loss):
     def forward(self, pred, label, sample_weight=None):
         if not self._from_logits:
             pred = npx.log_softmax(pred, self._axis)
-        loss = label * (np.log(label + 1e-12) - pred)
+        safe_label = np.maximum(label, 1e-12)
+        loss = label * (np.log(safe_label) - pred)
+        loss = np.nan_to_num(loss, nan=0.0)
         loss = _apply_weighting(loss, self._weight, sample_weight)
         return _batch_mean(loss, self._batch_axis)
 
@@ -521,6 +534,8 @@ class CTCLoss(Loss):
     def forward(self, pred, label, pred_lengths=None, label_lengths=None, sample_weight=None):
         if self._layout == 'NTC':
             pred = np.swapaxes(pred, 0, 1)
+        if pred.dtype == _np.float16:
+            pred = pred.astype('float32')
         if self._batch_axis == 1:
             label = np.swapaxes(label, 0, 1)
         loss = npx.ctc_loss(pred, label, pred_lengths, label_lengths,
@@ -575,8 +590,9 @@ class HuberLoss(Loss):
     def forward(self, pred, label, sample_weight=None):
         label = npx.reshape_like(label, pred)
         loss = np.abs(label - pred)
-        loss = np.where(loss > self._rho, loss - 0.5 * self._rho,
-                        (0.5 / self._rho) * np.square(loss))
+        quadratic = np.minimum(loss, self._rho)
+        linear = loss - quadratic
+        loss = linear + (0.5 / self._rho) * np.square(quadratic)
         loss = _apply_weighting(loss, self._weight, sample_weight)
         return _batch_mean(loss, self._batch_axis)
 
@@ -668,7 +684,10 @@ class SquaredHingeLoss(Loss):
 
     def forward(self, pred, label, sample_weight=None):
         label = npx.reshape_like(label, pred)
-        loss = np.square(npx.relu(self._margin - pred * label))
+        margin = npx.relu(self._margin - pred * label)
+        if sample_weight is not None:
+            margin = margin * (sample_weight != 0).astype(margin.dtype)
+        loss = np.square(margin)
         loss = _apply_weighting(loss, self._weight, sample_weight)
         return _batch_mean(loss, self._batch_axis)
 
@@ -719,9 +738,12 @@ class LogisticLoss(Loss):
         label = npx.reshape_like(label, pred)
         if self._label_format == 'signed':
             label = (label + 1.0) / 2.0  # Transform label to be either 0 or 1
-        # Use a stable formula in computation
-        loss = npx.relu(pred) - pred * label + \
-            npx.activation(-np.abs(pred), act_type='softrelu')
+        pred = _finite_for_logit_loss(pred)
+        zeros = np.zeros_like(pred)
+        pos_loss = npx.activation(-pred, act_type='softrelu')
+        neg_loss = npx.activation(pred, act_type='softrelu')
+        loss = np.where(label == 0, zeros, label * pos_loss) + \
+            np.where(label == 1, zeros, (1 - label) * neg_loss)
         loss = _apply_weighting(loss, self._weight, sample_weight)
         return _batch_mean(loss, self._batch_axis)
 
@@ -768,7 +790,7 @@ class TripletLoss(Loss):
     def forward(self, pred, positive, negative, sample_weight=None):
         positive = npx.reshape_like(positive, pred)
         negative = npx.reshape_like(negative, pred)
-        loss = _batch_sum(np.square(positive - pred) - np.square(negative - pred), self._batch_axis)
+        loss = _batch_sum((positive - negative) * (positive + negative - 2 * pred), self._batch_axis)
         loss = npx.relu(loss + self._margin)
         return _apply_weighting(loss, self._weight, sample_weight)
 
@@ -822,15 +844,16 @@ class PoissonNLLLoss(Loss):
     def forward(self, pred, target, sample_weight=None, epsilon=1e-08):
         target = npx.reshape_like(target, pred)
         if self._from_logits:
+            pred = _finite_for_logit_loss(pred)
             loss = np.exp(pred) - target * pred
         else:
             loss = pred - target * np.log(pred + epsilon)
         if self._compute_full:
             # Using numpy's pi value
-            stirling_factor = target * \
-                np.log(target) - target + 0.5 * np.log(2 * target * _np.pi)
-            target_gt_1 = target > 1
-            stirling_factor = stirling_factor * target_gt_1
+            safe_target = np.maximum(target, 1)
+            stirling_factor = safe_target * \
+                np.log(safe_target) - safe_target + 0.5 * np.log(2 * safe_target * _np.pi)
+            stirling_factor = np.where(target > 1, stirling_factor, np.zeros_like(stirling_factor))
             loss = loss + stirling_factor
         loss = _apply_weighting(loss, self._weight, sample_weight)
         return _batch_mean(loss, self._batch_axis)
@@ -889,11 +912,15 @@ class CosineEmbeddingLoss(Loss):
         return _batch_mean(loss, self._batch_axis)
 
     def _cosine_similarity(self, x, y, axis=-1):
-        # Calculates the cosine similarity between 2 vectors
-        x_norm = npx.reshape(npx.norm(x, axis=axis), (-1, 1))
-        y_norm = npx.reshape(npx.norm(y, axis=axis), (-1, 1))
-        x_dot_y = npx.reshape(np.sum(x * y, axis=axis), (-1, 1))
+        # Scale each vector before dot/norm so large finite inputs do not overflow.
         eps_arr = np.full((1, 1), 1e-12)
+        x_scale = np.maximum(np.max(np.abs(x), axis=axis, keepdims=True), eps_arr)
+        y_scale = np.maximum(np.max(np.abs(y), axis=axis, keepdims=True), eps_arr)
+        x_scaled = x / x_scale
+        y_scaled = y / y_scale
+        x_norm = npx.reshape(np.sqrt(np.sum(x_scaled * x_scaled, axis=axis)), (-1, 1))
+        y_norm = npx.reshape(np.sqrt(np.sum(y_scaled * y_scaled, axis=axis)), (-1, 1))
+        x_dot_y = npx.reshape(np.sum(x_scaled * y_scaled, axis=axis), (-1, 1))
         return (x_dot_y / np.maximum(x_norm * y_norm, eps_arr))
 
 

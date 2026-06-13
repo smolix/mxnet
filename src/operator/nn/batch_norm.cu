@@ -284,11 +284,33 @@ __launch_bounds__(inference_forward_threads) __global__
     }
 
     output_aligned[i] = scratch.aligned;
+  }
 
-    if (i < num_channels) {
-      saveMean[i]   = runningMean[i];
-      saveInvStd[i] = variance_to_invstd(runningVar[i], epsilon);
-    }
+  for (index_t idx = (size / nvec) * nvec + tid; idx < size; idx += stride) {
+    index_t my_channel = (idx % (inner_size * num_channels)) / inner_size;
+    AType current_input = static_cast<AType>(input[idx]);
+    AType invstd = small_num_channels ? saved_invstd[my_channel] :
+                                        variance_to_invstd(runningVar[my_channel], epsilon);
+    AType mean = small_num_channels ? saved_mean[my_channel] : runningMean[my_channel];
+    AType gamma = small_num_channels ?
+                      saved_weight[my_channel] :
+                      ((weight != nullptr && (flags & FIX_GAMMA_FLAG) == 0) ? weight[my_channel] : 1);
+    AType beta = small_num_channels ? saved_bias[my_channel] : ((bias != nullptr) ? bias[my_channel] : 0);
+    output[idx] = static_cast<DType>(gamma * (current_input - mean) * invstd + beta);
+  }
+}
+
+template <typename AccReal>
+__global__ void BatchNormalizationSetInferenceStatsKernel(const AccReal* runningMean,
+                                                          const AccReal* runningVar,
+                                                          AccReal* saveMean,
+                                                          AccReal* saveInvStd,
+                                                          const index_t channelCount,
+                                                          double eps) {
+  const index_t i = threadIdx.x + blockIdx.x * blockDim.x;
+  if (i < channelCount) {
+    saveMean[i] = runningMean[i];
+    saveInvStd[i] = variance_to_invstd(runningVar[i], eps);
   }
 }
 
@@ -307,17 +329,23 @@ __global__ void BatchNormalizationUpdateOutputKernel(DeviceTensor input,
   const int plane = blockIdx.x;
   const int N     = input.OuterSize() * input.InnerSize();
 
-  const AccReal norm = AccReal(1) / N;
+  const double norm = 1.0 / N;
 
-  // Compute the mean and variance across (batch, x/y/z)
-  const AccReal mean =
-      reduce<AccReal>(SumOp<DType, AccReal, DeviceTensor>(input), input, plane) * norm;
+  // Compute the mean and variance across (batch, x/y/z) in double precision so
+  // that large-finite float32 inputs do not overflow while summing the data or
+  // the centered squares (mirrors the CPU double-accumulation fix). The stored
+  // statistics are converted back to AccReal afterwards, and the elementwise
+  // output normalization below stays in AccReal.
+  const double mean_acc =
+      reduce<double>(SumOp<DType, double, DeviceTensor>(input), input, plane) * norm;
   __syncthreads();
-  const AccReal varN =
-      reduce<AccReal>(VarOp<DType, AccReal, DeviceTensor>(mean, input), input, plane);
+  const double varN_acc =
+      reduce<double>(VarOp<DType, double, DeviceTensor>(mean_acc, input), input, plane);
+  const AccReal mean = ScalarConvert<double, AccReal>::to(mean_acc);
   AccReal invStd = 0;
-  if (varN != AccReal(0) || epsilon != AccReal(0)) {
-    invStd = AccReal(1.0) / sqrt(varN * norm + epsilon);
+  if (varN_acc != 0.0 || epsilon != AccReal(0)) {
+    invStd = ScalarConvert<double, AccReal>::to(
+        1.0 / sqrt(varN_acc * norm + static_cast<double>(epsilon)));
   }
 
   // Save the mean, variance, and moving averages
@@ -334,7 +362,8 @@ __global__ void BatchNormalizationUpdateOutputKernel(DeviceTensor input,
     runningMean[plane] =
         runningMean[plane] * momentum + mean * (AccReal(1) - momentum);
     runningVar[plane] =
-        runningVar[plane] * momentum + varN * norm * (AccReal(1) - momentum);
+        runningVar[plane] * momentum +
+        ScalarConvert<double, AccReal>::to(varN_acc * norm) * (AccReal(1) - momentum);
   }
 
   // Write normalized and update the output
@@ -819,11 +848,19 @@ static void BatchNormalizationUpdateOutput(mshadow::Stream<gpu>* s,
   DCHECK_GT(weight.numElements(), 0);
 
   if ((flags & IS_TRAINING_FLAG) == 0 || (flags & USE_GLOBAL_STATS_FLAG) != 0) {
+    constexpr int stat_threads = 256;
+    const int stat_blocks = (input.ChannelCount() + stat_threads - 1) / stat_threads;
+    BatchNormalizationSetInferenceStatsKernel<AccReal>
+        <<<stat_blocks, stat_threads, 0, mshadow::Stream<gpu>::GetStream(s)>>>(runningMean.dptr_,
+                                                                               runningVar.dptr_,
+                                                                               saveMean.dptr_,
+                                                                               saveInvStd.dptr_,
+                                                                               input.ChannelCount(),
+                                                                               eps);
     AccReal* bias_ptr    = bias.numElements() > 0 ? bias.dptr_ : nullptr;
     AccReal* gamma_ptr   = weight.numElements() > 0 ? weight.dptr_ : nullptr;
     int nvec             = sizeof(double) / sizeof(DType);
     index_t size         = input.InnerSize() * input.OuterSize() * input.ChannelCount();
-    index_t aligned_size = ((size + nvec - 1) / nvec) * nvec;
     index_t blocks =
         std::min((size + nvec * inference_forward_threads - 1) / (nvec * inference_forward_threads),
                  static_cast<index_t>(512));
@@ -832,7 +869,7 @@ static void BatchNormalizationUpdateOutput(mshadow::Stream<gpu>* s,
           <<<blocks, inference_forward_threads, 0, mshadow::Stream<gpu>::GetStream(s)>>>(
               input.dptr_,
               output.dptr_,
-              aligned_size,
+              size,
               input.OuterSize(),
               input.ChannelCount(),
               input.InnerSize(),
@@ -849,7 +886,7 @@ static void BatchNormalizationUpdateOutput(mshadow::Stream<gpu>* s,
           <<<blocks, inference_forward_threads, 0, mshadow::Stream<gpu>::GetStream(s)>>>(
               input.dptr_,
               output.dptr_,
-              aligned_size,
+              size,
               input.OuterSize(),
               input.ChannelCount(),
               input.InnerSize(),

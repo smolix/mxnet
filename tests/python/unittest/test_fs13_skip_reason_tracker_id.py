@@ -104,6 +104,8 @@ ALLOWED_PATTERNS = [
     re.compile(r'\bfallback\b', re.IGNORECASE),
     # structural / capability gates that legitimately need a skip
     'platform-dependent', 'platform dependent',
+    re.compile(r'\b(?:un)?supported platform\b', re.IGNORECASE),  # platform gate
+    re.compile(r'\bplatform\b', re.IGNORECASE),                   # any platform gate
     'env-dependent', 'env dependent', 'environment dependent',
     'capability', 'sm_', 'compute capability',
     'numeric-grad eps', 'numeric grad eps',

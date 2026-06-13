@@ -109,6 +109,7 @@ NNVM_REGISTER_OP(_backward_npi_broadcast_div)
                                 [](const NodeAttrs& attrs) {
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
                                 })
+    .set_attr<mxnet::FInferShape>("FInferShape", BinaryBroadcastBackwardShape)
     .set_attr<FCompute>("FCompute<cpu>",
                         NumpyBinaryBackwardUseIn<cpu, mshadow_op::div_grad, mshadow_op::div_rgrad>);
 

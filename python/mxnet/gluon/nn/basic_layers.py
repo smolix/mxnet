@@ -28,7 +28,7 @@ import numpy as _np
 from .activations import Activation
 from ..block import Block, HybridBlock
 from ..utils import _indent
-from ... import np, npx, device as _device
+from ... import np, npx, device as _device, autograd
 from ...util import use_np
 from ..parameter import Parameter
 from ...ndarray import get_dtype_name
@@ -292,6 +292,13 @@ class Dropout(HybridBlock):
                         **self.__dict__)
 
 
+def _canonical_axis(axis, ndim):
+    axis = axis if axis >= 0 else axis + ndim
+    if axis < 0 or axis >= ndim:
+        raise ValueError("Channel axis out of range: axis={}".format(axis))
+    return axis
+
+
 @use_np
 class _BatchNorm(HybridBlock):
     """Abstract BatchNorm layer (private, used as implementation base).
@@ -380,10 +387,17 @@ class _BatchNorm(HybridBlock):
 
     def forward(self, x):
         device = x.device
-        return npx.batch_norm(x, self.gamma.data(device), self.beta.data(device),
-                                  self.running_mean.data(device),
-                                  self.running_var.data(device),
-                                  name='fwd', **self._kwargs)
+        gamma = self.gamma.data(device)
+        beta = self.beta.data(device)
+        running_mean = self.running_mean.data(device)
+        running_var = self.running_var.data(device)
+        if (self.gamma.grad_req == 'null' and self.beta.grad_req == 'null'
+                and autograd.is_recording()):
+            with autograd.pause():
+                beta = np.zeros_like(beta)
+            beta.attach_grad()
+        return npx.batch_norm(x, gamma, beta, running_mean, running_var,
+                              name='fwd', **self._kwargs)
 
     def infer_shape(self, x, *args):
         channel_axis = self._axis if self._axis >= 0 else self._axis + x.ndim
@@ -612,23 +626,44 @@ class InstanceNorm(HybridBlock):
         self._epsilon = epsilon
         self.gamma = Parameter('gamma', grad_req='write' if scale else 'null',
                                shape=(in_channels,), init=gamma_initializer,
-                               allow_deferred_init=True)
+                               allow_deferred_init=True,
+                               differentiable=scale)
         self.beta = Parameter('beta', grad_req='write' if center else 'null',
                               shape=(in_channels,), init=beta_initializer,
-                              allow_deferred_init=True)
+                              allow_deferred_init=True,
+                              differentiable=center)
 
     def forward(self, x):
         device = x.device
-        if self._axis == 1:
-            return npx.instance_norm(x, self.gamma.data(device), self.beta.data(device),
-                                     name='fwd', eps=self._epsilon)
-        x = x.swapaxes(1, self._axis)
-        return npx.instance_norm(x, self.gamma.data(device), self.beta.data(device),
-                                 name='fwd', eps=self._epsilon).swapaxes(1, self._axis)
+        original_axis = self._axis
+        if self._axis != 1:
+            x = x.swapaxes(1, self._axis)
+
+        gamma = self.gamma.data(device)
+        beta = self.beta.data(device)
+        if hasattr(x, "asnumpy"):
+            axes = tuple(range(2, x.ndim))
+            x64 = x.astype("float64")
+            mean = x64.mean(axis=axes, keepdims=True)
+            centered = x64 - mean
+            var = (centered * centered).mean(axis=axes, keepdims=True)
+            out = centered / np.sqrt(var + self._epsilon)
+            broadcast_shape = (1, x.shape[1]) + (1,) * (x.ndim - 2)
+            out = out * gamma.astype("float64").reshape(broadcast_shape)
+            out = out + beta.astype("float64").reshape(broadcast_shape)
+            out = out.astype(x.dtype)
+        else:
+            out = npx.instance_norm(x, gamma, beta, name="fwd", eps=self._epsilon)
+
+        if original_axis != 1:
+            out = out.swapaxes(1, original_axis)
+        return out
 
     def infer_shape(self, x, *args):
-        self.gamma.shape = (x.shape[1],)
-        self.beta.shape = (x.shape[1],)
+        channel_axis = self._axis if self._axis >= 0 else self._axis + x.ndim
+        channel_count = x.shape[channel_axis]
+        self.gamma.shape = (channel_count,)
+        self.beta.shape = (channel_count,)
 
     def __repr__(self):
         s = '{name}({content}'
@@ -705,14 +740,16 @@ class LayerNorm(HybridBlock):
         self._scale = scale
         self.gamma = Parameter('gamma', grad_req='write' if scale else 'null',
                                shape=(in_channels,), init=gamma_initializer,
-                               allow_deferred_init=True)
+                               allow_deferred_init=True,
+                               differentiable=scale)
         self.beta = Parameter('beta', grad_req='write' if center else 'null',
                               shape=(in_channels,), init=beta_initializer,
-                              allow_deferred_init=True)
+                              allow_deferred_init=True,
+                              differentiable=center)
 
     def forward(self, data):
         device = data.device
-        channel_axis = self._axis if self._axis >= 0 else self._axis + data.ndim
+        channel_axis = _canonical_axis(self._axis, data.ndim)
         channel_count = data.shape[channel_axis]
         gamma = self.gamma.data(device) if self._scale else np.ones((channel_count,),
                                                                     dtype=data.dtype,
@@ -723,7 +760,7 @@ class LayerNorm(HybridBlock):
         return npx.layer_norm(data, gamma=gamma, beta=beta, axis=self._axis, eps=self._epsilon)
 
     def infer_shape(self, data, *args):
-        channel_axis = self._axis if self._axis >= 0 else self._axis + data.ndim
+        channel_axis = _canonical_axis(self._axis, data.ndim)
         channel_count = data.shape[channel_axis]
         self.gamma.shape = (channel_count,)
         self.beta.shape = (channel_count,)
@@ -803,6 +840,8 @@ class GroupNorm(HybridBlock):
                  beta_initializer='zeros', gamma_initializer='ones',
                  in_channels=0):
         super(GroupNorm, self).__init__()
+        if num_groups <= 0:
+            raise ValueError("num_groups must be positive")
         self._kwargs = {'eps': epsilon, 'num_groups': num_groups, 'center': center, 'scale': scale}
         self._num_groups = num_groups
         self._epsilon = epsilon
@@ -810,10 +849,12 @@ class GroupNorm(HybridBlock):
         self._scale = scale
         self.gamma = Parameter('gamma', grad_req='write' if scale else 'null',
                                shape=(in_channels,), init=gamma_initializer,
-                               allow_deferred_init=True)
+                               allow_deferred_init=True,
+                               differentiable=scale)
         self.beta = Parameter('beta', grad_req='write' if center else 'null',
                               shape=(in_channels,), init=beta_initializer,
-                              allow_deferred_init=True)
+                              allow_deferred_init=True,
+                              differentiable=center)
 
     def forward(self, data):
         device = data.device
@@ -823,9 +864,8 @@ class GroupNorm(HybridBlock):
         beta = self.beta.data(device) if self._center else np.zeros((data.shape[1],),
                                                                     dtype=data.dtype,
                                                                     device=device)
-        norm_data = npx.group_norm(data, gamma=gamma, beta=beta,
-                                   num_groups=self._num_groups, eps=self._epsilon)
-        return norm_data
+        return npx.group_norm(data, gamma=gamma, beta=beta,
+                              num_groups=self._num_groups, eps=self._epsilon)
 
     def infer_shape(self, data, *args):
         self.gamma.shape = (data.shape[1],)
@@ -1106,6 +1146,20 @@ class SyncBatchNorm(BatchNorm):
 
     def forward(self, x):
         device = x.device
-        return npx.sync_batch_norm(x, self.gamma.data(device), self.beta.data(device),
-                                   self.running_mean.data(device), self.running_var.data(device),
+        gamma = self.gamma.data(device)
+        beta = self.beta.data(device)
+        running_mean = self.running_mean.data(device)
+        running_var = self.running_var.data(device)
+        if (self.gamma.grad_req == 'null' and self.beta.grad_req == 'null'
+                and autograd.is_recording()):
+            with autograd.pause():
+                beta = np.zeros_like(beta)
+            beta.attach_grad()
+        if self._kwargs['ndev'] == 1:
+            kwargs = dict(self._kwargs)
+            kwargs.pop('ndev')
+            kwargs.pop('key')
+            return npx.batch_norm(x, gamma, beta, running_mean, running_var,
+                                  name='fwd', **kwargs)
+        return npx.sync_batch_norm(x, gamma, beta, running_mean, running_var,
                                    name='fwd', **self._kwargs)

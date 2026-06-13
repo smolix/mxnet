@@ -764,7 +764,7 @@ def test_shape_array():
         xa = mx.nd.array(np.random.ranf(shape))
         xg = mx.nd.empty(xa.shape)
         ya = np.shape(xa)
-        yg = mx.nd.ones(ya)
+        yg = mx.nd.ones((len(ya),))
         exe = y._bind(ctx=default_device(), args={'x': xa},
                      args_grad={'x': xg})
         exe.forward(is_train=True)
@@ -781,7 +781,7 @@ def test_size_array():
         xa = mx.nd.array(np.random.ranf(shape))
         xg = mx.nd.empty(xa.shape)
         ya = np.size(xa)
-        yg = mx.nd.ones(ya)
+        yg = mx.nd.ones((1,))
         exe = y._bind(ctx=default_device(), args={'x': xa},
                      args_grad={'x': xg})
         exe.forward(is_train=True)
@@ -4407,7 +4407,7 @@ def test_order():
 
     b = mx.sym.argmax(a, axis=1, keepdims=True)
     check_symbolic_backward(sym=b, location={'a': a_npy},
-                            out_grads=[np.random.normal(size=(5, 5, 5, 5))],
+                            out_grads=[np.random.normal(size=(5, 1, 5, 5))],
                             expected=[np.zeros((5, 5, 5, 5))])
     check_symbolic_forward(b, location={'a': a_npy},
                            expected=[gt_topk(dat=a_npy, axis=1, ret_typ="indices", k=1,
@@ -4415,7 +4415,7 @@ def test_order():
 
     b = mx.sym.argmin(a, axis=1, keepdims=True)
     check_symbolic_backward(sym=b, location={'a': a_npy},
-                            out_grads=[np.random.normal(size=(5, 5, 5, 5))],
+                            out_grads=[np.random.normal(size=(5, 1, 5, 5))],
                             expected=[np.zeros((5, 5, 5, 5))])
     check_symbolic_forward(b, location={'a': a_npy},
                            expected=[gt_topk(dat=a_npy, axis=1, ret_typ="indices", k=1,
@@ -8345,7 +8345,7 @@ def test_multi_proposal_op():
 
         expected = [np.zeros_like(e) for e in location]
 
-        out_grads = [np.ones((rpn_post_nms_top_n, 5))]
+        out_grads = [np.ones((rpn_post_nms_top_n * batch_size, 5))]
 
         check_symbolic_backward(sym, location, out_grads, expected)
 
@@ -9453,7 +9453,7 @@ def test_index_array():
         index_array = mx.sym.contrib.index_array(data, axes=(2, 1))
 
         input_array = np.ones((0, 0, 0, 0))
-        expected = np.zeros((0, 0, 2))
+        expected = np.zeros((0, 0, 0, 0, 2))
 
         check_symbolic_forward(index_array, [input_array], [expected])
         check_symbolic_backward(index_array, [input_array], [np.ones(expected.shape)], [np.zeros_like(input_array)])

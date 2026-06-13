@@ -370,6 +370,7 @@ class BinaryScalarOp : public UnaryOp {
         (in_stype == kCSRStorage && out_stype == kCSRStorage)) {
       // csr -> csr, or rsp -> rsp
       UnaryOp::MapToFCompute<xpu>(attrs, ctx, inputs, req, outputs, Compute<xpu, OP>);
+      CompactSparseZeros(ctx.get_stream<xpu>(), outputs[0]);
     } else if (out_stype == kDefaultStorage &&
                (in_stype == kRowSparseStorage || in_stype == kCSRStorage)) {
       MSHADOW_TYPE_SWITCH(outputs[0].data().type_flag_, DType, {

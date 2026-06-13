@@ -95,6 +95,7 @@ NNVM_REGISTER_OP(_backward_broadcast_maximum)
                                 [](const NodeAttrs& attrs) {
                                   return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
                                 })
+    .set_attr<mxnet::FInferShape>("FInferShape", BinaryBroadcastBackwardShape)
     .set_attr<FCompute>("FCompute<cpu>",
                         BinaryBroadcastBackwardUseIn<cpu, mshadow_op::ge, mshadow_op::lt>);
 

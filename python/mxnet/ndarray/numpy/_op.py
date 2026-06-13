@@ -20,9 +20,9 @@
 """Namespace for numpy operators used in Gluon dispatched by F=ndarray."""
 
 import numpy as _np
-from ...base import numeric_types, integer_types
+from ...base import numeric_types, integer_types, MXNetError
 from ...util import _sanity_check_params, set_module
-from ...util import wrap_np_unary_func, wrap_np_binary_func
+from ...util import wrap_np_unary_func, wrap_np_binary_func, _check_same_device
 from ...util import is_np_default_dtype, dtype_from_number
 from ...device import current_device
 from . import _internal as _npi
@@ -183,6 +183,49 @@ def _normalize_axes(axes):
     return tuple(normalized)
 
 
+def _reshape_view(a, shape):
+    if isinstance(shape, (tuple, list)):
+        shape = tuple(shape)
+        if 0 in shape:
+            return _api_internal.reshape(a, shape, False, 'C')
+    if hasattr(a, 'reshape_view'):
+        return a.reshape_view(shape)
+    return a.reshape(shape)
+
+
+def _normalize_squeeze_axis(axis, ndim):
+    if axis is None:
+        return None
+    if isinstance(axis, _np.ndarray):
+        axis = axis.tolist()
+    if isinstance(axis, (integer_types, _np.integer)):
+        axis = int(axis)
+        if ndim == 0:
+            if axis in (-1, 0):
+                return tuple()
+            raise _np.AxisError(axis, ndim=ndim)
+        axis = (axis,)
+    elif isinstance(axis, (tuple, list)):
+        axis = tuple(axis)
+    else:
+        raise TypeError("'{}' object cannot be interpreted as an integer"
+                        .format(type(axis).__name__))
+
+    normalized = []
+    for ax in axis:
+        if not isinstance(ax, (integer_types, _np.integer)):
+            raise TypeError("'{}' object cannot be interpreted as an integer"
+                            .format(type(ax).__name__))
+        ax = int(ax)
+        if ax < -ndim or ax >= ndim:
+            raise _np.AxisError(ax, ndim=ndim)
+        ax = ax + ndim if ax < 0 else ax
+        if ax in normalized:
+            raise MXNetError("duplicate value in axis")
+        normalized.append(ax)
+    return tuple(normalized)
+
+
 def _normalize_repeat_repeats(repeats):
     if isinstance(repeats, _np.ndarray):
         repeats = repeats.tolist()
@@ -202,6 +245,12 @@ def _normalize_repeat_repeats(repeats):
         return normalized
     raise TypeError("'{}' object cannot be interpreted as an integer"
                     .format(type(repeats).__name__))
+
+
+def _tensordot_axes_are_empty(axes):
+    builtin_all = __builtins__['all'] if isinstance(__builtins__, dict) else __builtins__.all
+    return (isinstance(axes, (tuple, list)) and len(axes) == 2 and
+            builtin_all(isinstance(axis, (tuple, list)) and len(axis) == 0 for axis in axes))
 
 
 def _normalize_tensordot_axes(axes):
@@ -916,6 +965,7 @@ def take(a, indices, axis=None, mode='raise', out=None):
     if mode not in ('wrap', 'clip', 'raise'):
         raise NotImplementedError(
             "function take does not support mode '{}'".format(mode))
+    _check_same_device(a, indices, func_name="take")
     if axis is None:
         return _api_internal.take(reshape(a, -1), indices, 0, mode, out)
     else:
@@ -1092,6 +1142,7 @@ def _ufunc_helper(lhs, rhs, fn_array, fn_scalar, lfn_scalar, rfn_scalar=None, ou
     elif isinstance(rhs, numeric_types):
         return lfn_scalar(lhs, float(rhs), out=out)
     elif isinstance(lhs, ndarray) and isinstance(rhs, ndarray):
+        _check_same_device(lhs, rhs, func_name="operands")
         return fn_array(lhs, rhs, out=out)
     else:
         raise TypeError('type {} not supported'.format(str(type(rhs))))
@@ -1350,6 +1401,7 @@ def divide(x1, x2, out=None, **kwargs):
 
 
 @set_module('mxnet.ndarray.numpy')
+@wrap_np_binary_func
 def true_divide(x1, x2, out=None):
     """Returns a true division of the inputs, element-wise.
 
@@ -2006,6 +2058,7 @@ def dot(a, b, out=None):
     >>> np.sum(a[2,3,2,:] * b[:,2])
     array(29884.)
     """
+    _check_same_device(a, b, func_name="dot")
     return _api_internal.dot(a, b, out)
 
 @set_module('mxnet.ndarray.numpy')
@@ -2062,7 +2115,14 @@ def tensordot(a, b, axes=2):
            [ 4796.,  5162.],
            [ 4928.,  5306.]])
     """
-    return _api_internal.tensordot(a, b, _normalize_tensordot_axes(axes))
+    axes = _normalize_tensordot_axes(axes)
+    _check_same_device(a, b, func_name="tensordot")
+    if (_tensordot_axes_are_empty(axes) and isinstance(a, NDArray) and
+            isinstance(b, NDArray) and (a.ndim == 0 or b.ndim == 0)):
+        left = a.reshape(a.shape + (1,) * b.ndim) if b.ndim else a
+        right = b.reshape((1,) * a.ndim + b.shape) if a.ndim else b
+        return multiply(left, right)
+    return _api_internal.tensordot(a, b, axes)
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -5006,6 +5066,7 @@ def concatenate(seq, axis=0, out=None):
     seq = [arr if isinstance(arr, NDArray) else _as_np_ndarray(arr) for arr in seq]
     if len(seq) == 0:
         raise ValueError("need at least one array to concatenate")
+    _check_same_device(seq, func_name="concatenate")
     return _api_internal.concatenate(*seq, axis, out)
 
 
@@ -5054,6 +5115,7 @@ def append(arr, values, axis=None):  # pylint: disable=redefined-outer-name
         arr = arr.astype(dtype)
     if values.dtype != dtype:
         values = values.astype(dtype)
+    _check_same_device(arr, values, func_name="append")
     return _api_internal.concatenate(arr, values, axis, out)
 
 
@@ -5085,6 +5147,7 @@ def stack(arrays, axis=0, out=None):
     arrays = get_list(arrays)
     if len(arrays) == 0:
         raise ValueError("need at least one array to stack")
+    _check_same_device(arrays, func_name="stack")
     return _api_internal.stack(*arrays, axis, out)
 
 
@@ -5136,6 +5199,7 @@ def vstack(arrays, out=None):
         return [arr for arr in arrays]
 
     arrays = [_as_np_ndarray(arr) for arr in get_list(arrays)]
+    _check_same_device(arrays, func_name="vstack")
     return _api_internal.vstack(*arrays)
 
 
@@ -5181,6 +5245,7 @@ def row_stack(arrays):
         return [arr for arr in arrays]
 
     arrays = [_as_np_ndarray(arr) for arr in get_list(arrays)]
+    _check_same_device(arrays, func_name="row_stack")
     return _api_internal.vstack(*arrays)
 
 
@@ -5211,7 +5276,9 @@ def column_stack(tup):
            [2., 3.],
            [3., 4.]])
     """
-    return _api_internal.column_stack(*[_as_np_ndarray(arr) for arr in tup])
+    arrays = [_as_np_ndarray(arr) for arr in tup]
+    _check_same_device(arrays, func_name="column_stack")
+    return _api_internal.column_stack(*arrays)
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -5250,7 +5317,9 @@ def hstack(arrays):
            [2., 3.],
            [3., 4.]])
     """
-    return _api_internal.hstack(*[_as_np_ndarray(arr) for arr in arrays])
+    arrays = [_as_np_ndarray(arr) for arr in arrays]
+    _check_same_device(arrays, func_name="hstack")
+    return _api_internal.hstack(*arrays)
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -5292,7 +5361,9 @@ def dstack(arrays):
            [[2, 3]],
            [[3, 4]]])
     """
-    return _api_internal.dstack(*[_as_np_ndarray(arr) for arr in arrays])
+    arrays = [_as_np_ndarray(arr) for arr in arrays]
+    _check_same_device(arrays, func_name="dstack")
+    return _api_internal.dstack(*arrays)
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -6038,6 +6109,7 @@ def average(a, axis=None, weights=None, returned=False, out=None):
         a = a.astype(dtype)
         if weights is not None:
             weights = weights.astype(dtype)
+    _check_same_device(a, weights, func_name="average")
     out = _api_internal.average(a, weights, axis, returned, weights is not None, out)
     if isinstance(out, NDArray):
         return out
@@ -6425,10 +6497,17 @@ def ravel(x, order='C'):
         raise NotImplementedError('order {} is not supported'.format(order))
     if isinstance(x, numeric_types):
         return _np.reshape(x, -1)
-    elif isinstance(x, NDArray):
-        return reshape(x, -1)
-    else:
-        raise TypeError('type {} not supported'.format(str(type(x))))
+    if isinstance(x, NDArray):
+        return _reshape_view(x, (-1,))
+    raise TypeError('type {} not supported'.format(str(type(x))))
+
+
+def _unravel_index_output_tuple(indices, shape):
+    coords = _api_internal.unravel_index(indices, shape)
+    if indices.shape == ():
+        shape_ndim = 1 if isinstance(shape, int) else len(shape)
+        return tuple(coords[i] for i in range(shape_ndim))
+    return tuple(coords)
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -6463,9 +6542,9 @@ def unravel_index(indices, shape, order='C'): # pylint: disable=redefined-outer-
         if isinstance(indices, numeric_types):
             return _np.unravel_index(indices, shape)
         if isinstance(indices, NDArray):
-            return tuple(_api_internal.unravel_index(indices, shape))
+            return _unravel_index_output_tuple(indices, shape)
         if isinstance(indices, (list, tuple, _np.ndarray)):
-            return tuple(_api_internal.unravel_index(_as_np_ndarray(indices), shape))
+            return _unravel_index_output_tuple(_as_np_ndarray(indices), shape)
         raise TypeError('Do not support type {} as indices.'.format(str(type(indices))))
     raise NotImplementedError('Do not support column-major (Fortran-style) order at this moment')
 
@@ -7678,6 +7757,7 @@ def cross(a, b, axisa=-1, axisb=-1, axisc=-1, axis=None): # pylint: disable=too-
         axisa, axisb, axisc = (axis,) * 3
 
     if isinstance(a, NDArray) and isinstance(b, NDArray):
+        _check_same_device(a, b, func_name="cross")
         return _api_internal.cross(a, b, axisa, axisb, axisc)
     else:
         raise TypeError("Input data should be NDarray")
@@ -7720,10 +7800,12 @@ def kron(a, b):
     >>> np.kron([5,6,7], [1,10,100])
     array([  5,  50, 500,   6,  60, 600,   7,  70, 700])
     """
+    _check_same_device(a, b, func_name="kron")
     return _api_internal.kron(a, b)
 
 
 @set_module('mxnet.ndarray.numpy')
+@wrap_np_binary_func
 def equal(x1, x2, out=None):
     """
     Return (x1 == x2) element-wise.
@@ -7758,6 +7840,7 @@ def equal(x1, x2, out=None):
 
 
 @set_module('mxnet.ndarray.numpy')
+@wrap_np_binary_func
 def not_equal(x1, x2, out=None):
     """
     Return (x1 != x2) element-wise.
@@ -7793,6 +7876,7 @@ def not_equal(x1, x2, out=None):
 
 
 @set_module('mxnet.ndarray.numpy')
+@wrap_np_binary_func
 def greater(x1, x2, out=None):
     """
     Return the truth value of (x1 > x2) element-wise.
@@ -7827,6 +7911,7 @@ def greater(x1, x2, out=None):
 
 
 @set_module('mxnet.ndarray.numpy')
+@wrap_np_binary_func
 def less(x1, x2, out=None):
     """
     Return the truth value of (x1 < x2) element-wise.
@@ -7861,6 +7946,7 @@ def less(x1, x2, out=None):
 
 
 @set_module('mxnet.ndarray.numpy')
+@wrap_np_binary_func
 def greater_equal(x1, x2, out=None):
     """
     Return the truth value of (x1 >= x2) element-wise.
@@ -7896,6 +7982,7 @@ def greater_equal(x1, x2, out=None):
 
 
 @set_module('mxnet.ndarray.numpy')
+@wrap_np_binary_func
 def less_equal(x1, x2, out=None):
     """
     Return the truth value of (x1 <= x2) element-wise.
@@ -8387,6 +8474,7 @@ def einsum(*operands, **kwargs):
 
     subscripts = operands[0]
     operands = operands[1:]
+    _check_same_device(operands, func_name="einsum")
     return _api_internal.einsum(*operands, subscripts, out, int(optimize_arg))
 
 
@@ -8538,6 +8626,7 @@ def percentile(a, q, axis=None, out=None, overwrite_input=None, interpolation='l
     """
     if overwrite_input is not None:
         raise NotImplementedError('overwrite_input is not supported yet')
+    _check_same_device(a, q, func_name="percentile")
     return _api_internal.percentile(a, q, axis, interpolation, keepdims, out)
 
 
@@ -8668,6 +8757,7 @@ def quantile(a, q, axis=None, out=None, overwrite_input=None, interpolation='lin
     """
     if overwrite_input is not None:
         raise NotImplementedError('overwrite_input is not supported yet')
+    _check_same_device(a, q, func_name="quantile")
     return _api_internal.percentile(a, q * 100, axis, interpolation, keepdims, out)
 
 
@@ -8821,6 +8911,7 @@ def interp(x, xp, fp, left=None, right=None, period=None):  # pylint: disable=to
     """
     if not isinstance(x, numeric_types):
         x = x.astype(float)
+    _check_same_device(x, xp, fp, func_name="interp")
     return _api_internal.interp(xp.astype(float), fp.astype(float), x, left,
                                 right, period)
 
@@ -8909,6 +9000,7 @@ def ediff1d(ary, to_end=None, to_begin=None):
     >>> np.ediff1d(x, to_begin=y)
     array([ 1.,  2.,  4.,  1.,  6., 24.,  1.,  2.,  3., -7.])
     """
+    _check_same_device(ary, to_end, to_begin, func_name="ediff1d")
     return _api_internal.ediff1d(ary, to_end, to_begin)
 
 
@@ -9106,7 +9198,24 @@ def squeeze(x, axis=None):
     >>> np.squeeze(x, axis=2).shape
     (1, 3)
     """
-    return _api_internal.squeeze(x, axis)
+    if isinstance(x, NDArray):
+        axes = _normalize_squeeze_axis(axis, x.ndim)
+        if axes is None:
+            newshape = tuple(dim for dim in x.shape if dim != 1)
+        else:
+            shape = list(x.shape)
+            for ax in axes:
+                if shape[ax] != 1:
+                    raise ValueError(
+                        'cannot select an axis to squeeze out which has size not equal to one')
+            newshape = tuple(dim for ax, dim in enumerate(shape) if ax not in axes)
+        if newshape == x.shape:
+            from ... import autograd as _autograd  # pylint: disable=import-outside-toplevel
+            from ... import _deferred_compute as _dc  # pylint: disable=import-outside-toplevel
+            if not _autograd.is_recording() and not _dc.is_deferred_compute():
+                return x
+        return _reshape_view(x, newshape)
+    return _api_internal.reshape(_api_internal.squeeze(x, axis), -2, False, 'C')
 
 # pylint: disable=redefined-outer-name
 @set_module('mxnet.ndarray.numpy')
@@ -9486,9 +9595,12 @@ def atleast_1d(*arys):
     >>> np.atleast_1d(np.array(1), np.array([3, 4]))
     [array([1.]), array([3., 4.])]
     """
-    if len(arys) == 1:
-        return _api_internal.atleast_1d(*arys)[0]
-    return list(_api_internal.atleast_1d(*arys))
+    res = []
+    for ary in arys:
+        if not isinstance(ary, NDArray):
+            ary = _as_np_ndarray(ary)
+        res.append(_reshape_view(ary, (1,)) if ary.ndim == 0 else ary)
+    return res[0] if len(res) == 1 else res
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -9520,9 +9632,16 @@ def atleast_2d(*arys):
     >>> np.atleast_2d(np.array(1), np.array([1, 2]), np.array([[1, 2]]))
     [array([[1.]]), array([[1., 2.]]), array([[1., 2.]])]
     """
-    if len(arys) == 1:
-        return _api_internal.atleast_2d(*arys)[0]
-    return list(_api_internal.atleast_2d(*arys))
+    res = []
+    for ary in arys:
+        if not isinstance(ary, NDArray):
+            ary = _as_np_ndarray(ary)
+        if ary.ndim == 0:
+            ary = _reshape_view(ary, (1, 1))
+        elif ary.ndim == 1:
+            ary = _reshape_view(ary, (1, ary.shape[0]))
+        res.append(ary)
+    return res[0] if len(res) == 1 else res
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -9565,9 +9684,18 @@ def atleast_3d(*arys):
       [2.]]] (1, 2, 1)
     [[[1. 2.]]] (1, 1, 2)
     """
-    if len(arys) == 1:
-        return _api_internal.atleast_3d(*arys)[0]
-    return list(_api_internal.atleast_3d(*arys))
+    res = []
+    for ary in arys:
+        if not isinstance(ary, NDArray):
+            ary = _as_np_ndarray(ary)
+        if ary.ndim == 0:
+            ary = _reshape_view(ary, (1, 1, 1))
+        elif ary.ndim == 1:
+            ary = _reshape_view(ary, (1, ary.shape[0], 1))
+        elif ary.ndim == 2:
+            ary = _reshape_view(ary, ary.shape + (1,))
+        res.append(ary)
+    return res[0] if len(res) == 1 else res
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -9655,6 +9783,7 @@ def where(condition, x=None, y=None):  # pylint: disable=too-many-return-stateme
             else:
                 return y
         else:
+            _check_same_device(condition, x, y, func_name="where")
             return _api_internal.where(condition, x, y)
 
 
@@ -9705,6 +9834,7 @@ def polyval(p, x):
     if isinstance(p, numeric_types) and isinstance(x, numeric_types):
         return _np.polyval(p, x)
     elif isinstance(p, ndarray) and isinstance(x, ndarray):
+        _check_same_device(p, x, func_name="polyval")
         return _api_internal.polyval(p, x)
     else:
         raise TypeError('type not supported')
@@ -9760,6 +9890,7 @@ def bincount(x, weights=None, minlength=0):
     """
     if minlength < 0:
         raise ValueError("Minlength value should greater than 0")
+    _check_same_device(x, weights, func_name="bincount")
     return _api_internal.bincount(x, weights, minlength)
 
 
@@ -10434,6 +10565,7 @@ def sum(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=N
 
 
 @set_module('mxnet.ndarray.numpy')
+@wrap_np_binary_func
 def bitwise_left_shift(x1, x2, out=None):
     r"""
     Shift the bits of and integer to the left. Bits are shifted to the left by
@@ -10473,6 +10605,7 @@ def bitwise_left_shift(x1, x2, out=None):
 
 
 @set_module('mxnet.ndarray.numpy')
+@wrap_np_binary_func
 def bitwise_right_shift(x1, x2, out=None):
     r"""
     Shift the bits of and integer to the right. Bits are shifted to the right by

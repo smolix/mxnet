@@ -606,7 +606,8 @@ class CachedOp {
   bool SetBackwardGraph(GraphInfo* info,
                         const std::vector<OpReqType>& reqs,
                         const std::vector<NDArray*>& inputs,
-                        bool detect_inplace_addto = false);
+                        bool detect_inplace_addto = false,
+                        const std::vector<NDArray*>* cached_forward_arrays = nullptr);
   bool CheckDynamicShapeExists(const Context& default_ctx,
                                const std::vector<NDArray*>& inputs,
                                bool erase_result);

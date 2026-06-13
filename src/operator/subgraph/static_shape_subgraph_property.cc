@@ -94,18 +94,34 @@ class StaticShapeSubgraphProperty : public SubgraphProperty {
       } else if (kv.first == "param_indices") {
         std::string param_str = kv.second;
         int temp              = 0;
-        for (int i = 0; param_str[i] != '\0'; i++) {
-          if (param_str[i] == ',' || param_str[i] == '[') {
+        bool has_index        = false;
+        auto add_param_index = [&]() {
+          CHECK_LT(static_cast<size_t>(temp), indexed_graph.input_nodes().size())
+              << "param_indices contains input index " << temp << ", but graph has only "
+              << indexed_graph.input_nodes().size() << " inputs";
+          auto nid     = indexed_graph.input_nodes()[temp];
+          nnvm::Node n = *(indexed_graph[nid].source);
+          param_name_set_.emplace(n.attrs.name);
+          temp      = 0;
+          has_index = false;
+        };
+        for (size_t i = 0; i < param_str.length(); ++i) {
+          char c = param_str[i];
+          if (c >= '0' && c <= '9') {
+            temp      = temp * 10 + (c - '0');
+            has_index = true;
+          } else if (c == ',' || c == ']' || c == ' ' || c == '\t') {
+            if (has_index) {
+              add_param_index();
+            }
+          } else if (c == '[') {
             continue;
-          }
-          if (param_str[i] == ' ' || param_str[i] == ']') {
-            auto nid     = indexed_graph.input_nodes()[temp];
-            nnvm::Node n = *(indexed_graph[nid].source);
-            param_name_set_.emplace(n.attrs.name);
-            temp = 0;
           } else {
-            temp = temp * 10 + (param_str[i] - 48);
+            LOG(FATAL) << "Invalid param_indices option: " << param_str;
           }
+        }
+        if (has_index) {
+          add_param_index();
         }
       }
     }

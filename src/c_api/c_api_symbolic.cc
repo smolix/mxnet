@@ -1183,6 +1183,17 @@ int MXOptimizeForBackend(SymbolHandle sym_handle,
   NDArray** in_args_ptr   = reinterpret_cast<NDArray**>(in_args_handle);
   NDArray** in_aux_ptr    = reinterpret_cast<NDArray**>(in_aux_handle);
 
+  auto wait_to_read = [](NDArray** arrays, mx_uint len) {
+    if (arrays == nullptr) {
+      return;
+    }
+    for (mx_uint i = 0; i < len; ++i) {
+      if (arrays[i] != nullptr) {
+        arrays[i]->WaitToRead();
+      }
+    }
+  };
+
   auto init_graph = [&](auto s) {
     nnvm::Graph g = Symbol2Graph(*s);
 
@@ -1196,6 +1207,8 @@ int MXOptimizeForBackend(SymbolHandle sym_handle,
     size_t num_forward_inputs            = input_names.size();
 
     if (args_len || aux_len) {
+      wait_to_read(in_args_ptr, args_len);
+      wait_to_read(in_aux_ptr, aux_len);
       if (!skip_infer) {
         Context default_ctx = Context::Create(static_cast<Context::DeviceType>(dev_type), 0);
         mxnet::ShapeVector arg_shapes(args_len + aux_len);
@@ -1366,7 +1379,7 @@ int MXOptimizeForBackend(SymbolHandle sym_handle,
     *new_aux_ptr          = new_aux_arr;
   } else {
     // cannot find graph pass or subgraph backend registered in this name
-    LOG(ERROR) << "Error optimizing for backend '" << backend_name << "' cannot be found";
+    CHECK(false) << "Error optimizing for backend '" << backend_name << "' cannot be found";
   }
 
   *ret_sym_handle = s;

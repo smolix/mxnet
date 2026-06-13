@@ -132,6 +132,13 @@ class Horovod(KVStoreBase):
                 o[:] = hvd.allreduce(v, average=False, name=str(key),
                                      priority=priority)
 
+    def _barrier(self):
+        """Invokes global barrier among all Horovod workers."""
+        import horovod.mxnet as hvd
+        from .. import ndarray as nd
+
+        hvd.allreduce(nd.zeros((1,)), average=False, name='barrier').wait_to_read()
+
     def set_optimizer(self, optimizer):
         pass
 

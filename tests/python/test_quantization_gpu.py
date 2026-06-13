@@ -36,34 +36,8 @@ def _gpu_default_device():
     set_default_device(prev)
 
 
-def _xfail_unsupported_gpu_quantization(func):
-    # No FCompute<gpu> registration for these quantized ops (bf16->int8 calibration,
-    # quantized transpose/reshape, quantize_model harness, RNN quantization).
-    # Tracked under B4: GPU quantization deferred.
-    return pytest.mark.xfail(
-        strict=False,
-        reason="GPU quantization path not implemented for this op; deferred (see B4)"
-    )(func)
-
-
-test_calibrated_quantize_v2_bfloat16_to_int8 = _xfail_unsupported_gpu_quantization(
-    test_calibrated_quantize_v2_bfloat16_to_int8)
-test_quantize_uint8_uses_affine_range = _xfail_unsupported_gpu_quantization(
-    test_quantize_uint8_uses_affine_range)
-test_quantize_uint8_saturates_out_of_range_values = _xfail_unsupported_gpu_quantization(
-    test_quantize_uint8_saturates_out_of_range_values)
-test_quantize_v2_uint8_uses_affine_range = _xfail_unsupported_gpu_quantization(
-    test_quantize_v2_uint8_uses_affine_range)
-test_quantize_v2_uint8_saturates_out_of_range_values = _xfail_unsupported_gpu_quantization(
-    test_quantize_v2_uint8_saturates_out_of_range_values)
-test_quantize_v2_quantized_passthrough_reports_exact_ranges = _xfail_unsupported_gpu_quantization(
-    test_quantize_v2_quantized_passthrough_reports_exact_ranges)
-test_requantize_uint8_uses_affine_range = _xfail_unsupported_gpu_quantization(
-    test_requantize_uint8_uses_affine_range)
-test_quantized_elemwise_mul_calibrated_int8_saturates = _xfail_unsupported_gpu_quantization(
-    test_quantized_elemwise_mul_calibrated_int8_saturates)
-test_quantized_transpose = _xfail_unsupported_gpu_quantization(test_quantized_transpose)
-test_quantized_reshape = _xfail_unsupported_gpu_quantization(test_quantized_reshape)
-test_quantize_model = _xfail_unsupported_gpu_quantization(test_quantize_model)
-test_rnn_quantization = _xfail_unsupported_gpu_quantization(test_rnn_quantization)
-test_quantized_rnn = _xfail_unsupported_gpu_quantization(test_quantized_rnn)
+# test_rnn_quantization and test_quantized_rnn (imported from test_quantization)
+# now run on GPU as normal regression tests: _contrib_quantized_rnn has a GPU
+# FStatefulCompute (dequantize + cuDNN float LSTM fallback) and
+# _contrib_quantize_asym has a GPU FStatefulCompute with an on-device scale/shift
+# path, so the GPU graph-quantization chain is fully registered.

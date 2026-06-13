@@ -7583,7 +7583,7 @@ def squeeze(x, axis=None):
     >>> np.squeeze(x, axis=2).shape
     (1, 3)
     """
-    return _npi.squeeze(x, axis=axis)
+    return _npi.reshape(_npi.squeeze(x, axis=axis), -2)
 
 
 @set_module('mxnet.symbol.numpy')

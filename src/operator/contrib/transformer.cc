@@ -364,7 +364,7 @@ void BackwardInterleavedMatMulSelfAttValAttCPU(const nnvm::NodeAttrs& attrs,
                                                const std::vector<OpReqType>& req,
                                                const std::vector<TBlob>& outputs) {
   const auto& params = nnvm::get<InterleavedMatMulParam>(attrs.parsed);
-  if (req[0] == kNullOp)
+  if (req[0] == kNullOp && req[1] == kNullOp)
     return;
 
   CHECK_EQ(inputs[0].type_flag_, mshadow::kFloat32)
@@ -374,8 +374,6 @@ void BackwardInterleavedMatMulSelfAttValAttCPU(const nnvm::NodeAttrs& attrs,
   const float* output_grads        = inputs[0].FlatTo2D<cpu, float>(s).dptr_;
   const float* queries_keys_values = inputs[1].FlatTo2D<cpu, float>(s).dptr_;
   const float* attention_maps      = inputs[2].FlatTo2D<cpu, float>(s).dptr_;
-  float* queries_keys_values_grads = outputs[0].FlatTo2D<cpu, float>(s).dptr_;
-  float* attention_maps_grads      = outputs[1].FlatTo2D<cpu, float>(s).dptr_;
   const index_t qkv_seq_len        = inputs[1].shape_[0];
   const index_t sequences          = inputs[1].shape_[1];
   const index_t output_lin_dim     = inputs[1].shape_[2];
@@ -386,6 +384,7 @@ void BackwardInterleavedMatMulSelfAttValAttCPU(const nnvm::NodeAttrs& attrs,
   const index_t batch_stride       = 3 * head_dim;
   const float alpha                = 1.f;
   if (req[0] != kNullOp) {
+    float* queries_keys_values_grads = outputs[0].FlatTo2D<cpu, float>(s).dptr_;
     if (req[0] == kWriteTo) {
       memset(queries_keys_values_grads, 0, outputs[0].shape_.Size() * sizeof(float));
     }
@@ -410,6 +409,7 @@ void BackwardInterleavedMatMulSelfAttValAttCPU(const nnvm::NodeAttrs& attrs,
                         attn_batches);
   }
   if (req[1] != kNullOp) {
+    float* attention_maps_grads = outputs[1].FlatTo2D<cpu, float>(s).dptr_;
     const float beta = req[1] == kAddTo ? 1.f : 0.f;
     strided_batch_sgemm(true,
                         false,
@@ -486,7 +486,7 @@ void BackwardInterleavedMatMulEncDecQKCPU(const nnvm::NodeAttrs& attrs,
                                           const std::vector<OpReqType>& req,
                                           const std::vector<TBlob>& outputs) {
   const auto& params = nnvm::get<InterleavedMatMulParam>(attrs.parsed);
-  if (req[0] == kNullOp)
+  if (req[0] == kNullOp && req[1] == kNullOp)
     return;
 
   CHECK_EQ(inputs[0].type_flag_, mshadow::kFloat32)
@@ -496,8 +496,6 @@ void BackwardInterleavedMatMulEncDecQKCPU(const nnvm::NodeAttrs& attrs,
   const float* output_grads      = inputs[0].FlatTo2D<cpu, float>(s).dptr_;
   const float* queries           = inputs[1].FlatTo2D<cpu, float>(s).dptr_;
   const float* keys_values       = inputs[2].FlatTo2D<cpu, float>(s).dptr_;
-  float* queries_grads           = outputs[0].FlatTo2D<cpu, float>(s).dptr_;
-  float* keys_values_grads       = outputs[1].FlatTo2D<cpu, float>(s).dptr_;
   const index_t q_seq_len        = inputs[1].shape_[0];
   const index_t sequences        = inputs[1].shape_[1];
   const index_t output_lin_q_dim = inputs[1].shape_[2];
@@ -512,6 +510,7 @@ void BackwardInterleavedMatMulEncDecQKCPU(const nnvm::NodeAttrs& attrs,
   const float scale              = 1.f / sqrt(static_cast<float>(head_dim));
 
   if (req[0] != kNullOp) {
+    float* queries_grads = outputs[0].FlatTo2D<cpu, float>(s).dptr_;
     const float beta = req[0] == kAddTo ? 1.f : 0.f;
     strided_batch_sgemm(false,
                         false,
@@ -532,6 +531,7 @@ void BackwardInterleavedMatMulEncDecQKCPU(const nnvm::NodeAttrs& attrs,
                         attn_batches);
   }
   if (req[1] != kNullOp) {
+    float* keys_values_grads = outputs[1].FlatTo2D<cpu, float>(s).dptr_;
     if (req[1] == kWriteTo) {
       memset(keys_values_grads, 0, outputs[1].shape_.Size() * sizeof(float));
     }

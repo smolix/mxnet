@@ -21,77 +21,10 @@
  * \file quantized_transpose.cc
  * \author: Rafal Litka, rafal.litka@intel.com
  */
-#include <mxnet/op_attr_types.h>
-#include "../tensor/matrix_op-inl.h"
-#include "../numpy/np_matrix_op-inl.h"
+#include "./quantized_transpose-inl.h"
 
 namespace mxnet {
 namespace op {
-
-inline bool QuantizedTransposeType(const nnvm::NodeAttrs& attrs,
-                                   std::vector<int>* in_attrs,
-                                   std::vector<int>* out_attrs) {
-  CHECK_EQ(in_attrs->size(), 3U);
-  CHECK_EQ(out_attrs->size(), 3U);
-  TYPE_ASSIGN_CHECK(*in_attrs, 1, mshadow::kFloat32);
-  TYPE_ASSIGN_CHECK(*in_attrs, 2, mshadow::kFloat32);
-  TYPE_ASSIGN_CHECK(*out_attrs, 0, (*in_attrs)[0]);
-  TYPE_ASSIGN_CHECK(*out_attrs, 1, mshadow::kFloat32);
-  TYPE_ASSIGN_CHECK(*out_attrs, 2, mshadow::kFloat32);
-  return (*in_attrs)[0] != -1;
-}
-
-typedef bool (*TransposeShapeFunAny)(const nnvm::NodeAttrs&,
-                                     mxnet::ShapeVector*,
-                                     mxnet::ShapeVector*);
-typedef void (*TransposeComputeFunAny)(const nnvm::NodeAttrs&,
-                                       const OpContext&,
-                                       const std::vector<TBlob>&,
-                                       const std::vector<OpReqType>&,
-                                       const std::vector<TBlob>&);
-
-template <TransposeShapeFunAny TransposeShapeFun>
-inline bool QuantizedTransposeShape(const nnvm::NodeAttrs& attrs,
-                                    mxnet::ShapeVector* in_attrs,
-                                    mxnet::ShapeVector* out_attrs) {
-  CHECK_EQ(in_attrs->size(), 3U);
-  CHECK_EQ(out_attrs->size(), 3U);
-  mxnet::ShapeVector qin_attrs(1);
-  mxnet::ShapeVector qout_attrs(1);
-  SHAPE_ASSIGN_CHECK(qin_attrs, 0, (*in_attrs)[0]);
-  SHAPE_ASSIGN_CHECK(qout_attrs, 0, (*out_attrs)[0]);
-  bool ret = TransposeShapeFun(attrs, &qin_attrs, &qout_attrs);
-  SHAPE_ASSIGN_CHECK(*in_attrs, 0, qin_attrs[0]);
-  SHAPE_ASSIGN_CHECK(*out_attrs, 0, qout_attrs[0]);
-  SHAPE_ASSIGN_CHECK(*in_attrs, 1, mxnet::TShape{1});
-  SHAPE_ASSIGN_CHECK(*in_attrs, 2, mxnet::TShape{1});
-  SHAPE_ASSIGN_CHECK(*out_attrs, 1, mxnet::TShape{1});
-  SHAPE_ASSIGN_CHECK(*out_attrs, 2, mxnet::TShape{1});
-  return ret;
-}
-
-template <TransposeComputeFunAny TransposeComputeFun>
-void QuantizedTransposeCompute(const nnvm::NodeAttrs& attrs,
-                               const OpContext& ctx,
-                               const std::vector<TBlob>& inputs,
-                               const std::vector<OpReqType>& req,
-                               const std::vector<TBlob>& outputs) {
-  CHECK_EQ(inputs.size(), 3U);
-  CHECK_EQ(outputs.size(), 3U);
-  CHECK_EQ(req.size(), 3U);
-
-  TransposeComputeFun(attrs, ctx, {inputs[0]}, {req[0]}, {outputs[0]});
-  if (req[1] == kWriteTo || req[1] == kWriteInplace) {
-    *outputs[1].dptr<float>() = *inputs[1].dptr<float>();
-  } else if (req[1] == kAddTo) {
-    *outputs[1].dptr<float>() += *inputs[1].dptr<float>();
-  }
-  if (req[2] == kWriteTo || req[2] == kWriteInplace) {
-    *outputs[2].dptr<float>() = *inputs[2].dptr<float>();
-  } else if (req[2] == kAddTo) {
-    *outputs[2].dptr<float>() += *inputs[2].dptr<float>();
-  }
-}
 
 #define MXNET_OPERATOR_REGISTER_QUANTIZED_TRANSPOSE(name, ComputeFun)                        \
   NNVM_REGISTER_OP(name)                                                                     \
@@ -109,7 +42,8 @@ void QuantizedTransposeCompute(const nnvm::NodeAttrs& attrs,
           [](const NodeAttrs& attrs) {                                                       \
             return std::vector<std::string>{"output", "min_output", "max_output"};           \
           })                                                                                 \
-      .set_attr<FCompute>("FCompute<cpu>", QuantizedTransposeCompute<ComputeFun>)             \
+      .set_attr<FCompute>("FCompute<cpu>",                                                   \
+                          QuantizedTransposeCompute<cpu, ComputeFun>)                        \
       .set_attr<FResourceRequest>(                                                           \
           "FResourceRequest",                                                                \
           [](const NodeAttrs& n) {                                                           \

@@ -120,15 +120,29 @@ echo "Python:  $PYTHON"
 echo "GPUs:    ${GPU_LIST[*]}"
 echo "Targets: ${TARGETS[*]}  (sharded across $NSHARDS GPU(s) by collection index)"
 
+# SHARD_HARD_TIMEOUT (seconds): OS-level hard kill for a shard process. This is
+# the only reliable backstop against a C-level deadlock that holds the GIL --
+# pytest-timeout (both signal and thread methods) needs the GIL to fire, so a
+# native deadlock (e.g. a data-dependent op's GPU sync) hangs forever and blocks
+# the whole run via `wait`. With this set, `timeout -s KILL` force-kills the
+# shard so the run completes and the shard is reported as a failure.
+SHARD_HARD_TIMEOUT="${SHARD_HARD_TIMEOUT:-0}"
+TO_PREFIX=()
+if [ "$SHARD_HARD_TIMEOUT" -gt 0 ] 2>/dev/null; then
+  TO_PREFIX=(timeout -s KILL "$SHARD_HARD_TIMEOUT")
+fi
+
 pids=()
 for shard in $(seq 0 $((NSHARDS - 1))); do
   gpu="${GPU_LIST[$shard]}"
   (
     MXNET_TEST_SHARD_ID="$shard" MXNET_TEST_NUM_SHARDS="$NSHARDS" CUDA_VISIBLE_DEVICES="$gpu" \
-      "$PYTHON" -m pytest "${TARGETS[@]}" ${PYTEST_EXTRA_ARGS:-} \
+      "${TO_PREFIX[@]}" "$PYTHON" -m pytest "${TARGETS[@]}" ${PYTEST_EXTRA_ARGS:-} \
       -q -p pytest_gpu_shard_plugin -p no:cacheprovider \
       >"$OUTDIR/shard_$shard.log" 2>&1
-    echo "SHARD_${shard}_EXIT=$?" >>"$OUTDIR/shard_$shard.log"
+    rc=$?
+    [ "$rc" = 137 ] && echo "SHARD HARD-TIMEOUT (SIGKILL after ${SHARD_HARD_TIMEOUT}s)" >>"$OUTDIR/shard_$shard.log"
+    echo "SHARD_${shard}_EXIT=$rc" >>"$OUTDIR/shard_$shard.log"
   ) &
   pids+=($!)
 done
@@ -143,7 +157,9 @@ for shard in $(seq 0 $((NSHARDS - 1))); do
   line="$(grep -E "passed|failed|error" "$f" | tail -1)"
   exitc="$(grep -oE "SHARD_${shard}_EXIT=[0-9]+" "$f" | tail -1)"
   echo "shard $shard (GPU ${GPU_LIST[$shard]}): ${line:-<no summary>}   [$exitc]"
-  echo "$line" | grep -qE "failed|error" && bad=1
+  # Require a numeric prefix so "xfailed"/"xpassed"/"deselected" do not trip the
+  # failure detector; only "<N> failed" / "<N> error[s]" count as real failures.
+  echo "$line" | grep -qE "[0-9]+ (failed|error)" && bad=1
   [ "$exitc" != "SHARD_${shard}_EXIT=0" ] && bad=1
 done
 echo "=== OVERALL: $([ "$bad" -eq 0 ] && echo PASS || echo FAIL) ==="

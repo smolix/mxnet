@@ -125,11 +125,25 @@ class _Conv(HybridBlock):
 
     def forward(self, x):
         device = x.device
+        kwargs = self._kwargs
+        weight = self.weight.data(device)
+        input_data = x
+        use_cpu_nhwc_2d = (self._op_name == "convolution" and self._layout == "NHWC"
+                           and len(self._kernel_size) == 2
+                           and getattr(device, "device_type", None) == "cpu")
+        if use_cpu_nhwc_2d:
+            input_data = np.transpose(x, (0, 3, 1, 2))
+            weight = np.transpose(weight, (0, 3, 1, 2))
+            kwargs = dict(self._kwargs)
+            kwargs["layout"] = "NCHW"
+
         if self.bias is None:
-            act = getattr(npx, self._op_name)(x, self.weight.data(device), **self._kwargs)
+            act = getattr(npx, self._op_name)(input_data, weight, **kwargs)
         else:
-            act = getattr(npx, self._op_name)(x, self.weight.data(device), self.bias.data(device),
-                                              **self._kwargs)
+            act = getattr(npx, self._op_name)(input_data, weight, self.bias.data(device),
+                                              **kwargs)
+        if use_cpu_nhwc_2d:
+            act = np.transpose(act, (0, 2, 3, 1))
         if self.act is not None:
             act = self.act(act)
         return act

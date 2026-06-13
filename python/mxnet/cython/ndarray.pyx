@@ -32,6 +32,13 @@ cdef class NDArrayBase:
     cdef NDArrayHandle chandle
     cdef int cwritable
     cdef public bint _alive
+    # Enable weak references, matching the ctypes NDArrayBase (a plain Python
+    # class, which supports weakref implicitly). A Cython cdef class has no
+    # weakref slot unless one is declared, so without this `weakref.ref(nd)`
+    # raises "cannot create weak reference to 'NDArray' object" -- which breaks
+    # the AMP cast weight cache (amp/amp.py) and any other weakref-based caching
+    # whenever the fast cython path is compiled into the wheel.
+    cdef object __weakref__
 
     cdef _set_handle(self, handle):
         cdef unsigned long long ptr

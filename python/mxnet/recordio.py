@@ -22,12 +22,14 @@ from multiprocessing import current_process
 import ctypes
 import struct
 import numbers
+import threading
 import numpy as np
 
 from .base import _LIB
 from .base import RecordIOHandle
 from .base import check_call
 from .base import c_str
+from .base import string_types
 try:
     import cv2
 except ImportError:
@@ -67,6 +69,7 @@ class MXRecordIO(object):
         self.flag = flag
         self.pid = None
         self.is_open = False
+        self._lock = threading.RLock()
         self.open()
 
     def open(self):
@@ -100,12 +103,14 @@ class MXRecordIO(object):
         except AttributeError:
             pass
         del d['handle']
+        d.pop('_lock', None)
         d['uri'] = uri
         return d
 
     def __setstate__(self, d):
         """Restore from pickled."""
         self.__dict__ = d
+        self._lock = threading.RLock()
         is_open = d['is_open']
         self.is_open = False
         self.handle = RecordIOHandle()
@@ -125,7 +130,11 @@ class MXRecordIO(object):
 
     def close(self):
         """Closes the record file."""
-        if not self.is_open:
+        if not getattr(self, "is_open", False):
+            return
+        if not hasattr(self, "writable") or not hasattr(self, "handle"):
+            self.is_open = False
+            self.pid = None
             return
         if self.writable:
             check_call(_LIB.MXRecordIOWriterFree(self.handle))
@@ -267,7 +276,7 @@ class MXIndexedRecordIO(MXRecordIO):
         if not self.is_open:
             return
         try:
-            super(MXIndexedRecordIO, self).close()
+            super().close()
         finally:
             if self.fidx is not None:
                 self.fidx.close()
@@ -326,8 +335,9 @@ class MXIndexedRecordIO(MXRecordIO):
         >>> record.read_idx(3)
         record_3
         """
-        self.seek(idx)
-        return self.read()
+        with self._lock:
+            self.seek(idx)
+            return self.read()
 
     def write_idx(self, idx, buf):
         """Inserts input record at given index.
@@ -345,12 +355,13 @@ class MXIndexedRecordIO(MXRecordIO):
         buf :
             Record to write.
         """
-        key = self.key_type(idx)
-        pos = self.tell()
-        self.write(buf)
-        self.fidx.write(f'{str(key)}\t{pos}\n')
-        self.idx[key] = pos
-        self.keys.append(key)
+        with self._lock:
+            key = self.key_type(idx)
+            pos = self.tell()
+            self.write(buf)
+            self.fidx.write(f'{str(key)}\t{pos}\n')
+            self.idx[key] = pos
+            self.keys.append(key)
 
 
 IRHeader = namedtuple('HEADER', ['flag', 'label', 'id', 'id2'])
@@ -370,6 +381,9 @@ Parameters
 """
 _IR_FORMAT = 'IfQQ'
 _IR_SIZE = struct.calcsize(_IR_FORMAT)
+_IR_SCALAR_LABEL_FLOAT64 = 0xFFFFFFFF
+_IR_SCALAR_LABEL_FLOAT64_FORMAT = 'd'
+_IR_SCALAR_LABEL_FLOAT64_SIZE = struct.calcsize(_IR_SCALAR_LABEL_FLOAT64_FORMAT)
 
 def pack(header, s):
     """Pack a string into MXImageRecord.
@@ -396,9 +410,16 @@ def pack(header, s):
     ...     s = file.read()
     >>> packed_s = mx.recordio.pack(header, s)
     """
+    if isinstance(s, string_types):
+        s = s.encode('utf-8')
     header = IRHeader(*header)
     if isinstance(header.label, numbers.Number):
-        header = header._replace(flag=0)
+        label = header.label
+        if float(np.float32(label)) == float(label):
+            header = header._replace(flag=0)
+        else:
+            header = header._replace(flag=_IR_SCALAR_LABEL_FLOAT64, label=0)
+            s = struct.pack(_IR_SCALAR_LABEL_FLOAT64_FORMAT, float(label)) + s
     else:
         label = np.asarray(header.label, dtype=np.float32)
         header = header._replace(flag=label.size, label=0)
@@ -431,7 +452,12 @@ def unpack(s):
     """
     header = IRHeader(*struct.unpack(_IR_FORMAT, s[:_IR_SIZE]))
     s = s[_IR_SIZE:]
-    if header.flag > 0:
+    if header.flag == _IR_SCALAR_LABEL_FLOAT64:
+        label = struct.unpack(_IR_SCALAR_LABEL_FLOAT64_FORMAT,
+                              s[:_IR_SCALAR_LABEL_FLOAT64_SIZE])[0]
+        header = header._replace(flag=0, label=label)
+        s = s[_IR_SCALAR_LABEL_FLOAT64_SIZE:]
+    elif header.flag > 0:
         header = header._replace(label=np.frombuffer(s, np.float32, header.flag))
         s = s[header.flag*4:]
     return header, s

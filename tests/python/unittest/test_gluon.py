@@ -1847,7 +1847,7 @@ def test_grad_graph_change():
     row.backward()
 
 
-def check_layer_forward_withinput(net, x):
+def check_layer_forward_withinput(net, x, rtol=1e-5, atol=1e-6):
     x_hybrid = x.copy()
     x.attach_grad()
     x_hybrid.attach_grad()
@@ -1859,8 +1859,8 @@ def check_layer_forward_withinput(net, x):
     with mx.autograd.record():
         out2 = net(x)
     out2.backward()
-    mx.test_utils.assert_almost_equal(x.grad.asnumpy(), x_hybrid.grad.asnumpy(), rtol=1e-5, atol=1e-6)
-    mx.test_utils.assert_almost_equal(out1.asnumpy(), out2.asnumpy(), rtol=1e-5, atol=1e-6)
+    mx.test_utils.assert_almost_equal(x.grad.asnumpy(), x_hybrid.grad.asnumpy(), rtol=rtol, atol=atol)
+    mx.test_utils.assert_almost_equal(out1.asnumpy(), out2.asnumpy(), rtol=rtol, atol=atol)
 
 @use_np
 @pytest.mark.parametrize('chn_num', [16, 256])
@@ -1929,7 +1929,11 @@ def test_deconv2d_16c():
         x = mx.np.random.uniform(-1.0, 1.0, size=(batch_size, in_chn_list[i], in_shape[i], in_shape[i]))
         for j in range(len(kernel_list)):
             net = Net(out_chn_list[i], kernel_list[j])
-            check_layer_forward_withinput(net, x)
+            # On GPU, cuDNN selects different deconvolution algorithms for the
+            # imperative vs hybridized passes (non-deterministic accumulation),
+            # so with channel counts up to 1024 a 1e-5 rtol is too tight and the
+            # comparison flakes; use a tolerance that admits cuDNN algo differences.
+            check_layer_forward_withinput(net, x, rtol=1e-3, atol=1e-3)
 
 
 @use_np

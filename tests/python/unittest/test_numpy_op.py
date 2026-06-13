@@ -2938,22 +2938,6 @@ def test_np_broadcast_to_shape_validation():
             mx.sym.np.broadcast_to(sym_data, shape)
 
 
-@pytest.mark.skip(reason="QUARANTINE (mitigation applied, pending validation "
-                         "under load): intermittent cold-start deadlock in "
-                         "single-arg np.where -> nonzero (a GPU data-dependent "
-                         "op) under scheduling/GPU contention. ~1/8 fresh "
-                         "processes hung on the first such op and could not be "
-                         "interrupted (C-level deadlock holds the GIL, so "
-                         "pytest-timeout can't kill it). Engine fix applied "
-                         "(perdevice worker-pool creation no longer holds "
-                         "create_mutex_ across CUDA stream init; ops are no "
-                         "longer dropped when the pool is unavailable). Passed "
-                         "100/100 cold starts under load on an RTX 3060, but "
-                         "that box never reproduced the original hang when idle "
-                         "(0/540), so this is NOT yet definitive. REMOVE THIS "
-                         "SKIP on the heavily-loaded box to verify the fix. "
-                         "Full analysis + reproducer + debugger recipe: "
-                         ".investigations/nonzero_where_coldstart_deadlock.md.")
 @use_np
 def test_np_more_array_like_wrappers():
     checks = [

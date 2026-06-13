@@ -482,9 +482,9 @@ def %s(*%s, **kwargs):"""%(func_name, arr_name))
     name = _name.current().get(name, '%s')
     if not isinstance(kwargs.get('out', None), SymbolBase):
         _ = kwargs.pop('out', None)
-    if not sym_args and "data" in kwargs and "arg0" not in kwargs and isinstance(kwargs["data"], SymbolBase):
+    if not sym_args and "op_type" not in kwargs and "data" in kwargs and "arg0" not in kwargs and isinstance(kwargs["data"], SymbolBase):
         kwargs["arg0"] = kwargs.pop("data")
-    if not sym_args and "weight" in kwargs and "arg1" not in kwargs and isinstance(kwargs["weight"], SymbolBase):
+    if not sym_args and "op_type" not in kwargs and "weight" in kwargs and "arg1" not in kwargs and isinstance(kwargs["weight"], SymbolBase):
         kwargs["arg1"] = kwargs.pop("weight")
     keys = []
     vals = []

@@ -299,41 +299,6 @@ def _canonical_axis(axis, ndim):
     return axis
 
 
-def _channel_param_shape(channel_count, axis, ndim):
-    shape = [1] * ndim
-    shape[axis] = channel_count
-    return tuple(shape)
-
-
-def _stable_axis_norm(data, gamma, beta, axis, epsilon):
-    channel_axis = _canonical_axis(axis, data.ndim)
-    param_shape = _channel_param_shape(data.shape[channel_axis], channel_axis, data.ndim)
-    data64 = data.astype('float64')
-    mean = data64.mean(axis=channel_axis, keepdims=True)
-    centered = data64 - mean
-    var = (centered * centered).mean(axis=channel_axis, keepdims=True)
-    out = centered / np.sqrt(var + epsilon)
-    out = out * gamma.astype('float64').reshape(param_shape)
-    out = out + beta.astype('float64').reshape(param_shape)
-    return out.astype(data.dtype)
-
-
-def _stable_group_norm(data, gamma, beta, num_groups, epsilon):
-    channel_count = data.shape[1]
-    group_shape = (data.shape[0], num_groups, channel_count // num_groups) + tuple(data.shape[2:])
-    param_shape = _channel_param_shape(channel_count, 1, data.ndim)
-    data64 = data.astype('float64').reshape(group_shape)
-    reduce_axes = tuple(range(2, len(group_shape)))
-    mean = data64.mean(axis=reduce_axes, keepdims=True)
-    centered = data64 - mean
-    var = (centered * centered).mean(axis=reduce_axes, keepdims=True)
-    out = centered / np.sqrt(var + epsilon)
-    out = out.reshape(data.shape)
-    out = out * gamma.astype('float64').reshape(param_shape)
-    out = out + beta.astype('float64').reshape(param_shape)
-    return out.astype(data.dtype)
-
-
 @use_np
 class _BatchNorm(HybridBlock):
     """Abstract BatchNorm layer (private, used as implementation base).
@@ -792,8 +757,6 @@ class LayerNorm(HybridBlock):
         beta = self.beta.data(device) if self._center else np.zeros((channel_count,),
                                                                     dtype=data.dtype,
                                                                     device=device)
-        if get_dtype_name(data.dtype) == 'float32':
-            return _stable_axis_norm(data, gamma, beta, self._axis, self._epsilon)
         return npx.layer_norm(data, gamma=gamma, beta=beta, axis=self._axis, eps=self._epsilon)
 
     def infer_shape(self, data, *args):
@@ -901,8 +864,6 @@ class GroupNorm(HybridBlock):
         beta = self.beta.data(device) if self._center else np.zeros((data.shape[1],),
                                                                     dtype=data.dtype,
                                                                     device=device)
-        if get_dtype_name(data.dtype) == 'float32':
-            return _stable_group_norm(data, gamma, beta, self._num_groups, self._epsilon)
         return npx.group_norm(data, gamma=gamma, beta=beta,
                               num_groups=self._num_groups, eps=self._epsilon)
 

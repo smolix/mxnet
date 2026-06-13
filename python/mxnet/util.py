@@ -623,6 +623,26 @@ def wrap_np_unary_func(func):
     return _wrap_np_unary_func
 
 
+_CPU_DEVICE_FAMILY = ('cpu', 'cpu_pinned', 'cpu_shared')
+
+
+def _devices_are_compatible(dev_a, dev_b):
+    """Return True if two devices can be mixed in a single operator call.
+
+    The backend dispatches by device mask, so the CPU-family contexts
+    (``cpu``, ``cpu_pinned``, ``cpu_shared``) are all host memory and are
+    mutually compatible even though they compare unequal as ``Device`` objects.
+    Only genuinely different compute devices (e.g. ``cpu`` vs ``gpu`` or two
+    different GPU ids) must be rejected. This mirrors the native check in
+    ``imperative_utils.h`` rather than being stricter than it.
+    """
+    type_a = getattr(dev_a, "device_type", None)
+    type_b = getattr(dev_b, "device_type", None)
+    if type_a in _CPU_DEVICE_FAMILY and type_b in _CPU_DEVICE_FAMILY:
+        return True
+    return dev_a == dev_b
+
+
 def _check_same_device(*values, **kwargs):
     func_name = kwargs.get("func_name", "operands")
     first_device = [None]
@@ -640,7 +660,7 @@ def _check_same_device(*values, **kwargs):
             return
         if first_device[0] is None:
             first_device[0] = device
-        elif device != first_device[0]:
+        elif not _devices_are_compatible(first_device[0], device):
             raise ValueError(
                 "operands for {} must be on the same device/context, got {} and {}"
                 .format(func_name, first_device[0], device))

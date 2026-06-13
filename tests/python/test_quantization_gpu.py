@@ -36,13 +36,8 @@ def _gpu_default_device():
     set_default_device(prev)
 
 
-def _xfail_unsupported_gpu_quantization(func):
-    # Remaining GPU quantization gaps tracked under B4: RNN quantization.
-    return pytest.mark.xfail(
-        strict=False,
-        reason="GPU quantization path not implemented for this op; deferred (see B4)"
-    )(func)
-
-
-test_rnn_quantization = _xfail_unsupported_gpu_quantization(test_rnn_quantization)
-test_quantized_rnn = _xfail_unsupported_gpu_quantization(test_quantized_rnn)
+# test_rnn_quantization and test_quantized_rnn (imported from test_quantization)
+# now run on GPU as normal regression tests: _contrib_quantized_rnn has a GPU
+# FStatefulCompute (dequantize + cuDNN float LSTM fallback) and
+# _contrib_quantize_asym has a GPU FStatefulCompute with an on-device scale/shift
+# path, so the GPU graph-quantization chain is fully registered.

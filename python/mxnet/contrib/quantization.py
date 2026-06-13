@@ -897,8 +897,8 @@ def quantize_net(network, quantized_dtype='auto', quantize_mode='full', quantize
     """
     from ..gluon import SymbolBlock
 
-    if device != mx.cpu():
-        raise ValueError('Quantization currently supports only CPU device')
+    if not isinstance(device, Device):
+        raise ValueError(f'currently only supports single device, while received {str(device)}')
     backend = 'ONEDNN_QUANTIZE'
 
     network.hybridize(static_alloc=False, static_shape=False)
@@ -925,9 +925,12 @@ def quantize_net(network, quantized_dtype='auto', quantize_mode='full', quantize
     data_descs = _generate_list_of_data_desc(data_shapes, data_types)
 
     num_inputs = len(data_descs)
-    data_nd = []
-    arr_fn = mx.np if is_np_array() else mx.nd
-    data_nd = _multilist_iterator(data_descs, lambda d, F=arr_fn: F.zeros(shape=d.shape, dtype=d.dtype))
+    if is_np_array():
+        data_nd = _multilist_iterator(data_descs,
+                                      lambda d: mx.np.zeros(shape=d.shape, dtype=d.dtype, device=device))
+    else:
+        data_nd = _multilist_iterator(data_descs,
+                                      lambda d: mx.nd.zeros(shape=d.shape, dtype=d.dtype, ctx=device))
 
     while True:
         try:
@@ -994,10 +997,10 @@ def quantize_net(network, quantized_dtype='auto', quantize_mode='full', quantize
             for k, v in calib_net.collect_params().items():
                 v.grad_req = 'null'
 
-            calib_net.load_dict(params, cast_dtype=True, dtype_source='saved')
+            calib_net.load_dict(params, device=device, cast_dtype=True, dtype_source='saved')
             calib_net.hybridize(static_alloc=False, static_shape=False)
             num_batches = _collect_layer_statistics(calib_net, calib_data, collector, num_inputs,
-                                                    num_calib_batches, logger)
+                                                    num_calib_batches, logger, device=device)
 
             if logger:
                 logger.info(f'Collected layer output values from FP32 model using {num_batches} batches')
@@ -1018,8 +1021,8 @@ def quantize_net(network, quantized_dtype='auto', quantize_mode='full', quantize
         for k, v in net.collect_params().items():
             v.grad_req = 'null'
 
-    all_params = {(f'arg:{k}'): v.as_in_context(cpu()) for k, v in qarg_params.items()}
-    all_params.update({(f'aux:{k}'): v.as_in_context(cpu()) for k, v in aux_params.items()})
-    net.load_dict(all_params, cast_dtype=True, dtype_source='saved')
+    all_params = {(f'arg:{k}'): v.as_in_context(device) for k, v in qarg_params.items()}
+    all_params.update({(f'aux:{k}'): v.as_in_context(device) for k, v in aux_params.items()})
+    net.load_dict(all_params, device=device, cast_dtype=True, dtype_source='saved')
     net.optimize_for(data_nd, backend=backend, skip_infer=True)
     return net

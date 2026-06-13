@@ -30,6 +30,7 @@
 #include <dmlc/parameter.h>
 #include <mxnet/operator.h>
 #include <mshadow/base.h>
+#include <cmath>
 #include <map>
 #include <algorithm>
 #include <limits>
@@ -194,34 +195,46 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
   }
 #endif
 
-  // Calculate mean
+  // Calculate mean (and, on CPU, std as well).
 #if !defined(__CUDACC__)
+  // Accumulate the per-group mean and centered variance in double so that
+  // large-finite float32 inputs do not overflow (the raw sum alone can exceed
+  // the float32 range). The reduction is over contiguous channel_size blocks
+  // because temp_data_shape is a contiguous reshape of the input. Mirrors the
+  // CPU BatchNorm double-accumulation fix; statistics are narrowed back to DType.
   MSHADOW_REAL_TYPE_SWITCH(data.type_flag_, DType, {
-    BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
-      broadcast::Reduce<mshadow_op::sum, NDim, DType, mshadow_op::identity, true>(
-          s, mean_, kWriteTo, workspace, data_);
-    });
+    const index_t num_rows = red_dst_shape.Size();
+    const DType* in        = data_.dptr<DType>();
+    DType* mean_out        = mean_.dptr<DType>();
+    DType* std_out         = std_.dptr<DType>();
+    const double eps_d     = static_cast<double>(param.eps);
+    const double inv_n     = 1.0 / static_cast<double>(channel_size);
+    _Pragma("omp parallel for")
+    for (index_t r = 0; r < num_rows; ++r) {
+      const DType* row = in + r * channel_size;
+      double sum       = 0.0;
+      for (int64_t i = 0; i < channel_size; ++i) {
+        sum += static_cast<double>(row[i]);
+      }
+      const double mean_v = sum * inv_n;
+      double var          = 0.0;
+      for (int64_t i = 0; i < channel_size; ++i) {
+        const double c = static_cast<double>(row[i]) - mean_v;
+        var += c * c;
+      }
+      mean_out[r] = static_cast<DType>(mean_v);
+      std_out[r]  = static_cast<DType>(std::sqrt(var * inv_n + eps_d));
+    }
   });
 #else
   BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
     broadcast::RTCReduce(ctx, mean_reduce, kWriteTo, workspace, data_, "red::sum{}", NDim, "identity");
   });
-#endif  // !defined(__CUDACC__)
-  MSHADOW_REAL_TYPE_SWITCH(
-#if !defined(__CUDACC__)
-      data.type_flag_,
-#else
-      mean_reduce.type_flag_,
-#endif
-      DType, {
-    Tensor<xpu, 1, DType> mean_data_tensor =
-#if !defined(__CUDACC__)
-        mean_.FlatTo1D<xpu, DType>(s);
-#else
-        mean_reduce.FlatTo1D<xpu, DType>(s);
-#endif
+  MSHADOW_REAL_TYPE_SWITCH(mean_reduce.type_flag_, DType, {
+    Tensor<xpu, 1, DType> mean_data_tensor = mean_reduce.FlatTo1D<xpu, DType>(s);
     mean_data_tensor /= scalar<DType>(channel_size);
   });
+#endif  // !defined(__CUDACC__)
 
   TBlob data_grp          = data.reshape(temp_data_shape);
 #if !defined(__CUDACC__)
@@ -247,30 +260,19 @@ void GroupNormCompute(const nnvm::NodeAttrs& attrs,
       {output_grp});
 #endif  // !defined(__CUDACC__)
 
-  // Calculate std
+  // Calculate std. On CPU the std was already computed (in double) alongside the
+  // mean above; only the GPU reduce path remains here.
+#if defined(__CUDACC__)
   const TBlob centered_out = output_grp.reshape(red_src_shape);
-#if !defined(__CUDACC__)
-  MSHADOW_REAL_TYPE_SWITCH(output_grp.type_flag_, DType, {
-    BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
-      broadcast::Reduce<mshadow_op::sum, NDim, DType, mshadow_op::square, true>(
-          s, std_, kWriteTo, workspace, centered_out);
-    });
-  });
-#else
   BROADCAST_NDIM_SWITCH(red_dst_shape.ndim(), NDim, {
     broadcast::RTCReduce(ctx, std_reduce, kWriteTo, workspace, centered_out, "red::sum{}", NDim, "square");
   });
-#endif
   MSHADOW_REAL_TYPE_SWITCH(output_grp.type_flag_, DType, {
-    Tensor<xpu, 1, DType> std_data_tensor =
-#if !defined(__CUDACC__)
-        std_.FlatTo1D<xpu, DType>(s);
-#else
-        std_reduce.FlatTo1D<xpu, DType>(s);
-#endif
+    Tensor<xpu, 1, DType> std_data_tensor = std_reduce.FlatTo1D<xpu, DType>(s);
     std_data_tensor = F<mshadow_op::square_root>(std_data_tensor / scalar<DType>(channel_size) +
                                                  scalar<DType>(param.eps));
   });
+#endif
 
   if (write_output) {
     // Calculate data = data / std

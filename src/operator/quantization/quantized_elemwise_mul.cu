@@ -72,6 +72,20 @@ struct quantized_elemwise_mul_float_kernel {
   }
 };
 
+// Non-calibrated int8 * int8 -> int32 output. With out_scale == 1 (matching the
+// CPU op), the result is the exact integer product; the output range is derived
+// separately from the input ranges via QuantizationRangeForS8S8Multiplication.
+struct quantized_elemwise_mul_int32_kernel {
+  MSHADOW_XINLINE static void Map(int i,
+                                  int32_t* out,
+                                  const int8_t* lhs,
+                                  const int8_t* rhs,
+                                  const OpReqType req) {
+    const int32_t value = static_cast<int32_t>(lhs[i]) * static_cast<int32_t>(rhs[i]);
+    KERNEL_ASSIGN(out[i], req, value);
+  }
+};
+
 void QuantizedElemwiseMulOpForwardGPU(const nnvm::NodeAttrs& attrs,
                                       const OpContext& ctx,
                                       const std::vector<TBlob>& inputs,
@@ -108,35 +122,61 @@ void QuantizedElemwiseMulOpForwardGPU(const nnvm::NodeAttrs& attrs,
     return;
   }
 
-  CHECK(params.max_calib_range.has_value() && params.min_calib_range.has_value())
-      << "GPU quantized_elemwise_mul requires calibration ranges for quantized output";
-  CHECK_EQ(outputs[quantized_elemwise_mul::kOut].type_flag_, mshadow::kInt8);
-
-  if (req[quantized_elemwise_mul::kOut] != kNullOp) {
-    mxnet_op::Kernel<quantized_elemwise_mul_calibrated_int8_kernel, gpu>::Launch(
+  if (params.max_calib_range.has_value() && params.min_calib_range.has_value()) {
+    CHECK_EQ(outputs[quantized_elemwise_mul::kOut].type_flag_, mshadow::kInt8);
+    if (req[quantized_elemwise_mul::kOut] != kNullOp) {
+      mxnet_op::Kernel<quantized_elemwise_mul_calibrated_int8_kernel, gpu>::Launch(
+          s,
+          out_size,
+          outputs[quantized_elemwise_mul::kOut].dptr<int8_t>(),
+          input_l,
+          input_r,
+          lhs_min,
+          lhs_max,
+          rhs_min,
+          rhs_max,
+          params.min_calib_range.value(),
+          params.max_calib_range.value(),
+          req[quantized_elemwise_mul::kOut]);
+    }
+    AssignQuantizedRangeOutput<gpu>(
         s,
-        out_size,
-        outputs[quantized_elemwise_mul::kOut].dptr<int8_t>(),
-        input_l,
-        input_r,
-        lhs_min,
-        lhs_max,
-        rhs_min,
-        rhs_max,
+        outputs[quantized_elemwise_mul::kOutMin],
         params.min_calib_range.value(),
+        req[quantized_elemwise_mul::kOutMin]);
+    AssignQuantizedRangeOutput<gpu>(
+        s,
+        outputs[quantized_elemwise_mul::kOutMax],
         params.max_calib_range.value(),
-        req[quantized_elemwise_mul::kOut]);
+        req[quantized_elemwise_mul::kOutMax]);
+  } else {
+    // Non-calibrated int8 * int8 -> int32 output. The exact integer product is
+    // written on device; the output range is computed on device from the four
+    // input range scalars (no host dereference of device pointers), matching the
+    // CPU op and the quantized_fully_connected GPU precedent.
+    CHECK_EQ(outputs[quantized_elemwise_mul::kOut].type_flag_, mshadow::kInt32);
+    if (req[quantized_elemwise_mul::kOut] != kNullOp) {
+      mxnet_op::Kernel<quantized_elemwise_mul_int32_kernel, gpu>::Launch(
+          s,
+          out_size,
+          outputs[quantized_elemwise_mul::kOut].dptr<int32_t>(),
+          input_l,
+          input_r,
+          req[quantized_elemwise_mul::kOut]);
+    }
+    if (req[quantized_elemwise_mul::kOutMin] != kNullOp ||
+        req[quantized_elemwise_mul::kOutMax] != kNullOp) {
+      mxnet_op::Kernel<QuantizationRangeForS8S8MultiplicationStruct, gpu>::Launch(
+          s,
+          1,
+          outputs[quantized_elemwise_mul::kOutMin].dptr<float>(),
+          outputs[quantized_elemwise_mul::kOutMax].dptr<float>(),
+          lhs_min,
+          lhs_max,
+          rhs_min,
+          rhs_max);
+    }
   }
-  AssignQuantizedRangeOutput<gpu>(
-      s,
-      outputs[quantized_elemwise_mul::kOutMin],
-      params.min_calib_range.value(),
-      req[quantized_elemwise_mul::kOutMin]);
-  AssignQuantizedRangeOutput<gpu>(
-      s,
-      outputs[quantized_elemwise_mul::kOutMax],
-      params.max_calib_range.value(),
-      req[quantized_elemwise_mul::kOutMax]);
 }
 
 NNVM_REGISTER_OP(_contrib_quantized_elemwise_mul)

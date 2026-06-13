@@ -207,8 +207,12 @@ class _RNNLayer(HybridBlock):
                           lstm_state_clip_max=self._lstm_state_clip_max,
                           lstm_state_clip_nan=self._lstm_state_clip_nan)
             if self._use_sequence_length and device.device_type == 'cpu':
-                rnn = self._mask_cpu_sequence_outputs(rnn, sequence_length_device, inputs.shape[0],
-                                                      inputs.shape[1], device)
+                raise NotImplementedError(
+                    "Hybridized CPU RNN layers do not support use_sequence_length: the "
+                    "native CPU RNN operator ignores sequence_length, so the returned "
+                    "states would reflect the full padded sequence instead of each "
+                    "sequence's valid length. Use this layer without hybridize() on CPU, "
+                    "or run it on a GPU context.")
 
         if self._mode == 'lstm':
             outputs, states = rnn[0], [rnn[1], rnn[2]]
@@ -219,13 +223,6 @@ class _RNNLayer(HybridBlock):
             outputs = np.swapaxes(outputs, 0, 1)
 
         return outputs, states
-
-    def _mask_cpu_sequence_outputs(self, rnn, sequence_length, seq_len, batch_size, device):
-        outputs = rnn[0]
-        steps = np.arange(seq_len, dtype=sequence_length.dtype, device=device).reshape((seq_len, 1, 1))
-        lengths = sequence_length.reshape((1, batch_size, 1))
-        outputs = outputs * (steps < lengths).astype(outputs.dtype)
-        return (outputs,) + tuple(rnn[1:])
 
     def _forward_cpu_sequence_length(self, inputs, rnn_params, states, sequence_length):
         seq_len, batch_size = inputs.shape[0], inputs.shape[1]

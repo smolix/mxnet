@@ -804,9 +804,6 @@ def test_quantized_elemwise_mul():
         elif qtype != 'int8':
             print('skipped testing quantized_elemwise_mul for not supported data type')
             return
-        elif is_test_for_gpu():
-            print('skipped testing quantized_elemwise_mul for gpu since it is not supported yet')
-            return
 
         class ElemwiseMulBlock(mx.gluon.nn.HybridBlock):
             def __init__(self, **kwargs):

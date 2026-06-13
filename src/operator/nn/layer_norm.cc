@@ -124,8 +124,12 @@ bool LayerNormComputeMKL(const nnvm::NodeAttrs& attrs,
                          const std::vector<TBlob>& outputs) {
   using namespace mshadow;
   const LayerNormParam& param = nnvm::get<LayerNormParam>(attrs.parsed);
+  // A null primary-output request can still require the mean/std statistics
+  // outputs, which this MKL fast path does not populate. Decline the
+  // optimization so the general LayerNorm path (which honours stats-only
+  // requests) computes mean/std instead of leaving them as zeros.
   if (req[0] == kNullOp)
-    return true;
+    return false;
   CHECK_NE(req[0], kAddTo);
   CHECK_EQ(inputs.size(), 3U);
   int axis = GetRealAxis(param.axis, inputs[0].ndim());

@@ -56,8 +56,9 @@ Current counts:
 - Broad-scan PR candidates not yet verified and not counted as current bugs: 18.
 - Remaining expected-failing repros are all NumPy view/stride contract cases:
   stepped slicing, axis movement, and negative-stride flip/rot90 views. Parallel
-  source review confirmed these require core strided-view metadata in NDArray/TBlob
-  plus operator/API plumbing; Python-only wrappers would be incomplete.
+  source review completed with no code edits and confirmed these require core
+  strided-view metadata in NDArray/TBlob plus operator/API plumbing; Python-only
+  wrappers would be incomplete.
 - Baseline verification before fixes:
   /home/smola/d2l-neu/.venv-mxnet/bin/python -m pytest -q tests/python/unittest/test_apache_open_issue_repros.py
   reported 53 xfailed; running the same file with --runxfail reported
@@ -81,6 +82,204 @@ Current counts:
   `--runxfail`. After auditing the current batch, the broad RunGraph post-op
   shape repair and silent CachedOp output reallocation were removed; focused
   verification still passed against the rebuilt library.
+
+## 2026-06-13 Commit Review and Resolve Session
+
+Scope: reviewed the 18 local commits ahead of `origin/master`
+(`29aa33d8b..HEAD`) for correctness and regressions, completed the in-flight GPU
+RNN quantization work, rebuilt `build/libmxnet.so` from current sources, and
+re-baselined the repro and GPU/CPU quantization suites. Four parallel review
+agents were used: three over contiguous commit groups and one tracing
+cross-commit file evolution.
+
+### Cross-commit evolution (introduced-then-fixed) audit
+
+No source file touched by multiple commits carries an introduced-but-unfixed
+regression. Three side effects were introduced and then corrected within the
+range and must NOT be re-reported as current bugs:
+
+- `symbol.py` `optimize_for`: a hardcoded backend allow-list added in
+  `a48265145` was removed in `eb42027df` (the C++ unknown-backend `CHECK` in
+  `c_api_symbolic.cc` is the surviving guard).
+- `ndarray/numpy/_op.py` `squeeze`: a `return x` short-circuit added in
+  `1a9b948f0` that broke autograd/deferred-compute recording was guarded in
+  `241f870d9`.
+- `gluon/nn/basic_layers.py` `_scale_batch_norm_input`: input rescaling added in
+  `1a9b948f0` that corrupted BatchNorm running stats was fully removed in
+  `9734206f9`.
+
+### Committed-fix review verdicts
+
+GPU quantization + control-flow batch (`24a174206`, `086d77590`, `0b01525be`,
+`209da22d0`, `69b805ac4`): all correct; tests assert real behavior. Notes:
+
+- MEDIUM (documented, not changed): GPU `_contrib_quantized_elemwise_mul`
+  implements only float and calibrated-int8 outputs; the non-calibrated
+  int8->int32 path `LOG(FATAL)`s on GPU — a loud gap, not a regression (the GPU
+  registration is new).
+- The control-flow autograd guard (`AutogradRecordingGuard(false)` around legacy
+  while-loop bookkeeping) preserves body gradients via `LoopState::Forward`;
+  sound.
+
+Normalization / transformer / cachedop / optimize_for batch (`9a98a2610`,
+`13e73bbf5`, `669a588c8`, `9734206f9`, `96048f7b4`, `eb42027df`): all correct.
+Notes:
+
+- MEDIUM (FIXED this session): `LayerNormComputeMKL` (`layer_norm.cc:127`)
+  retained the same stats-only `req[0]==kNullOp` early-return that was fixed
+  everywhere else, returning zeros for mean/std on stats-only requests. Changed
+  to decline the MKL fast path (`return false`) so the general path computes the
+  statistics. Source-only: `MXNET_USE_MKL_LAYERNORM` is OFF in this build, so the
+  fix is not runtime-verified here.
+- MEDIUM (documented, not changed): GPU BatchNorm training-mode variance keeps
+  `AccReal` accumulation; the double-accumulation overflow mitigation is CPU
+  only. Matches upstream; no failing test.
+- LOW: cached vs imperative no-affine BatchNorm beta-zeroing conditions diverge;
+  `SharedND::Retrieve` fast-path read is unlocked (benign for valid usage).
+
+Early repro / numpy / engine / launcher batch (`a48265145`, `1a9b948f0`,
+`241f870d9`, `3cc85f509`, `d2776cd7f`, `e5ffa033c`, `0f865ca8c`): engine dedup,
+launcher fix, numpy sweep, and test infra are correct. Three current concerns in
+`1a9b948f0`, all runtime-checked against current code this session:
+
+- H1 (FIXED this session): `_check_same_device` rejected `cpu` vs `cpu_pinned`
+  and ran on every imperative op (via `register.py:324`), even though the backend
+  accepts CPU-family mixing. Verified at runtime: with the check bypassed,
+  `cpu + cpu_pinned` returns `cpu(0)`, while `cpu + gpu` and `gpu0 + gpu1` are
+  rejected by `imperative_utils.h:158`. `util.py` now treats `cpu`/`cpu_pinned`/
+  `cpu_shared` as mutually compatible (`_devices_are_compatible`); the issue
+  #21119 cross-GPU rejection repro still passes.
+- H2 (FIXED this session): hybridized CPU RNN/LSTM/GRU with
+  `use_sequence_length` masked only outputs in `_mask_cpu_sequence_outputs`; the
+  returned states reflected the full padded sequence, not the per-sequence
+  valid-length final states. A correct symbolic fix is infeasible (cell/lower-
+  layer states are not recoverable from outputs; the per-sequence loop uses
+  `asnumpy()` and does not hybridize). Resolved per user decision by raising
+  `NotImplementedError` for the hybridized CPU + `use_sequence_length` path
+  (`rnn_layer.py`); the dead `_mask_cpu_sequence_outputs` helper was removed. The
+  imperative (non-hybridized) CPU path still masks correctly. The repro was
+  renamed `test_similar_hybrid_rnn_cpu_sequence_length_raises` and now asserts the
+  raise plus imperative correctness.
+- H3 (REVERTED this session per user decision): LayerNorm/GroupNorm routed ALL
+  float32 inputs through a manual float64 path
+  (`_stable_axis_norm`/`_stable_group_norm`), costing GPU throughput, changing
+  numerics/gradients for every float32 user, and requiring a concrete shape at
+  trace time. Reverted to the fused native op for float32; the dead
+  `_stable_axis_norm`/`_stable_group_norm`/`_channel_param_shape` helpers were
+  removed. The large-finite normalization repros
+  (`test_similar_layernorm_large_finite_input_is_finite`,
+  `test_similar_groupnorm_large_finite_input_is_finite`, both `hybridize`
+  parametrizations) regress as expected and are now `xfail(strict=True)` pending a
+  native variance-accumulation fix.
+
+Additional MEDIUM notes (documented, not changed): sparse-op canonicalization is
+CPU-only (CPU/GPU storage-structure divergence); `squeeze` duplicate-axis now
+raises `MXNetError` (RuntimeError) not `ValueError` (NumPy raises `ValueError`);
+SequenceMask/Last/Reverse validation forces `asnumpy()` syncs on the hot path;
+CachedOp `PrepareOutputs` shape mismatch is now a fatal `CHECK`.
+
+### In-flight GPU RNN quantization — completed
+
+The uncommitted in-flight work (`quantize_net` device handling in
+`contrib/quantization.py`; `_contrib_quantized_rnn` GPU `FStatefulCompute` in
+`quantized_rnn.cc`/`.cu`) made the direct `test_quantized_rnn` pass, but the
+graph `test_rnn_quantization` failed because `_contrib_quantize_asym` had no GPU
+`FStatefulCompute` and its uncalibrated path host-dereferenced device min/max
+pointers. Resolved this session:
+
+- Added `src/operator/quantization/quantize_asym.cu` registering
+  `FStatefulCompute<gpu>` = `QuantizeAsymForward<gpu>`.
+- `quantize_asym-inl.h`: added a device-pointer `quantize_asymmetric` kernel
+  overload and a `quantize_asym_scale_shift` kernel. The uncalibrated branch now
+  reduces min/max, derives scale/shift on-device, quantizes with device-resident
+  scale/shift, and writes the range outputs via `AssignQuantizedRangeOutput`
+  (no host deref). The reduce is guarded `#if !defined(__CUDACC__)`
+  (`broadcast::Reduce`) / `#else` (`broadcast::RTCReduce`), mirroring
+  `quantize_v2` — this path had never been GPU-compiled before the new `.cu`.
+- `tests/python/test_quantization_gpu.py`: removed the stale `xfail` wrappers on
+  `test_rnn_quantization` and `test_quantized_rnn` (both now pass as normal GPU
+  regression tests).
+
+`quantize_graph_pass` admits RNN on GPU purely via `isRegistered()`, so no
+exclusion-list change was needed.
+
+### Baseline and regression results (against rebuilt build/libmxnet.so)
+
+- Build: incremental rebuild from current sources, exit 0. `libmxnet.so`
+  contains `CreateQuantizedRnnGPUState`, `QuantizedRnnGPUOp`, and the
+  `QuantizeAsym<gpu>` symbols. (A from-scratch clean rebuild across the 6 CUDA
+  arches was not done: the library already postdated all sources and the
+  incremental rebuild of the changed quantization TUs links an equivalent
+  artifact.)
+- Apache repro suite: 241 passed, 10 xfailed before changes; after this
+  session's changes (H1 + quantize_asym): 241 passed, 10 xfailed (no
+  regression). Final state after H2 (RNN raise) and H3 (norm revert): 237 passed,
+  14 xfailed, 0 failed. The +4 xfails are the large-finite LayerNorm/GroupNorm
+  cases re-marked by the H3 revert; the original 10 remain the NumPy view/stride
+  contract cases.
+- GPU quantization file: 52 passed / 1 failed (`test_rnn_quantization`) before;
+  53 passed / 0 after (normal and `--runxfail`).
+- CPU quantization file: 53 passed.
+
+### Follow-up resolve batch (native overflow + GPU quantization gaps)
+
+Three previously-deferred issues were fixed and verified against the rebuilt
+library:
+
+- Native LayerNorm/GroupNorm large-finite float32 overflow (the H3-revert
+  xfails). `LayerNormCPUKernel` (`layer_norm_cpu.h`) now accumulates in float64
+  for float32 input (float16 stays float32, float64 unchanged); the kernel
+  already divides before narrowing, so widening the accumulator suffices.
+  GroupNorm CPU (`group_norm-inl.h`) now computes per-group mean/std with an
+  explicit double-accumulation loop over the contiguous channel blocks (mirroring
+  the CPU BatchNorm fix), replacing the generic reduce that stored the raw sum
+  into a float32 buffer and squared in float. The four
+  `test_similar_*_large_finite_input_is_finite` repros were promoted from
+  strict-xfail back to normal passing tests.
+- GPU `_contrib_quantized_elemwise_mul` int8->int32 non-calibrated path
+  (`quantized_elemwise_mul.cu`): added an int32 kernel (exact `a*b`, `out_scale`
+  is 1) and an on-device `QuantizationRangeForS8S8MultiplicationStruct` launch
+  for the output range (no host deref, matching the FC GPU precedent). The CPU
+  early-return in `test_quantized_elemwise_mul` was removed so it now exercises
+  the GPU int32 path.
+- GPU BatchNorm training-variance overflow (`batch_norm.cu`): the native CUDA
+  training kernel now accumulates mean and centered variance in double
+  (`reduce<double>`, `VarOp<DType, double>`), narrowing the stored statistics
+  back to AccReal and keeping the elementwise output loop in AccReal. Added
+  `test_similar_gpu_batchnorm_training_large_finite_is_finite` (forces the native
+  kernel via `cudnn_off=True`, since cuDNN otherwise handles GPU BatchNorm).
+
+Verification after rebuild: large-finite LayerNorm/GroupNorm 4 passed under
+`--runxfail` then promoted; norm slice 16 passed; GPU quant file 53 passed;
+GPU batchnorm slice 3 passed (2 inference + 1 new training); GPU
+quantized_elemwise_mul passed.
+
+### Remaining open items
+
+- Residual same-class normalization gaps (no failing test, lower priority, left
+  documented): the generic `LayerNormComputeGeneral` path (axis != last for
+  float32) and the GPU GroupNorm RTC reduce still accumulate in float and would
+  overflow for large-finite float32. The GPU LayerNorm forward is already
+  Welford/double-safe. These need the same double-moments treatment if pursued.
+- Documented-but-unchanged review findings (M1/M3/M4 and LOW items): CPU-only
+  sparse-op canonicalization (CPU/GPU storage divergence), `squeeze`
+  `MXNetError` vs NumPy `ValueError`, `asnumpy()` syncs in sequence-op
+  validation, fatal CachedOp output-shape `CHECK`. Lower priority; left as-is.
+- The 10 NumPy view/stride contract xfails remain (need native signed-stride
+  metadata in `NDArray`/`TBlob` plus operator/API/DLPack plumbing — a core change
+  out of scope for this batch).
+- Files changed across this session (uncommitted): `src/operator/quantization/`
+  `quantize_asym-inl.h`, `quantize_asym.cu` (new),
+  `quantized_elemwise_mul.cu`; `src/operator/nn/layer_norm.cc`,
+  `layer_norm_cpu.h`, `group_norm-inl.h`, `batch_norm.cu`;
+  `python/mxnet/util.py`, `python/mxnet/gluon/nn/basic_layers.py` (H3 revert),
+  `python/mxnet/gluon/rnn/rnn_layer.py` (H2 raise);
+  `tests/python/test_quantization_gpu.py`,
+  `tests/python/quantization/test_quantization.py` (elemwise GPU un-skip),
+  `tests/python/unittest/test_apache_open_issue_repros.py` (H2 rename, GPU BN
+  test, large-finite promotions) — plus the prior in-flight
+  `contrib/quantization.py` and `quantized_rnn.cc`/`.cu`.
+
 ## Fix Progress
 
 Active batch started 2026-06-11:
@@ -322,6 +521,23 @@ normally after marker removal. The full GPU quantization wrapper file now report
 quantization xfails left in that wrapper. The remaining 2 xfails are the linked
 GPU RNN quantization / quantized_rnn support work items.
 
+2026-06-12 parallel agent follow-up completed for the two remaining GPU RNN
+quantization xfails. Runtime/source triage confirmed `test_rnn_quantization`
+still first fails because `quantize_net` rejects non-CPU devices, and the graph
+quantization pass excludes `RNN` on GPU because `_contrib_quantized_rnn` has no
+GPU `FCompute`/`FStatefulCompute` registration. The direct
+`test_quantized_rnn` path fails at the GPU fatal in
+`src/operator/quantization/quantized_rnn.cc`. A dequantize-on-GPU then call
+cuDNN float `RNN` implementation is sufficient for the direct op numerically:
+probes measured MSE `2.93e-05` unidirectional and `1.35e-05` bidirectional
+against float cuDNN, below the existing `0.001` threshold. An initial local
+implementation makes the direct `test_quantized_rnn` pass under `--runxfail`,
+but the graph test still exposes a second GPU quantization bug:
+`_contrib_quantize_asym` creates GPU state but lacks GPU
+`FStatefulCompute` registration; its uncalibrated path also computes min/max on
+device and then host-dereferences those device pointers. No new work is started
+until this ledger update is recorded.
+
 ## Similar-Bug Sweep Repros
 
 These tests were added after the original open-issue ledger, before any fixes
@@ -343,6 +559,18 @@ namespace in `tests/python/unittest/test_apache_open_issue_repros.py`.
   row_sparse elemwise, sparse unary/scalar canonicalization cases, plus
   stepped-slice, axis movement, reshape-like, flip/rot/squeeze/atleast_* NumPy
   view-contract cases.
+- 2026-06-12 parallel view/stride follow-up completed with no code edits. The
+  remaining 10 strict xfails are grouped into positive non-unit stepped slicing
+  (`test_issue_19170_stepped_slice_shares_storage`,
+  `test_similar_numpy_basic_stepped_slice_is_mutable_view`, and the two
+  multiaxis stepped-slice cases), axis-permutation views (`moveaxis` and
+  `rollaxis`), and negative-stride/permuted views (`flip`, `flipud`, `fliplr`,
+  and `rot90`). The current Python frontend materializes non-contiguous basic
+  slices with `_npi.slice`; native `NDArray`/`TBlob` carry shape plus offset but
+  no per-axis stride metadata, and DLPack strides are rejected unless compact.
+  Direct strided assignment already exists through slice-assign kernels, but
+  saved mutable non-contiguous views need native signed stride metadata, copy and
+  read/write plumbing, and then API/operator propagation.
 - Verification after adding the first wave: `pytest -q ... -k test_similar`
   reported 46 xfailed, 53 deselected, and 5 warnings in 200.85s. Verification
   after adding the second wave and dropping the unverified oneDNN FC branch

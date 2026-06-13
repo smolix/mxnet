@@ -329,17 +329,23 @@ __global__ void BatchNormalizationUpdateOutputKernel(DeviceTensor input,
   const int plane = blockIdx.x;
   const int N     = input.OuterSize() * input.InnerSize();
 
-  const AccReal norm = AccReal(1) / N;
+  const double norm = 1.0 / N;
 
-  // Compute the mean and variance across (batch, x/y/z)
-  const AccReal mean =
-      reduce<AccReal>(SumOp<DType, AccReal, DeviceTensor>(input), input, plane) * norm;
+  // Compute the mean and variance across (batch, x/y/z) in double precision so
+  // that large-finite float32 inputs do not overflow while summing the data or
+  // the centered squares (mirrors the CPU double-accumulation fix). The stored
+  // statistics are converted back to AccReal afterwards, and the elementwise
+  // output normalization below stays in AccReal.
+  const double mean_acc =
+      reduce<double>(SumOp<DType, double, DeviceTensor>(input), input, plane) * norm;
   __syncthreads();
-  const AccReal varN =
-      reduce<AccReal>(VarOp<DType, AccReal, DeviceTensor>(mean, input), input, plane);
+  const double varN_acc =
+      reduce<double>(VarOp<DType, double, DeviceTensor>(mean_acc, input), input, plane);
+  const AccReal mean = ScalarConvert<double, AccReal>::to(mean_acc);
   AccReal invStd = 0;
-  if (varN != AccReal(0) || epsilon != AccReal(0)) {
-    invStd = AccReal(1.0) / sqrt(varN * norm + epsilon);
+  if (varN_acc != 0.0 || epsilon != AccReal(0)) {
+    invStd = ScalarConvert<double, AccReal>::to(
+        1.0 / sqrt(varN_acc * norm + static_cast<double>(epsilon)));
   }
 
   // Save the mean, variance, and moving averages
@@ -356,7 +362,8 @@ __global__ void BatchNormalizationUpdateOutputKernel(DeviceTensor input,
     runningMean[plane] =
         runningMean[plane] * momentum + mean * (AccReal(1) - momentum);
     runningVar[plane] =
-        runningVar[plane] * momentum + varN * norm * (AccReal(1) - momentum);
+        runningVar[plane] * momentum +
+        ScalarConvert<double, AccReal>::to(varN_acc * norm) * (AccReal(1) - momentum);
   }
 
   // Write normalized and update the output

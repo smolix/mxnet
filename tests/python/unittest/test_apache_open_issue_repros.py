@@ -1204,35 +1204,47 @@ def test_similar_no_affine_batchnorm_backward_keeps_graph(case, layer_kind, hybr
 SIMILAR_RNN_SEQUENCE_CASES = ["rnn", "lstm", "gru"]
 
 
+def _make_seq_rnn(layer_kind):
+    import mxnet as mx
+    if layer_kind == "rnn":
+        return mx.gluon.rnn.RNN(2, activation="tanh", layout="NTC", use_sequence_length=True)
+    if layer_kind == "lstm":
+        return mx.gluon.rnn.LSTM(2, layout="NTC", use_sequence_length=True)
+    return mx.gluon.rnn.GRU(2, layout="NTC", use_sequence_length=True)
+
+
 @pytest.mark.parametrize("layer_kind", SIMILAR_RNN_SEQUENCE_CASES)
-def test_similar_hybrid_rnn_cpu_sequence_length_not_cached(layer_kind):
+def test_similar_hybrid_rnn_cpu_sequence_length_raises(layer_kind):
+    # The native CPU RNN operator ignores sequence_length, so a hybridized CPU
+    # layer could only mask the outputs while the returned states would still
+    # reflect the full padded sequence. The layer now raises NotImplementedError
+    # instead of returning silently-wrong states. The imperative (non-hybridized)
+    # CPU path still honors sequence_length correctly.
     import mxnet as mx
     import numpy as onp
     from mxnet import npx
 
     npx.set_np()
     mx.random.seed(7)
-    if layer_kind == "rnn":
-        net = mx.gluon.rnn.RNN(2, activation="tanh", layout="NTC", use_sequence_length=True)
-    elif layer_kind == "lstm":
-        net = mx.gluon.rnn.LSTM(2, layout="NTC", use_sequence_length=True)
-    else:
-        net = mx.gluon.rnn.GRU(2, layout="NTC", use_sequence_length=True)
-    net.initialize(ctx=mx.cpu())
-    net.hybridize()
 
     data = mx.np.ones((2, 4, 3), ctx=mx.cpu())
     full = mx.np.array([4, 4], dtype="int32")
     short = mx.np.array([1, 2], dtype="int32")
 
-    first = net(data, sequence_length=full)
-    first_out = first[0] if isinstance(first, (tuple, list)) else first
-    first_out.wait_to_read()
+    hybrid_net = _make_seq_rnn(layer_kind)
+    hybrid_net.initialize(ctx=mx.cpu())
+    hybrid_net.hybridize()
+    with pytest.raises(NotImplementedError):
+        result = hybrid_net(data, sequence_length=full)
+        out = result[0] if isinstance(result, (tuple, list)) else result
+        out.wait_to_read()
 
-    second = net(data, sequence_length=short)
-    out = second[0] if isinstance(second, (tuple, list)) else second
+    # The imperative CPU path remains correct: outputs past each valid length are zero.
+    eager_net = _make_seq_rnn(layer_kind)
+    eager_net.initialize(ctx=mx.cpu())
+    result = eager_net(data, sequence_length=short)
+    out = result[0] if isinstance(result, (tuple, list)) else result
     out.wait_to_read()
-
     onp.testing.assert_allclose(out[0, 1:].asnumpy(), onp.zeros((3, 2)), atol=0, rtol=0)
     onp.testing.assert_allclose(out[1, 2:].asnumpy(), onp.zeros((2, 2)), atol=0, rtol=0)
 
@@ -1968,6 +1980,43 @@ def test_similar_gpu_batchnorm_inference_output_mean_var_are_populated(cudnn_off
         )
         """ % cudnn_off,
         timeout=10,
+        extra_env={"CUDA_VISIBLE_DEVICES": "0"},
+    )
+    assert_subprocess_ok(proc)
+
+
+def test_similar_gpu_batchnorm_training_large_finite_is_finite():
+    # The native CUDA BatchNorm training kernel (forced via cudnn_off=True) must
+    # accumulate mean/variance in double so large-finite float32 inputs do not
+    # overflow into a NaN output (sum-of-data overflowing float32 -> inf mean ->
+    # inf*0 = NaN). Mirrors the CPU test_similar_batchnorm_training_large_finite.
+    require_gpus(1)
+    proc = run_python(
+        """
+        import numpy as onp
+        import mxnet as mx
+        from mxnet import autograd
+
+        ctx = mx.gpu(0)
+        data = mx.nd.array(
+            [[[1.4918449e38, 9.0072335e37, -1.3146734e38, 3.0568930e38]]],
+            ctx=ctx, dtype="float32")
+        gamma = mx.nd.ones((1,), ctx=ctx)
+        beta = mx.nd.zeros((1,), ctx=ctx)
+        moving_mean = mx.nd.zeros((1,), ctx=ctx)
+        moving_var = mx.nd.ones((1,), ctx=ctx)
+        data.attach_grad()
+        with autograd.record(train_mode=True):
+            out = mx.nd.BatchNorm(
+                data, gamma, beta, moving_mean, moving_var,
+                fix_gamma=False, use_global_stats=False, cudnn_off=True)
+            loss = out.sum()
+        loss.backward()
+        mx.nd.waitall()
+        assert onp.isfinite(out.asnumpy()).all(), out.asnumpy()
+        assert onp.isfinite(data.grad.asnumpy()).all(), data.grad.asnumpy()
+        """,
+        timeout=20,
         extra_env={"CUDA_VISIBLE_DEVICES": "0"},
     )
     assert_subprocess_ok(proc)

@@ -57,8 +57,13 @@ namespace op {
  */
 template <typename Data,
           typename Accum = typename
-          /* By default accumulate in float32 for float16.  Otherwise use same type. */
-          std::conditional<std::is_same<mshadow::half::half_t, Data>::value, float, Data>::type>
+          /* Accumulate in float32 for float16 and in float64 for float32 so that
+             large-finite float32 inputs do not overflow while summing the values
+             or the centered squares (the sum itself can exceed the float32 range).
+             float64 input keeps float64; the result is narrowed back to Data. */
+          std::conditional<std::is_same<mshadow::half::half_t, Data>::value, float,
+              typename std::conditional<std::is_same<float, Data>::value,
+                  double, Data>::type>::type>
 void LayerNormCPUKernel(size_t width,
                         size_t instances,
                         Data eps,

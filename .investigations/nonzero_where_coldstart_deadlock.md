@@ -1,13 +1,28 @@
 # Handoff: intermittent cold-start deadlock in `mx.np.where` / `nonzero` (GPU)
 
-**Status:** MITIGATION APPLIED — pending validation under load (2026-06-13).
-Engine changes landed on branch `fix/nonzero-coldstart-deadlock-engine`. Built
-with CUDA on an RTX 3060 and passed **100/100 cold starts under self-induced
-GPU+CPU load, 0 hangs** (+40/40 idle), no `MXNET_ENGINE_DIAG` timeouts. NOT yet
-definitive: that box never reproduced the original hang when idle (0/540 in the
-original campaign), so a clean run there proves no-regression + correct-path, not
-that the rare race is gone. **Re-verify on the heavily-loaded box** (see
-"Verification on the server" below).
+**Status:** FIXED — VALIDATED UNDER LOAD on the multi-GPU server (2026-06-13).
+Engine changes landed via PR #58 (`fix/nonzero-coldstart-deadlock-engine`).
+
+Definitive A/B on the box that reliably reproduces the hang (4× RTX 4090),
+using the 3-shard `test_operator_gpu.py` reproducer (GPUs 1/2/3, hard-timeout
+backstop, `MXNET_ENGINE_DIAG=1`):
+- **OLD binary (pre-fix): deadlock reproduced** — shard 2 hung at ~98% and was
+  SIGKILLed at the 2700s hard timeout, on **2 consecutive runs** (the campaign
+  sweep + a dedicated A/B run). shards 0/1 passed (4374/4376).
+- **NEW binary (#58): 0 hangs** — all three shards completed (4374/4376/4373
+  passed), shard 2 cleared the ~98% zone cleanly (44:44). The un-quarantined
+  `test_np_more_array_like_wrappers` also passes (1.15s) under the standard
+  OMP-capped harness env.
+
+The earlier RTX-3060 run (100/100 under self-load, 0/540 idle) plus this A/B and
+the remote's 100/100 confirm the fix. The test below is un-quarantined.
+
+NOTE on a separate, unrelated gotcha found during this validation: running pytest
+*directly* (without `tools/run_gpu_shards.sh`) on a 64-core host with no
+`OMP_NUM_THREADS` cap over-subscribes OpenMP (~322 threads) and can stall at
+import/init *before any GPU allocation* — distinct from this deadlock (which
+allocates GPU memory and hangs in `nonzero`). Always run the GPU tests via
+`run_gpu_shards.sh`, which caps OMP and sets `OMP_WAIT_POLICY=passive`.
 
 The original OPEN analysis is preserved unchanged below the resolution.
 

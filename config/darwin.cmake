@@ -58,7 +58,9 @@ else()
 endif()
 set(OPENCV_ROOT "" CACHE PATH "OpenCV install path. Supports autodetection.")
 
-set(USE_OPENMP OFF CACHE BOOL "Build with Openmp support")
+# USE_OPENMP is auto-detected on macOS: it defaults ON when a hermetic libomp prefix is
+# present under .deps/ (build it once via `python tools/dependencies/build_openmp.py`), and
+# OFF otherwise. Override explicitly with -DUSE_OPENMP=ON/OFF on the cmake command line.
 
 set(USE_ONEDNN ON CACHE BOOL "Build with oneDNN support")
 

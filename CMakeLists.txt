@@ -83,13 +83,54 @@ endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Utils.cmake)
 
 include(CMakeDependentOption)
+
+# On macOS, OpenMP uses a hermetic libomp prefix produced by
+# tools/dependencies/build_openmp.py (installed under .deps/openmp-<ver>-<platform>-<arch>).
+# By design we do NOT probe Homebrew/MacPorts/system locations. This helper locates such a
+# prefix so USE_OPENMP can default ON out of the box once the runtime has been built.
+function(mxnet_apple_discover_openmp_root out_var)
+  set(${out_var} "" PARENT_SCOPE)
+  file(GLOB _mxnet_openmp_candidates LIST_DIRECTORIES true
+       "${CMAKE_CURRENT_SOURCE_DIR}/.deps/openmp-*")
+  string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" _mxnet_host_arch)
+  set(_arch_match "")
+  set(_any_match "")
+  foreach(_cand IN LISTS _mxnet_openmp_candidates)
+    if(IS_DIRECTORY "${_cand}" AND EXISTS "${_cand}/include/omp.h" AND IS_DIRECTORY "${_cand}/lib")
+      if(NOT _any_match)
+        set(_any_match "${_cand}")
+      endif()
+      if(_mxnet_host_arch AND _cand MATCHES "${_mxnet_host_arch}" AND NOT _arch_match)
+        set(_arch_match "${_cand}")
+      endif()
+    endif()
+  endforeach()
+  if(_arch_match)
+    set(${out_var} "${_arch_match}" PARENT_SCOPE)
+  elseif(_any_match)
+    set(${out_var} "${_any_match}" PARENT_SCOPE)
+  endif()
+endfunction()
+
 #Some things have order. This must be put in front alone
 option(MXNET_BUILD_SHARED_LIBS "Build shared libraries instead of static libraries" ON)
 if(APPLE)
   set(MXNET_DEFAULT_USE_CUDA OFF)
   set(MXNET_DEFAULT_USE_OPENCV OFF)
-  set(MXNET_DEFAULT_USE_OPENMP OFF)
   set(USE_BLAS "apple" CACHE STRING "BLAS Vendor")
+  # Default USE_OPENMP ON only when a hermetic libomp prefix is available (a user-supplied
+  # OPENMP_ROOT or an auto-discovered .deps/openmp-* tree), so a fresh checkout without the
+  # runtime still configures cleanly as a single-threaded build.
+  if(OPENMP_ROOT)
+    set(MXNET_APPLE_OPENMP_ROOT "${OPENMP_ROOT}")
+  else()
+    mxnet_apple_discover_openmp_root(MXNET_APPLE_OPENMP_ROOT)
+  endif()
+  if(MXNET_APPLE_OPENMP_ROOT)
+    set(MXNET_DEFAULT_USE_OPENMP ON)
+  else()
+    set(MXNET_DEFAULT_USE_OPENMP OFF)
+  endif()
 else()
   set(MXNET_DEFAULT_USE_CUDA ON)
   set(MXNET_DEFAULT_USE_OPENCV ON)
@@ -388,7 +429,7 @@ if(USE_MKL_LAYERNORM)
   add_definitions(-DMXNET_USE_MKL_LAYERNORM=1)
 endif()
 
-set(OPENMP_ROOT "" CACHE PATH "OpenMP runtime install prefix")
+set(OPENMP_ROOT "${MXNET_APPLE_OPENMP_ROOT}" CACHE PATH "OpenMP runtime install prefix")
 function(mxnet_prepare_openmp_root)
   if(NOT OPENMP_ROOT)
     return()
@@ -419,8 +460,15 @@ function(mxnet_prepare_openmp_root)
     set(OpenMP_omp_LIBRARY "${MXNET_OPENMP_LIBRARY}" CACHE FILEPATH "OpenMP runtime library" FORCE)
   endif()
   if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp" CACHE STRING "OpenMP C compiler flags" FORCE)
-    set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp" CACHE STRING "OpenMP CXX compiler flags" FORCE)
+    # AppleClang needs "-Xpreprocessor -fopenmp" to honor #pragma omp. Also pass an explicit
+    # -I: CMake's FindOpenMP verification compiles an isolated try_compile that does not see
+    # include_directories(), so omp.h must be reachable through the flags themselves.
+    set(_mxnet_apple_omp_flags "-Xpreprocessor -fopenmp")
+    if(MXNET_OPENMP_INCLUDE_DIR)
+      set(_mxnet_apple_omp_flags "${_mxnet_apple_omp_flags} -I${MXNET_OPENMP_INCLUDE_DIR}")
+    endif()
+    set(OpenMP_C_FLAGS "${_mxnet_apple_omp_flags}" CACHE STRING "OpenMP C compiler flags" FORCE)
+    set(OpenMP_CXX_FLAGS "${_mxnet_apple_omp_flags}" CACHE STRING "OpenMP CXX compiler flags" FORCE)
   endif()
 endfunction()
 if(USE_OPENMP)
@@ -631,6 +679,14 @@ endif()
 
 # ---[ OpenMP
 if(USE_OPENMP)
+  if(APPLE AND NOT OpenMP_omp_LIBRARY AND NOT OPENMP_ROOT)
+    message(FATAL_ERROR
+      "USE_OPENMP=ON on macOS but no libomp runtime was found.\n"
+      "Build the repo-local runtime once:\n"
+      "    python tools/dependencies/build_openmp.py\n"
+      "It installs under .deps/ and is auto-discovered on reconfigure. Alternatively pass\n"
+      "-DOPENMP_ROOT=<prefix>, or set -DUSE_OPENMP=OFF to build single-threaded.")
+  endif()
   find_package(OpenMP REQUIRED COMPONENTS C CXX)
   if(OpenMP_FOUND)
     include_directories(SYSTEM ${OpenMP_CXX_INCLUDE_DIRS})

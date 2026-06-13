@@ -156,49 +156,10 @@ def _validate_symbol_image_params(op_name, keys, vals):
         except ValueError:
             return default
 
-    if op_name in ("_image_resize", "_npx__image_resize"):
-        size = get_param("size")
-        if size is not None:
-            _validate_size_param(size, "size")
-        interp = get_param("interp")
-        if interp is not None:
-            _validate_interp_param(interp)
-
-    if op_name in ("_image_crop", "_npx__image_crop"):
-        crop_args = (get_param("x"), get_param("y"), get_param("width"), get_param("height"))
-        if any(arg is not None for arg in crop_args):
-            x, y, width, height = crop_args
-            if _to_int_param(x, "x offset") < 0:
-                raise ValueError("x offset must be non-negative")
-            if _to_int_param(y, "y offset") < 0:
-                raise ValueError("y offset must be non-negative")
-            _validate_positive_int(width, "width")
-            _validate_positive_int(height, "height")
-
-    if op_name in ("_image_random_crop", "_npx__image_random_crop"):
-        interp = get_param("interp")
-        if interp is not None:
-            _validate_interp_param(interp)
-        _validate_size_param((get_param("width"), get_param("height")),
-                             "crop size", allow_single=False)
-        _validate_float_pair(get_param("xrange", (0.0, 1.0)),
-                             "xrange", lower=0.0, upper=1.0)
-        _validate_float_pair(get_param("yrange", (0.0, 1.0)),
-                             "yrange", lower=0.0, upper=1.0)
-
-    if op_name in ("_image_random_resized_crop", "_npx__image_random_resized_crop"):
-        _validate_size_param((get_param("width"), get_param("height")),
-                             "resize crop size", allow_single=False)
-        _validate_float_pair(get_param("area", (0.08, 1.0)), "area",
-                             lower=0.0, upper=1.0, strictly_positive=True)
-        _validate_float_pair(get_param("ratio", (3.0 / 4.0, 4.0 / 3.0)),
-                             "ratio", strictly_positive=True)
-        interp = get_param("interp")
-        if interp is not None:
-            _validate_interp_param(interp)
-        max_trial = get_param("max_trial")
-        if max_trial is not None:
-            _validate_positive_int(max_trial, "max_trial")
+    # Symbol-side image-op validation removed (mirrors the ndarray side): it
+    # rejected valid inputs and only pre-empted OpenCV's own catchable error for
+    # invalid interp. The native ops validate.
+    return
 
 
 def _is_image_validation_error(err):

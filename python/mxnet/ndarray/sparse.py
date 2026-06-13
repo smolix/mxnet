@@ -1019,7 +1019,11 @@ def _csr_matrix_from_definition(data, indices, indptr, shape=None, ctx=None,
     if shape is None:
         if indices.shape[0] == 0:
             raise ValueError('invalid shape')
-        shape = (len(indptr) - 1, op.max(indices).asscalar() + 1)
+        # Infer the number of columns from the largest column index. Compute the
+        # max on the host: a reduction over a sparse array's extracted aux index
+        # buffer can read a stale value, whereas asnumpy() materializes it
+        # correctly (the value is needed on the host here regardless).
+        shape = (len(indptr) - 1, int(indices.asnumpy().max()) + 1)
     # verify shapes
     aux_shapes = [indptr.shape, indices.shape]
     if data.ndim != 1 or indptr.ndim != 1 or indices.ndim != 1 or \

@@ -350,7 +350,15 @@ class Parameter(object):
 
         with autograd.pause(), dc.context(False):
             if data is None:
-                if is_np_array() and self._stype == 'default':
+                if is_np_array():
+                    # NumPy/Gluon2.0 does not support sparse-storage parameter
+                    # DATA (it would silently fall back to dense). Sparse
+                    # gradients (grad_stype) are supported separately in
+                    # _init_grad. Reject a non-default data stype clearly here.
+                    if self._stype != 'default':
+                        raise ValueError(
+                            "Currently stype {} is not supported in NumPy interface and Gluon2.0"
+                            .format(self._stype))
                     kwargs = {'shape': self.shape, 'dtype': self.dtype, 'device': cpu()}
                     zeros_fn = _mx_np.zeros
                 else:

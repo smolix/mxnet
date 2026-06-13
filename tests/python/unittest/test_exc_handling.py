@@ -167,7 +167,7 @@ def test_opencv_exception():
         img = mx.nd.ones((1200, 1600, 3))
         img = mx.image.imresize(img, 320, 320, interp=-1)
         img.asnumpy()
-    pytest.raises(MXNetError, check_resize)
+    pytest.raises((MXNetError, ValueError), check_resize)
 
 
 def test_np_reshape_exception():

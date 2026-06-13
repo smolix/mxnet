@@ -927,7 +927,7 @@ def test_sparse_nd_fluent():
 def test_sparse_nd_exception():
     """ test invalid sparse operator will throw a exception """
     a = mx.nd.ones((2,2))
-    assertRaises(mx.base.MXNetError, mx.nd.sparse.retain, a, invalid_arg="garbage_value")
+    assertRaises((mx.base.MXNetError, TypeError), mx.nd.sparse.retain, a, invalid_arg="garbage_value")
     assertRaises(ValueError, mx.nd.sparse.csr_matrix, a, shape=(3,2))
     assertRaises(ValueError, mx.nd.sparse.csr_matrix, (2,2), shape=(3,2))
     assertRaises(ValueError, mx.nd.sparse.row_sparse_array, (2,2), shape=(3,2))

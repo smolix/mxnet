@@ -52,8 +52,14 @@ def test_dnnl_fallback_does_not_invalidate_null_outputs():
     contents = _read("src/imperative/imperative_utils.h")
 
     invalidate_body = contents.split("void InvalidateOutputs", 1)[1].split("}", 1)[0]
-    assert "reqs[i] == kWriteTo" in invalidate_body
-    assert "kNullOp" not in invalidate_body
+    # The fix only invalidates the stale DNNL shadow of kWriteTo outputs; kNullOp
+    # (and kAddTo) outputs keep their existing layout. Assert on the guarded
+    # statement rather than on the comment text (the rationale comment legitimately
+    # mentions kNullOp), so this stays a behavior check and not a brittle grep.
+    assert "if (reqs[i] == kWriteTo)" in invalidate_body
+    assert "InvalidateDNNLData" in invalidate_body
+    # No kNullOp branch actually invalidates anything.
+    assert "reqs[i] == kNullOp" not in invalidate_body
 
 
 def test_dnnl_activation_backward_uses_commit_output_path():
@@ -177,7 +183,10 @@ def test_python_callback_ndarray_handles_are_python_owned():
     ctypes_ndarray = _read("python/mxnet/_ctypes/ndarray.py")
     c_api_cc = _read("src/c_api/c_api.cc")
 
-    assert "check_call(_LIB.MXNDArrayFree(self.handle))" in ctypes_ndarray
+    # __del__ frees the handle via the C API; the handle is read into a local
+    # (None-guarded) before freeing, so match MXNDArrayFree(handle) rather than
+    # the pre-refactor MXNDArrayFree(self.handle) literal.
+    assert "check_call(_LIB.MXNDArrayFree(handle))" in ctypes_ndarray
     assert "delete static_cast<NDArray*>(handle)" in c_api_cc
 
     assert "std::unique_ptr<NDArray>" not in custom_cc

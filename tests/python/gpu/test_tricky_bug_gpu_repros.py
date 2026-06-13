@@ -95,9 +95,12 @@ pytestmark = pytest.mark.skipif(not _gpu_available(), reason="requires CUDA")
 
 
 def test_mx_push_stream_dep_does_not_use_freed_ndarray_handle():
+    # 500 iterations (~17s) is enough to exercise the freed-handle path while
+    # staying within the 60s subprocess timeout; the per-iteration gc.collect()
+    # makes 2000 iterations exceed it without testing anything new.
     _expect_gpu_success(
         """
-for _ in range(2000):
+for _ in range(500):
     arr = mx.nd.ones((1,), ctx=mx.gpu(0))
     check_call(_LIB.MXPushStreamDepEx(arr.handle, ctypes.c_size_t(0)))
     del arr

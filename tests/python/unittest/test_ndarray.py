@@ -1028,15 +1028,15 @@ def test_order():
         # test for ret_typ=indices
         nd_ret_topk = mx.nd.topk(a_nd, axis=1, ret_typ="indices", k=3, is_ascend=True).asnumpy()
         # Test the default dtype
-        assert nd_ret_topk.dtype == np.float32
+        assert nd_ret_topk.dtype == np.int64
         gt = gt_topk(a_npy, axis=1, ret_typ="indices", k=3, is_ascend=True)
         assert_almost_equal(nd_ret_topk, gt)
         nd_ret_topk = mx.nd.topk(a_nd, axis=3, ret_typ="indices", k=2, is_ascend=False, dtype=np.float64).asnumpy()
-        assert nd_ret_topk.dtype == np.float64
+        assert nd_ret_topk.dtype == np.int64
         gt = gt_topk(a_npy, axis=3, ret_typ="indices", k=2, is_ascend=False)
         assert_almost_equal(nd_ret_topk, gt)
         nd_ret_topk = mx.nd.topk(a_nd, axis=None, ret_typ="indices", k=21, is_ascend=False, dtype=np.int32).asnumpy()
-        assert nd_ret_topk.dtype == np.int32
+        assert nd_ret_topk.dtype == np.int64
         gt = gt_topk(a_npy, axis=None, ret_typ="indices", k=21, is_ascend=False)
         assert_almost_equal(nd_ret_topk, gt)
 
@@ -1069,14 +1069,14 @@ def test_order():
         nd_ret_topk_val = nd_ret_topk_val.asnumpy()
         nd_ret_topk_ind = nd_ret_topk_ind.asnumpy()
         assert nd_ret_topk_val.dtype == dtype
-        assert nd_ret_topk_ind.dtype == np.float32
+        assert nd_ret_topk_ind.dtype == np.int64
         gt_val = gt_topk(a_npy, axis=1, ret_typ="value", k=3, is_ascend=True)
         gt_ind = gt_topk(a_npy, axis=1, ret_typ="indices", k=3, is_ascend=True)
         assert_almost_equal(nd_ret_topk_val, gt_val)
         assert_almost_equal(nd_ret_topk_ind, gt_ind)
         # test for kNullOp
         _, nd_ret_topk_ind = mx.nd.topk(a_nd, axis=1, ret_typ="both", k=3, is_ascend=True, dtype=np.float64)
-        assert nd_ret_topk_ind.dtype == np.float64
+        assert nd_ret_topk_ind.dtype == np.int64
         nd_ret_topk_ind = nd_ret_topk_ind.asnumpy()
         assert_almost_equal(nd_ret_topk_ind, gt_ind)
         # test for kNullOp

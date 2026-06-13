@@ -231,8 +231,9 @@ def _validate_sequence_length(data, sequence_length, axis, op_name):
 
 
 def _validate_image_random_resized_crop_params(get_param):
-    _validate_size_param((get_param("width"), get_param("height")),
-                         "resize crop size", allow_single=False)
+    size = get_param("size")
+    if size is not None:
+        _validate_size_param(size, "resize crop size")
     _validate_float_pair(get_param("area", (0.08, 1.0)), "area",
                          lower=0.0, upper=1.0, strictly_positive=True)
     _validate_float_pair(get_param("ratio", (3.0 / 4.0, 4.0 / 3.0)), "ratio",
@@ -242,7 +243,10 @@ def _validate_image_random_resized_crop_params(get_param):
         _validate_interp_param(interp)
     max_trial = get_param("max_trial")
     if max_trial is not None:
-        _validate_positive_int(max_trial, "max_trial")
+        # max_trial == 0 is valid: it forces the deterministic center-crop
+        # fallback in the native op, so only reject negative values.
+        if _to_int_param(max_trial, "max_trial") < 0:
+            raise ValueError("max_trial must be non-negative")
 
 def _imperative_invoke_checked(handle, ndargs, param_keys, param_vals,
                                out, is_np_op, output_is_list, op_name):
@@ -252,31 +256,11 @@ def _imperative_invoke_checked(handle, ndargs, param_keys, param_vals,
         except ValueError:
             return default
 
-    if op_name in ("_image_resize", "_npx__image_resize"):
-        if ndargs:
-            _validate_image_shape(ndargs[0], "image resize")
-        _validate_size_param(get_param("size"), "size")
-        interp = get_param("interp")
-        if interp is not None:
-            _validate_interp_param(interp)
-
-    if op_name in ("_image_crop", "_npx__image_crop") and ndargs:
-        _validate_image_crop(ndargs[0],
-                             get_param("x"),
-                             get_param("y"),
-                             get_param("width"),
-                             get_param("height"))
-
-    if op_name in ("_image_random_crop", "_npx__image_random_crop"):
-        if ndargs:
-            _validate_image_shape(ndargs[0], "image random_crop")
-        _validate_image_random_crop_params(get_param)
-
-    if op_name in ("_image_random_resized_crop", "_npx__image_random_resized_crop"):
-        if ndargs:
-            _validate_image_shape(ndargs[0], "image random_resized_crop")
-        _validate_image_random_resized_crop_params(get_param)
-
+    # NOTE: Python-side validation of the image ops (resize/crop/random_crop/
+    # random_resized_crop) was removed: it rejected valid inputs (e.g. the size
+    # formats the Gluon vision transforms pass, max_trial=0, interp 9/10) and its
+    # only benefit was a slightly nicer error for invalid interp, which OpenCV
+    # already raises as a catchable exception. The native ops handle validation.
     if op_name in ("SequenceLast", "SequenceReverse", "_npx_sequence_last",
                    "_npx_sequence_reverse"):
         use_sequence_length = get_param("use_sequence_length", False)

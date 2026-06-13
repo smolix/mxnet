@@ -1491,13 +1491,6 @@ class ndarray(NDArray):  # pylint: disable=invalid-name
             raise TypeError('len() of unsized object')
         return self.shape[0]
 
-    def __iter__(self):
-        if self.ndim == 0:
-            raise TypeError("iteration over a 0-d array")
-        for i in range(len(self)):
-            item = self[i]
-            yield item.item() if item.ndim == 0 else item
-
     def __reduce__(self):
         return ndarray, (None,), self.__getstate__()
 

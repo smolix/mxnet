@@ -1,9 +1,82 @@
 # Handoff: intermittent cold-start deadlock in `mx.np.where` / `nonzero` (GPU)
 
-**Status:** OPEN. Not fixed. Could not be reproduced on the dev box once the
-triggering external load disappeared, and `ptrace` is blocked here so no native
-debugger was available. This note is written so an agent on a machine **with a
-working debugger** can take over quickly.
+**Status:** MITIGATION APPLIED — pending validation under load (2026-06-13).
+Engine changes landed on branch `fix/nonzero-coldstart-deadlock-engine`. Built
+with CUDA on an RTX 3060 and passed **100/100 cold starts under self-induced
+GPU+CPU load, 0 hangs** (+40/40 idle), no `MXNET_ENGINE_DIAG` timeouts. NOT yet
+definitive: that box never reproduced the original hang when idle (0/540 in the
+original campaign), so a clean run there proves no-regression + correct-path, not
+that the rare race is gone. **Re-verify on the heavily-loaded box** (see
+"Verification on the server" below).
+
+The original OPEN analysis is preserved unchanged below the resolution.
+
+---
+
+## RESOLUTION (2026-06-13)
+
+A native-debugger reproduction was *not* required: a close code review located the
+real defects. The handoff's prime suspect — `dmlc::ManualEvent` as a lost-wakeup
+source — was **exonerated** (the waiter holds `mutex_` from its `!signaled_` check
+through entering `condition_variable_.wait`, and `signal()` must take `mutex_` to
+notify, so no notify can slip into the gap). `WaitForVar`/`OnComplete` are also
+correct. Two genuine problems were fixed instead:
+
+**Fix 1 — don't hold `create_mutex_` across CUDA stream init** (the §3 fragility).
+`LazyAllocArray::Get()` holds `create_mutex_` across the whole `creator()`, and for
+GPU pools `creator()` ran `ThreadPool(..., wait=true)` → `WaitForReady()`, which
+blocks until each worker has done `cudaStreamCreate` / `new GPUAuxStream`. So the
+pusher held a lock across CUDA driver calls of unbounded duration — exactly matching
+the "only under heavy multi-process contention, only on the first data-dependent op"
+signature. Change (`src/engine/thread_pool.h`, `src/engine/threaded_engine_perdevice.cc`):
+- `ThreadPool::WaitForReady()` made public.
+- GPU worker pools constructed with `wait=false`, so `Get()` returns (releasing
+  `create_mutex_`) before any stream is created.
+- The readiness wait moved *outside* the lock via a new `EnsureWorkersReady()`,
+  gated by a per-block `std::atomic<bool> workers_ready` (one relaxed load per push
+  after warmup → no hot-path cost). Same ordering invariant as before (stream is
+  registered before the op is pushed), but a slow/contended stream init can no
+  longer serialize unrelated pool creations or completion callbacks behind the lock.
+
+**Fix 2 — never drop a counted op** (the §4 bug). Every GPU/CPU `PushToExecute`
+site did `auto ptr = ...Get(...); if (ptr) { ...Push... }` and **silently dropped
+the op when `Get()` returned `nullptr`** (i.e. `is_clearing_` during shutdown). The
+op was already counted in `pending_` (`ThreadedEngine::Push`), so a drop wedges
+`pending_` and hangs `WaitForVar`/`WaitForAll` forever — the exact reported symptom
+(`pending_ops>=1`, unkillable, holds the GIL), though gated on engine teardown.
+Added `FinishUnschedulableOpr()`: completes the op inline (runs the completion
+callback, skips the body) so `pending_` is decremented and waiters wake.
+
+### Verification on the server (the definitive step)
+1. Build the branch; un-skip `test_np_more_array_like_wrappers` in
+   `tests/python/unittest/test_numpy_op.py`.
+2. Recreate the original contention (real training load is closest) and loop fresh
+   cold-start processes with `MXNET_ENGINE_DIAG=1 MXNET_ENGINE_DIAG_TIMEOUT_S=10`.
+   A ready harness mirror is at `/tmp/repro/` on the dev box (`coldstart_probe.py`,
+   `stress.sh N LOAD HARD_TIMEOUT`).
+3. If a hang still occurs: capture the `[MXNET_ENGINE_DIAG] ... pending_ops=` line,
+   then `gdb -p <pid> -batch -ex "thread apply all bt"`. If `pending_ops>=1` with a
+   GPU worker stuck inside a `cuda*` call, it's the pure driver stall (hyp 1, not
+   engine-fixable) and the remaining mitigation is to warm a GPU stream before the
+   first data-dependent op, or retry. If `pending_ops==0`, it's a completion/wakeup
+   bug (revisit `WaitForVar`).
+
+### Build notes (CUDA-toolkit gotcha found while building)
+- A real blocker: `nvcc` 13.2 with `/usr/local/cuda`→13.3 headers on the include
+  path → CCCL "compiler and toolkit headers are incompatible". Align them:
+  `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc -DCUDAToolkit_ROOT=/usr/local/cuda-13.3`.
+- Dev box lacked system OpenBLAS/gfortran/cuDNN; used a throwaway conda prefix for
+  OpenBLAS+gfortran and built `USE_CUDNN=OFF USE_ONEDNN=OFF USE_OPENCV=OFF
+  MXNET_CUDA_ARCH=8.6`. Runtime needed `LD_PRELOAD` of a libstdc++ ≥ GLIBCXX_3.4.33
+  because the conda python ships an older one. (cuDNN-off is fine for this repro —
+  the change is in worker-pool creation and `nonzero` doesn't use cuDNN.)
+
+---
+
+## ORIGINAL ANALYSIS (status was: OPEN)
+
+Could not be reproduced on the dev box once the triggering external load
+disappeared, and `ptrace` was blocked there so no native debugger was available.
 
 **Owner action requested:** reproduce under load + attach a debugger (gdb /
 cuda-gdb) to a hung process, get the native (C++) backtrace of *all* threads,

@@ -161,6 +161,8 @@ class ThreadedEnginePerDevice : public ThreadedEngine {
             } else {
               ptr->task_queue.Push(opr_block, opr_block->priority);
             }
+          } else {
+            FinishUnschedulableOpr(opr_block);
           }
         }
       } else {
@@ -179,15 +181,18 @@ class ThreadedEnginePerDevice : public ThreadedEngine {
                 [this, ctx, is_copy, blk](std::shared_ptr<dmlc::ManualEvent> ready_event) {
                   this->GPUWorker(ctx, is_copy, blk, ready_event);
                 },
-                true);
+                false);
             return blk;
           });
           if (ptr) {
+            EnsureWorkersReady(ptr);
             if (opr_block->opr->prop == FnProperty::kDeleteVar) {
               ptr->task_queue.PushFront(opr_block, opr_block->priority);
             } else {
               ptr->task_queue.Push(opr_block, opr_block->priority);
             }
+          } else {
+            FinishUnschedulableOpr(opr_block);
           }
         } else {
           const size_t nthread = gpu_worker_nthreads_;
@@ -202,11 +207,14 @@ class ThreadedEnginePerDevice : public ThreadedEngine {
                   [this, ctx, is_copy, blk](std::shared_ptr<dmlc::ManualEvent> ready_event) {
                     this->GPUWorker(ctx, is_copy, blk, ready_event);
                   },
-                  true);
+                  false);
               return blk;
             });
             if (ptr) {
+              EnsureWorkersReady(ptr);
               ptr->task_queue.Push(opr_block, opr_block->priority);
+            } else {
+              FinishUnschedulableOpr(opr_block);
             }
           } else {
             // GPU normal task
@@ -219,15 +227,18 @@ class ThreadedEnginePerDevice : public ThreadedEngine {
                   [this, ctx, is_copy, blk](std::shared_ptr<dmlc::ManualEvent> ready_event) {
                     this->GPUWorker(ctx, is_copy, blk, ready_event);
                   },
-                  true);
+                  false);
               return blk;
             });
             if (ptr) {
+              EnsureWorkersReady(ptr);
               if (opr_block->opr->prop == FnProperty::kDeleteVar) {
                 ptr->task_queue.PushFront(opr_block, opr_block->priority);
               } else {
                 ptr->task_queue.Push(opr_block, opr_block->priority);
               }
+            } else {
+              FinishUnschedulableOpr(opr_block);
             }
           }
         }
@@ -243,11 +254,42 @@ class ThreadedEnginePerDevice : public ThreadedEngine {
     dmlc::ConcurrentBlockingQueue<OprBlock*, type> task_queue;
     // thread pool that works on this task
     std::unique_ptr<ThreadPool> pool;
+    // Whether the pool's workers have been waited on for readiness.  GPU pools
+    // are created with ThreadPool wait=false (so CUDA stream init does not run
+    // under LazyAllocArray::create_mutex_); the first pusher then blocks on
+    // EnsureWorkersReady() *outside* that lock.  Subsequent pushes skip it.
+    std::atomic<bool> workers_ready{false};
     // constructor
     ThreadWorkerBlock() = default;
     // destructor
     ~ThreadWorkerBlock() = default;
   };
+
+  // Block until a freshly-created pool's workers have finished init (CUDA stream
+  // allocation for GPU pools).  Must be called *after* LazyAllocArray::Get has
+  // returned, i.e. with create_mutex_ released, so a slow/contended stream
+  // creation cannot serialize unrelated pool creations behind that lock.
+  template <typename BlockSharedPtr>
+  static inline void EnsureWorkersReady(const BlockSharedPtr& blk) {
+    if (!blk->workers_ready.load(std::memory_order_acquire)) {
+      blk->pool->WaitForReady();
+      blk->workers_ready.store(true, std::memory_order_release);
+    }
+  }
+
+  // The worker pool could not be obtained because the engine is being torn down
+  // (LazyAllocArray is clearing), so this op can never be dequeued and run.  It
+  // was already counted in pending_ by ThreadedEngine::Push, so dropping it would
+  // wedge WaitForVar/WaitForAll forever.  Finish it inline instead: run the
+  // completion callback (which marks vars complete and decrements pending_)
+  // without executing the op body.
+  void FinishUnschedulableOpr(OprBlock* opr_block) {
+    CallbackOnStart on_start = this->CreateOnStart(ThreadedEngine::OnStartStatic, opr_block);
+    CallbackOnComplete callback =
+        this->CreateCallback(ThreadedEngine::OnCompleteStatic, opr_block);
+    on_start();
+    callback();
+  }
 
   /*! \brief whether this is a worker thread. */
   static MX_THREAD_LOCAL bool is_worker_;

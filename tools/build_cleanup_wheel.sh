@@ -97,6 +97,29 @@ echo "==> CMake USE_OPENCV: $([ "$HAS_OPENCV" = 1 ] && echo ON || echo OFF)"
 echo "==> Staging libmxnet.so into python/mxnet/"
 cp -v build/libmxnet.so python/mxnet/libmxnet.so
 
+# Stage C/C++ headers into python/mxnet/include/ so the wheel ships them and
+# libinfo.find_include_path() resolves to a real in-package directory
+# (apache/mxnet#20936). We bundle the standard custom-operator header set
+# (mxnet + the nnvm/dlpack/dmlc/mshadow deps that mxnet/*.h include); these are
+# exactly the include roots setup.py's Cython extension compiles against.
+echo "==> Staging C/C++ headers into python/mxnet/include/"
+rm -rf python/mxnet/include
+mkdir -p python/mxnet/include
+# include/{nnvm,dlpack,dmlc,mshadow} are symlinks into 3rdparty/; use cp -rL to
+# dereference them so the real header files (not broken relative symlinks) land
+# in the wheel.
+for hdr in mxnet nnvm dlpack dmlc mshadow; do
+    if [ -e "include/$hdr" ]; then
+        cp -rL "include/$hdr" "python/mxnet/include/$hdr"
+    else
+        echo "  WARNING: include/$hdr not found; skipping" >&2
+    fi
+done
+if [ ! -f python/mxnet/include/mxnet/base.h ]; then
+    echo "ERROR: header staging failed; python/mxnet/include/mxnet/base.h missing" >&2
+    exit 6
+fi
+
 # Reset any prior staging so we always end up with a deterministic lib/
 rm -rf python/mxnet/lib
 

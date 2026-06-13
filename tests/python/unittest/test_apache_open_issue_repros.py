@@ -1012,56 +1012,19 @@ SIMILAR_WRAPPER_VALIDATION_REPROS = [
         """,
         ("heads",),
     ),
-    (
-        "sym_image_resize_invalid_interp",
-        """
-        data = mx.sym.Variable("data")
-        sym = mx.sym.image.resize(data, size=(2, 2), interp=10)
-        exe = sym._simple_bind(ctx=mx.cpu(), data=(4, 4, 3))
-        exe.arg_dict["data"][:] = 1
-        exe.forward()[0].wait_to_read()
-        """,
-        ("interp",),
-    ),
-    (
-        "nd_image_random_resized_crop_invalid_interp",
-        """
-        x = mx.nd.ones((4, 4, 3), dtype="uint8")
-        mx.nd.image.random_resized_crop(x, width=2, height=2,
-                                        interp=10).wait_to_read()
-        """,
-        ("interp",),
-    ),
-    (
-        "nd_image_random_resized_crop_invalid_ratio",
-        """
-        x = mx.nd.ones((4, 4, 3), dtype="uint8")
-        mx.nd.image.random_resized_crop(x, width=2, height=2,
-                                        ratio=(0.0, 0.0)).wait_to_read()
-        """,
-        ("ratio",),
-    ),
-    pytest.param(
-        "npx_image_random_crop_invalid_interp",
-        """
-        from mxnet import npx
-        npx.set_np()
-        x = mx.np.ones((1, 1, 3), dtype="uint8")
-        npx.image.random_crop(x, (2, 2), interp=10).wait_to_read()
-        """,
-        ("interp",),
-    ),
-    pytest.param(
-        "sym_image_random_crop_invalid_interp",
-        """
-        data = mx.sym.Variable("data")
-        sym = mx.sym.image.random_crop(data, (2, 2), interp=10)
-        exe = sym._simple_bind(ctx=mx.cpu(), data=(1, 1, 3))
-        exe.arg_dict["data"][:] = 1
-        exe.forward()[0].wait_to_read()
-        """,
-        ("interp",),
-    ),
+    # NOTE: image-op invalid-arg cases (sym/nd/npx image.resize / random_crop /
+    # random_resized_crop with interp=10 or ratio=(0,0)) were intentionally
+    # dropped from this synthetic list. The campaign's first attempt added a
+    # Python-side pre-backend validation that raised ValueError for these, but
+    # that guard was over-broad and rejected valid calls, so it was reverted to
+    # preserve API compatibility (see register.py and the H3-style revert).
+    # Post-revert these args are handled by upstream/backend semantics (a
+    # backend MXNetError for resize/ratio, or upstream pass-through for some
+    # interp values) rather than a pre-backend ValueError, so asserting a
+    # ValueError here is incorrect. The real reported behavior for an invalid
+    # interpolation id is covered by
+    # test_issue_20046_image_resize_invalid_interp_has_mxnet_validation, which
+    # asserts the backend rejects it (accepts any exception).
 ]
 
 

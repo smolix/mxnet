@@ -885,7 +885,17 @@ void SgDNNLFCOp::GetCachedWeightsAndBias(const NDArray& weight,
                              1,
                              float_output ? 0.0f : data_scale_,
                              weight_scales_,
-                             false);
+                             // M18: submit the reorder immediately when quantization
+                             // scales are present (the channelwise-quantized path).
+                             // The weight/bias scale dnnl::memory objects inside
+                             // ConvertWeightBias2DNNL are function-locals bound into
+                             // the reorder args; deferring the submit (false) frees
+                             // them before the reorder runs -> use-after-free (this is
+                             // exactly what the M18 CHECK in dnnl_common.h guards
+                             // against, which aborted test_quantize_gluon_with_forward).
+                             // Non-quantized weights have no scales, so keep the
+                             // deferred submit there.
+                             !weight_scales_.empty());
       if (has_bias && float_output) {
         NDArray new_bias(&bias_md);
         const auto bias_mem = new_bias.GetDNNLData();

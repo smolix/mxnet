@@ -250,7 +250,11 @@ cmake -S . -B build-macos-arm64 -G Ninja \
 cmake --build build-macos-arm64 --target mxnet -- -j 3
 export MXNET_LIBRARY_PATH="$(pwd)/build-macos-arm64/libmxnet.dylib"
 uv venv .venv --python 3.11
-uv pip install --python .venv/bin/python "numpy<2" requests pytest pytest-timeout
+# scipy is required by the broader tests/python/unittest suite (it is imported at
+# collection time by the sparse/random/metric/image/numpy_op modules); the curated
+# apple_silicon_cpu_smoke subset does not need it. "numpy<2" keeps scipy on a build
+# compatible with the pinned NumPy.
+uv pip install --python .venv/bin/python "numpy<2" scipy requests pytest pytest-timeout
 MXNET_SETUP_ENABLE_CUDA_DEPS=0 uv pip install --python .venv/bin/python -e ./python
 ```
 

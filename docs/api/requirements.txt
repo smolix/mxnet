@@ -1,0 +1,8 @@
+# Documentation toolchain for the MXNet 2.0 API reference (docs/api/).
+# Install alongside an importable mxnet (CPU wheel is enough; a CUDA wheel
+# needs its CUDA libs present so `import mxnet` succeeds):
+#   uv pip install dist/mxnet-*.whl -r docs/api/requirements.txt
+sphinx>=7,<9
+furo
+myst-parser
+sphinx-autodoc-typehints

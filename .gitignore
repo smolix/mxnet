@@ -188,3 +188,6 @@ gpu_memory_profile-*.csv
 python/mxnet/_build_info.py
 # Local test and wheel-acceptance scratch space
 .tmp/
+
+# Local virtualenvs (docs build, wheel tests, etc.)
+.venv*/

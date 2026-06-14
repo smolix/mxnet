@@ -151,29 +151,58 @@ if [ "$HAS_OPENCV" = 1 ] && [ "$BUNDLE_OPENCV" = 1 ]; then
         # Recreate the SONAME symlink that the dynamic linker will look up.
         (cd python/mxnet/lib && ln -sf "$(basename "$real")" "$soname")
     done
-    # Also copy direct transitive deps of libopencv that are themselves not in
-    # the standard search path (rare on Ubuntu; the OpenCV core libs are
-    # self-contained but we still capture any libopencv_imgproc, _core, etc
-    # references that may have been pulled in indirectly).
+    # Vendor the FULL transitive closure of the bundled OpenCV libraries — not
+    # just their libopencv_* siblings. Ubuntu's libopencv_imgcodecs links a deep
+    # codec/geo stack (libgdcm*, libgdal, libOpenEXR*/libImath, libtbb,
+    # libjpeg/png/tiff/webp/openjp2, …). Bundling only the libopencv_* files (the
+    # old behaviour, which filtered NEEDED on /libopencv_/) left those out, so a
+    # clean host without them failed at `import mxnet` with e.g.
+    #   OSError: libgdcmMSFF.so.3.0: cannot open shared object file
+    # Walk every NEEDED soname reachable from the already-bundled libs to a
+    # fixpoint and copy each, EXCEPT:
+    #   * the C runtime / toolchain (glibc, libstdc++, libgcc_s, ld-linux) — the
+    #     host ABI, which must never be shipped; and
+    #   * CUDA runtime / driver libs — intentionally host- or pip-provided and
+    #     resolved via libmxnet's RUNPATH (libcuda, libnvidia-*, libcudart,
+    #     libcublas, libcudnn, libnccl, libnvrtc, libcu{fft,solver,sparse,rand}).
+    skip_re='^(ld-linux|libc|libm|libdl|libpthread|librt|libutil|libnsl|libresolv|libstdc\+\+|libgcc_s|libcuda|libcudart|libcublas|libcudnn|libnccl|libnvrtc|libcufft|libcusolver|libcusparse|libcurand|libnvJitLink|libnvToolsExt|libnvidia)'
     while :; do
         added=0
-        for lib in python/mxnet/lib/libopencv_*.so.*; do
-            [ -e "$lib" ] || continue
+        for lib in python/mxnet/lib/*.so*; do
+            [ -f "$lib" ] || continue   # skip the SONAME symlinks
             for soname in $(readelf -d "$lib" 2>/dev/null \
-                | awk '/NEEDED/ && /libopencv_/ { gsub(/[][]/, "", $5); print $5 }'); do
+                | awk '/NEEDED/ { gsub(/[][]/, "", $5); print $5 }'); do
+                printf '%s\n' "$soname" | grep -qE "$skip_re" && continue
                 [ -e "python/mxnet/lib/$soname" ] && continue
                 target=$(ldconfig -p 2>/dev/null | awk -v s="$soname" '!found && $1 == s { print $NF; found=1 }')
-                [ -z "$target" ] && \
-                    target=$(find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name "$soname" -print -quit 2>/dev/null)
-                [ -z "$target" ] && continue
+                if [ -z "$target" ] || [ ! -e "$target" ]; then
+                    target=$(find /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu \
+                        -maxdepth 1 -name "$soname" -print -quit 2>/dev/null)
+                fi
+                if [ -z "$target" ] || [ ! -e "$target" ]; then
+                    echo "  WARNING: unresolved transitive dep $soname (left to host)" >&2
+                    continue
+                fi
                 real=$(readlink -f "$target")
                 cp -v "$real" "python/mxnet/lib/$(basename "$real")"
-                (cd python/mxnet/lib && ln -sf "$(basename "$real")" "$soname")
+                # Recreate the SONAME symlink unless the file already IS the
+                # soname (e.g. libdeflate.so.0) — `ln -sf X X` would self-link.
+                if [ "$(basename "$real")" != "$soname" ]; then
+                    (cd python/mxnet/lib && ln -sf "$(basename "$real")" "$soname")
+                fi
                 added=1
             done
         done
         [ "$added" = 0 ] && break
     done
+    # Point every bundled library at its siblings: DT_RUNPATH is not inherited by
+    # a library's own dependencies, so each vendored .so must carry $ORIGIN to
+    # find the others in python/mxnet/lib/ at load time.
+    for lib in python/mxnet/lib/*.so*; do
+        [ -f "$lib" ] || continue   # real files only, not the SONAME symlinks
+        patchelf --set-rpath '$ORIGIN' "$lib" 2>/dev/null || true
+    done
+    echo "==> Bundled OpenCV closure: $(find python/mxnet/lib -maxdepth 1 -type f -name '*.so*' | wc -l) shared objects in python/mxnet/lib/"
 fi
 
 echo "==> Patching libmxnet.so RUNPATH to include bundled and pip CUDA libraries"

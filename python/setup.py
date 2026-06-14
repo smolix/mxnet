@@ -49,6 +49,13 @@ BASE_INSTALL_REQUIRES = [
 # (9.22) and `nvidia-nccl-cu13` (2.30) on PyPI for CUDA 13; the other
 # nvidia-*-cu13 packages are placeholder stubs (0.0.1). When they
 # ship real, append them here.
+#
+# IMPORTANT: build the wheel against the SAME cuDNN minor that this pin
+# resolves to at install time (currently 9.22, the latest on PyPI). The
+# 20260614 wheel was compiled against cuDNN 9.23 while the pin still resolves
+# to 9.22, so first GPU use prints a (harmless but noisy) "cuDNN lib mismatch:
+# linked-against 92200 != compiled-against 92300" warning. Keep the build
+# toolkit's cuDNN == this pin (or raise the floor once 9.23 lands on PyPI).
 # `nvidia-cudnn-cu13` declares an *unversioned* `nvidia-cublas` dependency, so a
 # bare resolve pulls the newest cuBLAS (e.g. 13.4.x / 13.5.x).
 #

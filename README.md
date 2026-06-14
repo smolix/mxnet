@@ -121,17 +121,25 @@ stubs at version `0.0.1` as of 2026-05-17). `libmxnet.so`'s `RUNPATH`
 covers the wheel-local `mxnet/lib`, pip-installed NVIDIA package
 directories, and `/usr/local/cuda/lib64`.
 
-The Linux CUDA wheel is built with `USE_OPENCV=OFF` and reports
-`OPENCV=False` in `mx.runtime.feature_list()`. It has no
-`opencv-python` metadata, does not link system `libopencv_*` libraries,
-and does not require `libopencv-dev` on clean hosts. MXNet native
-image-decode and RecordIO image helpers that require OpenCV are therefore
-unavailable in this wheel; build from source with `USE_OPENCV=ON` only if
-you need that path, and then bundle or document the native OpenCV shared
-libraries explicitly.
+The Linux CUDA wheel is built with `USE_OPENCV=ON` and reports
+`OPENCV=True` in `mx.runtime.feature_list()`, so MXNet's native
+image-decode and RecordIO image helpers (`mx.image`, `gluon.data.vision`)
+work out of the box. The wheel **bundles the OpenCV shared libraries and
+their full transitive closure** (the `libopencv_*` cores plus their
+codec/geo dependencies — `libgdcm*`, `libgdal`, `libOpenEXR*`, `libtbb`,
+`libjpeg`/`png`/`tiff`/`webp`/`openjp2`, …) into `mxnet/lib/`, each patched
+with an `$ORIGIN` `RUNPATH`, so it imports on a clean host with **no
+`libopencv-dev` and no extra system packages**. (Earlier cp312 wheels
+through `20260614` bundled only the `libopencv_*` cores and failed on clean
+hosts with `OSError: libgdcmMSFF.so.3.0: cannot open shared object file`;
+fixed in `tools/build_cleanup_wheel.sh`.) The bundled closure adds roughly
+~150 MB to the wheel; if you do not need MXNet's native OpenCV image path,
+a smaller wheel can be produced with `BUNDLE_OPENCV=0` / `USE_OPENCV=OFF`,
+which reports `OPENCV=False`.
 
-Requires Python 3.11, Linux x86_64, NVIDIA driver R570+, and the CUDA
-13 toolkit installed at `/usr/local/cuda/` (e.g. `apt install cuda-13`).
+Requires Python 3.11 or 3.12 (both `cp311` and `cp312` wheels are
+published), Linux x86_64, NVIDIA driver R570+, and the CUDA 13 toolkit
+installed at `/usr/local/cuda/` (e.g. `apt install cuda-13`).
 
 To **build from source** see [`BUILDING.md`](BUILDING.md). The short version
 is: clone with submodules, install `libnccl-dev` *before* invoking `cmake`,

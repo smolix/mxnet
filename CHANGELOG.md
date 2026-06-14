@@ -13,12 +13,16 @@ Version string format: `<upstream>+cu<cuda-major>.bw.<YYYYMMDD>`.
 
 ---
 
-## Unreleased — O5 release-note baseline
+## Current state
 
-These notes describe current `master` after the public
-`v2.0.0+cu13.bw.20260518.2` GitHub wheel. No replacement CUDA/Linux wheel has
-been cut from this source yet, so treat the bullets below as source-tree release
-notes rather than artifact provenance.
+The latest published wheels are `v2.0.0+cu13.bw.20260614` (Linux/CUDA, `cp311` +
+`cp312`) and `2.0.0+cpu.macos.20260614` (Apple Silicon). For a thematic summary of
+everything this fork changed see [`FIXED.md`](FIXED.md); for known limitations and
+open work see [`OPEN_ISSUES.md`](OPEN_ISSUES.md). The dated sections below are the
+detailed per-release record through `20260518`; later releases
+(`20260529` … `20260614`) are summarized in `FIXED.md` and on the
+[Releases page](https://github.com/smolix/mxnet/releases). The bullets in this
+section describe notable `master` changes after `20260518.2`.
 
 ### Port and dependency coverage
 
@@ -62,7 +66,7 @@ notes rather than artifact provenance.
 
 ### Code-review hardening — user-visible changes
 
-A from-scratch code review (`freshissues.md`) drove a batch of correctness,
+A from-scratch code review (summarized in [`FIXED.md`](FIXED.md)) drove a batch of correctness,
 safety, and robustness fixes. Most are internal (capture-safety guards, 64-bit
 index discipline, exception safety, RAII, lock-free engine paths, build/tooling).
 The user-facing ones:
@@ -219,7 +223,7 @@ validated test surfaces (1324 pass / 3 fail / 296 skip).
 |--------|--------|
 | **CUDA 13 required** | `libmxnet.so` linked against CUDA 13.0; will not load on CUDA ≤12 drivers. |
 | **sm\_120 primary target** | Multi-arch fatbin includes sm\_80/86/89/90/120; PTX 120 fallback for unknown future SM. |
-| **Python 3.11 wheel** | Released wheel is `cp311-cp311-linux_x86_64`. 3.12/3.13 untested. |
+| **Python 3.11 / 3.12 wheels** | Released wheels are `cp311` and `cp312` (`linux_x86_64`); 3.13 untested. |
 | **numpy < 2 recommended** | `setup.py` pins `numpy>=1.17`; numpy 2.x API drift causes test failures. Pin `numpy<2` until audited. |
 | **RUNPATH-based CUDA loader** | No bundled CUDA runtime under `mxnet/lib/`; requires system CUDA 13 at `/usr/local/cuda/` and pip-installed `nvidia-cudnn-cu13>=9.22`, `nvidia-nccl-cu13>=2.28`. |
 | **oneDNN v3 INT8 scale direction** | Per-OC scales now bound on `DNNL_ARG_WEIGHTS` (not DST); DST scale divides in v3 vs multiplies in v2. Custom quantized operators referencing internal scale args must be audited. |
@@ -257,7 +261,7 @@ tests re-enabled after confirming they pass on Blackwell.
 
 First Blackwell preview release. Forward inference for fp32 / fp16 / INT8 is
 solid; quantized backward and several auxiliary paths remain open (see
-[`issues.md`](issues.md)).
+[`OPEN_ISSUES.md`](OPEN_ISSUES.md)).
 
 ### Added
 
@@ -266,8 +270,9 @@ solid; quantized backward and several auxiliary paths remain open (see
   conv / FC, fused sum, dequant-to-fp32 output, fused activations.
 - GitHub Release wheel for `linux_x86_64` (Python 3.11).
 - `BUILDING.md` documenting the build recipe for the release wheel.
-- `issues.md` listing open items (correctness, functionality, performance,
-  test coverage, build/release, code quality).
+- An open-items list (correctness, functionality, performance, test coverage,
+  build/release, code quality) — since consolidated into
+  [`OPEN_ISSUES.md`](OPEN_ISSUES.md).
 
 ### Changed
 
@@ -293,7 +298,7 @@ solid; quantized backward and several auxiliary paths remain open (see
 
 ### Known issues at 20260517 (most resolved in 20260518)
 
-See [`issues.md`](issues.md) for the full list. Notable items carried forward:
+See [`OPEN_ISSUES.md`](OPEN_ISSUES.md) for the full list. Notable items carried forward:
 int8 concat numerical error (#4), quantized subgraph backward (#5), ONNX
 export/import broken (#14), deconvolution TF32 gap (#23).
 

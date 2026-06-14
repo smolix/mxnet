@@ -27,7 +27,10 @@ there is no Python-level fallback; see `docs/cuda_wheel_build.md` §1.
   fp32 emulation in oneDNN. Intel SPR or AMD Zen 4 / Granite Rapids will
   exercise the real bf16 path.
 - NVIDIA RTX PRO 4000 / RTX 50-series (compute capability 12.0).
-- NVIDIA driver R570 or newer.
+- NVIDIA driver **R590 or newer** — the `nvidia-cublas>=13.5` runtime pin needs
+  R590+; the older CUDA 13.0 / R580 driver line is not supported (large GEMMs fail
+  with `CUBLAS_STATUS_NOT_INITIALIZED`). See
+  [`OPEN_ISSUES.md`](OPEN_ISSUES_DETAILS.md#oi-19).
 - macOS arm64 is covered by the CPU-only smoke path with oneDNN enabled. It is
   not a CUDA release-wheel target.
 
@@ -39,7 +42,7 @@ CUDA compile phase dominates; expect `nvcc` to be the long pole.
 | Component   | Version    | Notes                                          |
 | ----------- | ---------- | ---------------------------------------------- |
 | CUDA        | 13.0       | system install at `/usr/local/cuda-13`         |
-| cuDNN       | 9.22.0     | local `cudnn_local/unpacked/nvidia/cudnn/` from `nvidia-cudnn-cu13==9.22.0.52` wheel (system 9.14 still works too) |
+| cuDNN       | 9.22 / 9.23 | local `cudnn_local/unpacked/nvidia/cudnn/` from the `nvidia-cudnn-cu13` wheel (recent wheels build against 9.23; the pip pin resolves 9.22, which prints a harmless minor-version mismatch note — see [`OPEN_ISSUES.md`](OPEN_ISSUES_DETAILS.md#oi-20)) |
 | NCCL        | 2.28.3     | `libnccl2` + **`libnccl-dev`** (see gotcha 1)  |
 | oneDNN      | 3.11       | vendored as submodule under `3rdparty/onednn`  |
 | GCC         | 11 - 13    | 12 used for the release wheel                  |
@@ -118,11 +121,26 @@ Key flags:
 - `USE_DIST_KVSTORE=OFF` skips ps-lite; not needed for single-host
   Blackwell development.
 
-## Apple Silicon CPU-only smoke build
+## Apple Silicon (macOS arm64) CPU build
 
-For native macOS arm64 validation, use a separate build directory and the
-minimal CPU-only feature set. This avoids the Linux/CUDA release settings and
-does not use the shared build scripts.
+**To produce the distributable macOS wheel, use the shared build script — not the
+manual recipe below.** `tools/build_cleanup_wheel.sh` auto-detects macOS and builds
+the CPU wheel with **`USE_OPENCV=ON` + float oneDNN** (Accelerate BLAS/LAPACK),
+then bundles the OpenCV transitive closure into `mxnet/lib/` and rewrites every
+install name to `@loader_path` (re-signing each dylib with `codesign -s -`), so the
+wheel is self-contained on a clean host. This is the configuration that ships as
+`mxnet-2.0.0+cpu.macos.<YYYYMMDD>-cp312-…-arm64.whl`:
+
+```bash
+tools/build_cleanup_wheel.sh        # version defaults to 2.0.0+cpu.macos.$(date)
+tools/run_macos_wheel_full_test.sh  # acceptance: ~14.9k CPU tests
+```
+
+The **manual smoke build** below is for *development iteration* on a single
+`build-macos-arm64/` tree. It keeps OpenCV off for a minimal feature set; enable it
+with the optional OpenCV-via-UV recipe further down if you need the image/vision
+tests. (Note: oneDNN INT8 quantization and subgraph fusion are gated off on arm64 —
+see [`OPEN_ISSUES.md`](OPEN_ISSUES_DETAILS.md#oi-17).)
 
 OpenMP is recommended for CPU performance (it also switches oneDNN from the
 single-threaded `SEQ` runtime to multi-threaded `OMP`). AppleClang ships no
@@ -283,10 +301,11 @@ pip install -e .
 python setup.py bdist_wheel
 ```
 
-The wheel will be tagged with the version string from
-`python/mxnet/libinfo.py` — currently `2.0.0+cu13.bw.20260517`. Update
-that file (and re-run `bdist_wheel`) whenever you cut a new dated
-release.
+The wheel version is `2.0.0+cu13.bw.<YYYYMMDD>[.<build>]` (the latest published
+wheel is `2.0.0+cu13.bw.20260614`). The release pipeline regenerates it at build
+time from the date/commit — pass it explicitly to `tools/build_cleanup_wheel.sh`
+(see [`docs/cuda_wheel_build.md`](docs/cuda_wheel_build.md) §5); the
+`python/mxnet/libinfo.py` string is only a fallback for non-pipeline builds.
 
 ## Verification
 
@@ -311,9 +330,10 @@ cd ../tests/python/dnnl/subgraphs
 pytest test_conv_subgraph.py -x -v
 ```
 
-A clean run reports roughly 815 pass / 3 skip on this build. Anything
-that errors out at collect time (e.g. ONNX, `test_amp_subgraph`) is
-expected — see [`issues.md`](issues.md).
+A clean run reports roughly 815 pass / 3 skip on this build. The AMP subgraph
+tests now pass (bf16→fp32 fallback). ONNX errors at collect time only because the
+wheel is built ONNX-free; the ONNX path itself is fixed in source. See
+[`OPEN_ISSUES.md`](OPEN_ISSUES.md).
 
 ## Gotchas
 
@@ -338,10 +358,10 @@ expected — see [`issues.md`](issues.md).
    better than fp32. Not a build error.
 
 5. **cuDNN heuristic gap (now narrow).** cuDNN 9.0 - 9.20 ship `sm_120`
-   heuristic tables with incomplete coverage. The 2026-05-17 release
-   wheel ships 9.22 which closes the depthwise gap (depthwise 3×3
-   256→256: 0.16 → 1.14 TFLOPS, ~7×); other shapes are within noise of
-   9.14. The build is happy with 9.0+ but cuDNN 9.22 is recommended.
+   heuristic tables with incomplete coverage. Release wheels ship 9.22/9.23,
+   which close the depthwise gap (depthwise 3×3 256→256: 0.16 → 1.14 TFLOPS,
+   ~7×); other shapes are within noise of 9.14. The build is happy with 9.0+
+   but cuDNN 9.22+ is recommended.
 
 6. **`libnccl2` and `libcudnn9-cuda-13` ABI lock.** The wheel binds to
    the exact `SONAME` of these libraries at link time. If you upgrade
@@ -369,9 +389,9 @@ inside those submodules and **are not patched in this repository**:
   private patch in our submodule pointer would dirty the detached tree
   with no upstream PR to converge on.
 
-Both warnings are documented as **CN9** in `issues.md` (Resolved /
-informational) and are not blockers.  If you want to silence them
-locally:
+Both warnings are documented as **OI-30** in
+[`OPEN_ISSUES.md`](OPEN_ISSUES_DETAILS.md#oi-30) (informational) and are not blockers.
+If you want to silence them locally:
 
 - Update the submodule pointer to a newer oneDNN/dmlc commit if upstream
   fixes them later.
@@ -385,7 +405,7 @@ fork's next submodule bump will pick it up automatically.
 ## Cross-references
 
 - [`README.md`](README.md) — user-facing overview.
-- [`CHANGELOG.md`](CHANGELOG.md) — per-release notes.
-- [`issues.md`](issues.md) — open work list.
+- [`FIXED.md`](FIXED.md) — what this fork changed vs upstream.
+- [`OPEN_ISSUES.md`](OPEN_ISSUES.md) — open work list and known limitations.
 - Upstream Apache MXNet build docs under `docs/static_site/src/` are
   largely obsolete for this fork; treat them as historical reference.

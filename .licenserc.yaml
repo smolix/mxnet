@@ -77,23 +77,22 @@ header:
     # test/build data
     - 'tests/python/dnnl/data/test_dnnl_test_dnnl_model_model1.json'
     - 'tools/dependencies/download_checksums.json'
-    # Blackwell-port fork-local docs / scoping notes / bug reports.
-    # Pattern matches `*_status.md`, `*_fix.md`, `*_followup.md`,
-    # `*_investigation.md`, `*_review.md`, `*_audit.md`, `*_scope.md`,
-    # `*_bump.md`, `*_pr_*.md` — agent writeup naming we've used in
-    # this fork. Also the top-level READMEs we maintain ourselves.
-    - 'issues.md'
-    - 'cublaslt_scope.md'
-    - 'cublaslt_pr_a.md'
-    - 'cudnn_bump.md'
-    - 'cudnn_autotune_v9.md'
-    - 'amp_subgraph_fix.md'
-    - 'nccl_status.md'
-    - 'quantized_backward_status.md'
-    - 'singleton_thread_safety.md'
+    # Blackwell-port fork-local docs we maintain ourselves (no ASF header).
+    # The per-topic engineering notes were consolidated into FIXED.md /
+    # OPEN_ISSUES.md (+ details) and removed; see git history for the originals.
     - 'BUILDING.md'
     - 'CHANGELOG.md'
-    - 'PERFORMANCE_NOTES.md'
+    - 'FIXED.md'
+    - 'OPEN_ISSUES.md'
+    - 'OPEN_ISSUES_DETAILS.md'
+    # Remaining fork-local status notes (not yet consolidated).
+    - 'cudnn_autotune_v9.md'
+    - 'nccl_status.md'
+    - 'quantized_backward_status.md'
+    - 'fp16_perf_bench.md'
+    - 'sparse_thrust3_bench.md'
+    - 'storage_pool_bench.md'
+    - 'd2l-ssd-bug.md'
     # Blackwell-port fork-local benchmark / reproducer scripts
     # (kept in tree for future re-running; not shipped in the wheel).
     - 'bench_tf32_conv.py'
@@ -107,27 +106,11 @@ header:
     - 'bench_fp16_pytorch.py'
     - 'bench_gpu_storage_pool.py'
     - 'bench_sparse_thrust3.py'
-    # Blackwell-port fork-local notes and audit docs.
-    - 'b8_cpu_inference_bench.md'
-    - 'engine_deadlock_audit.md'
-    - 'fp16_perf_bench.md'
-    - 'sparse_thrust3_bench.md'
-    - 'storage_pool_bench.md'
-    - 'BUG_AUDIT.md'
-    - 'freshissues.md'
-    - 'CUDA_GRAPHS_PLAN.md'
-    - 'CUDA_GRAPHS_PROGRESS.md'
-    - 'multi-output-ops-bug-audit.md'
-    - 'pytorch-convention-sweep.md'
-    - 'tril-indices-partial-output-bug.md'
-    - 'tricky-bug.md'
     - 'perf_scan.py'
     # Investigations directory (patches, repros, notes — not shipped).
     - '.investigations/**'
     - 'd2l-issues/**'
     - 'd2l-diagnostics/**'
-    - 'd2l-mxnet-issues.md'
-    - 'd2l-ssd-bug.md'
     # Fork-local regression tests (GPU pool / dtype tests added during port).
     - 'tests/python/gpu/test_b7_multithread_pool.py'
     - 'tests/python/gpu/test_pool_dynamic_shape.py'

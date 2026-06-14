@@ -60,9 +60,21 @@ What works
 * F16C CPU intrinsics for fast fp16 host (de)serialization.
 * DNNL subgraph fusion, the activation/eltwise/layer-norm/softmax stack,
   pooling, batch norm fwd+bwd, transpose, concat, where, masked softmax.
-* Native macOS arm64 CPU-only source builds are smoke-tested for import,
-  NumPy/Gluon basics, dtype behavior, and engine lifecycle. This path does
-  not include CUDA, cuDNN, NCCL, OpenMP, oneDNN, SSE, or F16C.
+* Native macOS arm64 (Apple Silicon) CPU builds. The packaged CPU wheel
+  (`tools/build_cleanup_wheel.sh`, which auto-detects macOS) ships Accelerate
+  BLAS/LAPACK, the float oneDNN backend, and OpenCV — with the OpenCV shared
+  libraries and their **full transitive closure** bundled into `mxnet/lib/`,
+  each install name rewritten to `@loader_path` (the Mach-O analog of the Linux
+  `$ORIGIN` bundling), so `import mxnet` reports `OPENCV=True` and `mx.image`
+  native decode works on a clean host with no system OpenCV. The full CPU test
+  suite passes (`tools/run_macos_wheel_full_test.sh`): ~14.9k unittest /
+  operator / NumPy / Gluon / quantization-API tests green. CUDA, cuDNN, NCCL,
+  OpenMP, SSE and F16C are not included; oneDNN **INT8 quantization and
+  subgraph fusion are intentionally gated off on arm64** (the oneDNN
+  Xbyak_aarch64 JIT is unreliable on Apple Silicon — see
+  `SupportDNNLAArch64JITPrimitives` in `src/operator/nn/dnnl/dnnl_base-inl.h`),
+  so those ops fall back to MXNet's native kernels and the `tests/python/dnnl`
+  fusion/quantization lane does not apply.
 
 What is experimental or known-broken
 ------------------------------------
@@ -140,6 +152,21 @@ which reports `OPENCV=False`.
 Requires Python 3.11 or 3.12 (both `cp311` and `cp312` wheels are
 published), Linux x86_64, NVIDIA driver R570+, and the CUDA 13 toolkit
 installed at `/usr/local/cuda/` (e.g. `apt install cuda-13`).
+
+The **macOS arm64 CPU wheel** (`mxnet-2.0.0+cpu.macos.*-cp312-cp312-macosx_*_arm64.whl`)
+applies the same OpenCV bundling on Mach-O. `tools/build_cleanup_wheel.sh`
+auto-detects macOS: it walks `libmxnet.dylib`'s OpenCV dependency closure with
+`otool`, copies the `libopencv_*` cores **plus their full transitive closure**
+(`libjpeg`/`png`/`tiff`/`webp`/`openjp2`, `OpenEXR`/`Imath`/`Iex`/`IlmThread`,
+`libdeflate`/`zstd`/`lzma`/`Lerc`/`sharpyuv`/`openjph`, …) into `mxnet/lib/`,
+then rewrites every install name to `@loader_path/<sibling>` with
+`install_name_tool` and re-signs each dylib (`codesign -s -`, required on Apple
+Silicon). `@loader_path` is honored per library — the Mach-O equivalent of ELF
+`$ORIGIN` — so the bundle is self-contained and `import mxnet` works on a clean
+host with no Homebrew/MacPorts OpenCV. The wheel depends on `opencv-python`
+(`cv2`) for the Python image helpers and reports `OPENCV=True`. `BUNDLE_OPENCV=0`
+opts out. This wheel is CPU-only (Accelerate BLAS/LAPACK, float oneDNN); see the
+"What works" note above for the arm64 oneDNN INT8/fusion caveat.
 
 To **build from source** see [`BUILDING.md`](BUILDING.md). The short version
 is: clone with submodules, install `libnccl-dev` *before* invoking `cmake`,

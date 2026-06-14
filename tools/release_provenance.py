@@ -202,10 +202,61 @@ def _parse_dynamic_section(dynamic_section):
     return {"needed": needed, "runpath": runpath}
 
 
+def _otool(args):
+    result = subprocess.run(
+        ["otool"] + args,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
+    return result.stdout
+
+
+def _macho_install_id(library_path):
+    """Return the Mach-O install id (LC_ID_DYLIB), or '' if there is none."""
+    lines = _otool(["-D", str(library_path)]).splitlines()
+    # `otool -D` prints "<path>:" then the id on the next line.
+    return lines[1].strip() if len(lines) > 1 else ""
+
+
+def _macho_dependencies(library_path):
+    """Return the Mach-O LC_LOAD_DYLIB paths, excluding the library's own id."""
+    self_id = _macho_install_id(library_path)
+    deps = []
+    # `otool -L` prints "<path>:" then the id then one dependency per line as
+    # "<path> (compatibility ...)".
+    for line in _otool(["-L", str(library_path)]).splitlines()[1:]:
+        line = line.strip()
+        if not line:
+            continue
+        dep = line.split(" (")[0].strip()
+        if not dep or dep == self_id:
+            continue
+        deps.append(dep)
+    return deps
+
+
+def _macho_rpaths(library_path):
+    """Return the LC_RPATH paths of a Mach-O binary."""
+    rpaths = []
+    lines = _otool(["-l", str(library_path)]).splitlines()
+    for index, line in enumerate(lines):
+        if "cmd LC_RPATH" not in line:
+            continue
+        for follow in lines[index + 1:index + 4]:
+            match = re.search(r"\bpath (.+?) \(offset", follow)
+            if match:
+                rpaths.append(match.group(1).strip())
+                break
+    return rpaths
+
+
 def inspect_wheel_payload(wheel_path):
     payload = {
         "inspected": False,
         "error": None,
+        "format": None,
         "has_libmxnet": False,
         "needed": [],
         "cudnn_needed": [],
@@ -225,44 +276,70 @@ def inspect_wheel_payload(wheel_path):
         with zipfile.ZipFile(wheel_path) as wheel:
             names = wheel.namelist()
             payload["opencv_bundled"] = sorted(
-                name for name in names if name.startswith("mxnet/lib/libopencv_")
+                name for name in names
+                if name.startswith("mxnet/lib/libopencv_")
             )
             payload["opencv_bundled_sonames"] = sorted(
                 {Path(name).name for name in payload["opencv_bundled"]}
             )
-            libmxnet_name = "mxnet/libmxnet.so"
-            if libmxnet_name not in names:
-                payload["error"] = "{} not found in wheel".format(libmxnet_name)
+            # Linux wheels ship an ELF libmxnet.so; macOS wheels ship a Mach-O
+            # libmxnet.dylib.  Inspect whichever the wheel actually contains.
+            if "mxnet/libmxnet.so" in names:
+                libmxnet_name, payload["format"], local_name = (
+                    "mxnet/libmxnet.so", "elf", "libmxnet.so")
+            elif "mxnet/libmxnet.dylib" in names:
+                libmxnet_name, payload["format"], local_name = (
+                    "mxnet/libmxnet.dylib", "macho", "libmxnet.dylib")
+            else:
+                payload["error"] = (
+                    "neither mxnet/libmxnet.so nor mxnet/libmxnet.dylib "
+                    "found in wheel")
                 return payload
 
             payload["has_libmxnet"] = True
             with tempfile.TemporaryDirectory(prefix="mxnet-wheel-provenance-") as tmpdir:
-                libmxnet_path = Path(tmpdir) / "libmxnet.so"
+                libmxnet_path = Path(tmpdir) / local_name
                 with wheel.open(libmxnet_name) as src, libmxnet_path.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
-                dynamic = _parse_dynamic_section(_readelf_dynamic_section(libmxnet_path))
 
-            payload["needed"] = dynamic["needed"]
+                if payload["format"] == "elf":
+                    dynamic = _parse_dynamic_section(
+                        _readelf_dynamic_section(libmxnet_path))
+                    needed = dynamic["needed"]
+                    payload["needed"] = needed
+                    payload["opencv_needed"] = sorted(
+                        s for s in needed if s.startswith("libopencv_"))
+                    payload["runpath"] = dynamic["runpath"]
+                    entries = (
+                        [] if dynamic["runpath"] is None
+                        else dynamic["runpath"].split(":"))
+                    payload["runpath_has_origin_lib"] = "$ORIGIN/lib" in entries
+                    payload["runpath_has_nvidia_cudnn"] = (
+                        "$ORIGIN/../nvidia/cudnn/lib" in entries)
+                    payload["runpath_has_nvidia_nccl"] = (
+                        "$ORIGIN/../nvidia/nccl/lib" in entries)
+                else:
+                    deps = _macho_dependencies(libmxnet_path)
+                    rpaths = _macho_rpaths(libmxnet_path)
+                    payload["needed"] = [os.path.basename(d) for d in deps]
+                    opencv_refs = [
+                        d for d in deps
+                        if os.path.basename(d).startswith("libopencv_")]
+                    payload["opencv_needed"] = sorted(
+                        os.path.basename(d) for d in opencv_refs)
+                    payload["runpath"] = ":".join(rpaths) if rpaths else None
+                    # The Mach-O analog of "$ORIGIN/lib in RUNPATH": every OpenCV
+                    # reference is loader-relative (@loader_path/@rpath), i.e. the
+                    # absolute build-host path has been rewritten to resolve from
+                    # inside the wheel.
+                    payload["runpath_has_origin_lib"] = bool(opencv_refs) and all(
+                        d.startswith("@loader_path") or d.startswith("@rpath")
+                        for d in opencv_refs)
+
             payload["cudnn_needed"] = sorted(
-                soname for soname in dynamic["needed"] if soname.startswith("libcudnn")
-            )
+                s for s in payload["needed"] if s.startswith("libcudnn"))
             payload["nccl_needed"] = sorted(
-                soname for soname in dynamic["needed"] if soname.startswith("libnccl")
-            )
-            payload["opencv_needed"] = sorted(
-                soname for soname in dynamic["needed"] if soname.startswith("libopencv_")
-            )
-            payload["runpath"] = dynamic["runpath"]
-            runpath_entries = [] if dynamic["runpath"] is None else dynamic["runpath"].split(":")
-            payload["runpath_has_origin_lib"] = (
-                "$ORIGIN/lib" in runpath_entries
-            )
-            payload["runpath_has_nvidia_cudnn"] = (
-                "$ORIGIN/../nvidia/cudnn/lib" in runpath_entries
-            )
-            payload["runpath_has_nvidia_nccl"] = (
-                "$ORIGIN/../nvidia/nccl/lib" in runpath_entries
-            )
+                s for s in payload["needed"] if s.startswith("libnccl"))
             payload["inspected"] = True
     except (OSError, zipfile.BadZipFile, subprocess.CalledProcessError) as err:
         payload["error"] = str(err)

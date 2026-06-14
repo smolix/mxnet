@@ -21,10 +21,10 @@ Malformed/untrusted archives must fail with a clean error, never crash/UB; valid
 files must still round-trip (including >255-byte headers, which the old broken
 header-length decode silently truncated).
 """
+import binascii
 import os
 import struct
 import tempfile
-import zipfile
 
 import numpy as onp
 import pytest
@@ -54,14 +54,44 @@ def test_npy_roundtrip_many_dims_long_header():
     assert loaded[0].shape == arr.shape
 
 
+def _raw_zip(entries):
+    """Build a minimal STORED-only zip from a list of (name_bytes, data_bytes).
+
+    zipfile.writestr() cannot create a zero-length member name: ZipInfo.is_dir()
+    indexes filename[-1], which raises IndexError on "" (CPython >= 3.11). Emit the
+    archive bytes directly so the malformed entry can be exercised.
+    """
+    local_headers, central_headers, offset = [], [], 0
+    for name, data in entries:
+        crc = binascii.crc32(data) & 0xffffffff
+        n = len(data)
+        local_headers.append(
+            struct.pack("<IHHHHHIIIHH",
+                        0x04034b50, 20, 0, 0, 0, 0, crc, n, n, len(name), 0)
+            + name + data)
+        central_headers.append(
+            struct.pack("<IHHHHHHIIIHHHHHII",
+                        0x02014b50, 20, 20, 0, 0, 0, 0, crc, n, n,
+                        len(name), 0, 0, 0, 0, 0, offset)
+            + name)
+        offset += len(local_headers[-1])
+    central = b"".join(central_headers)
+    eocd = struct.pack("<IHHHHIIH",
+                       0x06054b50, 0, 0, len(entries), len(entries),
+                       len(central), offset, 0)
+    return b"".join(local_headers) + central + eocd
+
+
 def test_npz_zero_length_entry_name_is_rejected_cleanly():
     # Craft a zip with a zero-length member name; the loader must not crash
     # (string_view size()-1 underflow) — it should skip it or raise cleanly.
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "evil.npz")
-        with zipfile.ZipFile(path, "w") as zf:
-            zf.writestr("", b"garbage")          # zero-length name
-            zf.writestr("x", b"not a npy")        # too-short name
+        # zipfile.writestr() rejects an empty name, so write the archive bytes
+        # directly: one zero-length-named entry plus a too-short "x" entry.
+        raw = _raw_zip([(b"", b"garbage"), (b"x", b"not a npy")])
+        with open(path, "wb") as f:
+            f.write(raw)
         try:
             mx.nd.load(path)
         except mx.MXNetError:

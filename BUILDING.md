@@ -124,6 +124,15 @@ For native macOS arm64 validation, use a separate build directory and the
 minimal CPU-only feature set. This avoids the Linux/CUDA release settings and
 does not use the shared build scripts.
 
+OpenMP is recommended for CPU performance (it also switches oneDNN from the
+single-threaded `SEQ` runtime to multi-threaded `OMP`). AppleClang ships no
+OpenMP runtime, so build the hermetic libomp once; it installs under `.deps/`
+and is auto-discovered on the next configure (no `-DOPENMP_ROOT` needed):
+
+```bash
+python tools/dependencies/build_openmp.py
+```
+
 ```bash
 cmake -S . -B build-macos-arm64 -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
@@ -132,7 +141,7 @@ cmake -S . -B build-macos-arm64 -G Ninja \
   -DUSE_CUDNN=OFF \
   -DUSE_NCCL=OFF \
   -DUSE_ONEDNN=ON \
-  -DUSE_OPENMP=OFF \
+  -DUSE_OPENMP=ON \
   -DUSE_OPENCV=OFF \
   -DUSE_BLAS=apple \
   -DUSE_LAPACK=ON \
@@ -144,15 +153,22 @@ cmake -S . -B build-macos-arm64 -G Ninja \
 cmake --build build-macos-arm64 --target mxnet -- -j 3
 export MXNET_LIBRARY_PATH="$(pwd)/build-macos-arm64/libmxnet.dylib"
 uv venv .venv --python 3.11
-uv pip install --python .venv/bin/python "numpy<2" requests pytest pytest-timeout
+# scipy is required by the broader tests/python/unittest suite (sparse, random,
+# metric, image, numpy_op, gluon probability, ...) — those modules import it at
+# collection time, so it must be present or ~8 files error out. The curated
+# apple_silicon_cpu_smoke subset itself does not need scipy. "numpy<2" keeps the
+# resolver on a scipy build compatible with the pinned NumPy.
+uv pip install --python .venv/bin/python "numpy<2" scipy requests pytest pytest-timeout
 MXNET_SETUP_ENABLE_CUDA_DEPS=0 uv pip install --python .venv/bin/python -e ./python
 ```
 
-### Optional OpenMP via UV
+### OpenMP under a fully UV-managed toolchain
 
-AppleClang does not include an OpenMP runtime. To validate the OpenMP path on
-macOS without Homebrew, MacPorts, or a system LLVM install, build LLVM's
-`libomp` into a repo-local `.deps/` prefix and point CMake at it:
+The smoke recipe above already enables OpenMP. If you also want CMake/Ninja
+themselves isolated under the repo (no system cmake), run the same steps through
+UV. `build_openmp.py` installs `libomp` into a repo-local `.deps/` prefix that is
+auto-discovered on configure, so the `-DOPENMP_ROOT` below is an explicit
+override and can be omitted:
 
 ```bash
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python \

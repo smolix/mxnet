@@ -228,7 +228,15 @@ instructions on how to configure and build MXNet with cmake.
 
 ### macOS Apple Silicon CPU-only smoke build
 
-On an Apple Silicon host, the expected CPU-only smoke configuration is:
+On an Apple Silicon host, the expected CPU-only smoke configuration is below.
+OpenMP is recommended for CPU performance (it also switches oneDNN from the
+single-threaded `SEQ` runtime to multi-threaded `OMP`). AppleClang ships no
+OpenMP runtime, so build the hermetic libomp once; it installs under `.deps/`
+and is auto-discovered on the next configure:
+
+```bash
+python tools/dependencies/build_openmp.py
+```
 
 ```bash
 cmake -S . -B build-macos-arm64 -G Ninja \
@@ -238,7 +246,7 @@ cmake -S . -B build-macos-arm64 -G Ninja \
   -DUSE_CUDNN=OFF \
   -DUSE_NCCL=OFF \
   -DUSE_ONEDNN=ON \
-  -DUSE_OPENMP=OFF \
+  -DUSE_OPENMP=ON \
   -DUSE_OPENCV=OFF \
   -DUSE_BLAS=apple \
   -DUSE_LAPACK=ON \
@@ -250,13 +258,19 @@ cmake -S . -B build-macos-arm64 -G Ninja \
 cmake --build build-macos-arm64 --target mxnet -- -j 3
 export MXNET_LIBRARY_PATH="$(pwd)/build-macos-arm64/libmxnet.dylib"
 uv venv .venv --python 3.11
-uv pip install --python .venv/bin/python "numpy<2" requests pytest pytest-timeout
+# scipy is required by the broader tests/python/unittest suite (it is imported at
+# collection time by the sparse/random/metric/image/numpy_op modules); the curated
+# apple_silicon_cpu_smoke subset does not need it. "numpy<2" keeps scipy on a build
+# compatible with the pinned NumPy.
+uv pip install --python .venv/bin/python "numpy<2" scipy requests pytest pytest-timeout
 MXNET_SETUP_ENABLE_CUDA_DEPS=0 uv pip install --python .venv/bin/python -e ./python
 ```
 
-To opt into OpenMP on Apple Silicon, add `-DUSE_OPENMP=ON` and
-`-DOPENMP_ROOT="$(pwd)/.deps/openmp-22.1.5-macos-arm64"` to the CMake
-configure command.
+OpenMP is auto-discovered from the `.deps/openmp-*` prefix built above, so no
+`-DOPENMP_ROOT` is needed: `USE_OPENMP` defaults ON whenever that prefix (or a
+user-supplied `OPENMP_ROOT`) is present. Pass `-DUSE_OPENMP=OFF` to force a
+single-threaded build, or `-DOPENMP_ROOT=<prefix>` to use a libomp from
+elsewhere.
 
 To opt into the vision/data pipeline profile without Homebrew or MacPorts,
 build repo-local libjpeg-turbo and OpenCV through UV, then add the OpenCV and

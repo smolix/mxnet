@@ -26,6 +26,7 @@ import os
 import sys
 import inspect
 import platform
+import textwrap
 import numpy as _np
 
 from . import libinfo
@@ -554,12 +555,19 @@ def build_param_doc(arg_names, arg_types, arg_descs, remove_dup=True):
         param_keys.add(key)
         ret = f'{key} : {type_info}'
         if len(desc) != 0:
-            ret += '\n    ' + desc
+            # Indent EVERY line of the (possibly multi-line) description to the
+            # numpydoc continuation level. Previously only the first line was
+            # indented ('\n    ' + desc), so multi-line descriptions dedented
+            # back to column 0 and produced malformed reStructuredText. This is
+            # a docstring-formatting change only and has no runtime effect.
+            ret += '\n' + textwrap.indent(desc, '    ')
         param_str.append(ret)
     doc_str = ('Parameters\n' +
                '----------\n' +
                '{}\n')
-    doc_str = doc_str.format('\n'.join(param_str))
+    # Separate parameters by a blank line so a list/quote at the end of one
+    # description is terminated before the next field begins.
+    doc_str = doc_str.format('\n\n'.join(param_str))
     return doc_str
 
 

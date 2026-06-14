@@ -1,6 +1,11 @@
 MXNet 2.0 API reference
 =======================
 
+.. image:: _static/zombie.jpg
+   :alt: MXNet lives
+   :width: 680
+   :align: center
+
 This is the Python API reference for the `smolix/mxnet
 <https://github.com/smolix/mxnet>`_ fork — a maintained port of Apache MXNet 2.0
 to CUDA 13 / Blackwell GPUs and native Apple Silicon CPU.

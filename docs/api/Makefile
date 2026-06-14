@@ -19,7 +19,8 @@ help:
 	@echo "make serve  - build, then serve at http://localhost:8000"
 
 html:
-	$(SPHINXBUILD) -b html $(SPHINXOPTS) "$(SOURCEDIR)" "$(BUILDDIR)/html"
+	$(SPHINXBUILD) -b html -d "$(BUILDDIR)/doctrees" $(SPHINXOPTS) "$(SOURCEDIR)" "$(BUILDDIR)/html"
+	@touch "$(BUILDDIR)/html/.nojekyll"
 	@echo "Built: $(BUILDDIR)/html/index.html"
 
 clean:

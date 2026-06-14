@@ -90,3 +90,45 @@ intersphinx_mapping = {
 html_theme = "furo"
 html_title = f"MXNet {release}"
 html_short_title = "MXNet API"
+html_static_path = ["_static"]
+
+
+# -- Tidy machine-generated docstrings ----------------------------------------
+# MXNet builds most operator docstrings at import time from C++ metadata, and the
+# result is not always valid reStructuredText. Normalize each docstring before
+# Sphinx/napoleon parse it. This is a docs-build-time transform only; it does not
+# modify the installed package. (The complementary source fix lives in
+# python/mxnet/base.py:build_param_doc, which re-indents multi-line argument
+# descriptions so they parse cleanly.)
+import re as _re
+import textwrap as _textwrap
+
+_SECTION_RE = _re.compile(
+    r"\n(Parameters|Returns|Yields|Raises|Examples|Notes|References|See Also|"
+    r"Attributes|Warnings|Other Parameters)\n([-=~^]+)\n"
+)
+
+
+def _tidy_docstring(app, what, name, obj, options, lines):
+    if not lines:
+        return
+    text = _textwrap.dedent("\n".join(lines))
+    # Guarantee a blank line before every numpydoc section header.
+    text = _SECTION_RE.sub(lambda m: f"\n\n{m.group(1)}\n{m.group(2)}\n", text)
+    # Pad too-short title/section underlines to the length of the title above
+    # (matches how docutils already interprets them; just silences the warning).
+    out, prev = [], ""
+    for line in text.split("\n"):
+        s = line.strip()
+        if s and len(set(s)) == 1 and s[0] in "=-~^\"'`*+#" and 0 < len(s) < len(prev.strip()):
+            indent = prev[: len(prev) - len(prev.lstrip())]
+            line = indent + s[0] * len(prev.strip())
+        out.append(line)
+        prev = line
+    lines[:] = out
+
+
+def setup(app):
+    # priority < 500 so this runs before napoleon converts the numpydoc sections.
+    app.connect("autodoc-process-docstring", _tidy_docstring, priority=400)
+

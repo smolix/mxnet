@@ -1,188 +1,206 @@
-<!--- Licensed to the Apache Software Foundation (ASF) under one -->
-<!--- or more contributor license agreements.  See the NOTICE file -->
-<!--- distributed with this work for additional information -->
-<!--- regarding copyright ownership.  The ASF licenses this file -->
-<!--- to you under the Apache License, Version 2.0 (the -->
-<!--- "License"); you may not use this file except in compliance -->
-<!--- with the License.  You may obtain a copy of the License at -->
+<!---
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
 
-<!---   http://www.apache.org/licenses/LICENSE-2.0 -->
+    http://www.apache.org/licenses/LICENSE-2.0
 
-<!--- Unless required by applicable law or agreed to in writing, -->
-<!--- software distributed under the License is distributed on an -->
-<!--- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY -->
-<!--- KIND, either express or implied.  See the License for the -->
-<!--- specific language governing permissions and limitations -->
-<!--- under the License. -->
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
 
-# Building and Updating MXNet Documentation
+# Documentation
 
-The website is hosted at https://mxnet.apache.org/.
-https://mxnet.io redirects to this site and advised to use links with https://mxnet.apache.org/ instead of https://mxnet.io/.
+This is the documentation index for the **`smolix/mxnet`** fork (MXNet 2.0,
+CUDA 13 / Blackwell + Apple Silicon). For most users the Markdown docs at the
+repo root are the place to start; the directories under `docs/` are a mix of
+fork-maintained build docs and **legacy upstream documentation kept for
+historical reference only**.
 
-## Website & Documentation Contributions
+## Current, fork-maintained docs
 
-Detailed information on website development, continuous integration, and proposals for future projects can be found on the [MXNet Wiki](https://cwiki.apache.org/confluence/display/MXNET/Website).
+| Doc | What it covers |
+|-----|----------------|
+| [`../README.md`](../README.md) | Overview, install, system requirements, troubleshooting |
+| [`../FIXED.md`](../FIXED.md) | Everything this fork changed vs upstream |
+| [`../OPEN_ISSUES.md`](../OPEN_ISSUES.md) + [`details`](../OPEN_ISSUES_DETAILS.md) | Known limitations and open work |
+| [`../BUILDING.md`](../BUILDING.md) | Build from source (Linux/CUDA and Apple Silicon) |
+| [`cuda_wheel_build.md`](cuda_wheel_build.md) | Authoritative, provenance-gated release-wheel pipeline |
 
-The website is built using Jekyll. You may run your own version of the static website by following the instructions on the wiki.
+## Legacy upstream documentation (historical — not built here)
 
-Each language documentation is built in a modular way, so that if you are a contributor to Julia, for example, you only need Julia-related tools to build it. Each language API has a section on installation and building along with how to build the docs locally.
+These predate the fork, target `apache/mxnet`, and are **not currently buildable
+on a modern toolchain**. They are retained for reference and for anyone who wants
+to revive them:
 
-You can also use the project's CI tools to emulate any changes with Docker. You can use these tools to install dependencies and run the parts of the build you want to test.
+- `python_docs/` — the old Sphinx site (Python API + tutorials). Its
+  `python/scripts/conf.py` declares `needs_sphinx = '1.5.6'`, uses Sphinx APIs
+  removed in 2.x (`app.add_javascript` / `add_stylesheet`), the unmaintained
+  `recommonmark` Markdown bridge, the vendored `mxtheme`, and `breathe` +
+  `nbsphinx` tutorial evaluation. It will not build as-is.
+- `cpp_docs/` — Doxygen config for the C++ API.
+- `static_site/` — the Jekyll site that produced `mxnet.apache.org` (archived).
 
-Refer to the [MXNet Developer Wiki](https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=125309983) for instructions on building the docs locally.
+---
 
-If you plan to contribute changes to the documentation or website, please submit a pull request. Contributions are welcome!
+# Proposal: generating MXNet 2.0 API documentation
 
-## Python Docs
+> **Status: recommendation only — not yet implemented.** This section describes a
+> sensible, low-maintenance way to publish API docs for the fork. Nothing under
+> `docs/api/` exists yet; the layout and config below are the proposed starting
+> point for a follow-up change.
 
-MXNet's Python documentation is built with [Sphinx](https://www.sphinx-doc.org) and a variety of plugins including [pandoc](https://pandoc.org/), and [recommonmark](https://github.com/rtfd/recommonmark).
+## Why not just fix the old site
 
-More information on the dependencies can be found in the [CI folder's installation scripts](https://github.com/apache/mxnet/tree/master/ci/docker/install/ubuntu_docs.sh).
+Reviving `docs/python_docs` means simultaneously: upgrading from Sphinx 1.5 to 7+
+(rewriting `conf.py` for the removed APIs), replacing the unmaintained
+`recommonmark` with `myst-parser`, un-vendoring or porting `mxtheme`, wiring
+`breathe`/Doxygen for C++, and re-running `nbsphinx` tutorial evaluation — which
+needs a GPU and a working data pipeline. That is a large, fragile effort whose
+main payload (executed tutorials, the apache-branded theme) is not what a fork
+needs. A clean, minimal API reference is far cheaper to stand up and to keep
+green, and it can grow later.
 
-You can run just the Python docs by following the instructions in the Python API guide.
+## Recommended approach
 
-## Other API Docs
+Stand up a **new, minimal Sphinx API reference** under `docs/api/`, built from the
+**installed** `mxnet` package (the CPU wheel is enough — no GPU needed to document
+the Python API), using only maintained tooling:
 
-The docs are hosted on the website in each language API's section. You can find installation and build instructions there.
+- **Sphinx 7+** with `sphinx.ext.autodoc` + `sphinx.ext.autosummary` (with
+  `:recursive:`) to crawl the package, `sphinx.ext.napoleon` for the NumPy/Google
+  docstring style MXNet uses, `sphinx.ext.intersphinx` (link to numpy/python), and
+  `sphinx.ext.viewcode`.
+- **`myst-parser`** for Markdown pages (the modern replacement for `recommonmark`),
+  so narrative pages can be authored in Markdown alongside the autosummary API.
+- **`furo`** theme (or `pydata-sphinx-theme`) — actively maintained, no vendoring.
+- **No tutorial execution** for v1 (`nbsphinx` omitted). **No C++** for v1 (add
+  Doxygen + `breathe` later as a separate `docs/api/cpp` target).
 
-## How to Build the MXNet Website for Development and QA
+### Proposed layout
 
-`conda` or `miniconda` is recommended.
-* [Conda](https://www.anaconda.com/distribution/#download-section) (install to PATH)
-
-If you only need to make changes to tutorials or other pages that are not generated from one of the API source code folders, then you can use a basic Python pip or conda installation. But if you want edit the API source and have the reference API docs update, you also need to build MXNet from source. Refer to the build from source instructions for this requirement.
-
-
-### Ubuntu Setup
-
-As this is maintained for CI, Ubuntu is recommended. Refer to [ubuntu_doc.sh](https://github.com/apache/mxnet/tree/master/ci/docker/install/ubuntu_docs.sh) for the latest install script.
-
-### Caveat for Rendering Outputs
-
-Note that without a GPU you will not be able to generate the docs with the outputs in the tutorials.
-
-### GPU setup
-To run the full build, including tests of all tutorials,
-**you will need at least two GPUs**.
-Distributed training is a key feature of MXNet,
-so multiple GPUs are required for running through every tutorial.
-* [CUDA 9.2](https://developer.nvidia.com/cuda-downloads)
-
-### CPU-only setup
-In the `environment.yml` file:
-* Change `mxnet-cu92` to `mxnet`.
-
-### macOS setup
-In the `environment.yml` file:
-* Change `mxnet-cu92` to `mxnet`. (There is no CUDA package for mac anyway.)
-
-On Apple Silicon, build or install a native CPU-only MXNet first. The expected
-source configuration is `USE_CUDA=OFF`, `USE_CUDNN=OFF`, `USE_NCCL=OFF`,
-`USE_BLAS=apple`, `USE_OPENMP=OFF`, `USE_ONEDNN=OFF`, `USE_SSE=OFF`, and
-`USE_F16C=OFF`. Use `make EVAL=0` for documentation builds unless you are
-running tutorial evaluation on a separate supported GPU environment.
-
-### Windows Setup
-If you have a GPU and have installed CUDA 9.2 you can leave the MXNet dependency alone.
-Otherwise, in the `environment.yml` file:
-* Change `mxnet-cu92` to `mxnet`.
-
-Install recommended software:
-* [git bash](https://gitforwindows.org/)
-* Be sure to install `Conda` in `PATH`
-* Install `make` from a `git bash` terminal with Admin rights
-    - [Install chocolatey](https://chocolatey.org/install)
-    - Use `choco to install make`
-* Restart terminals after installations to make sure PATH is set.
-    - The `choco`, `make`, and `conda` commands should work in `git bash`.
-
-### Conda environment setup
-Run the following commands from the project root (`new-docs`) to setup the environment.
-
-```bash
-conda env create -f environment.yml
-source activate mxnet-docs
+```
+docs/api/
+├── conf.py             # the skeleton below
+├── index.md            # landing page (MyST Markdown)
+├── requirements.txt    # pinned doc deps
+├── Makefile            # `make html`
+└── _templates/         # autosummary recursive templates (optional)
 ```
 
-## Build the docs
+`docs/api/requirements.txt`:
 
-* Change directories to `new-docs/python`.
-
-To build without GPUs and without testing the notebooks (faster):
-
-```bash
-make EVAL=0
+```
+sphinx>=7,<9
+furo
+myst-parser
+sphinx-autodoc-typehints
 ```
 
-To build with testing the notebooks (requires GPU):
+`docs/api/conf.py` skeleton:
 
-```bash
-make
+```python
+import mxnet  # documented from the installed package
+
+project = "MXNet 2.0 (smolix fork)"
+author = "smolix/mxnet contributors"
+release = mxnet.__version__
+
+extensions = [
+    "sphinx.ext.autodoc",
+    "sphinx.ext.autosummary",
+    "sphinx.ext.napoleon",
+    "sphinx.ext.intersphinx",
+    "sphinx.ext.viewcode",
+    "sphinx_autodoc_typehints",
+    "myst_parser",
+]
+
+autosummary_generate = True          # build stub pages by crawling the package
+autodoc_default_options = {"members": True, "show-inheritance": True}
+autodoc_typehints = "description"
+napoleon_numpy_docstring = True
+# If any optional import is missing in the docs venv, mock it instead of failing:
+autodoc_mock_imports = []            # e.g. ["onnx"] if you document the ONNX bridge
+
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "numpy": ("https://numpy.org/doc/stable", None),
+}
+
+html_theme = "furo"
+source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
+master_doc = "index"
 ```
 
-The build docs will be available at `build/_build/html`.
+`docs/api/index.md` (drive the recursive crawl from a single autosummary):
 
-Each build may take a few minutes even without evaluation. To accelerate it, we can use one of the following ways:
+````markdown
+# MXNet 2.0 API reference
 
-1. open `build/conf.py`, add the folders you want to skip into `exclude_patterns`, such as `exclude_patterns = ['templates', 'api', 'develop', 'blog']`.
-2. move the files into a different folder, such as `mv api /tmp/`, and then `make clean`.
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :recursive:
 
-## Check results
+   mxnet.np
+   mxnet.npx
+   mxnet.gluon
+   mxnet.optimizer
+   mxnet.io
+   mxnet.image
+   mxnet.autograd
+   mxnet.runtime
+```
+````
 
-To run a server to see the website:
+### Build it
 
-1. Start a http server: `cd build/_build/html; python -m http.server`
-2. For viewing a remote machine, ssh to your machine with port forwarding: `ssh -L8000:localhost:8000 your_machine`
-3. Open http://localhost:8000 in your local machine
-
-## Run tutorials
-
-In addition to view the built html pages, you can run the Jupyter notebook from a remote machine.
-1. Install `notedown` plugin: `pip install https://github.com/mli/notedown/tarball/master` in remote server
-2. Start Jupyter notebook `jupyter notebook --NotebookApp.contents_manager_class='notedown.NotedownContentsManager'` in remote server
-3. ssh to your machine with port forwarding: `ssh -L8888:localhost:8888 your_machine`
-4. Open http://localhost:8888 in your local machine and run the md files directly
-
-Optionally, one can run the following to launch the notedown plugin automatically when starting jupyter notebook.
-1. Generate the jupyter configure file `~/.jupyter/jupyter_notebook_config.py` if it
-is not existing by run `jupyter notebook --generate-config`
-2. Add `c.NotebookApp.contents_manager_class = 'notedown.NotedownContentsManager'` to `~/.jupyter/jupyter_notebook_config.py`
-3. Simply run `jupyter notebook`
-
-## Troubleshooting
-Dependencies and the setup steps for this website are changing often. Here are some troubleshooting tips.
-
-* You might need to update the environment for the latest modules.
 ```bash
-conda env update -f environment.yml
+uv venv .venv-docs --python 3.12
+uv pip install --python .venv-docs/bin/python \
+  dist/mxnet-*.whl -r docs/api/requirements.txt
+.venv-docs/bin/python -m sphinx -b html docs/api docs/api/_build/html
+# open docs/api/_build/html/index.html
 ```
 
-The `-W` Sphinx option enforces "warnings as errors". This will help you debug your builds and get them through CI.
-**CI will not let a PR through if it breaks the website.** Refer to the [MXNet Developer wiki's documentation guide](https://cwiki.apache.org/confluence/display/MXNET/Documentation+Guide) for troubleshooting tips.
+### Publish (GitHub Pages) — sketch
 
+A single workflow installs the CPU wheel + doc deps, runs `sphinx-build`, and
+deploys to the `gh-pages` branch:
 
-## Production Website Deployment Process
+```yaml
+# .github/workflows/docs.yml
+name: docs
+on: { push: { branches: [master] } }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install dist/mxnet-*.whl -r docs/api/requirements.txt   # or the latest release wheel
+      - run: python -m sphinx -b html docs/api docs/api/_build/html
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/api/_build/html
+```
 
-[Apache Jenkins MXNet website building job](https://builds.apache.org/job/mxnet-build-site/) is used to build MXNet website.
+### Later add-ons (not in v1)
 
-The Jenkins docs build job will fetch MXNet repository, build MXNet website and push all static files to [host repository](https://github.com/apache/mxnet-site.git).
-
-The host repo is hooked with [Apache gitbox](https://gitbox.apache.org/repos/asf?p=mxnet-site.git;a=summary) to host website.
-
-### Processes for Running the Docs Build Jobs
-
-This information is maintained on the [MXNet Wiki](https://cwiki.apache.org/confluence/display/MXNET/Website).
-
-
-## Other Docs Build Processes
-
-* Perl API docs are maintained separately at [metacpan](https://metacpan.org/release/AI-MXNet).
-
-
-## Troubleshooting
-
-- If C++ code has been changed, remove the previous results to trigger the rebuild for all pages. To do this, run `make clean_docs`.
-- If C++ code fails to build, run `make clean`.
-- If CSS or javascript are changed, clear the cache in the browser with a *forced refresh*.
-- If search doesn't work, run `make clean` and then `make docs`.
+- **C++ API**: Doxygen + `breathe` as a separate target (`docs/api/cpp`).
+- **Tutorials**: port a handful of the legacy `python_docs/.../tutorials` notebooks
+  to MyST Markdown and include them *without* execution (`nbsphinx_execute='never'`)
+  until a CI GPU runner exists.
+- **Versioned docs**: `sphinx-multiversion` once there is more than one doc-bearing
+  release.

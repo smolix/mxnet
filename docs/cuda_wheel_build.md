@@ -293,11 +293,11 @@ Wheel versions are `2.0.0+cu13.bw.<YYYYMMDD>[.<build>]`. The trailing
 `.<build>` disambiguates multiple wheels on the same day — **always pass
 it explicitly when rebuilding a date that already has a published wheel**,
 otherwise the new wheel collides with the old tag. `tools/update_mxnet_wheel.py`
-(used by the d2l side) sorts by `(date, build)`, so `…20260529.1` correctly
-supersedes `…20260529`.
+(used by the d2l side) sorts by `(date, build)`, so `…20260614.1` correctly
+supersedes `…20260614`.
 
 ```bash
-tools/build_cleanup_wheel.sh 2.0.0+cu13.bw.20260529.1
+tools/build_cleanup_wheel.sh 2.0.0+cu13.bw.20260614.1
 ```
 
 ---
@@ -416,12 +416,12 @@ print(mx.np.ones((2, 2), ctx=mx.gpu(0)) + 1)   # GPU works
 
 ```bash
 # tag the source the wheel was built from
-git tag -a v2.0.0+cu13.bw.20260529.1 -m "CUDA 13 Ampere→Blackwell wheel, OpenCV on"
+git tag -a v2.0.0+cu13.bw.20260614.1 -m "CUDA 13 Ampere→Blackwell wheel, OpenCV on"
 git push origin master --tags
 
 # publish the wheel as a release asset
-gh release create v2.0.0+cu13.bw.20260529.1 dist/mxnet-*.whl \
-  --title "v2.0.0+cu13.bw.20260529.1" \
+gh release create v2.0.0+cu13.bw.20260614.1 dist/mxnet-*.whl \
+  --title "v2.0.0+cu13.bw.20260614.1" \
   --notes "Ampere→Blackwell (sm_80/86/89/90/100/120+PTX), CUDA 13, OpenCV on."
 ```
 

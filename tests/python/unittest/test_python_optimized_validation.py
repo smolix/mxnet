@@ -23,9 +23,23 @@ import textwrap
 import pytest
 
 
+def _has_local_libmxnet_build():
+    """True if the source tree has a built libmxnet shared library."""
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+    return any(os.path.exists(os.path.join(root, d, name))
+               for d in (os.path.join('python', 'mxnet'), 'lib', 'build')
+               for name in ('libmxnet.so', 'libmxnet.dylib', 'libmxnet.dll'))
+
+
 def _run_optimized_python(source):
     env = os.environ.copy()
-    if env.get('MXNET_TEST_USE_INSTALLED_MXNET') != '1':
+    # Use the in-tree source only when a local build exists; otherwise test the
+    # installed wheel (forcing the lib-less source onto PYTHONPATH would make the
+    # subprocess fail with "Cannot find the MXNet library"). Explicit env wins.
+    use_installed = env.get('MXNET_TEST_USE_INSTALLED_MXNET')
+    if use_installed is None:
+        use_installed = '0' if _has_local_libmxnet_build() else '1'
+    if use_installed != '1':
         repo_python = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'python'))
         env['PYTHONPATH'] = repo_python + os.pathsep + env.get('PYTHONPATH', '')
     result = subprocess.run(

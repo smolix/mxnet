@@ -759,20 +759,13 @@ def test_convolution_multiple_streams():
 # This test is designed to expose an issue with cudnn v7.1.4 algo find() when invoked with large c.
 # Algos returned by find() can fail to run with grad_req='add' (wgrad kernel beta parameter == 1.0f).
 #
-# Blackwell (sm_120) / cuDNN 9 xfail: cudnnBackendFinalize() returns
-# CUDNN_STATUS_NOT_SUPPORTED for 1D conv with 65536 input channels on this
-# arch. cuDNN 9 dropped the legacy heuristic engine for extreme-C configs in
-# its new backend API. The test's original purpose (catch a cuDNN v7.1.4
-# algo-find bug) is already served on older cuDNN; on cuDNN 9 / sm_120 the op
-# cannot be constructed at all.
+# History: this was xfail(strict) on Blackwell (sm_120) / cuDNN 9 because
+# cudnnBackendFinalize() returned CUDNN_STATUS_NOT_SUPPORTED for 1D conv with
+# C=65536. As of the cu13.bw.20260614 wheel (cuDNN 9.22, sm_120) the op now
+# constructs and runs via a cuDNN fallback engine ("Using fallback engine(s)
+# for fprop ... NCW kernel"), so the test PASSES on Blackwell and the strict
+# xfail turned that pass into a (false) failure. Marker removed accordingly.
 @pytest.mark.serial
-@pytest.mark.xfail(
-    get_cuda_compute_capability(mx.gpu(0)) >= 120,
-    reason="cuDNN 9 / sm_120 (Blackwell): CUDNN_STATUS_NOT_SUPPORTED for "
-           "1D conv with C=65536 via cudnnBackendFinalize(); cuDNN 9 dropped "
-           "legacy heuristic engine for extreme-C configs.",
-    strict=True,
-)
 def test_convolution_large_c():
     problematic_c = 64 * 1024
     # The convolution accumulates many values, so scale the input magnitude.

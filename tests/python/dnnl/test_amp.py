@@ -96,6 +96,12 @@ def get_param_name(param):
         return 'Tensor' + str(param.shape)
     if isinstance(param, (tuple, list)):
         return str(type(param)(get_param_name(elem) for elem in param))
+    # Render callables (weight-tensor factories, lambdas) by name, NOT repr:
+    # repr embeds the object's memory address (e.g. "<function f at 0x7f..>"),
+    # which differs per process and makes pytest-xdist abort collection with
+    # "Different tests were collected between gw0 and gw1" under `-n`.
+    if callable(param):
+        return getattr(param, '__name__', None) or type(param).__name__
     return str(param)
 
 

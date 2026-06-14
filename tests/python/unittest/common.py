@@ -27,7 +27,36 @@ from mxnet.base import MXNetError
 from mxnet.test_utils import environment
 curr_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))
 sys.path.append(os.path.join(curr_path, '../common/'))
-if os.environ.get('MXNET_TEST_USE_INSTALLED_MXNET') != '1':
+
+
+def _has_local_libmxnet_build():
+    """True if the source tree contains a built libmxnet shared library.
+
+    Mirrors the in-tree locations mxnet/libinfo.py:find_lib_path() searches
+    (relative to python/mxnet/): the package dir, <root>/lib, <root>/build.
+    """
+    root = os.path.join(curr_path, '../../..')
+    lib_names = ('libmxnet.so', 'libmxnet.dylib', 'libmxnet.dll')
+    search_dirs = (
+        os.path.join(root, 'python', 'mxnet'),
+        os.path.join(root, 'lib'),
+        os.path.join(root, 'build'),
+    )
+    return any(os.path.exists(os.path.join(d, name))
+               for d in search_dirs for name in lib_names)
+
+
+# Choose which mxnet the tests import:
+#   * a local source build present       -> test that in-tree library
+#   * no local build (installing a wheel) -> test only the installed package
+# Prepending the source python/ dir when there is no built libmxnet.so makes
+# subprocess-spawning tests (mp 'spawn') re-import a lib-less source package in
+# the child and die with "Cannot find the MXNet library". Auto-detecting avoids
+# that; an explicit MXNET_TEST_USE_INSTALLED_MXNET still overrides the choice.
+_use_installed_mxnet = os.environ.get('MXNET_TEST_USE_INSTALLED_MXNET')
+if _use_installed_mxnet is None:
+    _use_installed_mxnet = '0' if _has_local_libmxnet_build() else '1'
+if _use_installed_mxnet != '1':
     sys.path.insert(0, os.path.join(curr_path, '../../../python'))
 
 import models

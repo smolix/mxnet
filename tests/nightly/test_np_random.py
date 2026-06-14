@@ -23,7 +23,19 @@ from os import path
 curr_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))
 sys.path.append(os.path.join(curr_path, '../python/common/'))
 sys.path.append(os.path.join(curr_path, '../python/unittest/'))
-sys.path.insert(0, os.path.join(curr_path, '../../../python'))
+# Prefer the in-tree source only when a local build exists; otherwise test the
+# installed package (a lib-less source tree would fail with "Cannot find the
+# MXNet library"). Explicit MXNET_TEST_USE_INSTALLED_MXNET overrides.
+_root = os.path.join(curr_path, '../../..')
+_has_local_build = any(
+    os.path.exists(os.path.join(_root, d, name))
+    for d in (os.path.join('python', 'mxnet'), 'lib', 'build')
+    for name in ('libmxnet.so', 'libmxnet.dylib', 'libmxnet.dll'))
+_use_installed = os.environ.get('MXNET_TEST_USE_INSTALLED_MXNET')
+if _use_installed is None:
+    _use_installed = '0' if _has_local_build else '1'
+if _use_installed != '1':
+    sys.path.insert(0, os.path.join(curr_path, '../../../python'))
 import unittest
 import numpy as _np
 import mxnet as mx

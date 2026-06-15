@@ -380,6 +380,38 @@ def c_str(string):
     """
     return ctypes.c_char_p(string.encode('utf-8'))
 
+def _coerce_np_scalars(value):
+    """Recursively replace NumPy scalar elements of a tuple/list with Python scalars.
+
+    Leaves the container type and every non-NumPy element unchanged.
+    """
+    if isinstance(value, (tuple, list)):
+        return type(value)(_coerce_np_scalars(v) for v in value)
+    if isinstance(value, _np.generic):
+        return value.item()
+    return value
+
+
+def param_str(value):
+    """Render an operator parameter value as the string the C API parser expects.
+
+    Tuple/list params (``shape``, ``axis``, ...) may contain NumPy scalars — e.g.
+    ``rand_shape_nd`` / ``np.random.randint`` yield ``np.int64`` elements. ``str()`` of
+    a tuple renders each element with ``repr``, and under NumPy 2.x
+    ``repr(np.int64(3))`` is ``'np.int64(3)'`` (it was ``'3'`` under NumPy 1.x), which
+    the C++ ``Shape``/``Tuple`` parser rejects with "Invalid Parameter format for
+    shape". Coerce NumPy scalar elements to plain Python scalars so the rendering is
+    NumPy-version-independent and byte-identical to the NumPy 1.x output (so previously
+    working code is unaffected). Strings pass through untouched; any other value is
+    stringified as before.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (tuple, list)):
+        return str(_coerce_np_scalars(value))
+    return str(value)
+
+
 def c_str_array(strings):
     """Create ctypes const char ** from a list of Python strings.
 

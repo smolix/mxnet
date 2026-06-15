@@ -1567,15 +1567,17 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
   TBlob compute_data    = data;
   Tensor<xpu, 1, char> workspace;
   TBlob temp_data_blob;
-  const int compute_type = mean.type_flag_;
-  // fp16 mean/variance over a large reduced extent overflows: the reductions
-  // below write the un-normalized sum to the fp16 output before dividing, and
-  // that sum exceeds fp16's ~65504 range (diverging from NumPy, which stays
-  // finite). For an fp16 output, run the two reductions into fp32 scratch
-  // (sum in fp32, divide -> result is O(1)), then cast the finished
-  // mean/variance down to fp16. bf16 shares fp32's exponent range, so it does
-  // not overflow and keeps the in-place path.
+  // fp16 mean/variance over a large reduced extent overflows two ways: the
+  // un-normalized running sum can exceed fp16's ~65504 range before the divide,
+  // AND each (data - mean)^2 residual can itself exceed it. For an fp16 output we
+  // therefore run the ENTIRE moments computation in fp32 -- cast the input up,
+  // accumulate the mean and the second moment into fp32 scratch, form the
+  // residual squares in fp32 -- then cast only the finished mean/variance back
+  // down to fp16. bf16 shares fp32's exponent range, so it does not overflow and
+  // keeps the in-place path. (An earlier fix promoted only the reductions to fp32
+  // scratch, leaving the residual-square in fp16 and still able to overflow; OI-3.)
   const bool narrow_out  = (mean.type_flag_ == mshadow::kFloat16);
+  const int compute_type = narrow_out ? mshadow::kFloat32 : mean.type_flag_;
   TBlob mean_acc         = mean;    // reduction target for the mean   (fp32 when narrow_out)
   TBlob moment_acc       = moment;  // reduction target for the moment (fp32 when narrow_out)
   MSHADOW_TYPE_SWITCH(compute_type, DType, {
@@ -1612,12 +1614,9 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
   ReduceAxesRTCComputeImpl(
       ctx, {compute_data}, {kWriteTo}, {mean_acc}, small, "red::sum{}", &workspace, true, "identity");
 #endif
-  // Bring the (O(1), no longer overflowing) mean down to the fp16 output so the
-  // (data - mean) kernel below reads it in the compute dtype.
-  if (narrow_out) {
-    CastCompute<xpu>(attrs, ctx, {mean_acc}, {kWriteTo}, {mean});
-  }
-  // Compute data - mean
+  // Compute data - mean (the (data - mean)^2 kernel below reads the mean from
+  // mean_acc, which is the fp32 scratch when narrow_out, so the squaring is done
+  // in fp32 and cannot overflow the fp16 output).
   Shape<6> data_shape, mean_shape;
   for (int i = 0; i < 6; ++i) {
     data_shape[i] = (i < data.shape_.ndim()) ? data.shape_[i] : 1;
@@ -1629,7 +1628,7 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
                                             data_shape.Size(),
                                             temp_data_blob.dptr<DType>(),
                                             compute_data.dptr<DType>(),
-                                            mean.dptr<DType>(),
+                                            mean_acc.dptr<DType>(),
                                             data_shape,
                                             mean_shape);
   });
@@ -1662,6 +1661,8 @@ void NumpyMomentsForward(const nnvm::NodeAttrs& attrs,
   }
 #endif
   if (narrow_out) {
+    // Cast the finished (O(1)) fp32 mean and moment back down to the fp16 outputs.
+    CastCompute<xpu>(attrs, ctx, {mean_acc}, {kWriteTo}, {mean});
     CastCompute<xpu>(attrs, ctx, {moment_acc}, {req[0]}, {moment});
   }
 }

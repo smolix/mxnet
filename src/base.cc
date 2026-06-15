@@ -75,9 +75,17 @@ void Context::CuDNNLibChecks() {
     // Don't bother with checks if there are no GPUs visible (e.g. with CUDA_VISIBLE_DEVICES="")
     if (dmlc::GetEnv("MXNET_CUDNN_LIB_CHECKING", true) && GetGPUCount() > 0) {
       size_t linkedAgainstCudnnVersion = cudnnGetVersion();
-      if (linkedAgainstCudnnVersion != CUDNN_VERSION)
-        LOG(WARNING) << "cuDNN lib mismatch: linked-against version " << linkedAgainstCudnnVersion
-                     << " != compiled-against version " << CUDNN_VERSION << ".  "
+      // cuDNN guarantees ABI compatibility across minor/patch releases within a
+      // major version (cuDNN 9.x is minor-version-compatible in both directions),
+      // so only a *major*-version difference is a real ABI hazard worth warning
+      // about. A minor/patch skew (e.g. a wheel built against 9.23 whose pin
+      // resolves 9.22 at install time) is benign and previously produced a noisy
+      // false-positive warning on every first GPU use (OI-20). The encoding is
+      // MAJOR*10000 + MINOR*100 + PATCH, so integer-divide by 10000 for the major.
+      if (linkedAgainstCudnnVersion / 10000 != CUDNN_VERSION / 10000)
+        LOG(WARNING) << "cuDNN major-version mismatch: linked-against version "
+                     << linkedAgainstCudnnVersion << " != compiled-against version "
+                     << CUDNN_VERSION << " (different major versions are not ABI-compatible).  "
                      << "Set MXNET_CUDNN_LIB_CHECKING=0 to quiet this warning.";
       if (CUDNN_VERSION < MXNET_CI_OLDEST_CUDNN_VERSION)
         LOG(WARNING) << "Upgrade advisory: this mxnet has been built against cuDNN lib version "

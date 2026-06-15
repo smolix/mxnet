@@ -8,28 +8,30 @@ What has already been fixed is in [`FIXED.md`](FIXED.md).
 Severity: **High** = can produce wrong results or block a common workflow ·
 **Med** = perf / robustness / niche correctness · **Low** = cosmetic / informational.
 
-## Start here — the five things most likely to bite you
+## Start here — the four things most likely to bite you
 
-1. **No CUDA 13.0 / R580 driver support** — the wheel pins `nvidia-cublas>=13.5`,
-   which needs driver **R590+**. On R580 large GEMMs fail with
-   `CUBLAS_STATUS_NOT_INITIALIZED`. Upgrade the driver. ([OI-19](OPEN_ISSUES_DETAILS.md#oi-19))
-2. **ONNX is not in the published wheels** — fixed in source (PR #38) but wheels are
+> The old **CUDA 13.0 / R580** driver limitation (the `nvidia-cublas>=13.5` pin needs
+> driver **R590+**) is now an accepted, documented platform constraint rather than open
+> work — see [`FIXED.md`](FIXED.md) §1 (was OI-19). Upgrade the driver to R590+, or pin
+> an older wheel for R580.
+
+1. **ONNX is not in the published wheels** — fixed in source (PR #38) but wheels are
    built ONNX-free; you need a source build to use it. ([OI-27](OPEN_ISSUES_DETAILS.md#oi-27))
-3. **Apple Silicon oneDNN INT8/fusion is gated off** — quantization + subgraph fusion
+2. **Apple Silicon oneDNN INT8/fusion is gated off** — quantization + subgraph fusion
    fall back to native kernels on arm64; the `tests/python/dnnl` lane does not apply. ([OI-17](OPEN_ISSUES_DETAILS.md#oi-17))
-4. **bf16 on CPUs without AVX-512-BF16 is emulated in fp32** — numerically correct,
+3. **bf16 on CPUs without AVX-512-BF16 is emulated in fp32** — numerically correct,
    no speedup. ([OI-18](OPEN_ISSUES_DETAILS.md#oi-18))
-5. **Backward through quantized ops is unvalidated** — forward INT8 inference is
+4. **Backward through quantized ops is unvalidated** — forward INT8 inference is
    solid; training through `_sg_onednn_*` is not verified. ([OI-8](OPEN_ISSUES_DETAILS.md#oi-8))
 
 ## Correctness / numeric
 
 | ID | Sev | Summary | Workaround |
 |----|-----|---------|------------|
-| [OI-1](OPEN_ISSUES_DETAILS.md#oi-1) | Med | `matmul`/`dot`/`tensordot` reject integer inputs (NumPy/PyTorch compute them) | cast to float |
-| [OI-2](OPEN_ISSUES_DETAILS.md#oi-2) | Med | `np.mean(int)` doesn't round-to-int like NumPy/PyTorch | cast result |
-| [OI-3](OPEN_ISSUES_DETAILS.md#oi-3) | Med | `np.var`/`np.std(fp16)` *moments-with-custom-workspace* path can still overflow (simple path fixed) | use fp32 |
-| [OI-4](OPEN_ISSUES_DETAILS.md#oi-4) | Med | 6–10 NumPy view/stride xfails (stepped slicing, negative-stride flip/rot/squeeze) | materialize a copy |
+| [OI-4](OPEN_ISSUES_DETAILS.md#oi-4) | Low | NumPy *view-aliasing* gaps: positive-stepped slicing (`a[::2]`) and axis-moving (`moveaxis`/`rollaxis`) return copies, not views — PyTorch returns views (flip/rot90 already match PyTorch, which copies) | results are correct copies; only in-place aliasing differs |
+
+> OI-1 (integer `dot`/`matmul`/`tensordot`), OI-2 (`np.mean(int)` dtype), and OI-3
+> (fp16 `var`/`std` overflow) are **resolved** — see [`FIXED.md`](FIXED.md) §7.
 
 ## oneDNN INT8 quantization (CPU / x86)
 
@@ -59,8 +61,9 @@ Severity: **High** = can produce wrong results or block a common workflow ·
 |----|-----|---------|
 | [OI-17](OPEN_ISSUES_DETAILS.md#oi-17) | High | arm64: oneDNN INT8 + subgraph fusion gated off (Xbyak_aarch64 JIT unreliable) |
 | [OI-18](OPEN_ISSUES_DETAILS.md#oi-18) | Med | bf16 emulated in fp32 on non-AVX-512-BF16 CPUs |
-| [OI-19](OPEN_ISSUES_DETAILS.md#oi-19) | High | cuBLAS≥13.5 pin requires driver R590+; CUDA 13.0 / R580 unsupported |
-| [OI-20](OPEN_ISSUES_DETAILS.md#oi-20) | Low | cuDNN minor mismatch warning (wheel built vs 9.23, pin resolves 9.22) — harmless |
+
+> OI-19 (cuBLAS≥13.5 / driver R590+) is an **accepted constraint** and OI-20 (cuDNN
+> minor-version warning) is **fixed** — see [`FIXED.md`](FIXED.md) §1.
 
 ## Engine / concurrency
 
@@ -76,15 +79,13 @@ Severity: **High** = can produce wrong results or block a common workflow ·
 |----|-----|---------|
 | [OI-24](OPEN_ISSUES_DETAILS.md#oi-24) | Med | Wheel publication is manual; no conda/system packaging or release automation |
 | [OI-25](OPEN_ISSUES_DETAILS.md#oi-25) | Med | No CUDA build-matrix CI (Ada/Hopper/Blackwell + CUDA 12.x) |
-| [OI-26](OPEN_ISSUES_DETAILS.md#oi-26) | Low | Downstreams unverified (GluonNLP/Sockeye/AutoGluon, ps-lite, Py3.13+, NumPy 2.x, DLPack) |
+| [OI-26](OPEN_ISSUES_DETAILS.md#oi-26) | Low | Downstreams unverified (GluonNLP/Sockeye/AutoGluon, ps-lite, Py3.13+, NumPy 2.x [op shape/axis-param rendering fixed], DLPack) |
 | [OI-27](OPEN_ISSUES_DETAILS.md#oi-27) | Med | ONNX fixed in source but not shipped in wheels |
 
 ## D2L book compatibility
 
-| ID | Sev | Summary |
-|----|-----|---------|
-| [OI-28](OPEN_ISSUES_DETAILS.md#oi-28) | Med | `train_ch13` multi-GPU DeadKernel, under investigation |
-| [OI-29](OPEN_ISSUES_DETAILS.md#oi-29) | Low | Two convergence gaps are book-side fixes (scheduler `epoch_size`, FCN `trainer.step`) |
+All D2L items are **resolved** — the `train_ch13` multi-GPU DeadKernel (was OI-28) and
+the two book-side convergence gaps (was OI-29) are closed. See [`FIXED.md`](FIXED.md) §10.
 
 ## Build warnings (informational)
 

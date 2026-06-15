@@ -9,40 +9,26 @@ resolved work is retired to `git log` (and summarized in [`FIXED.md`](FIXED.md))
 
 ## Correctness / numeric
 
-<a id="oi-1"></a>
-### OI-1 — Integer `matmul` / `dot` / `tensordot` rejected
-NumPy and PyTorch both compute these for integer inputs; this fork rejects them.
-A naive drop-in is unsafe: the reduce path allocates a float intermediate in
-`kTempSpace` that collides with integer output, and heap NDArray temps are freed at
-`FCompute` return while async GPU kernels are still running (use-after-free). mshadow
-BLAS is float-only. **Real fix:** an integer GEMM kernel, or an engine-var-tracked
-scratch buffer plus an async-safe `float64` cast path. **Workaround:** cast inputs
-to a float dtype. (Was tracked as `INT2`.)
-
-<a id="oi-2"></a>
-### OI-2 — `np.mean(int)` does not round-to-int
-NumPy/PyTorch return a rounded integer for `mean` of an integer array; this fork
-returns float or rejects. Same temp-collision / async-lifetime hazard as OI-1 — the
-reduce allocates a float intermediate. **Real fix:** a fused integer-mean-with-rounding
-reduce kernel. The Python `average` wrapper convention is already aligned.
-
-<a id="oi-3"></a>
-### OI-3 — `np.var` / `np.std(fp16)` moments path overflow
-The simple reduction path was fixed (reduce into fp32 scratch, then cast — see
-`FIXED.md` §7). The *moments path that uses a custom workspace* still reduces in fp16
-before dividing and can overflow to `inf` over a large axis. **Real fix:** route the
-moments-with-workspace path through the same fp32-scratch accumulation. **Workaround:**
-compute variance/std in fp32.
+> OI-1 (integer `matmul`/`dot`/`tensordot`), OI-2 (`np.mean(int)` dtype), and OI-3
+> (fp16 `var`/`std` overflow) are **resolved** — see [`FIXED.md`](FIXED.md) §7.
 
 <a id="oi-4"></a>
-### OI-4 — NumPy view / stride contract (6–10 xfail)
-The Apache-issue regression sweep left ~6–10 expected-failing cases, all the same
-class: operations that should return a **strided view** instead materialize a copy via
-the Python frontend (`_npi.slice`). Affected: stepped slicing, axis movement, and
-negative-stride `flip`/`rot90`/`squeeze`. **Real fix:** signed-stride metadata in
-`NDArray`/`TBlob` plus operator/API plumbing to honor it — a substantial change.
-**Workaround:** none needed for value-correctness (results are correct copies); only
-view-aliasing semantics differ.
+### OI-4 — NumPy view-aliasing gaps (narrowed)
+The Apache-issue regression sweep flagged a class of operations that NumPy returns as a
+**strided view** but this fork materializes as a copy. Split by PyTorch's behavior (the
+fork's tie-breaker for value/format decisions):
+- **Resolved (match PyTorch):** `flip` / `flipud` / `fliplr` / `rot90` return
+  independent copies — exactly what `torch.flip` & friends do (they copy; they are not
+  views). Negative-step slicing (`a[::-1]`) is likewise not a view (PyTorch rejects
+  negative steps outright). The values were always correct; these are now pinned as
+  copy-semantics tests instead of view xfails (`FIXED.md` §7).
+- **Still open:** positive **stepped slicing** (`a[::2]`) and **axis-moving** ops
+  (`moveaxis` / `rollaxis`) return copies here, whereas PyTorch (and NumPy) return
+  views, so in-place writes to the result do not alias the base. **Real fix:**
+  signed/strided metadata in `NDArray` / `TBlob` plus operator/API plumbing to honor it
+  — a substantial change (today `TBlob::CheckContiguous()` is a stub returning `true`
+  and strides are discarded). **Workaround:** none needed for value-correctness
+  (results are correct copies); only view-aliasing semantics differ.
 
 ---
 
@@ -170,28 +156,9 @@ oneDNN v3 still exposes bf16 primitives but emulates them in fp32 on CPUs lackin
 AVX-512-BF16, so bf16 numerics are *correct* but no faster than fp32. Not a build
 error. Test the real bf16 path on Intel SPR or AMD Zen 4 / Granite Rapids.
 
-<a id="oi-19"></a>
-### OI-19 — Driver R590+ required (cuBLAS≥13.5); R580 unsupported
-`python/setup.py` pins `nvidia-cublas>=13.5,<14`. This is the result of a two-sided
-squeeze:
-- **cuBLAS 13.2+ on the CUDA 13.0 / R580 driver line** fails to load its large-GEMM
-  kernels: tiny GEMMs (N≤16) and convs work, but any non-trivial `dot`/`FullyConnected`
-  returns `CUBLAS_STATUS_NOT_INITIALIZED`. Not an API/workspace/MXNet bug.
-- **cuBLAS 13.1.1.3 (R580-safe) has a crashing `cublasSsyrk`/`cublasDsyrk`** — a
-  segfault inside the routine — so `linalg.syrk` crashes on GPU.
-
-Because 13.1.1.3 crashes syrk and 13.5.x needs R590+, both cannot be satisfied. We pin
-`>=13.5`: syrk and large GEMM both work on R590+. **This drops the old CUDA 13.0 / R580
-line** — those deployments must upgrade the driver to R590+ (or pin an older wheel).
-Diagnose the loaded cuBLAS with
-`CUBLAS_LOGINFO_DBG=1 CUBLAS_LOGDEST_DBG=stdout python -c "import mxnet as mx; mx.nd.dot(mx.nd.ones((256,256),ctx=mx.gpu(0)), mx.nd.ones((256,256),ctx=mx.gpu(0))).wait_to_read()" 2>&1 | grep -m1 'cuBLAS (v'`.
-
-<a id="oi-20"></a>
-### OI-20 — cuDNN minor-version mismatch warning
-The `20260614` wheel was compiled against cuDNN 9.23 while the pip pin
-(`nvidia-cudnn-cu13>=9.22,<10`) resolves 9.22, so first GPU use prints a harmless-but-
-noisy "cuDNN lib mismatch: …" line. Functionally fine. Silence it by aligning the
-toolkit's cuDNN to the build (9.23) or raising the floor once 9.23 lands on PyPI.
+> OI-19 (cuBLAS≥13.5 / driver R590+) is an **accepted platform constraint** and OI-20
+> (cuDNN minor-version mismatch warning) is **resolved** (the runtime check now warns
+> only on a major-version difference) — see [`FIXED.md`](FIXED.md) §1.
 
 ---
 
@@ -240,8 +207,10 @@ build/test target keeps OMP threads capped (1–4 per xdist lane; ~48–64 runna
 <a id="oi-26"></a>
 ### OI-26 — Downstream libraries unverified (was T2–T6/T11)
 Not validated against this fork: GluonNLP / Sockeye / AutoGluon (T2); ps-lite distributed
-rendezvous (T3); Python 3.13+ (T4); NumPy 2.x ABI (T5); DLPack interop (T6); broader
-cross-platform process lifecycle (T11). Strategic; revisit per concrete demand.
+rendezvous (T3); Python 3.13+ (T4); NumPy 2.x ABI (T5 — the operator shape/axis-param
+rendering incompatibility is now fixed, see [`FIXED.md`](FIXED.md) §10, but a full-suite
+NumPy 2.x run is not yet a gate); DLPack interop (T6); broader cross-platform process
+lifecycle (T11). Strategic; revisit per concrete demand.
 
 <a id="oi-27"></a>
 ### OI-27 — ONNX fixed in source but not shipped in wheels
@@ -255,22 +224,9 @@ when required.
 
 ## D2L book compatibility
 
-<a id="oi-28"></a>
-### OI-28 — `train_ch13` multi-GPU DeadKernel (D2L #3)
-Fine-tuning notebooks that call `d2l.train_ch13` show intermittent multi-GPU dispatch
-instability ("DeadKernel"). Empirically not autotune-related. A defense-in-depth lock
-was added; root cause is still being narrowed. 126/128 D2L notebook outcomes are green
-on the reference wheel; this is the main remaining one.
-
-<a id="oi-29"></a>
-### OI-29 — D2L convergence gaps are book-side fixes (D2L #6/#7)
-Two reported "2–3× higher loss" gaps are **not** framework bugs:
-- **#6 LR scheduler:** `MultiFactorScheduler`/`CosineScheduler` count minibatch steps,
-  not epochs. The framework now offers an `epoch_size=` kwarg (`FIXED.md` §10); the
-  notebooks must pass `epoch_size=num_batches`.
-- **#7 FCN:** `Trainer.step(batch_size)` rescales the gradient by `1/batch_size` (PyTorch
-  does not), making the effective LR ~32× smaller. Book-side fix: `trainer.step(1)` and
-  scale the LR, or multiply LR by `batch_size`.
+> All D2L items are **resolved**: the `train_ch13` multi-GPU DeadKernel (was OI-28) and
+> the two book-side convergence gaps — #6 scheduler `epoch_size`, #7 FCN `trainer.step`
+> (was OI-29) — are closed. See [`FIXED.md`](FIXED.md) §10.
 
 ---
 

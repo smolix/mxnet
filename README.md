@@ -128,7 +128,7 @@ System requirements
 * Linux x86_64 (tested on Ubuntu 22.04 / 24.04).
 * **NVIDIA driver R590 or newer** (required by the `nvidia-cublas>=13.5` pin; the
   older CUDA 13.0 / R580 line is not supported — see
-  [`OPEN_ISSUES.md`](OPEN_ISSUES_DETAILS.md#oi-19)).
+  [`FIXED.md`](FIXED.md) §1).
 * CUDA 13.0 toolkit at `/usr/local/cuda/` — supplies the base runtime libs
   (`libcudart`, `libcublas`, `libcufft`, `libcusolver`, `libcurand`, `libnvrtc`)
   that NVIDIA does not yet ship as real `cu13` PyPI wheels.
@@ -165,8 +165,8 @@ build is possible if you do not need MXNet's native image path (reports
 
 | Symptom | Cause / fix |
 |---|---|
-| `CUBLAS_STATUS_NOT_INITIALIZED` on a non-trivial `dot`/`FullyConnected` | driver too old; upgrade to **R590+** ([OI-19](OPEN_ISSUES_DETAILS.md#oi-19)) |
-| `cuDNN lib mismatch: …` printed on first GPU use | harmless minor-version note (wheel built vs 9.23, pin resolves 9.22) ([OI-20](OPEN_ISSUES_DETAILS.md#oi-20)) |
+| `CUBLAS_STATUS_NOT_INITIALIZED` on a non-trivial `dot`/`FullyConnected` | driver too old; upgrade to **R590+** ([`FIXED.md`](FIXED.md) §1) |
+| `cuDNN major-version mismatch: …` printed on first GPU use | the linked cuDNN is a different *major* version than the build — install a cuDNN 9.x. (Minor skews like 9.23↔9.22 are ABI-compatible and no longer warn — [`FIXED.md`](FIXED.md) §1.) |
 | `cudaErrorNoKernelImageForDevice` / `no kernel image available` | wheel lacks SASS for your GPU — rebuild with your arch in `MXNET_CUDA_ARCH` |
 | `Build with USE_OPENCV=1 for image io` | OpenCV-off wheel — install/build an `OPENCV=ON` wheel |
 | slow batch-size-1 CPU inference | set `OMP_NUM_THREADS=1` for bs=1 ([OI-14](OPEN_ISSUES_DETAILS.md#oi-14)) |

@@ -169,7 +169,7 @@ build is possible if you do not need MXNet's native image path (reports
 | `cuDNN major-version mismatch: …` printed on first GPU use | the linked cuDNN is a different *major* version than the build — install a cuDNN 9.x. (Minor skews like 9.23↔9.22 are ABI-compatible and no longer warn — [`FIXED.md`](FIXED.md) §1.) |
 | `cudaErrorNoKernelImageForDevice` / `no kernel image available` | wheel lacks SASS for your GPU — rebuild with your arch in `MXNET_CUDA_ARCH` |
 | `Build with USE_OPENCV=1 for image io` | OpenCV-off wheel — install/build an `OPENCV=ON` wheel |
-| slow batch-size-1 CPU inference (esp. AVX2-only, or an `IC=3` first conv) | oneDNN v3 picks a throughput-oriented `brg_conv` whose overhead dominates at bs=1, and the AVX2 weight format pads `IC=3`→16. **Set `OMP_NUM_THREADS=1` for bs=1 inference** — multi-thread can scale *negatively* here; optionally try `DNNL_DEFAULT_FPMATH_MODE`. The kernel-level perf fix is deferred ([OI-14](OPEN_ISSUES_DETAILS.md#oi-14)). |
+| slow batch-size-1 CPU inference (esp. AVX2-only, or an `IC=3` first conv) | oneDNN v3 picks a throughput-oriented `brg_conv` whose overhead dominates at bs=1, and the AVX2 weight format pads `IC=3`→16. The `IC<8` + bs≤1 first-conv cliff is now **auto-mitigated** on non-AVX-512 hosts (a dispatch gate steers off `brg_conv:avx2`); for the general bs=1 case **set `OMP_NUM_THREADS=1`** — multi-thread can scale *negatively* here — and optionally try `DNNL_DEFAULT_FPMATH_MODE`. The broader brgemm kernel perf fix is deferred ([OI-14](OPEN_ISSUES_DETAILS.md#oi-14)). |
 
 Building from source
 --------------------

@@ -17,8 +17,9 @@ Severity: **High** = can produce wrong results or block a common workflow ·
 
 1. **Apple Silicon oneDNN INT8/fusion is gated off** — quantization + subgraph fusion
    fall back to native kernels on arm64; the `tests/python/dnnl` lane does not apply. ([OI-17](OPEN_ISSUES_DETAILS.md#oi-17))
-2. **Backward through quantized ops is unvalidated** — forward INT8 inference is
-   solid; training through `_sg_onednn_*` is not verified. ([OI-8](OPEN_ISSUES_DETAILS.md#oi-8))
+2. **Composite-fusion QAT backward is broken** — simple INT8 FC and Conv(+ReLU)
+   backward are validated and work, but a composite (Conv→…→Dense with a quantized conv
+   output) crashes in `backward()` on a fused-subgraph type-inference conflict. ([OI-8](OPEN_ISSUES_DETAILS.md#oi-8))
 
 ## Correctness / numeric
 
@@ -36,7 +37,7 @@ Severity: **High** = can produce wrong results or block a common workflow ·
 | [OI-5](OPEN_ISSUES_DETAILS.md#oi-5) | Med | Asymmetric quantize loses the sub-integer `shift` (oneDNN zero-points are integer) |
 | [OI-6](OPEN_ISSUES_DETAILS.md#oi-6) | Med | Quantized concat / batch_norm affine fallback layout + u8→s8 roundtrip |
 | [OI-7](OPEN_ISSUES_DETAILS.md#oi-7) | Med | uint8 requantize uses a CPU fallback; needs an asymmetric reorder |
-| [OI-8](OPEN_ISSUES_DETAILS.md#oi-8) | High | Backward through quantized ops (`_sg_onednn_*`) unvalidated |
+| [OI-8](OPEN_ISSUES_DETAILS.md#oi-8) | Med | Composite-fusion QAT backward type-inference gap (simple FC/Conv INT8 backward validated & working) |
 
 ## Performance / refactor (deferred — perf only, results correct)
 

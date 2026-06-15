@@ -48,7 +48,12 @@ RTX 50-series (Blackwell, `sm_120`), AMD EPYC 7B12 (Zen 2 CPU), and Apple Silico
 
 - **oneDNN v3.11** (vendored under `3rdparty/onednn`) — float backend everywhere;
   full INT8 path on x86 (per-OC weight scales, fused conv/FC, fused sum,
-  dequant-to-fp32 output).
+  dequant-to-fp32 output). **QAT backward validated for the simple ops (OI-8):** the
+  acceptance shard `tests/python/dnnl/subgraphs/test_quantized_backward.py` runs
+  17 passed / 4 xfailed — quantized FC and Conv(+ReLU) backward propagate correct
+  non-zero gradients (via the `quantize_v2` straight-through estimator and
+  `quantize_net(qat=True)`); composite-fusion backward with a quantized conv output
+  remains a documented type-inference gap (the 4 strict xfails).
 - **cuBLASLt GEMM** (`MXNET_USE_CUBLASLT=1`) — heuristic-cached `cublasLtMatmul`
   for fp32 (PR-A) plus fp16/fp64 (PR-B), with a per-device handle + workspace +
   LRU algorithm cache. Bitwise-parity verified against the legacy path. Also used

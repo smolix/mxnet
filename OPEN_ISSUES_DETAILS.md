@@ -63,11 +63,24 @@ already closed defensively with `CHECK(submit || weight_scales.empty())` (inert 
 since both callers pass `submit=true`).
 
 <a id="oi-8"></a>
-### OI-8 — Backward through quantized ops unvalidated
-Forward INT8 inference through `_sg_onednn_fully_connected` / `_sg_onednn_conv` is
-solid and tested. The **backward** pass through these fused quantized ops has not been
-validated. Treat quantized training as unsupported until a QAT-backward acceptance run
-exists. (The QAT-backward shard currently reports an expected mixed pass/xfail state.)
+### OI-8 — Composite-fusion QAT backward type-inference gap
+Forward INT8 inference through `_sg_onednn_fully_connected` / `_sg_onednn_conv` is solid,
+and the **backward** pass is now validated for the simple cases: the QAT-backward
+acceptance shard (`tests/python/dnnl/subgraphs/test_quantized_backward.py`) runs
+**17 passed / 4 xfailed** — simple quantized FC and Conv(+ReLU) backward propagate
+correct non-zero gradients (data/weight/bias), with the `quantize_v2` straight-through
+estimator and `quantize_net(qat=True)`.
+
+The **4 xfails are the composite path** (e.g. Conv → … → Dense, where the conv output is
+*quantized* because it feeds a downstream quantized op): `backward()` fails with
+`Incompatible attr … expected float32, got uint8` at an internal node of the fused
+`_sg_onednn_conv` subgraph (the quantized ReLU/`Activation`, which uses `ElemwiseType`) —
+the float32 output gradient meets the uint8 forward types. A first fix attempt (dropping
+the subgraph copy on the backward node in `SgDNNLConvGrad`) was reverted because the
+backward op's param parser requires the subgraph (`subgraphs.size()==1`). **Real fix:**
+reconcile the quantized-output type inference in the fused-conv subgraph backward so the
+internal quantized nodes are not constrained to the float32 gradient type. Deferred;
+tracked by the 4 strict-xfail tests, which will flag automatically once fixed.
 
 ---
 

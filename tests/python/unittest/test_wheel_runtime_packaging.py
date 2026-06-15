@@ -170,19 +170,25 @@ def test_setup_metadata_empty_package_version_falls_back_to_libinfo(monkeypatch,
     assert metadata["version"] == _libinfo_version()
 
 
-def test_release_wheel_build_disables_opencv_explicitly():
+def test_release_wheel_build_enables_opencv_via_flavor():
+    # The CI CPU wheel is built OpenCV-on through the shared build script's
+    # linux-cpu flavor (USE_OPENCV + native bundling live there), not via an
+    # inline cmake step — so CI and a local `MXNET_WHEEL_FLAVOR=cpu
+    # tools/build_cleanup_wheel.sh` are the same recipe.
     workflow = (
         _repo_root() / ".github" / "workflows" / "release-wheel.yml"
     ).read_text()
 
-    assert "libopencv-dev" not in workflow
-    assert "-DUSE_OPENCV=OFF" in workflow
-    assert "-DUSE_OPENCV=ON" not in workflow
-    assert 'MXNET_SETUP_ENABLE_OPENCV_DEPS: "0"' in workflow
-    assert "MXNET_PACKAGE_VERSION: ${{ steps.ver.outputs.version }}" in workflow
+    # OpenCV is now built in and its native libs bundled into the CPU wheel.
+    assert "libopencv-dev" in workflow
+    assert "MXNET_WHEEL_FLAVOR: cpu" in workflow
+    assert "tools/build_cleanup_wheel.sh" in workflow
+    # The old OpenCV-off opt-out must be gone.
+    assert "-DUSE_OPENCV=OFF" not in workflow
+    assert 'MXNET_SETUP_ENABLE_OPENCV_DEPS: "0"' not in workflow
+    # Version resolution is preserved (the version is passed as the script's arg).
     assert "0.0.0.dev0+g${GITHUB_SHA::8}" in workflow
     assert "from packaging.version import Version" in workflow
-    assert 'cp -v "$libpath" python/mxnet/libmxnet.so' in workflow
 
 
 def test_legacy_pip_setup_handles_opencv_runtime_policy():

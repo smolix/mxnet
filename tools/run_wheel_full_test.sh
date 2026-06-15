@@ -136,10 +136,16 @@ fi
 # on the CUDA wheel that already arrives via the wheel's deps).  We add onnx here
 # too so this driver still exercises the onnx lane against a non-CUDA wheel where
 # onnx is only the optional [onnx] extra.
+#
+# Pin BOTH to the validated range: the exporter is tested against onnx 1.21 / ORT
+# 1.24, and newer onnxruntime (>=1.25) is stricter in a handful of op edge cases
+# (np_mod, pooling 'full' convention) that the exporter does not yet cover — an
+# unpinned `onnxruntime` pulls the latest and reports those as spurious failures.
+ONNX_PINS=('onnx>=1.7.0,<1.22' 'onnxruntime>=1.20,<1.25')
 if command -v uv >/dev/null 2>&1; then
-    UV_CACHE_DIR="$UV_CACHE_DIR" uv pip install --python "$VENV_DIR/bin/python" pytest pytest-xdist pytest-timeout scipy matplotlib 'onnx>=1.7.0,<1.22' onnxruntime
+    UV_CACHE_DIR="$UV_CACHE_DIR" uv pip install --python "$VENV_DIR/bin/python" pytest pytest-xdist pytest-timeout scipy matplotlib "${ONNX_PINS[@]}"
 else
-    python -m pip install pytest pytest-xdist pytest-timeout scipy matplotlib 'onnx>=1.7.0,<1.22' onnxruntime
+    python -m pip install pytest pytest-xdist pytest-timeout scipy matplotlib "${ONNX_PINS[@]}"
 fi
 
 section "Verify wheel-installed mxnet is the one we get"

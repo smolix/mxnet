@@ -130,10 +130,16 @@ fi
 # test_operator, and gpu_operator shards; without it pytest collect-errors
 # the file instead of running it, which makes acceptance summaries
 # unreadable.  matplotlib covers a handful of plotting-adjacent nodes.
+#
+# onnxruntime is needed to *run* exported models in the tests/python/onnx lane;
+# it is intentionally NOT an install_requires (only the exporter, onnx, is — and
+# on the CUDA wheel that already arrives via the wheel's deps).  We add onnx here
+# too so this driver still exercises the onnx lane against a non-CUDA wheel where
+# onnx is only the optional [onnx] extra.
 if command -v uv >/dev/null 2>&1; then
-    UV_CACHE_DIR="$UV_CACHE_DIR" uv pip install --python "$VENV_DIR/bin/python" pytest pytest-xdist pytest-timeout scipy matplotlib
+    UV_CACHE_DIR="$UV_CACHE_DIR" uv pip install --python "$VENV_DIR/bin/python" pytest pytest-xdist pytest-timeout scipy matplotlib 'onnx>=1.7.0,<1.22' onnxruntime
 else
-    python -m pip install pytest pytest-xdist pytest-timeout scipy matplotlib
+    python -m pip install pytest pytest-xdist pytest-timeout scipy matplotlib 'onnx>=1.7.0,<1.22' onnxruntime
 fi
 
 section "Verify wheel-installed mxnet is the one we get"
@@ -280,6 +286,16 @@ fi
 run_shard quant_general \
     "Quantization general" -- \
     tests/python/quantization/test_quantization.py -v -n "$PARALLEL_QUANT"
+
+# ----- ONNX export/import lane -----
+# The wheel ships mxnet.onnx (OI-27) and the CUDA wheel hard-depends on onnx, so
+# acceptance must exercise export + onnxruntime round-trip.  CPU-only work (export
+# on host, ORT inference on CPU); fan out across CPU workers.
+if [ -d tests/python/onnx ]; then
+    run_shard onnx_export_import \
+        "ONNX export/import (mxnet.onnx) — onnx + onnxruntime round-trip" -- \
+        tests/python/onnx -v -n "$PARALLEL_CPU"
+fi
 
 # ----- GPU lane (only if GPUs visible) -----
 if [ "$(nvidia-smi -L 2>/dev/null | wc -l)" -gt 0 ]; then

@@ -194,10 +194,14 @@ cold-start deadlock, which **is** fixed (`FIXED.md` §5).
 ## Ecosystem / packaging / CI
 
 <a id="oi-24"></a>
-### OI-24 — Manual packaging, no release automation (was O4/O7)
-Linux/macOS wheels are published manually to GitHub Releases; there is no conda package,
-no system package, and no automated release pipeline. Expensive CUDA build automation is
-deliberately deferred. The d2l side consumes wheels via `tools/update_mxnet_wheel.py`.
+### OI-24 — No conda/system packaging; no CI-hosted release (was O4/O7)
+The CUDA wheel's **build → acceptance-test → tag → GitHub-release** pipeline is now
+scripted end-to-end as `tools/release_cuda_wheel.sh` (one command, fails closed at each
+gate; see [`docs/cuda_wheel_build.md`](docs/cuda_wheel_build.md) §9). What remains open:
+the pipeline still runs **on the build host, by hand** — there is no CI-hosted CUDA
+runner (a dedicated GPU CI instance is deliberately deferred, see OI-25) — and there is
+still **no conda package and no system package**. The d2l side consumes wheels via
+`tools/update_mxnet_wheel.py`.
 
 <a id="oi-25"></a>
 ### OI-25 — No CUDA build-matrix CI (was C4)

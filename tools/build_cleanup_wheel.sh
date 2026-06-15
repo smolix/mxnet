@@ -449,11 +449,17 @@ fi
 # declare nvidia-*-cu13.  Cython is compiled into the Linux wheel for the _cy3
 # fast path; on macOS we ship the ctypes path by default (set MXNET_WITH_CYTHON=1
 # to opt in) to keep the wheel build robust across Xcode toolchains.
+# ONNX (mxnet.onnx) is pure-Python and always ships in the wheel; the CUDA wheel
+# additionally declares `onnx` as a hard runtime dependency (so `pip install mxnet`
+# has working export/import), whereas the macOS CPU wheel keeps it as the optional
+# `[onnx]` extra.  See setup.py _include_onnx_deps().
 if [ "$OS" = Darwin ]; then
     CUDA_DEPS_FLAG=0
+    ONNX_DEPS_FLAG="${MXNET_SETUP_ENABLE_ONNX_DEPS:-0}"
     CYTHON_FLAG="${MXNET_WITH_CYTHON:-0}"
 else
     CUDA_DEPS_FLAG=1
+    ONNX_DEPS_FLAG="${MXNET_SETUP_ENABLE_ONNX_DEPS:-1}"
     CYTHON_FLAG="${MXNET_WITH_CYTHON:-1}"
 fi
 
@@ -471,6 +477,7 @@ mkdir -p dist
     MXNET_PACKAGE_VERSION="$VERSION" \
     MXNET_SETUP_ENABLE_OPENCV_DEPS="$OPENCV_DEPS_FLAG" \
     MXNET_SETUP_ENABLE_CUDA_DEPS="$CUDA_DEPS_FLAG" \
+    MXNET_SETUP_ENABLE_ONNX_DEPS="$ONNX_DEPS_FLAG" \
     MXNET_WITH_CYTHON="$CYTHON_FLAG" \
     "$PYTHON_BIN" -m build --wheel --no-isolation --outdir ../dist)
 
@@ -488,6 +495,10 @@ ls -lh "$WHEEL"
 echo "==> Validating provenance"
 EXPECT_OPENCV=off
 [ "$HAS_OPENCV" = 1 ] && [ "$BUNDLE_OPENCV" = 1 ] && EXPECT_OPENCV=on
+# onnx is a hard runtime dependency on the wheel that requested it (the CUDA wheel);
+# elsewhere mxnet.onnx still ships but onnx stays the optional [onnx] extra.
+EXPECT_ONNX=off
+[ "$ONNX_DEPS_FLAG" = 1 ] && EXPECT_ONNX=on
 if [ "$OS" = Darwin ]; then
     # macOS CPU wheel: CUDA/cuDNN/NCCL off, oneDNN + OpenCV on.  Allow a dirty
     # tree because this script is typically run from a work-in-progress checkout
@@ -500,6 +511,7 @@ if [ "$OS" = Darwin ]; then
         --expect-nccl off \
         --expect-onednn on \
         --expect-opencv "$EXPECT_OPENCV" \
+        --expect-onnx "$EXPECT_ONNX" \
         --allow-dirty
 else
     "$PYTHON_BIN" tools/release_provenance.py "$WHEEL" \
@@ -509,7 +521,8 @@ else
         --expect-cudnn on \
         --expect-nccl on \
         --expect-onednn on \
-        --expect-opencv "$EXPECT_OPENCV"
+        --expect-opencv "$EXPECT_OPENCV" \
+        --expect-onnx "$EXPECT_ONNX"
 fi
 
 echo "==> Wheel build OK: $WHEEL"

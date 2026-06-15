@@ -58,6 +58,15 @@ If it exits non-zero, **do not publish** — read the error; the provenance
 gate exists specifically to stop a half-featured wheel (see §7) from ever
 reaching a user.
 
+To go further than *just building* — build, run the full acceptance suite,
+then tag and publish the GitHub release in one shot — use the release wrapper
+(§9):
+
+```bash
+MXNET_BUILD_JOBS=64 tools/release_cuda_wheel.sh        # build → test → tag → release
+MXNET_BUILD_JOBS=64 tools/release_cuda_wheel.sh --dry-run   # stop before publishing
+```
+
 ---
 
 ## 1. Why this document exists: the OpenCV regression
@@ -272,9 +281,12 @@ for the release build. In order:
    ```
 7. **Build the wheel** via `python -m build --wheel --no-isolation`, with
    `MXNET_PACKAGE_VERSION=<version>` and `MXNET_SETUP_ENABLE_OPENCV_DEPS`
-   / `MXNET_SETUP_ENABLE_CUDA_DEPS` toggling the `install_requires` lists
-   in `setup.py`.
-8. **Validate provenance** (§7) — non-zero exit means *don't ship*.
+   / `MXNET_SETUP_ENABLE_CUDA_DEPS` / `MXNET_SETUP_ENABLE_ONNX_DEPS` toggling
+   the `install_requires` lists in `setup.py`. On Linux all three are `1`, so the
+   CUDA wheel hard-depends on the nvidia-*-cu13 runtime libs, `opencv-python`,
+   and `onnx` (see §6).
+8. **Validate provenance** (§7) — non-zero exit means *don't ship*. The Linux
+   call asserts `--expect-cuda/cudnn/nccl/onednn/opencv/onnx on`.
 
 Knobs:
 
@@ -283,6 +295,7 @@ Knobs:
 | `MXNET_BUILD_JOBS` | nproc | Ninja parallelism |
 | `PYTHON` | `.venv-mxnet/bin/python` | interpreter for `-m build` and provenance |
 | `BUNDLE_OPENCV` | `1` | copy system OpenCV into the wheel; set `0` only for a deliberate OpenCV-off wheel |
+| `MXNET_SETUP_ENABLE_ONNX_DEPS` | `1` (Linux) / `0` (macOS) | make `onnx` a hard dependency of this wheel vs the optional `[onnx]` extra |
 | `MXNET_PACKAGE_VERSION` | today's date | overridden by the positional `<version>` arg |
 
 ---
@@ -321,6 +334,13 @@ inside it. Everything else is reached at load time via RUNPATH:
   `mxnet/lib/` and found via `$ORIGIN/lib`. The wheel is therefore
   self-contained for image I/O and does **not** require the consumer to
   `pip install opencv-python`.
+- **ONNX** (`mxnet.onnx`) is pure-Python and **ships inside the wheel**
+  (OI-27). The CUDA wheel additionally declares `onnx>=1.7.0,<1.22` as a
+  **hard pip dependency** (`MXNET_SETUP_ENABLE_ONNX_DEPS=1`), so
+  `pip install mxnet` has working ONNX export/import out of the box — no
+  `mxnet[onnx]` extra needed. (`onnxruntime`, required only to *run* an
+  exported model, stays a test-only dependency, not an install dep.) On
+  macOS / source installs `onnx` remains the optional `[onnx]` extra.
 
 This is why `.venv-mxnet` can run MXNet image notebooks with **no `cv2`
 module installed** — the C++ OpenCV is inside the wheel, and `mx.image`
@@ -365,8 +385,8 @@ CUBLAS_LOGINFO_DBG=1 CUBLAS_LOGDEST_DBG=stdout python -c \
 
 `tools/release_provenance.py <wheel> --cmake-cache build/CMakeCache.txt
 --package-version <v> --expect-cuda on --expect-cudnn on --expect-nccl on
---expect-onednn on --expect-opencv on` performs **read-only** checks and
-exits non-zero on any mismatch. For OpenCV (`--expect-opencv on`) it
+--expect-onednn on --expect-opencv on --expect-onnx on` performs **read-only**
+checks and exits non-zero on any mismatch. For OpenCV (`--expect-opencv on`) it
 asserts all three of:
 
 1. `libmxnet.so` has `libopencv_*` entries in its `NEEDED` list (i.e. it
@@ -374,6 +394,11 @@ asserts all three of:
    regression in §1 would have failed);
 2. the wheel bundles `mxnet/lib/libopencv_*`;
 3. every `NEEDED` `libopencv_*` SONAME is present among the bundled files.
+
+For ONNX (`--expect-onnx on`) it asserts the wheel ships the `mxnet/onnx/`
+package **and** that its `METADATA` declares `onnx` as an unconditional
+`Requires-Dist` (not merely the `extra == "onnx"` marker). `--expect-onnx off`
+(the macOS path) conversely fails if onnx was accidentally hard-pinned.
 
 It also checks the package version matches and that the binary's embedded
 commit stamp corresponds to the checkout. Treat a non-zero exit as a hard
@@ -399,7 +424,17 @@ uv pip install --python .venv-mxnet/bin/python pytest pytest-timeout flaky
 
 # GPU smoke
 .venv-mxnet/bin/python -m pytest -q tests/python/gpu -k "d2l or image or convolution"
+
+# ONNX export/import — the wheel now hard-depends on onnx; round-trip via ORT.
+# (onnxruntime is test-only and not an install dep; install it explicitly here.)
+.venv-mxnet/bin/python -m pip install onnxruntime
+.venv-mxnet/bin/python -m pytest -q tests/python/onnx
 ```
+
+The full `tools/run_wheel_full_test.sh` acceptance suite (run automatically by
+`tools/release_cuda_wheel.sh`, §9) already includes an `onnx_export_import`
+shard and installs `onnx`/`onnxruntime` into its throwaway venv, so a normal
+release run covers ONNX without these manual steps.
 
 A quick manual capability check:
 
@@ -412,17 +447,53 @@ print(mx.np.ones((2, 2), ctx=mx.gpu(0)) + 1)   # GPU works
 
 ---
 
-## 9. Release
+## 9. Release — automated (`tools/release_cuda_wheel.sh`)
+
+The whole build → acceptance-test → tag → publish pipeline is one script.
+A dedicated CUDA CI runner is deliberately out of scope (OI-24/OI-25); this
+runs on the build host (which has the GPU + CUDA 13 toolkit) and chains the
+single-purpose tools, **failing closed** at every gate:
+
+| Step | What it runs |
+|------|--------------|
+| 1. build | `tools/build_cleanup_wheel.sh <version>` (+ the §7 provenance gate, now incl. `--expect-onnx on`) |
+| 2. test | `tools/run_wheel_full_test.sh <wheel>` (full acceptance suite, incl. the ONNX shard) |
+| 3. tag | `git tag -a v<version>`; `git push <remote> v<version>` |
+| 4. release | `gh release create v<version> <wheel> …` |
+
+```bash
+# Build, test, then tag + publish (prompts before the irreversible publish):
+tools/release_cuda_wheel.sh                       # auto-versions 2.0.0+cu13.bw.<today>.<N>
+tools/release_cuda_wheel.sh 2.0.0+cu13.bw.20260615.1   # explicit version
+
+# Rehearse everything except the publish (no tag, no push, no release):
+tools/release_cuda_wheel.sh --dry-run
+
+# Non-interactive (e.g. unattended): -y skips the confirmation prompt.
+tools/release_cuda_wheel.sh -y 2.0.0+cu13.bw.20260615.1
+```
+
+Safety properties: it refuses a dirty tree, auto-picks a **non-colliding**
+build number from existing tags (docs §5), refuses to clobber an existing tag
+(local or remote), verifies `gh` is authenticated before building, and pauses
+for confirmation before the tag push + release (skip with `-y`; `--dry-run`
+stops cleanly before any remote mutation). Useful knobs: `--skip-build` (reuse
+`dist/`), `--skip-tests` (provenance still runs), `RELEASE_REMOTE`,
+`MXNET_BUILD_JOBS`, `PYTHON`.
+
+### Manual equivalent
+
+If you need to drive the last two steps by hand:
 
 ```bash
 # tag the source the wheel was built from
-git tag -a v2.0.0+cu13.bw.20260614.1 -m "CUDA 13 Ampere→Blackwell wheel, OpenCV on"
+git tag -a v2.0.0+cu13.bw.20260614.1 -m "CUDA 13 Ampere→Blackwell wheel, OpenCV on, ONNX included"
 git push origin master --tags
 
 # publish the wheel as a release asset
 gh release create v2.0.0+cu13.bw.20260614.1 dist/mxnet-*.whl \
   --title "v2.0.0+cu13.bw.20260614.1" \
-  --notes "Ampere→Blackwell (sm_80/86/89/90/100/120+PTX), CUDA 13, OpenCV on."
+  --notes "Ampere→Blackwell (sm_80/86/89/90/100/120+PTX), CUDA 13, OpenCV on, ONNX included."
 ```
 
 Downstreams (e.g. d2l) then bump their pin with
@@ -440,7 +511,8 @@ Downstreams (e.g. d2l) then bump their pin with
 | provenance: `does not bundle mxnet/lib/libopencv_*` | `BUNDLE_OPENCV=0` or bundling failed | unset `BUNDLE_OPENCV`; ensure system OpenCV `.so` files resolve via `ldconfig -p` |
 | `cudaErrorNoKernelImageForDevice` on GPU op | wheel lacks SASS for that GPU | add the arch to `MXNET_CUDA_ARCH`, delete `build/`, rebuild |
 | NCCL/cuDNN feature off despite `-DUSE_*=ON` | `-dev` package missing | install `libnccl-dev` / `libcudnn9-dev-cuda-13`, delete `build/`, reconfigure |
-| wheel version collides with a published tag | rebuilt same date without `.<build>` | pass an explicit `…<YYYYMMDD>.<N>` version |
+| provenance: `METADATA does not declare onnx as a hard runtime dependency` | `MXNET_SETUP_ENABLE_ONNX_DEPS` not `1` at wheel-build time | rebuild via `build_cleanup_wheel.sh` (it sets the flag on Linux), don't hand-run `python -m build` without it |
+| wheel version collides with a published tag | rebuilt same date without `.<build>` | pass an explicit `…<YYYYMMDD>.<N>` version, or let `release_cuda_wheel.sh` auto-pick the next build number |
 
 > When in doubt about a stale CMake cache, `rm -rf build/` and redo the
 > first-time configure (§3). The reconfigure inside the script only flips

@@ -11,10 +11,11 @@ SPHINXOPTS  ?=
 SOURCEDIR    = .
 BUILDDIR     = _build
 
-.PHONY: help html clean serve
+.PHONY: help html clean serve deploy
 
 help:
 	@echo "make html   - build the HTML API reference into $(BUILDDIR)/html"
+	@echo "make deploy - build, then publish to the gh-pages branch (GitHub Pages)"
 	@echo "make clean  - remove $(BUILDDIR) and autosummary stubs (generated/)"
 	@echo "make serve  - build, then serve at http://localhost:8000"
 
@@ -28,3 +29,6 @@ clean:
 
 serve: html
 	@cd "$(BUILDDIR)/html" && python -m http.server
+
+deploy: html
+	@bash deploy.sh

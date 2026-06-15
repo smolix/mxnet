@@ -62,8 +62,14 @@ jobs:
         run: |
           git submodule update --init --recursive
           mkdir build; cd build
+          # The docs build only needs libmxnet to import for autodoc, not a warning-clean
+          # release build. ubuntu-22.04's gcc-11 (after this job dropped the retired
+          # gcc-7) is stricter and raises false-positive warnings in vendored mshadow
+          # (e.g. -Wmaybe-uninitialized in Shape<>) that -Werror would fail on, so build
+          # this docs-only target with USE_WERROR=OFF.
           CXXFLAGS="-Wno-error=strict-overflow" cmake \
               -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
+              -DUSE_WERROR=OFF \
               -DUSE_ONEDNN=OFF \
               -DUSE_CUDA=OFF \
               -G Ninja ..

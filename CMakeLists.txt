@@ -1038,7 +1038,13 @@ if(UNIX)
   endif()
   target_link_libraries(mxnet PUBLIC mshadow)
   target_link_libraries(mxnet PUBLIC ${CMAKE_DL_LIBS})
-  if(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+  # USE_WERROR lets a build opt out of -Werror (default ON keeps it on for normal and
+  # release builds). The docs-only link-check CI build sets it OFF so that the older
+  # ubuntu-22.04 gcc-11's false-positive warnings (e.g. -Wmaybe-uninitialized inside
+  # vendored mshadow's Shape<>) do not fail a build whose only purpose is to import
+  # libmxnet for the documentation autodoc.
+  option(USE_WERROR "Treat C++ compiler warnings as errors (RelWithDebInfo)" ON)
+  if(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo" AND USE_WERROR)
     target_compile_options(mxnet PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Werror>")
     # Ignore erroneous compiler warnings:
     # 1) variables used in '#pragma omp parallel' are considered unused

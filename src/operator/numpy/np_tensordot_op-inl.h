@@ -27,6 +27,7 @@
 #include <vector>
 #include <string>
 #include "../tensor/matrix_op-inl.h"
+#include "../linalg.h"
 
 namespace mxnet {
 namespace op {
@@ -178,26 +179,56 @@ void MatrixDot(const OpContext& ctx,
 
   Stream<xpu>* s = ctx.get_stream<xpu>();
 
+  if (req == kNullOp)
+    return;
+
   MSHADOW_REAL_TYPE_SWITCH(out.type_flag_, DType, {
     Tensor<xpu, 2, DType> a_tensor = a.get_with_shape<xpu, 2, DType>(Shape2(ad1, ad2), s);
     Tensor<xpu, 2, DType> b_tensor = b.get_with_shape<xpu, 2, DType>(Shape2(bd1, bd2), s);
 
+    // On GPU, route the matrix multiply through linalg_gemm so the gemm honors the
+    // capture-safe cuBLASLt path under CUDA Graphs (UseCuBlasLt); the legacy mshadow
+    // dot() does capture-illegal cuBLAS setup (OI-16). linalg_gemm(A, B, C, alpha,
+    // beta, tA, tB) computes C = alpha*op_tA(A)*op_tB(B) + beta*C, so the (aT, bT)
+    // flags and the output shape match the dot() expressions exactly. The CPU path is
+    // left unchanged. Eager GPU runs use linalg_gemm's legacy fallback (UseCuBlasLt is
+    // false outside capture) — numerically the same full-fp32 gemm.
     if (aT && bT) {
       CHECK_EQ(ad1, bd2);
       Tensor<xpu, 2, DType> out_tensor = out.get_with_shape<xpu, 2, DType>(Shape2(ad2, bd1), s);
+#if defined(__CUDACC__)
+      linalg_gemm(a_tensor, b_tensor, out_tensor, DType(1),
+                  (req == kAddTo) ? DType(1) : DType(0), true, true, s);
+#else
       ASSIGN_DISPATCH(out_tensor, req, dot(a_tensor.T(), b_tensor.T()));
+#endif
     } else if (aT && !bT) {
       CHECK_EQ(ad1, bd1);
       Tensor<xpu, 2, DType> out_tensor = out.get_with_shape<xpu, 2, DType>(Shape2(ad2, bd2), s);
+#if defined(__CUDACC__)
+      linalg_gemm(a_tensor, b_tensor, out_tensor, DType(1),
+                  (req == kAddTo) ? DType(1) : DType(0), true, false, s);
+#else
       ASSIGN_DISPATCH(out_tensor, req, dot(a_tensor.T(), b_tensor));
+#endif
     } else if (!aT && bT) {
       CHECK_EQ(ad2, bd2);
       Tensor<xpu, 2, DType> out_tensor = out.get_with_shape<xpu, 2, DType>(Shape2(ad1, bd1), s);
+#if defined(__CUDACC__)
+      linalg_gemm(a_tensor, b_tensor, out_tensor, DType(1),
+                  (req == kAddTo) ? DType(1) : DType(0), false, true, s);
+#else
       ASSIGN_DISPATCH(out_tensor, req, dot(a_tensor, b_tensor.T()));
+#endif
     } else {
       CHECK_EQ(ad2, bd1);
       Tensor<xpu, 2, DType> out_tensor = out.get_with_shape<xpu, 2, DType>(Shape2(ad1, bd2), s);
+#if defined(__CUDACC__)
+      linalg_gemm(a_tensor, b_tensor, out_tensor, DType(1),
+                  (req == kAddTo) ? DType(1) : DType(0), false, false, s);
+#else
       ASSIGN_DISPATCH(out_tensor, req, dot(a_tensor, b_tensor));
+#endif
     }
   });
 }

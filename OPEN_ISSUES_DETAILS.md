@@ -132,8 +132,9 @@ workstation SKU).
 ### OI-16 — CUDA Graphs remaining exclusions
 Host-generator `kRandom` ops (`np.random.*`, shuffle, image augmentation) are excluded
 from capture — they would need a device-resident offset or a host-side per-replay bump.
-`tensordot` / `np.dot` reroute to the capture-safe path is still pending. Everything
-else in the default-on static-shape regime captures (see `FIXED.md` §3).
+(`tensordot` / `np.dot` now reroute through the capture-safe cuBLASLt path — `MatrixDot`
+calls `linalg_gemm` on GPU instead of the legacy mshadow `dot()` — see `FIXED.md` §3.)
+Everything else in the default-on static-shape regime captures.
 
 ---
 

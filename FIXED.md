@@ -76,7 +76,9 @@ Implemented and validated across phases (`src/imperative/cuda_graphs.h`,
 
 - Capture of conv/deconv/pooling/batchnorm/layernorm/instancenorm/activation/
   elementwise/broadcast, plus FullyConnected via the cuBLASLt path, and
-  `batch_dot`/`matmul` rerouted to a capture-safe strided cuBLASLt gemm.
+  `batch_dot`/`matmul`/`dot`/`tensordot` rerouted to a capture-safe strided cuBLASLt
+  gemm (`dot`/`tensordot` route their `MatrixDot` gemm through `linalg_gemm` instead of
+  the legacy mshadow `dot()` — OI-16; the CPU path is unchanged).
 - Differential-replay validation: bitwise-identical outputs; non-deterministic
   segments correctly skipped, then RNG ops (`kParallelRandom`, cuDNN dropout)
   made replay-safe and admitted.

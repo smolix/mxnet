@@ -51,7 +51,7 @@ Severity: **High** = can produce wrong results or block a common workflow ·
 | [OI-13](OPEN_ISSUES_DETAILS.md#oi-13) | Low | GPU axis reductions ~35–40% BW headroom; CPU float64 mean single-threaded |
 | [OI-14](OPEN_ISSUES_DETAILS.md#oi-14) | Med | Batch-size-1 inference slow on AVX2-only CPUs (IC=3 brgemm padding) |
 | [OI-15](OPEN_ISSUES_DETAILS.md#oi-15) | Low | cuBLASLt follow-ups deferred (mshadow dot_engine, INT8, default-on flip) |
-| [OI-16](OPEN_ISSUES_DETAILS.md#oi-16) | Low | CUDA Graphs: host-generator `kRandom` ops excluded; `tensordot`/`np.dot` reroute pending |
+| [OI-16](OPEN_ISSUES_DETAILS.md#oi-16) | Low | CUDA Graphs: host-generator `kRandom` ops excluded from capture (need a device-resident offset) |
 
 ## Platform
 

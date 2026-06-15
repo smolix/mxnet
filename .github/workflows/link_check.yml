@@ -33,7 +33,14 @@ jobs:
       - name: Setup python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          # The docs toolchain in docs/python_docs/requirements is a legacy, tightly
+          # pinned set (numpy<1.20, sphinx==2.4.0, nbsphinx==0.4.3, ...) that only has
+          # wheels for Python <=3.9 — on 3.10+ pip falls back to building numpy 1.19
+          # from source, which fails (the _Py_HashDouble signature changed in 3.10).
+          # 3.9 is the newest interpreter these pins install cleanly on; mxnet itself
+          # has no python_requires, so it installs here too. (Modernizing the whole
+          # docs stack to a current sphinx is a separate, larger effort.)
+          python-version: '3.9'
           architecture: x64
 
       - name: Install Dependencies

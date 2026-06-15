@@ -114,8 +114,9 @@ On AMD EPYC 7B12 (Zen 2, AVX2-only): Conv2D 64ch `(1,3,224,224)` runs 49.8 ms at
 to 16 (81% waste); (2) brgemm is throughput-designed and its overhead dominates at
 bs=1; (3) oneDNN v3 picks brg_conv over v2's faster `jit:avx2` here. **Workarounds:**
 set `OMP_NUM_THREADS=1` for bs=1 inference; consider `DNNL_DEFAULT_FPMATH_MODE`. Some
-of the 512-channel slowdown is inherent to the padding + cache behavior. Config/docs
-follow-ups not yet applied.
+of the 512-channel slowdown is inherent to the padding + cache behavior. The
+`OMP_NUM_THREADS=1` / fpmath guidance + root cause is now documented in `README.md`
+(troubleshooting); the kernel-level perf fix itself remains deferred.
 
 <a id="oi-15"></a>
 ### OI-15 — cuBLASLt follow-ups deferred
@@ -150,15 +151,10 @@ backend works; the `tests/python/dnnl` *fusion + quantization* lane asserts fusi
 quant happened and therefore does not apply on arm64 (it is not a wheel defect). The
 float path and ~14.9k unittest/operator/NumPy/Gluon tests pass on the macOS CPU wheel.
 
-<a id="oi-18"></a>
-### OI-18 — bf16 emulated in fp32 on non-AVX-512-BF16 CPUs
-oneDNN v3 still exposes bf16 primitives but emulates them in fp32 on CPUs lacking
-AVX-512-BF16, so bf16 numerics are *correct* but no faster than fp32. Not a build
-error. Test the real bf16 path on Intel SPR or AMD Zen 4 / Granite Rapids.
-
-> OI-19 (cuBLAS≥13.5 / driver R590+) is an **accepted platform constraint** and OI-20
-> (cuDNN minor-version mismatch warning) is **resolved** (the runtime check now warns
-> only on a major-version difference) — see [`FIXED.md`](FIXED.md) §1.
+> OI-18 (bf16 emulated in fp32 on CPUs without AVX-512-BF16 — inherent) and OI-19
+> (cuBLAS≥13.5 / driver R590+) are **accepted constraints**, and OI-20 (cuDNN
+> minor-version mismatch warning) is **resolved** (the runtime check now warns only on a
+> major-version difference) — see [`FIXED.md`](FIXED.md) §1 and §11.
 
 ---
 
@@ -182,11 +178,8 @@ C++20 `std::atomic<std::shared_ptr>` or a seqlock. (Note: the *cold-start deadlo
 already moved `ThreadPool` readiness out of the `create_mutex_` critical section; this
 remaining item is the lock-free read itself.)
 
-<a id="oi-23"></a>
-### OI-23 — CUB global-reduce input aliasing (won't fix, was B1)
-An audit flagged the CUB global-reduce fast path for ignoring workspace / aliasing
-input, but the path is correct on fp16/fp32/fp64 despite the overlap. A guard added to
-"fix" it regressed fp16, so it was reverted. **Not a real bug; won't fix.**
+> OI-23 (CUB global-reduce input aliasing) is closed **won't-fix** — see
+> [`FIXED.md`](FIXED.md) §11.
 
 ---
 
@@ -219,27 +212,3 @@ validated; see `FIXED.md` §2), but the **published wheels are built ONNX-free**
 `import`-time the ONNX path is absent. To use ONNX, build from source with the ONNX
 toolchain installed. Future opset bumps should be opened as new compatibility work only
 when required.
-
----
-
-## D2L book compatibility
-
-> All D2L items are **resolved**: the `train_ch13` multi-GPU DeadKernel (was OI-28) and
-> the two book-side convergence gaps — #6 scheduler `epoch_size`, #7 FCN `trainer.step`
-> (was OI-29) — are closed. See [`FIXED.md`](FIXED.md) §10.
-
----
-
-## Build warnings (informational)
-
-<a id="oi-30"></a>
-### OI-30 — Vendored submodule build warnings (was CN9)
-Two build-time warnings originate inside vendored submodules and are **not patched** by
-policy (patching would dirty the detached submodule pointer with no upstream PR to
-converge on):
-- `3rdparty/dmlc-core` concurrent queue assigns `-1` into a `uint32_t` sentinel → NVCC
-  unsigned-conversion warning (intentional in dmlc).
-- `3rdparty/onednn` vendored ITT assembly (`ittptmark64.S.o`) lacks a `.note.GNU-stack`
-  section → linker executable-stack warning (oneDNN owns the upstream fix).
-
-A future submodule bump that includes the upstream fixes will clear them automatically.

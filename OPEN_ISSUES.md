@@ -8,7 +8,7 @@ What has already been fixed is in [`FIXED.md`](FIXED.md).
 Severity: **High** = can produce wrong results or block a common workflow ·
 **Med** = perf / robustness / niche correctness · **Low** = cosmetic / informational.
 
-## Start here — the four things most likely to bite you
+## Start here — the three things most likely to bite you
 
 > The old **CUDA 13.0 / R580** driver limitation (the `nvidia-cublas>=13.5` pin needs
 > driver **R590+**) is now an accepted, documented platform constraint rather than open
@@ -19,9 +19,7 @@ Severity: **High** = can produce wrong results or block a common workflow ·
    built ONNX-free; you need a source build to use it. ([OI-27](OPEN_ISSUES_DETAILS.md#oi-27))
 2. **Apple Silicon oneDNN INT8/fusion is gated off** — quantization + subgraph fusion
    fall back to native kernels on arm64; the `tests/python/dnnl` lane does not apply. ([OI-17](OPEN_ISSUES_DETAILS.md#oi-17))
-3. **bf16 on CPUs without AVX-512-BF16 is emulated in fp32** — numerically correct,
-   no speedup. ([OI-18](OPEN_ISSUES_DETAILS.md#oi-18))
-4. **Backward through quantized ops is unvalidated** — forward INT8 inference is
+3. **Backward through quantized ops is unvalidated** — forward INT8 inference is
    solid; training through `_sg_onednn_*` is not verified. ([OI-8](OPEN_ISSUES_DETAILS.md#oi-8))
 
 ## Correctness / numeric
@@ -60,10 +58,11 @@ Severity: **High** = can produce wrong results or block a common workflow ·
 | ID | Sev | Summary |
 |----|-----|---------|
 | [OI-17](OPEN_ISSUES_DETAILS.md#oi-17) | High | arm64: oneDNN INT8 + subgraph fusion gated off (Xbyak_aarch64 JIT unreliable) |
-| [OI-18](OPEN_ISSUES_DETAILS.md#oi-18) | Med | bf16 emulated in fp32 on non-AVX-512-BF16 CPUs |
 
-> OI-19 (cuBLAS≥13.5 / driver R590+) is an **accepted constraint** and OI-20 (cuDNN
-> minor-version warning) is **fixed** — see [`FIXED.md`](FIXED.md) §1.
+> OI-19 (cuBLAS≥13.5 / driver R590+) and OI-18 (bf16 emulated in fp32 on CPUs without
+> AVX-512-BF16 — inherent to oneDNN v3 / the ISA, not a defect) are **accepted
+> constraints**; OI-20 (cuDNN minor-version warning) is **fixed** — see
+> [`FIXED.md`](FIXED.md) §1 (OI-19/20) and §11 (OI-18).
 
 ## Engine / concurrency
 
@@ -71,7 +70,10 @@ Severity: **High** = can produce wrong results or block a common workflow ·
 |----|-----|---------|
 | [OI-21](OPEN_ISSUES_DETAILS.md#oi-21) | Med | Rare long-running inference hang (A6) — instrumented, needs an aarch64 repro |
 | [OI-22](OPEN_ISSUES_DETAILS.md#oi-22) | Low | `LazyAllocArray::Get()` lock-free read is a benign data race (needs C++20 atomics) |
-| [OI-23](OPEN_ISSUES_DETAILS.md#oi-23) | Low | CUB global-reduce input aliasing flagged but benign — **won't fix** |
+
+> OI-23 (CUB global-reduce input aliasing) is closed **won't-fix** — the fast path is
+> correct on fp16/fp32/fp64 despite the overlap, and a guard added to "fix" it regressed
+> fp16. See [`FIXED.md`](FIXED.md) §11.
 
 ## Ecosystem / packaging / CI
 
@@ -82,13 +84,7 @@ Severity: **High** = can produce wrong results or block a common workflow ·
 | [OI-26](OPEN_ISSUES_DETAILS.md#oi-26) | Low | Downstreams unverified (GluonNLP/Sockeye/AutoGluon, ps-lite, Py3.13+, NumPy 2.x [op shape/axis-param rendering fixed], DLPack) |
 | [OI-27](OPEN_ISSUES_DETAILS.md#oi-27) | Med | ONNX fixed in source but not shipped in wheels |
 
-## D2L book compatibility
-
-All D2L items are **resolved** — the `train_ch13` multi-GPU DeadKernel (was OI-28) and
-the two book-side convergence gaps (was OI-29) are closed. See [`FIXED.md`](FIXED.md) §10.
-
-## Build warnings (informational)
-
-| ID | Sev | Summary |
-|----|-----|---------|
-| [OI-30](OPEN_ISSUES_DETAILS.md#oi-30) | Low | Vendored dmlc/oneDNN build warnings (u32 sentinel, ITT exec-stack) — by policy, not patched |
+> Closed, no action planned: **D2L book compatibility** (all items resolved — `train_ch13`
+> multi-GPU DeadKernel and the two book-side convergence gaps, was OI-28/29, `FIXED.md` §10);
+> **OI-30** vendored dmlc/oneDNN build warnings (won't-patch by policy — they clear on a
+> future submodule bump, `FIXED.md` §11).

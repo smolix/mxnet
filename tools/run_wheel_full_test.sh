@@ -303,8 +303,13 @@ if [ -d tests/python/onnx ]; then
         tests/python/onnx -v -n "$PARALLEL_CPU"
 fi
 
-# ----- GPU lane (only if GPUs visible) -----
-if [ "$(nvidia-smi -L 2>/dev/null | wc -l)" -gt 0 ]; then
+# ----- GPU lane (only if the *wheel* can use a GPU) -----
+# Gate on the installed wheel's GPU count, NOT just `nvidia-smi`: a CPU wheel
+# (USE_CUDA=OFF) reports 0 GPUs even on a GPU host, so its GPU shards must be
+# skipped rather than run and fail with "no CUDA support".
+WHEEL_NUM_GPUS=$(python -c 'import mxnet; print(mxnet.device.num_gpus())' 2>/dev/null || echo 0)
+log "Wheel-visible GPU count: $WHEEL_NUM_GPUS"
+if [ "${WHEEL_NUM_GPUS:-0}" -gt 0 ]; then
     run_shard gpu_amp \
         "GPU AMP" -- \
         tests/python/gpu/test_amp.py -v -n "$PARALLEL_GPU"

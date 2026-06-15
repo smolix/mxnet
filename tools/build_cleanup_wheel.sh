@@ -56,9 +56,32 @@ cd "$REPO_ROOT"
 
 OS="$(uname -s)"
 
+# Wheel flavor selects the feature set and the build tree:
+#   macos      — Apple-silicon CPU wheel (Darwin)
+#   linux-cuda — Ampere→Blackwell CUDA 13 wheel (Linux default)
+#   linux-cpu  — x86_64 CPU wheel (Linux, MXNET_WHEEL_FLAVOR=cpu): no CUDA stack,
+#                oneDNN + OpenCV on, OpenCV bundled exactly like the other flavors.
+# The CPU wheel uses a SEPARATE build tree (build-cpu/) so it never clobbers — and
+# is never clobbered by — the CUDA build/ (override with MXNET_BUILD_DIR).
 case "$OS" in
-    Darwin) DEFAULT_VERSION="2.0.0+cpu.macos.$(date -u +%Y%m%d)" ;;
-    *)      DEFAULT_VERSION="2.0.0+cu13.bw.$(date -u +%Y%m%d)" ;;
+    Darwin) FLAVOR=macos ;;
+    *)
+        case "${MXNET_WHEEL_FLAVOR:-cuda}" in
+            cpu)  FLAVOR=linux-cpu ;;
+            cuda) FLAVOR=linux-cuda ;;
+            *) echo "unknown MXNET_WHEEL_FLAVOR='${MXNET_WHEEL_FLAVOR}' (use 'cuda' or 'cpu')" >&2; exit 2 ;;
+        esac
+        ;;
+esac
+case "$FLAVOR" in
+    linux-cpu) BUILD_DIR="${MXNET_BUILD_DIR:-build-cpu}" ;;
+    *)         BUILD_DIR="${MXNET_BUILD_DIR:-build}" ;;
+esac
+
+case "$FLAVOR" in
+    macos)     DEFAULT_VERSION="2.0.0+cpu.macos.$(date -u +%Y%m%d)" ;;
+    linux-cpu) DEFAULT_VERSION="2.0.0+cpu.linux.$(date -u +%Y%m%d)" ;;
+    *)         DEFAULT_VERSION="2.0.0+cu13.bw.$(date -u +%Y%m%d)" ;;
 esac
 VERSION="${1:-${MXNET_PACKAGE_VERSION:-$DEFAULT_VERSION}}"
 if [ -n "${PYTHON:-}" ]; then
@@ -78,11 +101,15 @@ BUNDLE_OPENCV="${BUNDLE_OPENCV:-1}"
 
 echo "==> Repo: $REPO_ROOT"
 echo "==> Host OS: $OS"
+echo "==> Flavor: $FLAVOR"
+echo "==> Build dir: $BUILD_DIR"
 echo "==> Version: $VERSION"
 echo "==> BUNDLE_OPENCV: $BUNDLE_OPENCV"
 
-if [ ! -f build/CMakeCache.txt ]; then
-    echo "build/CMakeCache.txt missing — configure build/ with CMake first" >&2
+# linux-cpu does a complete first-time configure below, so it may start from a
+# clean tree; the reuse flavors (linux-cuda / macos) require a pre-seeded cache.
+if [ "$FLAVOR" != linux-cpu ] && [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    echo "$BUILD_DIR/CMakeCache.txt missing — configure $BUILD_DIR/ with CMake first" >&2
     exit 2
 fi
 
@@ -96,7 +123,7 @@ bundle_opencv_closure_linux() {
     mkdir -p python/mxnet/lib
     # Resolve the OpenCV SONAMEs that libmxnet.so actually depends on.
     local needed
-    needed=$(readelf -d build/libmxnet.so \
+    needed=$(readelf -d "$BUILD_DIR/libmxnet.so" \
         | awk '/NEEDED/ && /libopencv_/ { gsub(/[][]/, "", $5); print $5 }')
     if [ -z "$needed" ]; then
         echo "ERROR: libmxnet.so has no libopencv_ NEEDED entries despite USE_OPENCV=ON" >&2
@@ -214,7 +241,7 @@ bundle_opencv_closure_macos() {
     mkdir -p python/mxnet/lib
     local dep b seeded=0
     # Seed: the OpenCV dylibs libmxnet.dylib links directly.
-    for dep in $(_macos_dylib_deps build/libmxnet.dylib); do
+    for dep in $(_macos_dylib_deps "$BUILD_DIR/libmxnet.dylib"); do
         case "$(basename "$dep")" in
             libopencv_*) ;;
             *) continue ;;
@@ -231,7 +258,7 @@ bundle_opencv_closure_macos() {
         seeded=1
     done
     if [ "$seeded" = 0 ]; then
-        echo "ERROR: libmxnet.dylib has no libopencv_* dependencies despite USE_OPENCV=ON" >&2
+        echo "ERROR: $BUILD_DIR/libmxnet.dylib has no libopencv_* dependencies despite USE_OPENCV=ON" >&2
         exit 5
     fi
     # Walk the FULL transitive closure to a fixpoint: every non-system dylib
@@ -287,7 +314,7 @@ bundle_opencv_closure_macos() {
 # ----------------------------------------------------------------------
 # Configure + build libmxnet
 # ----------------------------------------------------------------------
-if [ "$OS" = Darwin ]; then
+if [ "$FLAVOR" = macos ]; then
     echo "==> Refreshing CMake metadata (macOS arm64 CPU + OpenCV)"
     # CPU-only Apple-silicon feature set: no CUDA stack, Accelerate BLAS/LAPACK,
     # oneDNN on, OpenCV on (so mx.image / RecordIO native decode works), OpenMP
@@ -296,7 +323,7 @@ if [ "$OS" = Darwin ]; then
     # is /opt/local/libexec/opencv4/cmake.
     OPENCV_DIR_HINT="${OpenCV_DIR:-/opt/local/libexec/opencv4/cmake}"
     echo "==> OpenCV_DIR: $OPENCV_DIR_HINT"
-    cmake -S . -B build -G Ninja \
+    cmake -S . -B "$BUILD_DIR" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_OSX_ARCHITECTURES=arm64 \
         -DUSE_CUDA=OFF \
@@ -312,8 +339,29 @@ if [ "$OS" = Darwin ]; then
         -DUSE_SSE=OFF \
         -DUSE_F16C=OFF \
         -DBUILD_CPP_EXAMPLES=OFF
-    LIBMXNET_BUILT="build/libmxnet.dylib"
+    LIBMXNET_BUILT="$BUILD_DIR/libmxnet.dylib"
     LIBMXNET_STAGED="python/mxnet/libmxnet.dylib"
+elif [ "$FLAVOR" = linux-cpu ]; then
+    echo "==> Configuring CMake ($BUILD_DIR: Linux x86_64 CPU + oneDNN + OpenCV)"
+    # x86_64 CPU feature set: no CUDA stack, OpenBLAS/LAPACK, oneDNN on, OpenCV on
+    # (so mx.image / RecordIO native decode works — parity with the CUDA wheel),
+    # OpenMP + F16C on.  This is a COMPLETE first-time configure (generator, build
+    # type, BLAS all set) so build-cpu/ can be created from a clean tree.
+    cmake -S . -B "$BUILD_DIR" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DUSE_CUDA=OFF \
+        -DUSE_CUDNN=OFF \
+        -DUSE_NCCL=OFF \
+        -DUSE_ONEDNN=ON \
+        -DUSE_OPENMP=ON \
+        -DUSE_F16C=ON \
+        -DUSE_OPENCV=ON \
+        -DUSE_LAPACK=ON \
+        -DUSE_BLAS=open \
+        -DUSE_DIST_KVSTORE=OFF \
+        -DBUILD_CPP_EXAMPLES=OFF
+    LIBMXNET_BUILT="$BUILD_DIR/libmxnet.so"
+    LIBMXNET_STAGED="python/mxnet/libmxnet.so"
 else
     echo "==> Refreshing CMake metadata (Linux CUDA)"
     # Explicit release arch set so the wheel always covers Ampere (sm_80/86),
@@ -323,19 +371,19 @@ else
     # yields no gencode (H4).
     RELEASE_CUDA_ARCH="${MXNET_CUDA_ARCH:-8.0;8.6;8.9;9.0;10.0;12.0+PTX}"
     echo "==> MXNET_CUDA_ARCH: $RELEASE_CUDA_ARCH"
-    cmake -S . -B build \
+    cmake -S . -B "$BUILD_DIR" \
         -DUSE_CUDA=ON \
         -DUSE_CUDNN=ON \
         -DUSE_NCCL=ON \
         -DUSE_ONEDNN=ON \
         -DUSE_OPENCV=ON \
         -DMXNET_CUDA_ARCH="$RELEASE_CUDA_ARCH"
-    LIBMXNET_BUILT="build/libmxnet.so"
+    LIBMXNET_BUILT="$BUILD_DIR/libmxnet.so"
     LIBMXNET_STAGED="python/mxnet/libmxnet.so"
 fi
 
 echo "==> Building libmxnet with $jobs jobs"
-cmake --build build --target mxnet --parallel "$jobs"
+cmake --build "$BUILD_DIR" --target mxnet --parallel "$jobs"
 
 if [ ! -f "$LIBMXNET_BUILT" ]; then
     echo "$LIBMXNET_BUILT missing after build" >&2
@@ -344,7 +392,7 @@ fi
 
 # Probe the CMake cache so we know whether OpenCV was actually built in.
 HAS_OPENCV=0
-if grep -q "USE_OPENCV:BOOL=ON" build/CMakeCache.txt 2>/dev/null; then
+if grep -q "USE_OPENCV:BOOL=ON" "$BUILD_DIR/CMakeCache.txt" 2>/dev/null; then
     HAS_OPENCV=1
 fi
 echo "==> CMake USE_OPENCV: $([ "$HAS_OPENCV" = 1 ] && echo ON || echo OFF)"
@@ -389,7 +437,7 @@ fi
 # ----------------------------------------------------------------------
 # Repoint libmxnet at the bundled libraries
 # ----------------------------------------------------------------------
-if [ "$OS" = Darwin ]; then
+if [ "$FLAVOR" = macos ]; then
     echo "==> Patching libmxnet.dylib install names to the bundled OpenCV closure"
     # Give libmxnet a relocatable id so the Cython extension (built next, with
     # -rpath @loader_path/..) and any consumer resolve it from inside the package
@@ -409,6 +457,22 @@ if [ "$OS" = Darwin ]; then
     codesign --force --sign - python/mxnet/libmxnet.dylib 2>/dev/null || true
     echo "    libmxnet.dylib OpenCV references now:"
     otool -L python/mxnet/libmxnet.dylib | awk '/libopencv_/ {print "      " $1}'
+elif [ "$FLAVOR" = linux-cpu ]; then
+    echo "==> Patching libmxnet.so RUNPATH (CPU wheel: bundled OpenCV + OpenBLAS)"
+    # CPU wheel: no NVIDIA runtime, so the RUNPATH only needs the bundled OpenCV
+    # closure ($ORIGIN/lib) and the scipy-openblas32 OpenBLAS.  No libcuda.so.1
+    # dependency is expected (USE_CUDA=OFF).
+    old_runpath=$(patchelf --print-rpath python/mxnet/libmxnet.so || echo "")
+    new_runpath='$ORIGIN/lib:$ORIGIN/../scipy_openblas32/lib'
+    if [ -n "$old_runpath" ]; then
+        new_runpath="$new_runpath:$old_runpath"
+    fi
+    patchelf --set-rpath "$new_runpath" python/mxnet/libmxnet.so
+    echo "    new RUNPATH: $new_runpath"
+    if readelf -d python/mxnet/libmxnet.so 2>/dev/null | grep -qiE 'NEEDED.*\blibcuda'; then
+        echo "  FAILED: CPU wheel libmxnet.so unexpectedly links a CUDA library." >&2
+        exit 5
+    fi
 else
     echo "==> Patching libmxnet.so RUNPATH to include bundled and pip CUDA libraries"
     old_runpath=$(patchelf --print-rpath python/mxnet/libmxnet.so || echo "")
@@ -453,10 +517,16 @@ fi
 # additionally declares `onnx` as a hard runtime dependency (so `pip install mxnet`
 # has working export/import), whereas the macOS CPU wheel keeps it as the optional
 # `[onnx]` extra.  See setup.py _include_onnx_deps().
-if [ "$OS" = Darwin ]; then
+if [ "$FLAVOR" = macos ]; then
     CUDA_DEPS_FLAG=0
     ONNX_DEPS_FLAG="${MXNET_SETUP_ENABLE_ONNX_DEPS:-0}"
     CYTHON_FLAG="${MXNET_WITH_CYTHON:-0}"
+elif [ "$FLAVOR" = linux-cpu ]; then
+    # CPU wheel: no nvidia-*-cu13 deps; onnx stays the optional [onnx] extra
+    # (the hard-onnx-dep policy is CUDA-wheel-only).  Cython is compiled in.
+    CUDA_DEPS_FLAG=0
+    ONNX_DEPS_FLAG="${MXNET_SETUP_ENABLE_ONNX_DEPS:-0}"
+    CYTHON_FLAG="${MXNET_WITH_CYTHON:-1}"
 else
     CUDA_DEPS_FLAG=1
     ONNX_DEPS_FLAG="${MXNET_SETUP_ENABLE_ONNX_DEPS:-1}"
@@ -499,12 +569,12 @@ EXPECT_OPENCV=off
 # elsewhere mxnet.onnx still ships but onnx stays the optional [onnx] extra.
 EXPECT_ONNX=off
 [ "$ONNX_DEPS_FLAG" = 1 ] && EXPECT_ONNX=on
-if [ "$OS" = Darwin ]; then
+if [ "$FLAVOR" = macos ]; then
     # macOS CPU wheel: CUDA/cuDNN/NCCL off, oneDNN + OpenCV on.  Allow a dirty
     # tree because this script is typically run from a work-in-progress checkout
     # on the build host (the Linux release path runs from a clean, tagged tree).
     "$PYTHON_BIN" tools/release_provenance.py "$WHEEL" \
-        --cmake-cache build/CMakeCache.txt \
+        --cmake-cache "$BUILD_DIR/CMakeCache.txt" \
         --package-version "$VERSION" \
         --expect-cuda off \
         --expect-cudnn off \
@@ -513,9 +583,20 @@ if [ "$OS" = Darwin ]; then
         --expect-opencv "$EXPECT_OPENCV" \
         --expect-onnx "$EXPECT_ONNX" \
         --allow-dirty
+elif [ "$FLAVOR" = linux-cpu ]; then
+    # Linux x86_64 CPU wheel: CUDA/cuDNN/NCCL off, oneDNN + OpenCV on, onnx extra.
+    "$PYTHON_BIN" tools/release_provenance.py "$WHEEL" \
+        --cmake-cache "$BUILD_DIR/CMakeCache.txt" \
+        --package-version "$VERSION" \
+        --expect-cuda off \
+        --expect-cudnn off \
+        --expect-nccl off \
+        --expect-onednn on \
+        --expect-opencv "$EXPECT_OPENCV" \
+        --expect-onnx "$EXPECT_ONNX"
 else
     "$PYTHON_BIN" tools/release_provenance.py "$WHEEL" \
-        --cmake-cache build/CMakeCache.txt \
+        --cmake-cache "$BUILD_DIR/CMakeCache.txt" \
         --package-version "$VERSION" \
         --expect-cuda on \
         --expect-cudnn on \

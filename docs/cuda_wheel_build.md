@@ -296,6 +296,8 @@ Knobs:
 | `PYTHON` | `.venv-mxnet/bin/python` | interpreter for `-m build` and provenance |
 | `BUNDLE_OPENCV` | `1` | copy system OpenCV into the wheel; set `0` only for a deliberate OpenCV-off wheel |
 | `MXNET_SETUP_ENABLE_ONNX_DEPS` | `1` (Linux) / `0` (macOS) | make `onnx` a hard dependency of this wheel vs the optional `[onnx]` extra |
+| `MXNET_WHEEL_FLAVOR` | `cuda` (Linux) | set to `cpu` for the x86_64 CPU wheel (no CUDA, oneDNN + OpenCV, its own `build-cpu/` tree) — see [`BUILDING.md`](../BUILDING.md) |
+| `MXNET_BUILD_DIR` | `build` / `build-cpu` | override the CMake build tree |
 | `MXNET_PACKAGE_VERSION` | today's date | overridden by the positional `<version>` arg |
 
 ---

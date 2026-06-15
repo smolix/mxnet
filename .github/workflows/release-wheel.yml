@@ -16,12 +16,9 @@ permissions:
 
 jobs:
   build-wheel:
-    name: Build CPU wheel (manylinux-ish on ubuntu-22.04)
+    name: Build CPU wheel (oneDNN + OpenCV bundled) on ubuntu-22.04
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
-    env:
-      CMAKE_BUILD_DIR: build
-      CMAKE_BUILD_TYPE: Release
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,6 +31,9 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
+          # libopencv-dev: the CPU wheel is now built with USE_OPENCV=ON and the
+          # native libopencv_* closure is bundled into the wheel (parity with the
+          # CUDA wheel) so image I/O works out of the box.
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             ninja-build \
@@ -42,42 +42,14 @@ jobs:
             g++ \
             libopenblas-dev \
             libomp-dev \
+            libopencv-dev \
             patchelf \
             python3-dev
-          python -m pip install --upgrade pip wheel setuptools build auditwheel
-
-      - name: Configure CMake (CPU + oneDNN, no OpenCV)
-        run: |
-          cmake -S . -B "$CMAKE_BUILD_DIR" -G Ninja \
-            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DUSE_CUDA=OFF \
-            -DUSE_CUDNN=OFF \
-            -DUSE_NCCL=OFF \
-            -DUSE_ONEDNN=ON \
-            -DUSE_OPENMP=ON \
-            -DUSE_OPENCV=OFF \
-            -DUSE_BLAS=open \
-            -DUSE_DIST_KVSTORE=OFF \
-            -DBUILD_CPP_EXAMPLES=OFF
-
-      - name: Build libmxnet
-        timeout-minutes: 90
-        run: |
-          jobs="$(getconf _NPROCESSORS_ONLN)"
-          echo "Building with ${jobs} parallel jobs"
-          cmake --build "$CMAKE_BUILD_DIR" --target mxnet -- -j"${jobs}"
-
-      - name: Stage libmxnet.so into python package
-        run: |
-          set -e
-          libpath=$(find "$CMAKE_BUILD_DIR" -maxdepth 3 -name 'libmxnet.so' | head -n1)
-          if [ -z "$libpath" ]; then
-            echo "libmxnet.so not produced" >&2
-            exit 1
-          fi
-          cp -v "$libpath" python/mxnet/libmxnet.so
+          # tools/build_cleanup_wheel.sh runs `python -m build --no-isolation`, so
+          # the build front-end AND setup.py's runtime imports (op-signature
+          # autocomplete) must already be present in this interpreter.
+          python -m pip install --upgrade pip wheel setuptools build Cython \
+            "numpy<2" requests graphviz packaging scipy-openblas32
 
       - name: Resolve tag / version
         id: ver
@@ -99,36 +71,26 @@ jobs:
           echo "tag=$tag"     >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Build wheel
+      - name: Build CPU wheel (oneDNN + OpenCV bundled)
         env:
-          MXNET_PACKAGE_VERSION: ${{ steps.ver.outputs.version }}
-          MXNET_SETUP_ENABLE_OPENCV_DEPS: "0"
+          # Drive the shared release tooling in its Linux CPU flavor so the CI
+          # wheel is byte-for-byte the same recipe as a local
+          #   MXNET_WHEEL_FLAVOR=cpu tools/build_cleanup_wheel.sh
+          # configure -> build (build-cpu/) -> bundle OpenCV closure -> patch
+          # RUNPATH -> build wheel -> release_provenance.py gate.
+          PYTHON: python
+          MXNET_WHEEL_FLAVOR: cpu
         run: |
           set -e
-          cd python
-          # setup.py auto-detects libmxnet.so under mxnet/.
-          python -m build --wheel --outdir ../dist
-          ls -lh ../dist
-
-      - name: Repair wheel with auditwheel (best effort)
-        continue-on-error: true
-        run: |
-          set -e
-          mkdir -p wheelhouse
-          for whl in dist/*.whl; do
-            # auditwheel may fail on ubuntu-22.04 newer libstdc++ vs older manylinux tags;
-            # keep it best-effort so we still publish the raw wheel.
-            auditwheel repair --plat manylinux_2_35_x86_64 -w wheelhouse "$whl" || cp "$whl" wheelhouse/
-          done
-          ls -lh wheelhouse
+          MXNET_BUILD_JOBS="$(getconf _NPROCESSORS_ONLN)" \
+            tools/build_cleanup_wheel.sh "${{ steps.ver.outputs.version }}"
+          ls -lh dist/*.whl
 
       - name: Upload wheel as workflow artefact
         uses: actions/upload-artifact@v4
         with:
           name: mxnet-cpu-wheel-${{ steps.ver.outputs.version }}
-          path: |
-            dist/*.whl
-            wheelhouse/*.whl
+          path: dist/*.whl
           if-no-files-found: error
           retention-days: 30
 
@@ -137,12 +99,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
-          files: |
-            dist/*.whl
-            wheelhouse/*.whl
+          files: dist/*.whl
           fail_on_unmatched_files: false
           generate_release_notes: true
           body: |
-            CPU-only MXNet wheel (oneDNN enabled, no CUDA).
+            CPU-only MXNet wheel — x86_64, oneDNN + OpenCV (native libs bundled),
+            no CUDA. ONNX (`mxnet.onnx`) ships in the wheel; `onnx` itself is the
+            optional `[onnx]` extra here (`pip install "mxnet[onnx]"`).
 
-            GPU wheels require a self-hosted CUDA runner and are not built by this workflow.
+            GPU/CUDA wheels require a self-hosted CUDA runner and are not built by
+            this workflow — see docs/cuda_wheel_build.md and
+            tools/release_cuda_wheel.sh.

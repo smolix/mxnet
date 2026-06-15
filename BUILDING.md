@@ -307,6 +307,28 @@ time from the date/commit — pass it explicitly to `tools/build_cleanup_wheel.s
 (see [`docs/cuda_wheel_build.md`](docs/cuda_wheel_build.md) §5); the
 `python/mxnet/libinfo.py` string is only a fallback for non-pipeline builds.
 
+### Wheel flavors (`tools/build_cleanup_wheel.sh`)
+
+The shared build script produces three wheel flavors, each bundling the OpenCV
+native closure into the wheel (`USE_OPENCV=ON`) so image I/O works out of the box:
+
+| Flavor | Selected by | Feature set | Build tree | Version default |
+|--------|-------------|-------------|-----------|-----------------|
+| `linux-cuda` | Linux, default | CUDA 13 + cuDNN + NCCL + oneDNN + OpenCV, `sm_80…120+PTX`; `onnx` is a hard dep | `build/` | `2.0.0+cu13.bw.<date>` |
+| `linux-cpu` | Linux, `MXNET_WHEEL_FLAVOR=cpu` | x86_64 CPU, oneDNN + OpenCV, OpenBLAS; `onnx` as the `[onnx]` extra | `build-cpu/` | `2.0.0+cpu.linux.<date>` |
+| `macos` | Darwin (auto) | Apple-silicon CPU, oneDNN + OpenCV, Accelerate BLAS | `build/` | `2.0.0+cpu.macos.<date>` |
+
+```bash
+# Linux x86_64 CPU wheel (no CUDA; its own build-cpu/ tree, so it never
+# clobbers an existing CUDA build/):
+MXNET_WHEEL_FLAVOR=cpu tools/build_cleanup_wheel.sh
+```
+
+Each flavor ends with the `release_provenance.py` gate asserting its expected
+feature set (the CPU flavors assert `--expect-cuda off … --expect-opencv on
+--expect-onnx off`). The GitHub `release-wheel.yml` CI job builds the `linux-cpu`
+flavor, so the CI wheel and a local CPU build are the same recipe.
+
 ## Verification
 
 ```bash

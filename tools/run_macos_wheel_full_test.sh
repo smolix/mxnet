@@ -26,10 +26,11 @@
 # FAILED/ERROR line plus each shard's pytest summary is aggregated into
 # macos_wheel_test/errors.log.
 #
-# GPU (tests/python/gpu, test_quantization_gpu.py) and ONNX (tests/python/onnx)
-# are intentionally skipped: this host has no CUDA, and the ONNX path is broken
-# upstream for MXNet 2.0 (errors at collection).  They are reported as SKIPPED
-# lanes in the summary so the omission is explicit.
+# GPU (tests/python/gpu, test_quantization_gpu.py) is skipped: this host has no
+# CUDA.  ONNX (tests/python/onnx) now ships in the wheel (OI-27) and the export/
+# import path works, but it is skipped here only because this runner does not
+# install onnx/onnxruntime; run it with `pip install "mxnet[onnx]" onnxruntime`.
+# Skipped lanes are reported in the summary so the omission is explicit.
 #
 # Usage: tools/run_macos_wheel_full_test.sh [<wheel-path>]
 # Defaults to the newest dist/mxnet-*.whl.

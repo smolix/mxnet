@@ -469,7 +469,6 @@ mkdir -p dist
 # config_cython() degrades to ctypes if Cython is absent.
 (cd python && \
     MXNET_PACKAGE_VERSION="$VERSION" \
-    MXNET_SETUP_EXCLUDE_ONNX=1 \
     MXNET_SETUP_ENABLE_OPENCV_DEPS="$OPENCV_DEPS_FLAG" \
     MXNET_SETUP_ENABLE_CUDA_DEPS="$CUDA_DEPS_FLAG" \
     MXNET_WITH_CYTHON="$CYTHON_FLAG" \

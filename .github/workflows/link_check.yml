@@ -51,7 +51,11 @@ jobs:
           ccache -M 500M  # Limit the ccache size; Github's overall cache limit is 5GB
           python -m pip install pandoc-attributes==0.1.7
           python -m pip install -r docs/python_docs/requirements
-          python -m pip install docs/python_docs/themes/mx-theme
+          # mx-theme's setup.py imports sphinx at module load (mxtheme/card.py), but
+          # modern pip's build isolation runs it in a fresh env without sphinx
+          # ("ModuleNotFoundError: No module named 'sphinx'"). Build it against the env
+          # we just populated (sphinx is installed above) instead of an isolated one.
+          python -m pip install --no-build-isolation docs/python_docs/themes/mx-theme
         shell: bash
 
       - name: Build project
@@ -69,7 +73,10 @@ jobs:
 
       - name: Setup Python
         run: |
-          python -m pip install --user -e python
+          # Same reason as mx-theme above: mxnet's setup.py runs an op-signature
+          # autocomplete that imports the (just-built) mxnet, which needs numpy at build
+          # time. Build isolation would hide it, so build against the populated env.
+          python -m pip install --no-build-isolation --user -e python
 
       - name: Link Check
         env:

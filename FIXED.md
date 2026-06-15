@@ -30,7 +30,15 @@ RTX 50-series (Blackwell, `sm_120`), AMD EPYC 7B12 (Zen 2 CPU), and Apple Silico
   down to `sm_100`, so both are listed explicitly.
 - **cuDNN 9.x.** Including a rewritten v8-style RNN path (LSTM / GRU / vanilla RNN,
   fwd + bwd). Bumped 9.14 → 9.22 for better `sm_120` heuristic coverage; the wheel
-  builds against 9.22/9.23.
+  builds against 9.22/9.23. The first-GPU-use "cuDNN lib mismatch" warning now fires
+  only on a *major*-version difference (cuDNN 9.x is minor-version ABI-compatible both
+  directions), so a wheel built against 9.23 whose pin resolves 9.22 is silent
+  (OI-20, `src/base.cc`).
+- **cuBLAS ≥13.5 / driver R590+ (OI-19, accepted constraint).** The
+  `nvidia-cublas>=13.5` pin is the permanent resolution of a two-sided squeeze:
+  cuBLAS 13.1.1.3 (R580-safe) crashes `syrk`, while 13.2+ needs R590+ for large GEMMs
+  — both cannot be satisfied, so the fork targets R590+ and drops the CUDA 13.0 / R580
+  line (pin an older wheel there). Not a defect; closed as an inherent constraint.
 - **NCCL 2.28** single-process / multi-GPU.
 - **TF32 enabled by default on FP32 conv** (mirrors PyTorch/TensorFlow defaults;
   ~2.87× on `sm_120` vs the legacy non-TF32 mode). `batch_dot`/`matmul` default to
@@ -128,9 +136,28 @@ Implemented and validated across phases (`src/imperative/cuda_graphs.h`,
 
 ## 7. Numeric correctness
 
-- **fp16 reduction overflow (T5)** — `np.mean`/`np.var`/`np.std` over a large axis
-  reduced into fp16 before dividing and overflowed to `inf`; now reduce into fp32
-  scratch then cast (`test_linalg_reduce_safety_gpu.py`).
+- **fp16 reduction overflow (T5, OI-3)** — `np.mean`/`np.var`/`np.std` over a large
+  axis reduced into fp16 before dividing and overflowed to `inf`. The mean/sum path
+  reduces into fp32 scratch then casts; the variance/std *moments* path now runs the
+  ENTIRE fp16 computation in fp32 — including the per-element `(data - mean)^2`, which
+  a single large-magnitude element can overflow even when the final variance is O(1) —
+  and casts only the finished result back to fp16 (`test_linalg_reduce_safety_gpu.py`).
+- **Integer `dot` / `matmul` / `tensordot` (OI-1)** — these float-only kernels
+  rejected integer inputs, which NumPy and PyTorch both compute. The eager frontend
+  now follows PyTorch promotion: integer (non-bool) operands run in float64 and the
+  result is cast back to the promoted integer dtype (`int @ int -> int`); mixed
+  int/float keeps the float operand's width. Exact while products/sums stay within
+  float64's 2**53 integer range. bool still rejects (PyTorch errors on bool matmul),
+  and the symbolic path is unchanged (it cannot promote without an eager dtype).
+- **`np.mean` / `np.average` of integers (OI-2)** — confirmed to follow NumPy
+  semantics: an integer array returns the default float dtype with the *unrounded*
+  true mean. (NumPy returns float64; PyTorch errors; neither rounds to int — the
+  original "should round to int" framing was mistaken.) Pinned by a regression test.
+- **flip / flipud / fliplr / rot90 are copies (OI-4, partial)** — these return
+  independent copies, matching PyTorch (`torch.flip` & friends copy; they are not
+  views). The values were always correct; the NumPy view-aliasing the regression
+  sweep expected is a NumPy-only contract. (Positive-stepped-slice and axis-moving
+  views, which PyTorch *does* return as views, still copy here — the narrowed OI-4.)
 - **float64 accumulation** for LayerNorm / GroupNorm / BatchNorm training variance
   on large-finite float32 inputs (avoids precision loss / overflow).
 - **PyTorch-convention type promotion** — int×float binary ops now promote to
@@ -172,8 +199,18 @@ Implemented and validated across phases (`src/imperative/cuda_graphs.h`,
   (`MXNET_GPU_MEM_POOL_OOM_RETRIES`), stale `mxnet.__version__` regeneration, storage
   banner gated behind `MXNET_LOG_STORAGE_INIT=1`, and a learning-rate scheduler
   `epoch_size=` kwarg so `MultiFactorScheduler`/`CosineScheduler` count epochs, not
-  minibatch steps. (Two convergence gaps, #6/#7, are book-side fixes — see
-  OPEN_ISSUES.)
+  minibatch steps. The two convergence gaps (#6 scheduler `epoch_size`, #7 FCN
+  `trainer.step`) are resolved book-side (OI-29). All D2L notebook compatibility is
+  now green, including the `train_ch13` multi-GPU path (OI-28).
+- **NumPy 2.x operator shape/axis params (toward OI-26)** — tuple params containing
+  NumPy scalars (e.g. from `rand_shape_nd` / `np.random.randint`) rendered as
+  `(np.int64(3), …)` under NumPy 2.x — the scalar-`repr` change, since `str(tuple)`
+  uses `repr` per element — which the C++ Shape/Tuple parser rejected with "Invalid
+  Parameter format for shape". `base.param_str` now coerces NumPy scalars in tuple/list
+  params to plain Python scalars before stringifying (the ndarray imperative-invoke and
+  both symbol attr paths). Byte-identical to NumPy 1.x for previously-working inputs, so
+  it is non-breaking. Full NumPy 2.x ABI validation across the suite is still open
+  (OI-26).
 
 ---
 

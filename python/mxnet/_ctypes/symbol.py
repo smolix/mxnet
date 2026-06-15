@@ -21,7 +21,7 @@
 
 import ctypes
 from ..base import _LIB
-from ..base import c_str_array, c_handle_array, c_str, mx_uint
+from ..base import c_str_array, c_handle_array, c_str, mx_uint, param_str
 from ..base import SymbolHandle
 from ..base import check_call
 
@@ -99,7 +99,7 @@ class SymbolBase(object):
             The attributes to set
         """
         keys = c_str_array(kwargs.keys())
-        vals = c_str_array([str(s) for s in kwargs.values()])
+        vals = c_str_array([param_str(s) for s in kwargs.values()])
         num_args = mx_uint(len(kwargs))
         check_call(_LIB.MXSymbolSetAttrs(
             self.handle, num_args, keys, vals))
@@ -130,7 +130,7 @@ def _symbol_creator(handle, args, kwargs, keys, vals, name, is_np_op, output_is_
         ctypes.c_void_p(handle),
         mx_uint(len(keys)),
         c_str_array(keys),
-        c_str_array([str(v) for v in vals]),
+        c_str_array([param_str(v) for v in vals]),
         ctypes.byref(sym_handle)))
 
     if args and kwargs:

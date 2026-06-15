@@ -215,13 +215,38 @@ def test_np_tensordot(a_shape, b_shape, axes, hybridize, dtype):
 
 @use_np
 @pytest.mark.parametrize('axes', [1, ([1], [0])])
-@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
-def test_np_tensordot_unsupported_dtypes_rejected(axes, dtype):
-    a = np.array([[1, 2], [3, 4]], dtype=dtype)
-    b = np.array([[1, 2], [3, 4]], dtype=dtype)
+@pytest.mark.parametrize('dtype', ['int8', 'int16', 'int32', 'int64', 'uint8'])
+def test_np_tensordot_integer(axes, dtype):
+    # OI-1: NumPy and PyTorch both compute integer tensordot (int in -> int out).
+    # The eager frontend promotes to float64, runs the float kernel, and casts the
+    # result back to the promoted integer dtype.
+    a_np = onp.array([[1, 2], [3, 4]], dtype=dtype)
+    b_np = onp.array([[5, 6], [7, 8]], dtype=dtype)
+    a = np.array(a_np, dtype=dtype)
+    b = np.array(b_np, dtype=dtype)
+    expected = onp.tensordot(a_np, b_np, axes=axes)
+    out = np.tensordot(a, b, axes=axes)
+    assert onp.dtype(out.dtype) == expected.dtype, (out.dtype, expected.dtype)
+    assert_almost_equal(out.asnumpy(), expected, rtol=0, atol=0)
+
+
+@use_np
+@pytest.mark.parametrize('axes', [1, ([1], [0])])
+def test_np_tensordot_bool_rejected(axes):
+    # PyTorch errors on bool matmul; the eager frontend leaves bool to the
+    # float-only kernel, which rejects it.
+    a = np.array([[1, 0], [1, 1]], dtype='bool')
+    b = np.array([[1, 1], [0, 1]], dtype='bool')
     with pytest.raises((ValueError, mx.MXNetError), match="floating point"):
         np.tensordot(a, b, axes=axes).asnumpy()
 
+
+@use_np
+@pytest.mark.parametrize('axes', [1, ([1], [0])])
+@pytest.mark.parametrize('dtype', ['int16', 'uint16', 'uint32'])
+def test_np_tensordot_integer_symbol_unsupported(axes, dtype):
+    # Eager integer tensordot is computed (see test_np_tensordot_integer); the
+    # symbolic path cannot promote without an eager dtype, so it still rejects.
     a_sym = mx.sym.var('a').as_np_ndarray()
     b_sym = mx.sym.var('b').as_np_ndarray()
     with pytest.raises(mx.MXNetError, match="floating point"):
@@ -327,17 +352,81 @@ def test_np_dot_error(shape_a, shape_b):
 
 @use_np
 @pytest.mark.parametrize('op_name', ['dot', 'matmul'])
-@pytest.mark.parametrize('dtype', ['bool', 'int16', 'uint16', 'uint32'])
-def test_np_matrix_product_unsupported_dtypes_rejected(op_name, dtype):
-    a = np.array([[1, 2], [3, 4]], dtype=dtype)
-    b = np.array([[1, 2], [3, 4]], dtype=dtype)
+@pytest.mark.parametrize('dtype', ['int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32'])
+def test_np_matrix_product_integer(op_name, dtype):
+    # OI-1: NumPy and PyTorch both compute integer dot/matmul (int in -> int out).
+    # The eager frontend promotes to float64, runs the float kernel, and casts the
+    # result back to the promoted integer dtype.
+    a_np = onp.array([[1, 2], [3, 4]], dtype=dtype)
+    b_np = onp.array([[5, 6], [7, 8]], dtype=dtype)
+    a = np.array(a_np, dtype=dtype)
+    b = np.array(b_np, dtype=dtype)
+    expected = getattr(onp, op_name)(a_np, b_np)
+    out = getattr(np, op_name)(a, b)
+    assert onp.dtype(out.dtype) == expected.dtype, (out.dtype, expected.dtype)
+    assert_almost_equal(out.asnumpy(), expected, rtol=0, atol=0)
+
+
+@use_np
+@pytest.mark.parametrize('op_name', ['dot', 'matmul'])
+def test_np_matrix_product_bool_rejected(op_name):
+    # PyTorch errors on bool matmul; the eager frontend leaves bool to the
+    # float-only kernel, which rejects it.
+    a = np.array([[1, 0], [1, 1]], dtype='bool')
+    b = np.array([[1, 1], [0, 1]], dtype='bool')
     with pytest.raises((ValueError, mx.MXNetError), match="floating point"):
         getattr(np, op_name)(a, b).asnumpy()
 
+
+@use_np
+@pytest.mark.parametrize('op_name', ['dot', 'matmul'])
+@pytest.mark.parametrize('dtype', ['int16', 'uint16', 'uint32'])
+def test_np_matrix_product_integer_symbol_unsupported(op_name, dtype):
+    # Eager integer matmul/dot is computed (see test_np_matrix_product_integer);
+    # the symbolic path cannot promote without an eager dtype, so it still rejects.
     a_sym = mx.sym.var('a').as_np_ndarray()
     b_sym = mx.sym.var('b').as_np_ndarray()
     with pytest.raises(mx.MXNetError, match="floating point"):
         getattr(mx.sym.np, op_name)(a_sym, b_sym).as_nd_ndarray().infer_type(a=dtype, b=dtype)
+
+
+@use_np
+@pytest.mark.parametrize('dtype', ['int8', 'int32', 'int64', 'uint8'])
+def test_np_mean_average_integer_returns_float(dtype):
+    # OI-2: np.mean / np.average of an integer array follow NumPy semantics --
+    # return the default float dtype with the *unrounded* true mean. (NumPy returns
+    # float64; PyTorch errors; neither rounds to int, contrary to the original issue
+    # framing.) The mxnet.numpy API mirrors NumPy, so a float result is correct.
+    a_np = onp.array([[1, 2], [3, 4]], dtype=dtype)
+    a = np.array(a_np, dtype=dtype)
+    assert onp.dtype(a.dtype) == onp.dtype(dtype)  # the array really is integer
+    out = np.mean(a)
+    assert onp.issubdtype(onp.dtype(out.dtype), onp.floating), out.dtype
+    assert_almost_equal(out.asnumpy(),
+                        onp.array(a_np.mean(), dtype=out.dtype), rtol=1e-6, atol=1e-6)
+    # average with uniform weights matches mean (also a float result)
+    avg = np.average(a)
+    assert onp.issubdtype(onp.dtype(avg.dtype), onp.floating), avg.dtype
+    assert_almost_equal(avg.asnumpy(), out.asnumpy(), rtol=1e-6, atol=1e-6)
+
+
+@use_np
+def test_np_numpy_scalar_shape_axis_params_oi26():
+    # OI-26 / NumPy 2.x: operator shape/axis params built from NumPy scalars (e.g.
+    # from rand_shape_nd or np.random.randint) must render version-independently.
+    # Under NumPy 2.x, str() of a tuple uses repr() per element and repr(np.int64(3))
+    # is 'np.int64(3)' (it was '3' under 1.x), which the C++ Shape/Tuple parser
+    # rejected. base.param_str coerces NumPy scalars to Python scalars first.
+    from mxnet.base import param_str
+    assert param_str((3, 3, 4)) == '(3, 3, 4)'            # plain Python unchanged
+    assert param_str((onp.int64(3), onp.int64(4))) == '(3, 4)'
+    shape = tuple(onp.int64(s) for s in (2, 3, 4))
+    assert np.zeros(shape).shape == (2, 3, 4)             # numpy-FFI shape param
+    out = mx.nd.random.uniform(-1.0, 1.0, shape=shape, dtype='float32')  # classic nd op
+    assert out.shape == (2, 3, 4)
+    # axis tuple built from NumPy scalars
+    red = np.sum(np.ones((2, 3, 4)), axis=(onp.int64(0), onp.int64(2)))
+    assert red.shape == (3,)
 
 
 @use_np

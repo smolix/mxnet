@@ -2399,16 +2399,10 @@ def test_similar_cross_gpu_legacy_extra_wrappers_reject(expr):
     assert_subprocess_ok(proc)
 
 
-SIMILAR_NUMPY_EXTRA_VIEW_STRIDE_XFAIL = similar_bug_xfail(
-    "numpy_extra_view_contract_strides",
-    "flip/fliplr/rot90 need negative-stride or axis-stride backend view metadata",
-)
-
+# squeeze and atleast_* ARE views in both NumPy and PyTorch and share storage here.
+# (flip / flipud / fliplr / rot90 are handled separately below: PyTorch returns
+# COPIES for those, so the fork copying them is correct, not a missing view -- OI-4.)
 SIMILAR_NUMPY_EXTRA_VIEW_CASES = [
-    pytest.param("flip", marks=SIMILAR_NUMPY_EXTRA_VIEW_STRIDE_XFAIL),
-    pytest.param("flipud", marks=SIMILAR_NUMPY_EXTRA_VIEW_STRIDE_XFAIL),
-    pytest.param("fliplr", marks=SIMILAR_NUMPY_EXTRA_VIEW_STRIDE_XFAIL),
-    pytest.param("rot90", marks=SIMILAR_NUMPY_EXTRA_VIEW_STRIDE_XFAIL),
     "squeeze",
     "atleast_1d",
     "atleast_2d",
@@ -2422,26 +2416,7 @@ def test_similar_numpy_extra_view_contract_mutates_base(case):
     from mxnet import npx
 
     npx.set_np()
-    if case in ("flip", "flipud", "fliplr"):
-        base = mxnp.arange(6, dtype="float32").reshape((2, 3))
-        if case == "flip":
-            view = mxnp.flip(base, 0)
-            view[0] = 0
-            actual = base[1]
-        elif case == "flipud":
-            view = mxnp.flipud(base)
-            view[0] = 0
-            actual = base[1]
-        else:
-            view = mxnp.fliplr(base)
-            view[:, 0] = 0
-            actual = base[:, 2]
-    elif case == "rot90":
-        base = mxnp.arange(4, dtype="float32").reshape((2, 2))
-        view = mxnp.rot90(base)
-        view[0] = 0
-        actual = base[:, 1]
-    elif case == "squeeze":
+    if case == "squeeze":
         base = mxnp.arange(3, dtype="float32").reshape((1, 3, 1))
         view = mxnp.squeeze(base)
         view[:] = 0
@@ -2452,6 +2427,35 @@ def test_similar_numpy_extra_view_contract_mutates_base(case):
         view[:] = 0
         actual = base
     np.testing.assert_allclose(actual.asnumpy(), np.zeros(actual.shape, dtype="float32"))
+
+
+@pytest.mark.parametrize("case", ["flip", "flipud", "fliplr", "rot90"])
+def test_numpy_flip_rot90_are_independent_copies_like_pytorch(case):
+    # OI-4: torch.flip / flipud / fliplr / rot90 return COPIES, not views, so the
+    # fork returning a copy here matches PyTorch (NumPy's view-aliasing the original
+    # sweep expected is a NumPy-only contract). Assert the result holds the right
+    # flipped/rotated values AND that mutating it does not write back to the base.
+    import numpy as onp
+    from mxnet import np as mxnp
+    from mxnet import npx
+
+    npx.set_np()
+    base_np = onp.arange(6, dtype="float32").reshape((2, 3))
+    base = mxnp.array(base_np)
+    if case == "flip":
+        view, expected = mxnp.flip(base, 0), onp.flip(base_np, 0)
+    elif case == "flipud":
+        view, expected = mxnp.flipud(base), onp.flipud(base_np)
+    elif case == "fliplr":
+        view, expected = mxnp.fliplr(base), onp.fliplr(base_np)
+    else:
+        base_np = onp.arange(4, dtype="float32").reshape((2, 2))
+        base = mxnp.array(base_np)
+        view, expected = mxnp.rot90(base), onp.rot90(base_np)
+    onp.testing.assert_allclose(view.asnumpy(), expected)
+    # mutation isolation: writing the copy must not touch the base (PyTorch contract)
+    view[...] = 0
+    onp.testing.assert_allclose(base.asnumpy(), base_np)
 
 def test_similar_row_sparse_elemwise_mul_prunes_zero_rows():
     import mxnet as mx

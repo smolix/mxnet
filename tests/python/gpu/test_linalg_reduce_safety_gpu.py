@@ -138,6 +138,29 @@ def test_fp16_var_std_large_axis_no_overflow_gpu(shape, axis, op):
     onp.testing.assert_allclose(got, ref, rtol=5e-2, atol=5e-2)
 
 
+@pytest.mark.parametrize('op', ['var', 'std'])
+def test_fp16_var_std_large_residual_no_overflow_gpu(op):
+    """np.var/np.std(fp16): a single large-magnitude element makes (data - mean)^2
+    exceed fp16's ~65504 range per-element, even though the final variance is O(10)
+    and fits in fp16. The earlier fix reduced into fp32 scratch but still squared the
+    residual in the fp16 compute dtype, so this still overflowed to inf. The moments
+    path now runs the whole fp16 computation in fp32 and casts only the finished
+    result back (OI-3).
+    """
+    ctx = _gpu()
+    n = 10000
+    a_np = onp.zeros((n,), dtype='float16')
+    a_np[0] = 300.0  # (300 - mean)^2 ~ 9e4 > 65504, but var ~ 9.0 fits fp16
+    a = np.array(a_np, ctx=ctx, dtype='float16')
+    mxf = np.var if op == 'var' else np.std
+    npf = onp.var if op == 'var' else onp.std
+    got = mxf(a).asnumpy().astype('float64')
+    assert not onp.isinf(got).any() and not onp.isnan(got).any(), \
+        "fp16 {} residual-square overflowed".format(op)
+    ref = npf(a_np.astype('float64'))
+    onp.testing.assert_allclose(got, ref, rtol=5e-2, atol=5e-2)
+
+
 def test_fp16_mean_cpu_large_axis_no_overflow():
     """np.mean(fp16) over a large axis on CPU must not overflow (companion to the
     GPU case; the CPU generic-reduce path also summed into fp16 before dividing)."""

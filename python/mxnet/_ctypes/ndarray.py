@@ -23,7 +23,7 @@
 import ctypes
 
 from ..base import _LIB
-from ..base import c_str_array, c_handle_array
+from ..base import c_str_array, c_handle_array, param_str
 from ..base import NDArrayHandle
 from ..base import check_call
 from .. import _global_var
@@ -119,7 +119,9 @@ def _imperative_invoke(handle, ndargs, keys, vals, out, is_np_op, output_is_list
         ctypes.c_int(len(keys)),
         c_str_array(keys),
         # M15: avoid str() on values that are already strings (the common case).
-        c_str_array([s if isinstance(s, str) else str(s) for s in vals]),
+        # param_str also coerces NumPy scalars inside tuple/list params (shape, axis)
+        # so they render NumPy-version-independently (OI-26 / NumPy 2.x).
+        c_str_array([param_str(s) for s in vals]),
         ctypes.byref(out_stypes)))
 
     create_ndarray_fn = _global_var._np_ndarray_cls if is_np_op else _global_var._ndarray_cls

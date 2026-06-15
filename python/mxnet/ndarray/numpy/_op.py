@@ -1608,6 +1608,46 @@ def delete(arr, obj, axis=None):
         return _api_internal.delete(arr, obj, axis)
 
 
+def _gemm_promote_operands(a, b):
+    """Bring ``dot`` / ``matmul`` / ``tensordot`` operands to a common float compute
+    dtype, following PyTorch's promotion rules. These kernels are float-only and
+    otherwise reject integer inputs (``"only supports floating point input types"``),
+    whereas NumPy and PyTorch both compute them. Integer (non-bool) inputs are run in
+    float64 and the result is reported for cast-back to the promoted integer dtype --
+    exact while the products and their sums stay within float64's 2**53 integer range;
+    very large integer magnitudes lose low-order bits (an exact path would need an
+    integer GEMM). bool operands are left untouched so the kernel still rejects them
+    (PyTorch likewise errors on bool matmul).
+
+    Returns ``(a, b, cast_back)`` where ``cast_back`` is the dtype to cast the float
+    result back to (the promoted integer dtype), or ``None`` to leave it as produced.
+    """
+    if not (isinstance(a, NDArray) and isinstance(b, NDArray)):
+        return a, b, None
+    a_dtype = _np.dtype(a.dtype)
+    b_dtype = _np.dtype(b.dtype)
+    if a_dtype == _np.bool_ or b_dtype == _np.bool_:
+        return a, b, None
+    a_int = _np.issubdtype(a_dtype, _np.integer)
+    b_int = _np.issubdtype(b_dtype, _np.integer)
+    if a_int and b_int:
+        # int @ int -> int (PyTorch). Compute in float64, cast back to the promoted int.
+        compute, cast_back = _np.dtype('float64'), _np.result_type(a_dtype, b_dtype)
+    elif a_int or b_int:
+        # mixed int/float -> keep the float operand's width (PyTorch convention).
+        compute, cast_back = (b_dtype if a_int else a_dtype), None
+    elif a_dtype != b_dtype:
+        # two different floats -> the wider float (NumPy and PyTorch agree here).
+        compute, cast_back = _np.result_type(a_dtype, b_dtype), None
+    else:
+        return a, b, None
+    if a_dtype != compute:
+        a = a.astype(compute)
+    if b_dtype != compute:
+        b = b.astype(compute)
+    return a, b, cast_back
+
+
 @set_module('mxnet.ndarray.numpy')
 @wrap_np_binary_func
 def matmul(a, b, out=None):
@@ -1705,7 +1745,14 @@ def matmul(a, b, out=None):
     ...
     mxnet.base.MXNetError: ... : Multiplication by scalars is not allowed.
     """
-    return _api_internal.matmul(a, b, out)
+    a, b, cast_back = _gemm_promote_operands(a, b)
+    if cast_back is None:
+        return _api_internal.matmul(a, b, out)
+    res = _api_internal.matmul(a, b, None).astype(cast_back)
+    if out is not None:
+        out[...] = res
+        return out
+    return res
 
 
 @set_module('mxnet.ndarray.numpy')
@@ -2059,7 +2106,14 @@ def dot(a, b, out=None):
     array(29884.)
     """
     _check_same_device(a, b, func_name="dot")
-    return _api_internal.dot(a, b, out)
+    a, b, cast_back = _gemm_promote_operands(a, b)
+    if cast_back is None:
+        return _api_internal.dot(a, b, out)
+    res = _api_internal.dot(a, b, None).astype(cast_back)
+    if out is not None:
+        out[...] = res
+        return out
+    return res
 
 @set_module('mxnet.ndarray.numpy')
 def tensordot(a, b, axes=2):
@@ -2122,7 +2176,10 @@ def tensordot(a, b, axes=2):
         left = a.reshape(a.shape + (1,) * b.ndim) if b.ndim else a
         right = b.reshape((1,) * a.ndim + b.shape) if a.ndim else b
         return multiply(left, right)
-    return _api_internal.tensordot(a, b, axes)
+    a, b, cast_back = _gemm_promote_operands(a, b)
+    if cast_back is None:
+        return _api_internal.tensordot(a, b, axes)
+    return _api_internal.tensordot(a, b, axes).astype(cast_back)
 
 
 @set_module('mxnet.ndarray.numpy')

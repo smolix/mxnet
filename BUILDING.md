@@ -30,7 +30,7 @@ there is no Python-level fallback; see `docs/cuda_wheel_build.md` §1.
 - NVIDIA driver **R590 or newer** — the `nvidia-cublas>=13.5` runtime pin needs
   R590+; the older CUDA 13.0 / R580 driver line is not supported (large GEMMs fail
   with `CUBLAS_STATUS_NOT_INITIALIZED`). See
-  [`OPEN_ISSUES.md`](OPEN_ISSUES_DETAILS.md#oi-19).
+  [`FIXED.md`](FIXED.md) §1.
 - macOS arm64 is covered by the CPU-only smoke path with oneDNN enabled. It is
   not a CUDA release-wheel target.
 
@@ -42,7 +42,7 @@ CUDA compile phase dominates; expect `nvcc` to be the long pole.
 | Component   | Version    | Notes                                          |
 | ----------- | ---------- | ---------------------------------------------- |
 | CUDA        | 13.0       | system install at `/usr/local/cuda-13`         |
-| cuDNN       | 9.22 / 9.23 | local `cudnn_local/unpacked/nvidia/cudnn/` from the `nvidia-cudnn-cu13` wheel (recent wheels build against 9.23; the pip pin resolves 9.22, which prints a harmless minor-version mismatch note — see [`OPEN_ISSUES.md`](OPEN_ISSUES_DETAILS.md#oi-20)) |
+| cuDNN       | 9.22 / 9.23 | local `cudnn_local/unpacked/nvidia/cudnn/` from the `nvidia-cudnn-cu13` wheel (recent wheels build against 9.23; the pip pin resolves 9.22 — a minor skew that is ABI-compatible and no longer warns, [`FIXED.md`](FIXED.md) §1) |
 | NCCL        | 2.28.3     | `libnccl2` + **`libnccl-dev`** (see gotcha 1)  |
 | oneDNN      | 3.11       | vendored as submodule under `3rdparty/onednn`  |
 | GCC         | 11 - 13    | 12 used for the release wheel                  |

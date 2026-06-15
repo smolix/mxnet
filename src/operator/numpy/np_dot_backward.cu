@@ -23,15 +23,18 @@
  */
 
 #include "./np_dot-inl.h"
+#include "../../common/cuda/cublaslt_gemm.h"
 
 namespace mxnet {
 namespace op {
 
-// See np_dot_forward.cu: tensordot's GPU gemm is the capture-unsafe legacy
-// mshadow path, so exclude the numpy dot backward from CUDA Graphs too.
+// See np_dot_forward.cu: the backward gemm also flows through MatrixDot, which is now
+// capture-safe (linalg_gemm / cuBLASLt), so the numpy dot backward is capturable too
+// (OI-16). MXNET_CUDA_GRAPHS_ALLOW_CUBLAS=0 opts out.
 NNVM_REGISTER_OP(_backward_npi_dot)
-    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
-                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FIsCUDAGraphsCompatible>(
+        "FIsCUDAGraphsCompatible",
+        [](const NodeAttrs&, const bool) { return mxnet::common::cuda::AllowGemmCapture(); })
     .set_attr<FCompute>("FCompute<gpu>", NumpyDotBackward<gpu>);
 
 }  // namespace op

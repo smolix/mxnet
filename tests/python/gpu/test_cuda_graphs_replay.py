@@ -120,6 +120,31 @@ y.wait_to_read(); npx.waitall(); print("WORKLOAD_OK")
 """
 
 
+# np.dot / np.tensordot (2-D) capture — OI-16. Their gemm now routes through MatrixDot
+# -> linalg_gemm (cuBLASLt) instead of the capture-unsafe legacy mshadow dot(), so they
+# capture and match conventional. {fn} is substituted with the call expression.
+_DOT_LIKE_WORKLOAD = r"""
+import mxnet as mx
+from mxnet import np, npx, gluon
+npx.set_np()
+dev = mx.gpu(0)
+class Net(gluon.HybridBlock):
+    def __init__(s, n, **k):
+        super().__init__(**k); s.w = gluon.Parameter('w', shape=(n, n))
+    def forward(s, x):
+        w = s.w.data()
+        for _ in range(4):
+            x = {fn}; x = npx.relu(x)
+        return x
+net = Net(64); net.initialize(device=dev)
+net.hybridize(static_alloc=True, static_shape=True)
+x = np.ones((64, 64), device=dev) * 0.01
+for _ in range(20):
+    y = net(x)
+y.wait_to_read(); npx.waitall(); print("WORKLOAD_OK")
+"""
+
+
 # End-to-end training: a hybridized static MLP + SGD trained a few steps. Prints
 # the per-step loss trajectory as JSON so the test can assert graphs-on ==
 # graphs-off (captures FC forward+backward + the optimizer step).
@@ -281,6 +306,26 @@ def test_cuda_graphs_batched_gemm_capture(name, code):
               "MXNET_CUDA_GRAPHS_VERIFY": "1",
               "MXNET_CUDA_GRAPHS_VERBOSE": "1"},
              code=code)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, f"{name} capture aborted:\n{out[-3000:]}"
+    assert "WORKLOAD_OK" in r.stdout, f"{name} did not finish:\n{out[-3000:]}"
+    assert "differential-replay MISMATCH" not in out, f"{name} mismatch:\n{out[-3000:]}"
+    assert "capture-unsafe legacy cuBLAS" not in out, f"{name} hit legacy fallback:\n{out[-3000:]}"
+    assert "replay OK" in out, f"{name} not captured/verified:\n{out[-3000:]}"
+
+
+@pytest.mark.serial
+@pytest.mark.parametrize("name,fn", [("dot", "np.dot(x, w)"),
+                                     ("tensordot", "np.tensordot(x, w, axes=1)")],
+                         ids=["dot", "tensordot"])
+def test_cuda_graphs_dot_tensordot_capture(name, fn):
+    """np.dot / np.tensordot capture via the rerouted MatrixDot -> linalg_gemm (cuBLASLt)
+    path and match conventional (OI-16). Previously these ran conventionally between
+    graphs because their gemm went through the capture-unsafe legacy mshadow dot()."""
+    r = _run({"MXNET_CUDA_GRAPHS_ALLOW_CUBLAS": "1",
+              "MXNET_CUDA_GRAPHS_VERIFY": "1",
+              "MXNET_CUDA_GRAPHS_VERBOSE": "1"},
+             code=_DOT_LIKE_WORKLOAD.format(fn=fn))
     out = r.stdout + r.stderr
     assert r.returncode == 0, f"{name} capture aborted:\n{out[-3000:]}"
     assert "WORKLOAD_OK" in r.stdout, f"{name} did not finish:\n{out[-3000:]}"

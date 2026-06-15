@@ -23,18 +23,25 @@
  */
 
 #include "./np_dot-inl.h"
+#include "../../common/cuda/cublaslt_gemm.h"
 
 namespace mxnet {
 namespace op {
 
-// _npi_dot dispatches through the tensordot machinery, whose GPU gemm uses the
-// legacy mshadow BLASEngine path (capture-unsafe). It has no FStatefulCompute /
-// FComputeEx to exclude it, so mark it explicitly incompatible with CUDA Graphs
-// to avoid a capture-time crash; it runs conventionally between graphs.
-// (Routing tensordot through linalg/cuBLASLt is possible future work.)
+// _npi_dot dispatches through the tensordot machinery (MatrixDot), which now routes
+// its GPU gemm through the capture-safe cuBLASLt linalg_gemm path under CUDA Graphs
+// (OI-16). Capturable by default (Phase 5); set MXNET_CUDA_GRAPHS_ALLOW_CUBLAS=0 to
+// opt out.
+namespace {
+inline bool DotGraphsCompatible() {
+  return mxnet::common::cuda::AllowGemmCapture();
+}
+}  // namespace
+
 NNVM_REGISTER_OP(_npi_dot)
-    .set_attr<FIsCUDAGraphsCompatible>("FIsCUDAGraphsCompatible",
-                                       [](const NodeAttrs&, const bool) { return false; })
+    .set_attr<FIsCUDAGraphsCompatible>(
+        "FIsCUDAGraphsCompatible",
+        [](const NodeAttrs&, const bool) { return DotGraphsCompatible(); })
     .set_attr<FCompute>("FCompute<gpu>", NumpyDotForward<gpu>);
 
 }  // namespace op

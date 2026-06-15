@@ -8,7 +8,10 @@ defaults:
 
 jobs:
   linkcheck:
-    runs-on: ubuntu-20.04
+    # ubuntu-20.04 was retired by GitHub-hosted runners (2025), so this job sat
+    # queued indefinitely. Bump to 22.04; this also requires dropping the gcc-7
+    # toolchain (not packaged on 22.04) and the EOL Python 3.8 below.
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
     steps:
@@ -30,14 +33,14 @@ jobs:
       - name: Setup python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
+          python-version: '3.11'
           architecture: x64
 
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libopenblas-dev ninja-build ccache python3-sphinx \
-              pandoc gcc-7 g++-7 libopencv-dev protobuf-compiler libprotobuf-dev
+              pandoc libopencv-dev protobuf-compiler libprotobuf-dev
           ccache -M 500M  # Limit the ccache size; Github's overall cache limit is 5GB
           python -m pip install pandoc-attributes==0.1.7
           python -m pip install -r docs/python_docs/requirements
@@ -45,9 +48,6 @@ jobs:
         shell: bash
 
       - name: Build project
-        env:
-          CC: gcc-7
-          CXX: g++-7
         run: |
           git submodule update --init --recursive
           mkdir build; cd build
@@ -68,18 +68,15 @@ jobs:
         env:
           MAX_RETRY: 3
         run: |
-          for run in {1..$MAX_RETRY}
-          do
-            cd docs/python_docs/python
+          # `{1..$MAX_RETRY}` does not brace-expand with a variable (it ran once
+          # over the literal string), and the cd lived inside the loop; do it once
+          # and iterate with seq.
+          cd docs/python_docs/python
+          for run in $(seq 1 "$MAX_RETRY"); do
             make clean
-            timeout 10m make linkcheck EVAL=0
-            if [[ $? -eq 0 ]]
-            then
-              break
-            else
-              if [[ run -eq $MAX_RETRY ]]
-              then
-                exit 1
-              fi
+            if timeout 10m make linkcheck EVAL=0; then
+              exit 0
             fi
+            echo "linkcheck attempt ${run}/${MAX_RETRY} failed"
           done
+          exit 1

@@ -106,25 +106,41 @@ jobs:
           python -m pip install "numpy<2" requests scipy pytest pytest-timeout pytest-xdist pytest-rerunfailures
           cd python && python -m pip install -e . && cd ..
 
-      - name: Run pytest sweep (30 min global timeout)
-        # Generous per-test (300s) and per-file (1800s) timeouts; flaky tests
-        # auto-retry twice before being marked failed.
-        timeout-minutes: 30
+      - name: Run pytest sweep (per-target, memory-bounded)
+        # Each target runs in its OWN pytest process so module state and accumulated
+        # NDArray memory are released between targets. The previous single-process
+        # sweep over test_operator.py + test_gluon.py + dnnl peaked past the runner's
+        # RAM and was OOM-killed mid-run (the job showed "canceled" with no report
+        # uploaded). Per-target reports are uploaded unconditionally, so if a single
+        # target still exceeds RAM the next run pinpoints which one (candidate
+        # follow-up: run that target with pytest-forked's --forked).
+        # Per-test 300s timeout; flaky tests auto-retry twice.
+        timeout-minutes: 45
         env:
           MXNET_ENGINE_TYPE: NaiveEngine
           OMP_NUM_THREADS: "2"
         run: |
-          set -o pipefail
+          set -uo pipefail
           mkdir -p test-reports
-          pytest \
-            --timeout=300 \
-            --reruns=2 --reruns-delay=5 \
-            --junitxml=test-reports/cpu-sweep.xml \
-            -ra -v \
-            tests/python/unittest/test_operator.py \
-            tests/python/unittest/test_gluon.py \
-            tests/python/dnnl/ \
-            | tee test-reports/cpu-sweep.log
+          targets=(
+            "operator:tests/python/unittest/test_operator.py"
+            "gluon:tests/python/unittest/test_gluon.py"
+            "dnnl:tests/python/dnnl"
+          )
+          rc=0
+          for entry in "${targets[@]}"; do
+            name="${entry%%:*}"
+            path="${entry#*:}"
+            echo "::group::pytest ${name} (${path})"
+            pytest \
+              --timeout=300 \
+              --reruns=2 --reruns-delay=5 \
+              --junitxml="test-reports/${name}.xml" \
+              -ra -v \
+              "${path}" 2>&1 | tee "test-reports/${name}.log" || rc=1
+            echo "::endgroup::"
+          done
+          exit "${rc}"
 
       - name: Upload pytest report
         if: always()
@@ -132,7 +148,7 @@ jobs:
         with:
           name: pytest-report-cpu-${{ github.sha }}
           path: |
-            test-reports/cpu-sweep.xml
-            test-reports/cpu-sweep.log
+            test-reports/*.xml
+            test-reports/*.log
           if-no-files-found: warn
           retention-days: 30

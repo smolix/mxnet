@@ -212,6 +212,29 @@ Implemented and validated across phases (`src/imperative/cuda_graphs.h`,
   it is non-breaking. Full NumPy 2.x ABI validation across the suite is still open
   (OI-26).
 
+## 11. Closed as won't-fix / inherent (no action planned)
+
+These were tracked as open items but carry no code work — they are either inherent to
+the hardware/toolchain or were deliberately decided against. Recorded here so the open
+list stays scoped to actionable work.
+
+- **bf16 emulated in fp32 on non-AVX-512-BF16 CPUs (OI-18, inherent).** oneDNN v3 still
+  exposes bf16 primitives but emulates them in fp32 on CPUs lacking AVX-512-BF16, so the
+  numerics are correct but no faster than fp32. This is a property of the ISA + oneDNN,
+  not a fork defect; the AMP subgraph already detects the ISA and falls back (see §2).
+  The real bf16 path is exercised on Intel SPR / AMD Zen 4 / Granite Rapids. Still noted
+  for users in `README.md` ("What is experimental").
+- **CUB global-reduce input aliasing (OI-23, won't-fix).** An audit flagged the CUB
+  global-reduce fast path for ignoring workspace / aliasing its input, but the path is
+  correct on fp16/fp32/fp64 despite the overlap. A guard added to "fix" it regressed
+  fp16 and was reverted. Not a real bug.
+- **Vendored submodule build warnings (OI-30, won't-patch by policy).** Two build-time
+  warnings originate inside vendored submodules — `3rdparty/dmlc-core`'s concurrent-queue
+  `-1`→`uint32_t` sentinel (NVCC unsigned-conversion) and `3rdparty/onednn`'s vendored
+  ITT assembly lacking a `.note.GNU-stack` section (linker exec-stack). Patching them
+  would dirty the detached submodule pointers with no upstream PR to converge on; a
+  future submodule bump that includes the upstream fixes clears both automatically.
+
 ---
 
 *For the build/release recipe see [`docs/cuda_wheel_build.md`](docs/cuda_wheel_build.md)

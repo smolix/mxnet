@@ -64,8 +64,16 @@ RTX 50-series (Blackwell, `sm_120`), AMD EPYC 7B12 (Zen 2 CPU), and Apple Silico
 - **ONNX export/import** (PR #38) — defaults to the tested opset 13, exposes
   `opset_version`, emits explicit opset imports, fixes float16 constant encoding and
   `pooling_convention='full'` output-shape parity. Validated with ONNX 1.21 / ONNX
-  Runtime 1.24 (`tests/python/onnx`: 10525 passed). *Note: the published wheels are
-  built ONNX-free; enabling ONNX requires a source build — see OPEN_ISSUES.*
+  Runtime 1.24 (`tests/python/onnx`: 10525 passed). **Now shipped in the wheels
+  (OI-27):** the `mxnet.onnx` / `mxnet.contrib.onnx` packages are bundled (the wheel
+  build no longer sets `MXNET_SETUP_EXCLUDE_ONNX`), and `onnx` is an optional extra —
+  `pip install "mxnet[onnx]"` (pure-Python, no native rebuild; `onnxruntime` is only
+  needed to run exported models). Bringing the wheel ONNX suite fully green also fixed
+  three pre-existing exporter defects the suite had been hiding: a missing `_np_reshape`
+  ONNX converter (what `np.squeeze` lowers to); integer `sum`/`prod` declaring `int32`
+  output where mxnet upcasts to `int64` (now cast + declared int64); and `mean` always
+  declaring `float32` instead of preserving the input float dtype (fp16→fp16). `onnx`
+  is pinned `<1.22` to the validated range.
 
 ## 3. CUDA Graphs revival
 

@@ -81,6 +81,16 @@ OPENCV_PYTHON_INSTALL_REQUIRES = [
     'opencv-python>=4,<5',
 ]
 
+# ONNX export/import (mxnet.onnx) is pure-Python and now ships in the wheel (OI-27).
+# onnx is exposed as an *optional* extra so a plain `pip install mxnet` does not pull
+# protobuf/onnx unless requested: `pip install "mxnet[onnx]"`. (onnxruntime is only
+# needed to run exported models, e.g. in the tests/python/onnx suite.)
+# Pin to the validated ONNX range. The exporter is tested against onnx 1.21 / ORT 1.24;
+# newer onnx/onnxruntime are stricter in a few op edge cases that are not yet covered.
+ONNX_EXTRA_REQUIRES = [
+    'onnx>=1.7.0,<1.22',
+]
+
 # need to use distutils.core for correct placement of cython dll
 kwargs = {}
 if "--inplace" in sys.argv:
@@ -317,6 +327,8 @@ if 'install_requires' in kwargs and _include_cuda_runtime_deps():
     kwargs['install_requires'].extend(CUDA_RUNTIME_INSTALL_REQUIRES)
 if 'install_requires' in kwargs and _include_opencv_python_deps():
     kwargs['install_requires'].extend(OPENCV_PYTHON_INSTALL_REQUIRES)
+if 'install_requires' in kwargs:
+    kwargs.setdefault('extras_require', {})['onnx'] = ONNX_EXTRA_REQUIRES
 
 # NVIDIA runtime libs are NOT bundled — see install_requires above.
 # libmxnet.so's RUNPATH points at site-packages/nvidia/<pkg>/lib/ for them.

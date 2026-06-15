@@ -774,14 +774,16 @@ def test_onnx_export_npx_reshape_like(tmp_path, dtype):
 
 @pytest.mark.parametrize('dtype', ['int32', 'int64', 'float16', 'float32', 'float64'])
 def test_onnx_export_npx_gather_nd(tmp_path, dtype):
+    # gather_nd indices must be int32/int64 regardless of the data dtype (mxnet
+    # enforces this); the data dtype is what we parametrize over.
     # y[0] == dim(x)
     x1 = mx.np.random.uniform(-100, 100, (4, 5, 6, 7)).astype(dtype)
-    y1 = mx.np.random.randint(-4, 4, (4, 4, 4)).astype(dtype)
+    y1 = mx.np.random.randint(-4, 4, (4, 4, 4)).astype('int64')
     M1 = def_model(mx.npx, 'gather_nd')
     op_export_test('gather_nd1', M1, [x1, y1], tmp_path)
     # y[0] < dim(x)
     x2 = mx.np.random.uniform(-100, 100, (4, 5, 6, 7)).astype(dtype)
-    y2 = mx.np.random.randint(-4, 4, (2,3,4)).astype(dtype)
+    y2 = mx.np.random.randint(-4, 4, (2,3,4)).astype('int64')
     M2 = def_model(mx.npx, 'gather_nd')
     op_export_test('gather_nd2', M2, [x2, y2], tmp_path)
 

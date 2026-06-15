@@ -206,10 +206,6 @@ rendering incompatibility is now fixed, see [`FIXED.md`](FIXED.md) §10, but a f
 NumPy 2.x run is not yet a gate); DLPack interop (T6); broader cross-platform process
 lifecycle (T11). Strategic; revisit per concrete demand.
 
-<a id="oi-27"></a>
-### OI-27 — ONNX fixed in source but not shipped in wheels
-ONNX export/import was repaired in PR #38 (opset-13 default, ONNX 1.21 / ORT 1.24
-validated; see `FIXED.md` §2), but the **published wheels are built ONNX-free**, so
-`import`-time the ONNX path is absent. To use ONNX, build from source with the ONNX
-toolchain installed. Future opset bumps should be opened as new compatibility work only
-when required.
+> OI-27 (ONNX shipped in wheels) is **resolved** — the wheel now bundles the `mxnet.onnx`
+> / `mxnet.contrib.onnx` packages and exposes an `onnx` extra (`pip install "mxnet[onnx]"`).
+> See [`FIXED.md`](FIXED.md) §2.

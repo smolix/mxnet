@@ -988,6 +988,7 @@ def convert_sum(node, **kwargs):
     and return the created node.
     """
     from onnx.helper import make_node
+    from onnx import TensorProto
 
     name, input_nodes, attrs = get_inputs(node, kwargs)
 
@@ -996,27 +997,26 @@ def convert_sum(node, **kwargs):
 
     keepdims = get_boolean_attribute_value(attrs, "keepdims")
 
+    # MXNet sums integers into int64 (numpy convention), but ONNX ReduceSum keeps the
+    # input integer type, so the node output would mismatch the declared int64 graph
+    # dtype. Cast integer inputs to int64 up front and declare the int64 output (OI-27).
+    is_int = np.issubdtype(get_input_dtypes(node, kwargs)[0], np.integer)
+    nodes = []
+    reduce_in = input_nodes[0]
+    if is_int:
+        nodes.append(make_node('Cast', [input_nodes[0]], [name+'_i64'], to=int(TensorProto.INT64)))
+        reduce_in = name+'_i64'
+
+    reduce_inputs = [reduce_in]
     if axes:
         create_tensor(axes, name+'_axes', kwargs['initializer'])
-        input_nodes.append(name+'_axes')
-        node = make_node(
-            'ReduceSum',
-            inputs=input_nodes,
-            outputs=[name],
-            keepdims=keepdims,
-            name=name
-        )
-        return [node]
-    else:
-        create_tensor([1], name+'_1', kwargs['initializer'])
-        nodes = [
-            onnx.helper.make_node(
-                'ReduceSum',
-                inputs=input_nodes,
-                outputs=[name],
-                keepdims=keepdims,
-            )
-        ]
+        reduce_inputs.append(name+'_axes')
+
+    nodes.append(make_node('ReduceSum', inputs=reduce_inputs, outputs=[name],
+                           keepdims=keepdims, name=name))
+
+    if is_int:
+        return nodes, (np.dtype('int64'),)
     return nodes
 
 
@@ -1914,6 +1914,15 @@ def convert_npi_mean(node, **kwargs):
     dtype = np.dtype('float32')
     dtype_t = onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[dtype]
 
+    # ReduceMean is computed in float32 for precision, but MXNet's mean preserves a
+    # floating input dtype (float16->float16, float64->float64) and returns float32 for
+    # integer input. Declare and cast back to that output dtype so the node output
+    # matches the declared graph type (OI-27 — previously this always declared float32,
+    # which mismatched a float16-input mean).
+    in_dtype = get_input_dtypes(node, kwargs)[0]
+    out_dtype = np.dtype(in_dtype) if np.issubdtype(in_dtype, np.floating) else dtype
+    mean_out = name+'_meanf32' if out_dtype != dtype else name
+
     mx_axis = str(attrs.get("axis", 'None'))
     axes = convert_string_to_list(mx_axis) if mx_axis != 'None' else None
 
@@ -1924,7 +1933,7 @@ def convert_npi_mean(node, **kwargs):
         if keepdims:
             nodes = [
                 make_node('Cast', input_nodes, [name+'_cast'], to=dtype_t),
-                make_reduce_node('ReduceMean', [name+'_cast'], name, name+'_axes', axes, keepdims, opset_version),
+                make_reduce_node('ReduceMean', [name+'_cast'], mean_out, name+'_axes', axes, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
@@ -1935,21 +1944,26 @@ def convert_npi_mean(node, **kwargs):
                 make_node('Shape', [name+'_reduce'], [name+'_reduce_shape']),
                 make_node('Concat', [name+'_1', name+'_reduce_shape'], [name+'_concat'], axis=0),
                 make_node('Reshape', [name+'_reduce', name+'_concat'], [name+'_reshape']),
-                make_node('Squeeze', [name+'_reshape', name+'_0'], [name]),
+                make_node('Squeeze', [name+'_reshape', name+'_0'], [mean_out]),
             ]
     else:
         if keepdims:
             nodes = [
                 make_node('Cast', input_nodes, [name+'_cast'], to=dtype_t),
-                make_reduce_node('ReduceMean', [name+'_cast'], name, name+'_axes', None, keepdims, opset_version),
+                make_reduce_node('ReduceMean', [name+'_cast'], mean_out, name+'_axes', None, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
                 make_node('Cast', input_nodes, [name+'_cast'], to=dtype_t),
-                make_reduce_node('ReduceMean', [name+'_cast'], name, name+'_axes', None, keepdims, opset_version),
+                make_reduce_node('ReduceMean', [name+'_cast'], mean_out, name+'_axes', None, keepdims, opset_version),
             ]
-    return nodes, (dtype,)
+
+    if mean_out != name:
+        out_t = onnx.mapping.NP_TYPE_TO_TENSOR_TYPE[out_dtype]
+        nodes.append(make_node('Cast', [mean_out], [name], to=out_t))
+
+    return nodes, (out_dtype,)
 
 
 @mx_op.register("_npi_prod", OPSET_VERSION)
@@ -1966,17 +1980,27 @@ def convert_npi_prod(node, **kwargs):
 
     keepdims = get_boolean_attribute_value(attrs, "keepdims")
 
+    # MXNet multiplies integers into int64 (numpy convention); ONNX ReduceProd keeps the
+    # input integer type. Cast integer inputs to int64 and declare int64 output (OI-27).
+    from onnx import TensorProto
+    is_int = np.issubdtype(get_input_dtypes(node, kwargs)[0], np.integer)
+    prefix = []
+    reduce_in = input_nodes[0]
+    if is_int:
+        prefix = [make_node('Cast', [input_nodes[0]], [name+'_i64'], to=int(TensorProto.INT64))]
+        reduce_in = name+'_i64'
+
     if axes is not None:
         create_tensor(axes, name+'_axes', kwargs['initializer'])
         if keepdims:
             nodes = [
-                make_reduce_node('ReduceProd', [input_nodes[0]], name, name+'_axes', axes, keepdims, opset_version),
+                make_reduce_node('ReduceProd', [reduce_in], name, name+'_axes', axes, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             create_tensor([0], name+'_0', kwargs['initializer'])
             nodes = [
-                make_reduce_node('ReduceProd', [input_nodes[0]], name+'_reduce', name+'_axes', axes, keepdims, opset_version),
+                make_reduce_node('ReduceProd', [reduce_in], name+'_reduce', name+'_axes', axes, keepdims, opset_version),
                 make_node('Shape', [name+'_reduce'], [name+'_reduce_shape']),
                 make_node('Concat', [name+'_1', name+'_reduce_shape'], [name+'_concat'], axis=0),
                 make_node('Reshape', [name+'_reduce', name+'_concat'], [name+'_reshape']),
@@ -1985,13 +2009,16 @@ def convert_npi_prod(node, **kwargs):
     else:
         if keepdims:
             nodes = [
-                make_reduce_node('ReduceProd', [input_nodes[0]], name, name+'_axes', None, keepdims, opset_version),
+                make_reduce_node('ReduceProd', [reduce_in], name, name+'_axes', None, keepdims, opset_version),
             ]
         else:
             create_tensor([1], name+'_1', kwargs['initializer'])
             nodes = [
-                make_reduce_node('ReduceProd', [input_nodes[0]], name, name+'_axes', None, keepdims, opset_version),
+                make_reduce_node('ReduceProd', [reduce_in], name, name+'_axes', None, keepdims, opset_version),
             ]
+    nodes = prefix + nodes
+    if is_int:
+        return nodes, (np.dtype('int64'),)
     return nodes
 
 

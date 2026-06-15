@@ -90,8 +90,9 @@ What works
   `_sg_onednn_fully_connected`) on x86; fp16/fp32 forward + backward training.
 * **AMP (automatic mixed precision) subgraph** — on CPUs without AVX-512-BF16 the
   bf16 subgraph ops fall back to fp32 (all 6 AMP subgraph tests pass).
-* **ONNX export/import** (opset-13 default, ONNX 1.21 / ORT 1.24) — *in source
-  builds*; the published wheels are built ONNX-free (see [`OPEN_ISSUES.md`](OPEN_ISSUES.md)).
+* **ONNX export/import** (opset-13 default, ONNX 1.21 / ORT 1.24) — bundled in the
+  wheel; `pip install "mxnet[onnx]"` pulls the `onnx` dependency (pure-Python, no
+  native rebuild). `onnxruntime` is only needed to run exported models.
 * **Self-contained wheels.** Both the Linux CUDA wheel and the macOS CPU wheel
   bundle OpenCV and its **full transitive closure** into `mxnet/lib/` (ELF
   `$ORIGIN` on Linux, Mach-O `@loader_path` on macOS), so `import mxnet` reports
@@ -104,20 +105,19 @@ What works
 What is experimental or not covered
 -----------------------------------
 
-The five most likely to affect you (full list and details in
+The four most likely to affect you (full list and details in
 [`OPEN_ISSUES.md`](OPEN_ISSUES.md)):
 
 1. **CUDA 13.0 / driver R580 is unsupported** — the wheel pins
    `nvidia-cublas>=13.5`, which needs **driver R590+**. On R580 large GEMMs fail
    with `CUBLAS_STATUS_NOT_INITIALIZED`.
-2. **ONNX is not in the published wheels** (fixed in source only).
-3. **Apple Silicon: oneDNN INT8 + subgraph fusion are gated off** (the
+2. **Apple Silicon: oneDNN INT8 + subgraph fusion are gated off** (the
    Xbyak_aarch64 JIT is unreliable on Apple Silicon — see
    `SupportDNNLAArch64JITPrimitives` in `src/operator/nn/dnnl/dnnl_base-inl.h`);
    those ops fall back to native kernels and the `tests/python/dnnl` fusion/quant
    lane does not apply.
-4. **bf16 on CPUs without AVX-512-BF16** is emulated in fp32 — correct, not faster.
-5. **Backward through quantized ops is unvalidated** — forward INT8 inference is
+3. **bf16 on CPUs without AVX-512-BF16** is emulated in fp32 — correct, not faster.
+4. **Backward through quantized ops is unvalidated** — forward INT8 inference is
    solid; quantized *training* is not verified.
 
 System requirements

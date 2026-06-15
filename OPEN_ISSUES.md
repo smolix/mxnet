@@ -8,18 +8,16 @@ What has already been fixed is in [`FIXED.md`](FIXED.md).
 Severity: **High** = can produce wrong results or block a common workflow ·
 **Med** = perf / robustness / niche correctness · **Low** = cosmetic / informational.
 
-## Start here — the three things most likely to bite you
+## Start here — the two things most likely to bite you
 
 > The old **CUDA 13.0 / R580** driver limitation (the `nvidia-cublas>=13.5` pin needs
 > driver **R590+**) is now an accepted, documented platform constraint rather than open
 > work — see [`FIXED.md`](FIXED.md) §1 (was OI-19). Upgrade the driver to R590+, or pin
 > an older wheel for R580.
 
-1. **ONNX is not in the published wheels** — fixed in source (PR #38) but wheels are
-   built ONNX-free; you need a source build to use it. ([OI-27](OPEN_ISSUES_DETAILS.md#oi-27))
-2. **Apple Silicon oneDNN INT8/fusion is gated off** — quantization + subgraph fusion
+1. **Apple Silicon oneDNN INT8/fusion is gated off** — quantization + subgraph fusion
    fall back to native kernels on arm64; the `tests/python/dnnl` lane does not apply. ([OI-17](OPEN_ISSUES_DETAILS.md#oi-17))
-3. **Backward through quantized ops is unvalidated** — forward INT8 inference is
+2. **Backward through quantized ops is unvalidated** — forward INT8 inference is
    solid; training through `_sg_onednn_*` is not verified. ([OI-8](OPEN_ISSUES_DETAILS.md#oi-8))
 
 ## Correctness / numeric
@@ -82,7 +80,9 @@ Severity: **High** = can produce wrong results or block a common workflow ·
 | [OI-24](OPEN_ISSUES_DETAILS.md#oi-24) | Med | Wheel publication is manual; no conda/system packaging or release automation |
 | [OI-25](OPEN_ISSUES_DETAILS.md#oi-25) | Med | No CUDA build-matrix CI (Ada/Hopper/Blackwell + CUDA 12.x) |
 | [OI-26](OPEN_ISSUES_DETAILS.md#oi-26) | Low | Downstreams unverified (GluonNLP/Sockeye/AutoGluon, ps-lite, Py3.13+, NumPy 2.x [op shape/axis-param rendering fixed], DLPack) |
-| [OI-27](OPEN_ISSUES_DETAILS.md#oi-27) | Med | ONNX fixed in source but not shipped in wheels |
+
+> OI-27 (ONNX shipped in wheels) is **resolved** — the wheel now bundles the
+> `mxnet.onnx` packages; `pip install "mxnet[onnx]"` pulls onnx. See [`FIXED.md`](FIXED.md) §2.
 
 > Closed, no action planned: **D2L book compatibility** (all items resolved — `train_ch13`
 > multi-GPU DeadKernel and the two book-side convergence gaps, was OI-28/29, `FIXED.md` §10);

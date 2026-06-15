@@ -1822,6 +1822,28 @@ def convert_npx_reshape(node, **kwargs):
     return nodes
 
 
+@mx_op.register("_np_reshape")
+def convert_np_reshape(node, **kwargs):
+    """Map MXNet's _np_reshape (numpy reshape) to ONNX Reshape. This is the op
+    np.squeeze lowers to (a reshape to the squeezed shape), so it must be supported
+    for ONNX export. newshape carries numpy semantics — concrete dims with at most one
+    -1 (infer); the MXNet-only reshape codes (-2/-3/-4/-5/-6) do not occur on this
+    numpy path and are rejected if they ever appear.
+    """
+    from onnx.helper import make_node
+
+    name, input_nodes, attrs = get_inputs(node, kwargs)
+    targ_shape = convert_string_to_list(attrs['newshape'])
+
+    unsupported = [x for x in targ_shape if x in (-2, -3, -4, -5, -6)]
+    if unsupported:
+        raise NotImplementedError('conversion of _np_reshape with special dims '
+                                  '%s is not implemented yet' % unsupported)
+
+    create_tensor(targ_shape, name+'_targ_shape', kwargs['initializer'])
+    return [make_node('Reshape', [input_nodes[0], name+'_targ_shape'], [name], name=name)]
+
+
 # Legacy Reshape
 @mx_op.register("Reshape")
 def convert_reshape(node, **kwargs):

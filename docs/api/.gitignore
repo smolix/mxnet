@@ -1,0 +1,4 @@
+# Sphinx build output and auto-generated autosummary stubs (regenerated on build)
+_build/
+generated/
+_build_log.txt

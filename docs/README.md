@@ -34,6 +34,7 @@ historical reference only**.
 | [`../OPEN_ISSUES.md`](../OPEN_ISSUES.md) + [`details`](../OPEN_ISSUES_DETAILS.md) | Known limitations and open work |
 | [`../BUILDING.md`](../BUILDING.md) | Build from source (Linux/CUDA and Apple Silicon) |
 | [`cuda_wheel_build.md`](cuda_wheel_build.md) | Authoritative, provenance-gated release-wheel pipeline |
+| [`api/`](api/) | Sphinx **API reference**, generated from the installed package's docstrings |
 
 ## Legacy upstream documentation (historical — not built here)
 
@@ -51,136 +52,90 @@ to revive them:
 
 ---
 
-# Proposal: generating MXNet 2.0 API documentation
+# API reference (`docs/api/`)
 
-> **Status: recommendation only — not yet implemented.** This section describes a
-> sensible, low-maintenance way to publish API docs for the fork. Nothing under
-> `docs/api/` exists yet; the layout and config below are the proposed starting
-> point for a follow-up change.
+The fork ships a **minimal, self-contained Sphinx API reference** under
+[`api/`](api/). It is generated entirely from the docstrings in the installed
+`mxnet` package — there is no hand-written narrative and no tutorials. This is the
+low-maintenance way to give users *some* real documentation (the actual framework
+API, extracted from the code) without resurrecting the full website.
 
-## Why not just fix the old site
+## Why a fresh reference instead of reviving the old site
 
-Reviving `docs/python_docs` means simultaneously: upgrading from Sphinx 1.5 to 7+
-(rewriting `conf.py` for the removed APIs), replacing the unmaintained
-`recommonmark` with `myst-parser`, un-vendoring or porting `mxtheme`, wiring
-`breathe`/Doxygen for C++, and re-running `nbsphinx` tutorial evaluation — which
-needs a GPU and a working data pipeline. That is a large, fragile effort whose
-main payload (executed tutorials, the apache-branded theme) is not what a fork
-needs. A clean, minimal API reference is far cheaper to stand up and to keep
-green, and it can grow later.
+Reviving `python_docs/` would mean upgrading Sphinx 1.5 → 8 (rewriting `conf.py`
+for removed APIs), replacing `recommonmark` with `myst-parser`, porting the
+vendored `mxtheme`, wiring `breathe`/Doxygen, and re-running `nbsphinx` tutorial
+evaluation (which needs a GPU and a data pipeline). That is a large, fragile effort
+whose main payload — executed tutorials and the apache-branded theme — is not what
+a fork needs. A clean autosummary reference is far cheaper to stand up and keep
+green.
 
-## Recommended approach
-
-Stand up a **new, minimal Sphinx API reference** under `docs/api/`, built from the
-**installed** `mxnet` package (the CPU wheel is enough — no GPU needed to document
-the Python API), using only maintained tooling:
-
-- **Sphinx 7+** with `sphinx.ext.autodoc` + `sphinx.ext.autosummary` (with
-  `:recursive:`) to crawl the package, `sphinx.ext.napoleon` for the NumPy/Google
-  docstring style MXNet uses, `sphinx.ext.intersphinx` (link to numpy/python), and
-  `sphinx.ext.viewcode`.
-- **`myst-parser`** for Markdown pages (the modern replacement for `recommonmark`),
-  so narrative pages can be authored in Markdown alongside the autosummary API.
-- **`furo`** theme (or `pydata-sphinx-theme`) — actively maintained, no vendoring.
-- **No tutorial execution** for v1 (`nbsphinx` omitted). **No C++** for v1 (add
-  Doxygen + `breathe` later as a separate `docs/api/cpp` target).
-
-### Proposed layout
+## What's here
 
 ```
 docs/api/
-├── conf.py             # the skeleton below
-├── index.md            # landing page (MyST Markdown)
-├── requirements.txt    # pinned doc deps
-├── Makefile            # `make html`
-└── _templates/         # autosummary recursive templates (optional)
+├── conf.py                      # Sphinx config — documents the *installed* mxnet
+├── index.rst                    # landing page + the autosummary module list
+├── requirements.txt             # pinned doc toolchain
+├── Makefile                     # `make html` / `make serve` / `make clean`
+├── _templates/autosummary/      # recursive-autosummary templates (module + class)
+└── .gitignore                   # ignores _build/ and the generated/ stubs
 ```
 
-`docs/api/requirements.txt`:
+Tooling: Sphinx + `autosummary` (`:recursive:`) + `napoleon` (MXNet uses NumPy-style
+docstrings) + `intersphinx` + `viewcode` + `myst-parser` + `sphinx-autodoc-typehints`,
+with the maintained **furo** theme. Documented namespaces: `mxnet.numpy` (`np`),
+`mxnet.numpy_extension` (`npx`), `ndarray`, `symbol`, `gluon` (recursive:
+nn/rnn/loss/data/metric/model_zoo), `optimizer`, `lr_scheduler`, `io`, `image`,
+`autograd`, `kvstore`, `device`, `profiler`, `runtime`, `contrib`.
 
-```
-sphinx>=7,<9
-furo
-myst-parser
-sphinx-autodoc-typehints
-```
+## The one requirement: an importable `mxnet`
 
-`docs/api/conf.py` skeleton:
+MXNet registers most of its operator surface dynamically from the C++ backend at
+import time, so `conf.py` does `import mxnet` and the build host must have a
+**working** mxnet:
 
-```python
-import mxnet  # documented from the installed package
+- A **CPU wheel** (the macOS wheel, or a `USE_CUDA=OFF` Linux build) is enough and
+  documents the full CPU operator set — no GPU needed.
+- A **CUDA wheel imports only where its CUDA libraries load.** On a Linux GPU host
+  it additionally surfaces GPU-only operators; on a GPU-less runner `import mxnet`
+  fails, so use a CPU wheel there.
 
-project = "MXNet 2.0 (smolix fork)"
-author = "smolix/mxnet contributors"
-release = mxnet.__version__
-
-extensions = [
-    "sphinx.ext.autodoc",
-    "sphinx.ext.autosummary",
-    "sphinx.ext.napoleon",
-    "sphinx.ext.intersphinx",
-    "sphinx.ext.viewcode",
-    "sphinx_autodoc_typehints",
-    "myst_parser",
-]
-
-autosummary_generate = True          # build stub pages by crawling the package
-autodoc_default_options = {"members": True, "show-inheritance": True}
-autodoc_typehints = "description"
-napoleon_numpy_docstring = True
-# If any optional import is missing in the docs venv, mock it instead of failing:
-autodoc_mock_imports = []            # e.g. ["onnx"] if you document the ONNX bridge
-
-intersphinx_mapping = {
-    "python": ("https://docs.python.org/3", None),
-    "numpy": ("https://numpy.org/doc/stable", None),
-}
-
-html_theme = "furo"
-source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
-master_doc = "index"
-```
-
-`docs/api/index.md` (drive the recursive crawl from a single autosummary):
-
-````markdown
-# MXNet 2.0 API reference
-
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :recursive:
-
-   mxnet.np
-   mxnet.npx
-   mxnet.gluon
-   mxnet.optimizer
-   mxnet.io
-   mxnet.image
-   mxnet.autograd
-   mxnet.runtime
-```
-````
-
-### Build it
+## Build it
 
 ```bash
 uv venv .venv-docs --python 3.12
-uv pip install --python .venv-docs/bin/python \
-  dist/mxnet-*.whl -r docs/api/requirements.txt
-.venv-docs/bin/python -m sphinx -b html docs/api docs/api/_build/html
-# open docs/api/_build/html/index.html
+uv pip install --python .venv-docs/bin/python dist/mxnet-*.whl -r docs/api/requirements.txt
+.venv-docs/bin/sphinx-build -b html docs/api docs/api/_build/html
+# open docs/api/_build/html/index.html      (or:  cd docs/api && make html)
 ```
 
-### Publish (GitHub Pages) — sketch
+A clean build emits a few hundred warnings and **succeeds** (do **not** pass `-W`).
+Almost all warnings are MXNet's own auto-generated operator docstrings not being
+valid reStructuredText, plus ambiguous cross-references for names that exist in
+several namespaces at once (`reshape` is in `numpy`, `ndarray`, and `symbol`). They
+are non-fatal; the dominant `ref.python` category is suppressed in `conf.py`. The
+build produces ~200 API pages under `_build/html/generated/`.
 
-A single workflow installs the CPU wheel + doc deps, runs `sphinx-build`, and
-deploys to the `gh-pages` branch:
+## Deploying on a Linux + GPU box
+
+On the GPU host, install the CUDA wheel and build the same way — the import then
+documents the GPU paths too:
+
+```bash
+pip install <the cu13 release wheel> -r docs/api/requirements.txt
+sphinx-build -b html docs/api docs/api/_build/html
+```
+
+Serve `docs/api/_build/html/` with any static web server (`python -m http.server`,
+nginx, …). To publish via GitHub Pages instead, a minimal workflow (CPU wheel, no
+GPU runner needed):
 
 ```yaml
-# .github/workflows/docs.yml
+# .github/workflows/docs.yml  (optional)
 name: docs
 on: { push: { branches: [master] } }
+permissions: { contents: write }
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -188,19 +143,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install dist/mxnet-*.whl -r docs/api/requirements.txt   # or the latest release wheel
-      - run: python -m sphinx -b html docs/api docs/api/_build/html
+      - run: pip install <cpu-wheel-url> -r docs/api/requirements.txt
+      - run: sphinx-build -b html docs/api _site
       - uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: docs/api/_build/html
+        with: { github_token: ${{ secrets.GITHUB_TOKEN }}, publish_dir: _site }
 ```
 
-### Later add-ons (not in v1)
+## Later add-ons
 
-- **C++ API**: Doxygen + `breathe` as a separate target (`docs/api/cpp`).
-- **Tutorials**: port a handful of the legacy `python_docs/.../tutorials` notebooks
-  to MyST Markdown and include them *without* execution (`nbsphinx_execute='never'`)
-  until a CI GPU runner exists.
-- **Versioned docs**: `sphinx-multiversion` once there is more than one doc-bearing
-  release.
+- **C++ API** via Doxygen + `breathe`, as a separate target.
+- **Versioned docs** with `sphinx-multiversion` once more than one doc-bearing
+  release exists.

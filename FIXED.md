@@ -55,9 +55,10 @@ RTX 50-series (Blackwell, `sm_120`), AMD EPYC 7B12 (Zen 2 CPU), and Apple Silico
   `quantize_net(qat=True)`); composite-fusion backward with a quantized conv output
   remains a documented type-inference gap (the 4 strict xfails).
 - **cuBLASLt GEMM** (`MXNET_USE_CUBLASLT=1`) — heuristic-cached `cublasLtMatmul`
-  for fp32 (PR-A) plus fp16/fp64 (PR-B), with a per-device handle + workspace +
-  LRU algorithm cache. Bitwise-parity verified against the legacy path. Also used
-  for capture-safe `batch_dot`/`matmul` (see §3).
+  for fp32 (PR-A), fp16/fp64 (PR-B), and strided-batched (PR-C, `batch_dot` /
+  `linalg_batch_gemm` via `MaybeCublasLt{S,H,D}gemmStrided`), with a per-device handle +
+  workspace + LRU algorithm cache. Bitwise-parity verified against the legacy path. Also
+  used for capture-safe `batch_dot`/`matmul` (see §3).
 - **cuDNN 9.14 → 9.22 bump** — closes the `sm_120` depthwise heuristic gap:
   depthwise 3×3 256→256 went **0.16 → 1.14 TFLOPS (~7×)**; other shapes within
   noise.
@@ -122,6 +123,15 @@ Implemented and validated across phases (`src/imperative/cuda_graphs.h`,
   under load — fixed (PR #58): `LazyAllocArray::Get()` no longer holds
   `create_mutex_` across CUDA stream init; ops dropped during shutdown now finish
   inline. Validated under load; the quarantined test was un-skipped.
+- **`LazyAllocArray::Get()` lock-free read race (OI-22)** — the old
+  double-checked-locking fast path read `head_[idx]` / `more_[idx]` *before* taking
+  `create_mutex_`, an unsynchronized read concurrent with another thread's write under
+  the lock (technically UB, benign in practice). `Get()` now takes `create_mutex_`
+  unconditionally on entry (`src/common/lazy_alloc_array.h`), so every slot read is
+  synchronized; the hot CPU(0) random-resource path stays lock-free via pointers cached
+  once in the `ResourceManager` constructor (`cpu_rand0_` / `cpu_parallel_rand0_`,
+  `src/resource.cc`), which are immutable after construction and therefore race-free —
+  so no C++20 `std::atomic<std::shared_ptr>` was needed. Commit `6f7cea22d`.
 - **Shutdown ordering (A13)** — `MXNotifyShutdown` now calls `Engine::Stop()` so
   worker threads are joined before Python teardown (`test_engine_shutdown.py`).
 - **CUDA event-pool recycling (T1)** — lapped event slots under-synchronized across

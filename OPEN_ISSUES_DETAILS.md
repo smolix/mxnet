@@ -9,9 +9,6 @@ resolved work is retired to `git log` (and summarized in [`FIXED.md`](FIXED.md))
 
 ## Correctness / numeric
 
-> OI-1 (integer `matmul`/`dot`/`tensordot`), OI-2 (`np.mean(int)` dtype), and OI-3
-> (fp16 `var`/`std` overflow) are **resolved** — see [`FIXED.md`](FIXED.md) §7.
-
 <a id="oi-4"></a>
 ### OI-4 — NumPy view-aliasing gaps (narrowed)
 The Apache-issue regression sweep flagged a class of operations that NumPy returns as a
@@ -88,8 +85,14 @@ tracked by the 4 strict-xfail tests, which will flag automatically once fixed.
 
 <a id="oi-9"></a>
 ### OI-9 — RNN re-issues cuDNN descriptors every forward (was M4)
-Descriptor / temp-size / clip caching and an async sequence-length memcpy live only in
-the narrow `use_sequence_length` path. Stateful change; deferred to its own cycle.
+The cuDNN-v8 GPU forward re-issues the RNN data descriptors (`cudnnSetRNNDataDescriptor`),
+re-queries `cudnnGetRNNTempSpaceSizes`, and re-applies `cudnnRNNSetClip_v8` on **every**
+forward — none are cached across calls (only descriptor *creation* is guarded by
+`init_cudnn_`, `src/operator/rnn-inl.h`). Since the cuDNN-v8 rewrite the per-batch
+sequence-length upload (`EnsureDevSeqLengthsBuffer` + `cudaMemcpyAsync`, `rnn-inl.h:884`)
+runs unconditionally in **both** the packed and `use_sequence_length` paths. **Real fix:**
+cache the data descriptors / temp-space sizes / clip config keyed on the (shape, mode)
+tuple and skip the re-issue when unchanged. Stateful change; deferred to its own cycle.
 
 <a id="oi-10"></a>
 ### OI-10 — Proposal ops do per-call `cudaMalloc`/`cudaFree` (was M7)
@@ -128,15 +131,22 @@ to 16 (81% waste); (2) brgemm is throughput-designed and its overhead dominates 
 bs=1; (3) oneDNN v3 picks brg_conv over v2's faster `jit:avx2` here. **Workarounds:**
 set `OMP_NUM_THREADS=1` for bs=1 inference; consider `DNNL_DEFAULT_FPMATH_MODE`. Some
 of the 512-channel slowdown is inherent to the padding + cache behavior. The
-`OMP_NUM_THREADS=1` / fpmath guidance + root cause is now documented in `README.md`
-(troubleshooting); the kernel-level perf fix itself remains deferred.
+`OMP_NUM_THREADS=1` / fpmath guidance + root cause is documented in `README.md`
+(troubleshooting). A code-level mitigation also ships: the **FU-3 dispatch gate**
+(`src/operator/nn/dnnl/dnnl_convolution.cc`, commit `17ee6dfab`) detects the pathological
+region (`!AVX-512 && batch_size<=1 && 0<IC<8 && !quantized`) and walks oneDNN's dispatch
+past `brg_conv:avx2` to the next non-brg impl, sidestepping the IC-padding cliff
+(`tests/python/dnnl/test_b8_conv_dispatch.py`). Only the oneDNN brgemm *kernel* improvement
+itself (an upstream concern) remains deferred.
 
 <a id="oi-15"></a>
 ### OI-15 — cuBLASLt follow-ups deferred
-PR-A (fp32) and PR-B (fp16/fp64) landed (see `FIXED.md` §2). Deferred: mshadow
+PR-A (fp32), PR-B (fp16/fp64), and PR-C (strided-batched, commit `3e21065f2`) landed
+(see `FIXED.md` §2) — `batch_dot` / `linalg_batch_gemm` now route through
+`MaybeCublasLt{S,H,D}gemmStrided` (`src/operator/linalg_impl.h`). Deferred: mshadow
 `dot_engine-inl.h` rewiring (possibly a separate submodule PR), INT8 via cuBLASLt, the
-true-fp16 HMMA path (`MXNET_FC_TRUE_FP16=1` still uses legacy `cublasGemmEx`), batched
-GEMM coverage, and the default-on flip. bf16 is not yet reachable via `mx.nd.dot`
+true-fp16 HMMA path (`MXNET_FC_TRUE_FP16=1` still uses legacy `cublasGemmEx`), and the
+default-on flip. bf16 is not yet reachable via `mx.nd.dot`
 (mshadow `MSHADOW_REAL_TYPE_SWITCH` limitation). Datacenter Blackwell (B100/B200) is
 expected to show ~1.5–1.7× but has not been benchmarked (validation card is a 110 W
 workstation SKU).
@@ -165,11 +175,6 @@ backend works; the `tests/python/dnnl` *fusion + quantization* lane asserts fusi
 quant happened and therefore does not apply on arm64 (it is not a wheel defect). The
 float path and ~14.9k unittest/operator/NumPy/Gluon tests pass on the macOS CPU wheel.
 
-> OI-18 (bf16 emulated in fp32 on CPUs without AVX-512-BF16 — inherent) and OI-19
-> (cuBLAS≥13.5 / driver R590+) are **accepted constraints**, and OI-20 (cuDNN
-> minor-version mismatch warning) is **resolved** (the runtime check now warns only on a
-> major-version difference) — see [`FIXED.md`](FIXED.md) §1 and §11.
-
 ---
 
 ## Engine / concurrency
@@ -183,17 +188,6 @@ reproducer); (2) the queue receiving `SignalForKill` before an op completes. Now
 pointer / `pending_ops` / shutdown phase / kill flag on timeout (it does not abort).
 A reliable reproducer (seen on aarch64) is needed to land a fix. Distinct from the
 cold-start deadlock, which **is** fixed (`FIXED.md` §5).
-
-<a id="oi-22"></a>
-### OI-22 — `LazyAllocArray<T>::Get()` lock-free read race
-The lock-free fast path reads `head_[idx]` without synchronization while another thread
-may be writing it — technically UB, pre-existing, benign in practice. A proper fix needs
-C++20 `std::atomic<std::shared_ptr>` or a seqlock. (Note: the *cold-start deadlock* fix
-already moved `ThreadPool` readiness out of the `create_mutex_` critical section; this
-remaining item is the lock-free read itself.)
-
-> OI-23 (CUB global-reduce input aliasing) is closed **won't-fix** — see
-> [`FIXED.md`](FIXED.md) §11.
 
 ---
 
@@ -218,7 +212,3 @@ rendezvous (T3); Python 3.13+ (T4); NumPy 2.x ABI (T5 — the operator shape/axi
 rendering incompatibility is now fixed, see [`FIXED.md`](FIXED.md) §10, but a full-suite
 NumPy 2.x run is not yet a gate); DLPack interop (T6); broader cross-platform process
 lifecycle (T11). Strategic; revisit per concrete demand.
-
-> OI-27 (ONNX shipped in wheels) is **resolved** — the wheel now bundles the `mxnet.onnx`
-> / `mxnet.contrib.onnx` packages and exposes an `onnx` extra (`pip install "mxnet[onnx]"`).
-> See [`FIXED.md`](FIXED.md) §2.

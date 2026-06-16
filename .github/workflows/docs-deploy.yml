@@ -68,18 +68,28 @@ jobs:
           mkdir -p build && cd build
           # USE_WERROR=OFF: gcc-11 on 22.04 raises false-positive -Wmaybe-uninitialized
           # in vendored mshadow; this is a docs-only import build, not a release build.
+          # Route compiles through ccache so the ~/.ccache cache action actually
+          # speeds up subsequent runs (without the launchers cmake never invokes
+          # ccache and every run is a cold full build).
           CXXFLAGS="-Wno-error=strict-overflow" cmake -G Ninja \
               -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
               -DUSE_WERROR=OFF \
               -DUSE_CUDA=OFF -DUSE_CUDNN=OFF -DUSE_NCCL=OFF \
               -DUSE_ONEDNN=OFF -DUSE_OPENCV=OFF -DUSE_OPENMP=OFF \
               -DUSE_BLAS=open -DUSE_LAPACK=ON \
               ..
           ninja mxnet
+          ccache -s | grep -iE 'hits|misses' || true
 
       - name: Install mxnet (editable) + docs toolchain
         run: |
-          python -m pip install --upgrade pip
+          # setuptools+wheel are mxnet's PEP 517 build backend; with
+          # --no-build-isolation they must already be present in the env, and
+          # Python 3.12 + modern pip no longer bundle setuptools — without this the
+          # editable install dies with "Cannot import 'setuptools.build_meta'".
+          python -m pip install --upgrade pip setuptools wheel
           # mxnet runtime deps needed at import + setup.py autocomplete time.
           python -m pip install "numpy<2" requests "graphviz>=0.8.1,<0.9.0" "packaging>=20.0"
           # Build against the populated env (setup.py's autocomplete imports the

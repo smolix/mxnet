@@ -67,14 +67,23 @@ jobs:
           # gcc-7) is stricter and raises false-positive warnings in vendored mshadow
           # (e.g. -Wmaybe-uninitialized in Shape<>) that -Werror would fail on, so build
           # this docs-only target with USE_WERROR=OFF.
+          # Route compiles through ccache (the ~/.ccache cache action above is
+          # otherwise dead weight — without these launchers cmake never invokes
+          # ccache, ~/.ccache stays empty, and every run is a cold ~64-min full
+          # build).  With them, an incremental run only recompiles changed TUs.
           CXXFLAGS="-Wno-error=strict-overflow" cmake \
               -DCMAKE_BUILD_TYPE="RelWithDebInfo" \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
               -DUSE_WERROR=OFF \
               -DUSE_ONEDNN=OFF \
               -DUSE_CUDA=OFF \
               -G Ninja ..
-          ninja
+          # Only libmxnet is needed for the docs autodoc import; bare `ninja`
+          # also builds tests/examples the linkcheck never uses.
+          ninja mxnet
           cd ..
+          ccache -s | grep -iE 'hits|misses' || true
         shell: bash
 
       - name: Setup Python

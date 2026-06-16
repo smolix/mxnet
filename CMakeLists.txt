@@ -368,6 +368,15 @@ else()
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3")
   endif()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_C_FLAGS}")
+  # gcc — especially 13+ on the current runner images — floods these three warnings
+  # on the vendored, template-heavy mshadow/nnvm code, where they are well-known
+  # false positives (e.g. -Wmaybe-uninitialized in mshadow Shape<>). Suppress them on
+  # GNU so the build log is readable; clang/AppleClang are unaffected (they don't
+  # accept these spellings, and unknown -Wno-* there would itself warn).
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    string(APPEND CMAKE_CXX_FLAGS
+      " -Wno-maybe-uninitialized -Wno-dangling-reference -Wno-array-bounds")
+  endif()
 endif()
 
 if(NOT mxnet_LINKER_LIBS)
@@ -817,7 +826,10 @@ FILE(GLOB_RECURSE NNVMSOURCE
 add_library(nnvm OBJECT ${NNVMSOURCE})
 set_target_properties(nnvm PROPERTIES CXX_CLANG_TIDY "")  # don't lint 3rdparty dependency
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(nnvm PRIVATE -Wno-deprecated-declarations -Wno-unused-value)
+  # nnvm is vendored 3rdparty we don't maintain; silence ALL of its warnings (this
+  # is the noisy "Building CXX object CMakeFiles/nnvm.dir/..." output) rather than
+  # chasing each new compiler's diagnostics. Our own src/ warnings are unaffected.
+  target_compile_options(nnvm PRIVATE -w)
 endif()
 list(APPEND SOURCE $<TARGET_OBJECTS:nnvm>)
 

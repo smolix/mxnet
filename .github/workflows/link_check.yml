@@ -1,6 +1,20 @@
 name: link check
 
-on: [push, pull_request]
+# Branch-filter the push trigger: a same-repo PR otherwise fires BOTH `push` (to
+# the PR branch) and `pull_request`, running the libmxnet build twice. Now push
+# only triggers on master; PRs are covered by the pull_request event.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs (e.g. rapid pushes to a PR) so full builds don't pile up.
+concurrency:
+  group: link-check-${{ github.ref }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -8,10 +22,10 @@ defaults:
 
 jobs:
   linkcheck:
-    # ubuntu-20.04 was retired by GitHub-hosted runners (2025), so this job sat
-    # queued indefinitely. Bump to 22.04; this also requires dropping the gcc-7
-    # toolchain (not packaged on 22.04) and the EOL Python 3.8 below.
-    runs-on: ubuntu-22.04
+    # ubuntu-20.04 was retired by GitHub-hosted runners (2025); this job runs on
+    # ubuntu-latest. That dropped the old gcc-7 toolchain and EOL Python 3.8 — the
+    # legacy docs stack now pins Python 3.9 explicitly below (runner-independent).
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
     steps:

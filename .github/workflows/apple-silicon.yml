@@ -1,0 +1,28 @@
+# Apple Silicon (arm64) CPU build + smoke test.
+#
+# This is the single entry point for the macOS arm64 CI; it just calls the
+# reusable macos-arm64-cpu.yml (build libmxnet + import/pytest smoke).  It used
+# to be split across two near-identical wrappers (os_x_mklbuild.yml "Apple
+# Silicon smoke" and os_x_staticbuild.yml "continuous build"), both triggered on
+# the same push/PR events and both calling the same reusable workflow — so every
+# push and PR built macOS arm64 twice.  Consolidated into one.
+name: Apple Silicon CPU
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-silicon-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apple-silicon:
+    name: Apple Silicon CPU build + smoke
+    uses: ./.github/workflows/macos-arm64-cpu.yml

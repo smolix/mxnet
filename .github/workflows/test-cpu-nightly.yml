@@ -16,7 +16,7 @@ concurrency:
 jobs:
   test:
     name: CPU pytest sweep (operator, gluon, dnnl)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     # Cold build (~70 min at -j4) + deps install + 30-min pytest sweep, with
     # headroom. Nightly normally restores the build-cpu master cache (see the
     # cmake-build-cpu-/ccache-build-cpu- restore-keys) and builds warm in

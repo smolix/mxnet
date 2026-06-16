@@ -1,9 +1,17 @@
 name: license check
 
-on: [push, pull_request]
+# Branch-filter push so a same-repo PR doesn't run this twice (push + pull_request).
+on:
+  push:
+    branches: [master]
+  pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: license-check-${{ github.ref }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -19,6 +27,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Check License Header
-        uses: apache/skywalking-eyes@main
+        # Pin to a release tag rather than the moving @main ref (supply-chain hygiene).
+        uses: apache/skywalking-eyes@v0.8.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

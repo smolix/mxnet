@@ -30,6 +30,9 @@ sphinxcontrib-htmlhelp==1.0.3
 sphinxcontrib-jsmath==1.0.1
 sphinxcontrib-qthelp==1.0.3
 sphinxcontrib-serializinghtml==1.1.5
+# alabaster (the default HTML theme, also an unconstrained sphinx dep) likewise
+# drifted to a release that needs Sphinx>=3.4; pin to the last 2.x-compatible one.
+alabaster==0.7.12
 matplotlib
 notebook
 nbconvert==5.6.1

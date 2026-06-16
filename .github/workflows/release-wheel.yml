@@ -16,8 +16,8 @@ permissions:
 
 jobs:
   build-wheel:
-    name: Build CPU wheel (oneDNN + OpenCV bundled) on ubuntu-22.04
-    runs-on: ubuntu-22.04
+    name: Build Linux x86_64 CPU wheel (oneDNN + OpenCV bundled)
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -110,3 +110,104 @@ jobs:
             GPU/CUDA wheels require a self-hosted CUDA runner and are not built by
             this workflow — see docs/cuda_wheel_build.md and
             tools/release_cuda_wheel.sh.
+
+  build-macos-wheel:
+    name: Build macOS arm64 CPU wheel (oneDNN + OpenCV + OpenMP bundled)
+    # macos-15 is a native Apple-silicon (arm64) runner; matches macos-arm64-cpu.yml.
+    runs-on: macos-15
+    # Cold libmxnet build (~90 min) + the hermetic libomp build + the OpenCV
+    # closure bundling + the provenance gate; generous headroom.
+    timeout-minutes: 150
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          # The macOS wheel is built cp312 (matches the local build / full-test
+          # tooling, which uses python3.12).
+          python-version: "3.12"
+
+      - name: Verify native arm64 runner
+        run: |
+          set -e
+          test "$(uname -m)" = arm64 || { echo "expected an arm64 runner, got $(uname -m)" >&2; exit 1; }
+          sw_vers
+
+      - name: Install build dependencies (Homebrew)
+        run: |
+          # cmake + ninja for the build; opencv so USE_OPENCV=ON can discover it.
+          # libomp is intentionally NOT installed: build_cleanup_wheel.sh builds a
+          # hermetic libomp (tools/dependencies/build_openmp.py) and bundles it into
+          # the wheel for self-containment — there is no system libomp to fall back
+          # on, unlike Linux's libgomp.
+          brew install cmake ninja opencv
+
+      - name: Resolve tag (for the GitHub Release attachment)
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          else
+            tag="${{ github.event.inputs.tag }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS arm64 CPU wheel (oneDNN + OpenCV + OpenMP bundled)
+        env:
+          # build_cleanup_wheel.sh reads $PYTHON for its interpreter and $OpenCV_DIR
+          # to locate OpenCV (it defaults to the MacPorts path; this runner uses
+          # Homebrew). The flavor auto-detects to `macos` from `uname -s`.
+          PYTHON: python
+        run: |
+          set -e
+          # PEP 517 build front-end + setup.py's autocomplete imports must be present
+          # in this interpreter (the script runs `python -m build --no-isolation`).
+          python -m pip install --upgrade pip wheel setuptools build Cython \
+            "numpy<2" requests graphviz packaging
+          export OpenCV_DIR="$(brew --prefix opencv)/lib/cmake/opencv4"
+          echo "OpenCV_DIR=$OpenCV_DIR"
+          # No explicit version: the script's per-flavor default (2.0.0+cpu.macos.DATE)
+          # encodes the flavor and matches the published macOS wheel naming. The build
+          # configures the macOS arm64 CPU feature set, bundles the OpenCV closure +
+          # hermetic libomp, and runs the release_provenance.py gate (fails on any
+          # feature/payload mismatch).
+          MXNET_BUILD_JOBS=3 tools/build_cleanup_wheel.sh
+          ls -lh dist/*.whl
+
+      - name: Smoke test the wheel (fresh venv, import + features)
+        run: |
+          set -e
+          python -m venv /tmp/wheeltest
+          /tmp/wheeltest/bin/pip install --upgrade pip
+          /tmp/wheeltest/bin/pip install dist/*.whl
+          /tmp/wheeltest/bin/python - <<'PY'
+          import mxnet, mxnet.runtime as rt
+          print("mxnet", mxnet.__version__, "from", mxnet.__file__)
+          feats = rt.Features()
+          assert feats.is_enabled("OPENCV"), "OPENCV feature is OFF in the macOS wheel"
+          print("features OK:", feats)
+          PY
+
+      - name: Upload wheel as workflow artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mxnet-macos-arm64-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach wheel to GitHub Release
+        # Only add the wheel file to the release; the build-wheel (Linux) job owns
+        # the release body / notes, so this step deliberately sets no body to avoid
+        # clobbering it when both jobs target the same tag.
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          files: dist/*.whl
+          fail_on_unmatched_files: true

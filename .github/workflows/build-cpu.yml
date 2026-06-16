@@ -2,7 +2,7 @@ name: build-cpu
 
 on:
   push:
-    branches: [master, onednn-v3-port]
+    branches: [master]
   pull_request:
   workflow_dispatch:
 
@@ -16,7 +16,7 @@ concurrency:
 jobs:
   build:
     name: CPU build (oneDNN, no CUDA)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     # Job-level: build step cap (120) + ~20 (setup, smoke-test, artefact
     # upload, cache save). Generous headroom so the *first* cold build in a
     # ref scope completes and seeds the ccache/build-dir caches — once seeded,
@@ -97,7 +97,7 @@ jobs:
             -DBUILD_CPP_EXAMPLES=OFF
 
       - name: Build (ninja mxnet)
-        # Standard ubuntu-22.04 GitHub-hosted runners are 4 vCPU / 16 GB
+        # Standard ubuntu-latest GitHub-hosted runners are 4 vCPU / 16 GB
         # (the old "7 GB" comment was stale, which is why this was pinned
         # to -j2). Each mxnet cc1plus peaks ~1.5 GB RSS in the heavy-template
         # files (operator_tune.cc, np_moments_op.cc, etc.), so -j4 peaks

@@ -2,7 +2,7 @@ name: lint
 
 on:
   push:
-    branches: [master, onednn-v3-port]
+    branches: [master]
   pull_request:
   workflow_dispatch:
 
@@ -12,7 +12,7 @@ permissions:
 jobs:
   shellcheck:
     name: shellcheck (tools/)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install shellcheck
@@ -35,7 +35,7 @@ jobs:
 
   cmake-lint:
     name: cmake-format / cmake-lint
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -61,13 +61,50 @@ jobs:
           cmake-format --check "${files[@]}" || true
 
   python-lint:
-    name: ruff / flake8 (python/mxnet)
-    runs-on: ubuntu-22.04
+    name: ruff / flake8 / py_compile (python/mxnet)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Byte-compile Python sources (py_compile)
+        # Folded in from the former o3-ci.yml: a hard gate that every source
+        # under python/mxnet parses/compiles. ruff's E9 (below) catches the same
+        # syntax errors, but py_compile is the authoritative "does CPython accept
+        # it" check and covers the files ruff's E9 gate excludes, so we keep it.
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import py_compile
+          import sys
+          import tempfile
+
+          roots = [Path("python/mxnet")]
+          checked = 0
+          failures = []
+
+          with tempfile.TemporaryDirectory(prefix="mxnet-pycompile-") as tmp:
+              tmpdir = Path(tmp)
+              for root in roots:
+                  for path in sorted(root.rglob("*.py")):
+                      if "__pycache__" in path.parts:
+                          continue
+                      checked += 1
+                      cfile = tmpdir / (str(path).replace("/", "__") + ".pyc")
+                      try:
+                          py_compile.compile(str(path), cfile=str(cfile), doraise=True)
+                      except py_compile.PyCompileError as exc:
+                          failures.append((path, exc.msg))
+
+          print(f"checked {checked} Python files")
+          for path, message in failures:
+              print(f"::error file={path}::{message}")
+
+          sys.exit(1 if failures else 0)
+          PY
       - name: Install linters
         run: python -m pip install --upgrade pip ruff==0.6.9 flake8==7.1.1
       - name: ruff (errors only, warn on style)
@@ -94,7 +131,7 @@ jobs:
 
   clang-format:
     name: clang-format check (warn only)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

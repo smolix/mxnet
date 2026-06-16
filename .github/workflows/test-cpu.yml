@@ -8,7 +8,7 @@ on:
   workflow_run:
     workflows: ["build-cpu"]
     types: [completed]
-    branches: [master, onednn-v3-port]
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -28,7 +28,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     # Artifact download + uv install + test run.  All chosen tests are
     # CPU-only and have a 180 s per-test timeout; the full suite finishes
     # well under 20 min on a 4-core runner when the build artifact is

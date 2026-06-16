@@ -125,10 +125,14 @@ Key flags:
 
 **To produce the distributable macOS wheel, use the shared build script — not the
 manual recipe below.** `tools/build_cleanup_wheel.sh` auto-detects macOS and builds
-the CPU wheel with **`USE_OPENCV=ON` + float oneDNN** (Accelerate BLAS/LAPACK),
-then bundles the OpenCV transitive closure into `mxnet/lib/` and rewrites every
-install name to `@loader_path` (re-signing each dylib with `codesign -s -`), so the
-wheel is self-contained on a clean host. This is the configuration that ships as
+the CPU wheel with **`USE_OPENCV=ON` + float oneDNN + `USE_OPENMP=ON`** (Accelerate
+BLAS/LAPACK). It builds the hermetic `libomp` on demand if absent (under `.deps/`,
+via `tools/dependencies/build_openmp.py`), then bundles the OpenCV transitive
+closure **and** `libomp.dylib` into `mxnet/lib/` and rewrites every install name to
+`@loader_path` (re-signing each dylib with `codesign -s -`), so the wheel is
+self-contained on a clean host. `onnx` is a hard runtime dependency (parity with
+the CUDA wheel), so `pip install mxnet` has working ONNX export/import out of the
+box. This is the configuration that ships as
 `mxnet-2.0.0+cpu.macos.<YYYYMMDD>-cp312-…-arm64.whl`:
 
 ```bash
@@ -314,9 +318,9 @@ native closure into the wheel (`USE_OPENCV=ON`) so image I/O works out of the bo
 
 | Flavor | Selected by | Feature set | Build tree | Version default |
 |--------|-------------|-------------|-----------|-----------------|
-| `linux-cuda` | Linux, default | CUDA 13 + cuDNN + NCCL + oneDNN + OpenCV, `sm_80…120+PTX`; `onnx` is a hard dep | `build/` | `2.0.0+cu13.bw.<date>` |
-| `linux-cpu` | Linux, `MXNET_WHEEL_FLAVOR=cpu` | x86_64 CPU, oneDNN + OpenCV, OpenBLAS; `onnx` as the `[onnx]` extra | `build-cpu/` | `2.0.0+cpu.linux.<date>` |
-| `macos` | Darwin (auto) | Apple-silicon CPU, oneDNN + OpenCV, Accelerate BLAS | `build/` | `2.0.0+cpu.macos.<date>` |
+| `linux-cuda` | Linux, default | CUDA 13 + cuDNN + NCCL + oneDNN + OpenCV + OpenMP, `sm_80…120+PTX`; `onnx` is a hard dep | `build/` | `2.0.0+cu13.bw.<date>` |
+| `linux-cpu` | Linux, `MXNET_WHEEL_FLAVOR=cpu` | x86_64 CPU, oneDNN + OpenCV + OpenMP, OpenBLAS; `onnx` as the `[onnx]` extra | `build-cpu/` | `2.0.0+cpu.linux.<date>` |
+| `macos` | Darwin (auto) | Apple-silicon CPU, oneDNN + OpenCV + OpenMP (hermetic libomp, bundled), Accelerate BLAS; `onnx` is a hard dep | `build/` | `2.0.0+cpu.macos.<date>` |
 
 ```bash
 # Linux x86_64 CPU wheel (no CUDA; its own build-cpu/ tree, so it never
@@ -325,9 +329,15 @@ MXNET_WHEEL_FLAVOR=cpu tools/build_cleanup_wheel.sh
 ```
 
 Each flavor ends with the `release_provenance.py` gate asserting its expected
-feature set (the CPU flavors assert `--expect-cuda off … --expect-opencv on
---expect-onnx off`). The GitHub `release-wheel.yml` CI job builds the `linux-cpu`
-flavor, so the CI wheel and a local CPU build are the same recipe.
+feature set. All three assert `--expect-opencv on --expect-onednn on
+--expect-openmp on`; the CPU flavors add `--expect-cuda off …`. ONNX differs by
+flavor: `linux-cuda` and `macos` assert `--expect-onnx on` (onnx is a hard dep),
+while `linux-cpu` asserts `--expect-onnx off` (onnx stays the optional `[onnx]`
+extra). On macOS `--expect-openmp on` additionally requires the hermetic
+`libomp.dylib` to be bundled into `mxnet/lib/` and reached via `@loader_path`
+(there is no system libomp to fall back on, unlike the host `libgomp` on Linux).
+The GitHub `release-wheel.yml` CI job builds the `linux-cpu` flavor, so the CI
+wheel and a local CPU build are the same recipe.
 
 ## Verification
 

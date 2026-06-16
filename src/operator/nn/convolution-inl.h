@@ -329,6 +329,15 @@ class ConvolutionOp {
       Tensor<xpu, 3, DType> col_buffer_3d =
           col_buffer.get_with_shape<xpu, 3, DType>(Shape3(group_, K, N), s);
       for (index_t n = 0; n < num_; ++n) {
+        // Defensively zero the im2col column buffer before each fill.  The
+        // requested temp-space workspace is uninitialized scratch from the
+        // resource manager; if any cell is left unwritten before the GEMM reads
+        // it (observed intermittently on the native CPU path for large-kernel,
+        // padded configs — the unwritten cells correspond to padding, whose
+        // correct value is 0), the GEMM otherwise multiplies in stale memory and
+        // can emit NaN in the output. Zeroing first makes the read deterministic
+        // and matches the zero-fill semantics im2col already uses for padding.
+        col_buffer_3d = scalar<DType>(0);
         // transform image to col_buffer in order to use gemm
         im2col(s,
                in_data.dptr<DType>() + n * input_dim_,

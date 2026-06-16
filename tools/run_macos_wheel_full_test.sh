@@ -21,16 +21,26 @@
 #
 # Installs the wheel into a FRESH venv (never the build/dev venv), verifies the
 # installed package is the one under test, then runs the CPU-runnable parts of
-# the Python test suite (unittest + dnnl + quantization + array-api + amp +
-# profiling).  Per-shard logs land under macos_wheel_test/shards/, and every
+# the Python test suite (unittest + quantization + array-api + amp + profiling +
+# onnx).  Per-shard logs land under macos_wheel_test/shards/, and every
 # FAILED/ERROR line plus each shard's pytest summary is aggregated into
 # macos_wheel_test/errors.log.
 #
+# The tests/python/dnnl lane is intentionally NOT run on macOS.  It exercises the
+# oneDNN INT8-quantization + subgraph-fusion path, which is gated off on Apple
+# Silicon: the Xbyak_aarch64 JIT those passes rely on is unstable on arm64, so
+# they fall back to native kernels and the lane "does not apply" (OI-17 — see
+# OPEN_ISSUES_DETAILS.md#oi-17).  That gate is an architecture limitation, not a
+# wheel defect, and is not expected to be fixed; running the lane only produces
+# ~830 known/expected failures that drown out real signal.  The float oneDNN path
+# (ONEDNN=ON) is still covered indirectly by the CPU operator/unittest lanes.
+#
 # GPU (tests/python/gpu, test_quantization_gpu.py) is skipped: this host has no
-# CUDA.  ONNX (tests/python/onnx) now ships in the wheel (OI-27) and the export/
-# import path works, but it is skipped here only because this runner does not
-# install onnx/onnxruntime; run it with `pip install "mxnet[onnx]" onnxruntime`.
-# Skipped lanes are reported in the summary so the omission is explicit.
+# CUDA.  ONNX (tests/python/onnx) IS exercised here (onnx_export_import shard):
+# the macOS wheel ships mxnet.onnx (OI-27) and now hard-depends on onnx (parity
+# with the CUDA wheel), and this runner installs the pinned onnxruntime so the
+# export + round-trip path is covered.  Skipped lanes are reported in the summary
+# so the omission is explicit.
 #
 # Usage: tools/run_macos_wheel_full_test.sh [<wheel-path>]
 # Defaults to the newest dist/mxnet-*.whl.
@@ -78,8 +88,13 @@ uv venv "$VENV" --python "$WHEEL_TEST_PYTHON"
 uv pip install --python "$VENV/bin/python" "$WHEEL"
 # Test-time extras (not part of install_requires): pytest stack + scipy/matplotlib
 # statistical oracles. pytest-env applies pytest.ini's `env = MXNET_HOME=...`.
+# onnx/onnxruntime back the ONNX export/import lane: onnx itself is already a hard
+# dependency of the macOS wheel (it arrives with the install above), but it is
+# pinned here to the validated range alongside the test-only onnxruntime (needed
+# only to *run* an exported model), matching tools/run_wheel_full_test.sh.
 uv pip install --python "$VENV/bin/python" \
-    pytest pytest-xdist pytest-timeout pytest-env scipy matplotlib
+    pytest pytest-xdist pytest-timeout pytest-env scipy matplotlib \
+    'onnx>=1.7.0,<1.22' 'onnxruntime>=1.20,<1.25'
 
 PYBIN="$VENV/bin/python"
 
@@ -159,9 +174,10 @@ run_shard unittest_operator \
 run_shard unittest_random \
     tests/python/unittest/test_random.py
 
-# ----- oneDNN lane (serial; has global state) --------------------------------
-run_shard dnnl \
-    tests/python/dnnl
+# ----- oneDNN lane: intentionally NOT run on macOS ---------------------------
+# tests/python/dnnl exercises the oneDNN INT8/subgraph-fusion path, gated off on
+# Apple Silicon (Xbyak_aarch64 JIT unstable, OI-17); it produces only known
+# expected failures and "does not apply" here.  See the header comment.
 
 # ----- quantization lane -----------------------------------------------------
 run_shard quantization \
@@ -176,6 +192,17 @@ run_shard amp \
 
 run_shard profiling \
     tests/python/profiling
+
+# ----- ONNX export/import lane -----------------------------------------------
+# The wheel ships mxnet.onnx (OI-27) and the macOS wheel now hard-depends on onnx,
+# so acceptance must exercise export + an onnxruntime round-trip.  onnxruntime was
+# installed (test-only) above.  CPU-only work, so parallelize lightly.
+if [ -d tests/python/onnx ]; then
+    run_shard onnx_export_import \
+        tests/python/onnx -n 2
+else
+    log "onnx lane: tests/python/onnx not present — skipping"
+fi
 
 # ---------------------------------------------------------------------------
 # Summary
@@ -198,9 +225,10 @@ run_shard profiling \
         printf '| %s | %s | %s |\n' "$id" "$rc" "${summ//|/\\|}"
     done < "$REPORT_DIR/shard_index.tsv"
     echo
-    echo "Skipped lanes (not runnable on this host): tests/python/gpu,"
-    echo "tests/python/test_quantization_gpu.py (no CUDA); tests/python/onnx"
-    echo "(broken upstream for MXNet 2.0)."
+    echo "Skipped lanes: tests/python/gpu, tests/python/test_quantization_gpu.py"
+    echo "(no CUDA on this host); tests/python/dnnl (oneDNN INT8/subgraph fusion"
+    echo "gated off on arm64 — Xbyak_aarch64 unstable, OI-17 — lane does not apply)."
+    echo "The ONNX lane (tests/python/onnx) IS run — see onnx_export_import above."
     echo
     echo "Aggregated failures/errors: \`errors.log\`. Per-shard logs: \`shards/\`."
 } > "$SUMMARY"

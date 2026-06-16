@@ -68,14 +68,20 @@ jobs:
           mkdir -p build && cd build
           # USE_WERROR=OFF: gcc-11 on 22.04 raises false-positive -Wmaybe-uninitialized
           # in vendored mshadow; this is a docs-only import build, not a release build.
+          # Route compiles through ccache so the ~/.ccache cache action actually
+          # speeds up subsequent runs (without the launchers cmake never invokes
+          # ccache and every run is a cold full build).
           CXXFLAGS="-Wno-error=strict-overflow" cmake -G Ninja \
               -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
               -DUSE_WERROR=OFF \
               -DUSE_CUDA=OFF -DUSE_CUDNN=OFF -DUSE_NCCL=OFF \
               -DUSE_ONEDNN=OFF -DUSE_OPENCV=OFF -DUSE_OPENMP=OFF \
               -DUSE_BLAS=open -DUSE_LAPACK=ON \
               ..
           ninja mxnet
+          ccache -s | grep -iE 'hits|misses' || true
 
       - name: Install mxnet (editable) + docs toolchain
         run: |

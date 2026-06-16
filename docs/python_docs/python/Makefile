@@ -47,7 +47,11 @@ linkcheck: $(OBJ)
 	cp Makefile_sphinx build/Makefile;
 	cp -n -r ../_static build/ || true;
 	sphinx-autogen build/api/*.rst build/api/**/*.rst   -t build/_templates/;
-	make -C build linkcheck;
+	# Override SPHINXOPTS to drop -W for linkcheck: this target checks LINKS, not
+	# doc-quality warnings, and the legacy tutorial docs emit benign warnings
+	# (e.g. autosummary 'msort' removed from numpy, RST formatting) that -W would
+	# otherwise escalate to a build failure. The html target keeps -W.
+	make -C build linkcheck SPHINXOPTS="-c ../scripts --keep-going";
 
 html: $(OBJ)
 	mkdir -p build;

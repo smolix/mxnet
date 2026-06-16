@@ -29,7 +29,6 @@ Sorting
    sort
    lexsort
    argsort
-   msort
    partition
    argpartition
 

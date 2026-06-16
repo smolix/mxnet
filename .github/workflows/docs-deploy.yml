@@ -14,8 +14,9 @@
 # from source just to import it — duplicating the libmxnet build that link_check.yml
 # also runs.  Instead we install the most recent published `+cpu.linux` wheel from
 # the GitHub Releases: it is built for cp312 (matching the py3.12 docs toolchain)
-# and bundles its native deps (OpenCV/OpenBLAS), so it imports on a bare runner in
-# seconds with no build, no submodules and no apt packages.  The reference therefore
+# and bundles most native deps, so it installs + imports in seconds with no source
+# build and no submodules (it does need the OpenCV runtime via apt — the wheel's
+# bundled OpenCV has a few unbundled system deps).  The reference therefore
 # documents the last released wheel's surface — for a published, pip-installable API
 # reference that is exactly what should be documented.  (link_check.yml still builds
 # libmxnet because its legacy py3.9 toolchain has no installable wheel; see that
@@ -47,13 +48,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         # No native build here, so the 3rd-party submodules are not needed.
         with:
           submodules: false
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           # docs/api uses a modern toolchain (sphinx>=7, furo); 3.12 installs it
           # cleanly and matches the cp312 published wheel installed below.
@@ -65,10 +66,9 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          # Install the newest published cp312 Linux CPU wheel. It bundles its
-          # native deps, so it imports on a bare runner with no source build and no
-          # apt packages. Scanning several releases keeps this working even if the
-          # very latest release happened not to attach a +cpu.linux wheel.
+          # Install the newest published cp312 Linux CPU wheel. Scanning several
+          # releases keeps this working even if the very latest release happened not
+          # to attach a +cpu.linux wheel.
           wheeldir="$(mktemp -d)"
           wheel=""
           for tag in $(gh release list --limit 20 --json tagName --jq '.[].tagName'); do
@@ -83,6 +83,10 @@ jobs:
             echo "No published +cpu.linux cp312 wheel found in the last 20 releases" >&2
             exit 1
           fi
+          # The wheel bundles OpenCV but not all of OpenCV's transitive *system* deps
+          # (e.g. libcharls.so.2), so `import mxnet` needs the OpenCV runtime present.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libopencv-dev
           python -m pip install "$wheel"
           python -m pip install -r docs/api/requirements.txt
           python -c "import mxnet; print('mxnet', mxnet.__version__)"
@@ -93,10 +97,10 @@ jobs:
           test -f docs/api/_build/html/index.html
 
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: docs/api/_build/html
 
@@ -109,4 +113,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

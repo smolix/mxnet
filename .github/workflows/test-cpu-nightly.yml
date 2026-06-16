@@ -30,19 +30,22 @@ jobs:
       # single cold build. Matches build-cpu.yml.
       CCACHE_MAXSIZE: "5G"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
       - name: Install build + test dependencies
         run: |
           sudo apt-get update
+          # gfortran provides libgfortran.so (libmxnet links it via OpenBLAS/LAPACK);
+          # the runner image no longer ships the unversioned .so by default.
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             ninja-build \
             cmake \
             ccache \
             g++ \
+            gfortran \
             libopenblas-dev \
             libopencv-dev \
             libomp-dev \
@@ -50,29 +53,31 @@ jobs:
             python3-pip \
             python3-dev
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-test-cpu-${{ github.ref }}-${{ github.sha }}
+          # Image-scoped (ubuntu24): the build dir / ccache bake the absolute gcc
+          # path, so caches from a different gcc major must not be restored.
+          key: ccache-test-cpu-ubuntu24-${{ github.ref }}-${{ github.sha }}
           restore-keys: |
-            ccache-test-cpu-${{ github.ref }}-
-            ccache-test-cpu-
-            ccache-build-cpu-
+            ccache-test-cpu-ubuntu24-${{ github.ref }}-
+            ccache-test-cpu-ubuntu24-
+            ccache-build-cpu-ubuntu24-
 
       - name: Cache CMake build dir
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CMAKE_BUILD_DIR }}
-          key: cmake-test-cpu-${{ github.ref }}-${{ github.sha }}
+          key: cmake-test-cpu-ubuntu24-${{ github.ref }}-${{ github.sha }}
           restore-keys: |
-            cmake-test-cpu-${{ github.ref }}-
-            cmake-test-cpu-
-            cmake-build-cpu-
+            cmake-test-cpu-ubuntu24-${{ github.ref }}-
+            cmake-test-cpu-ubuntu24-
+            cmake-build-cpu-ubuntu24-
 
       - name: Configure CMake
         run: |
@@ -144,7 +149,7 @@ jobs:
 
       - name: Upload pytest report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-report-cpu-${{ github.sha }}
           path: |

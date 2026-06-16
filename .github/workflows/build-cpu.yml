@@ -33,7 +33,7 @@ jobs:
       VENV_DIR: ${{ github.workspace }}/.venv
       UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -41,12 +41,16 @@ jobs:
         run: |
           sudo apt-get update
           # CPU-only build: openblas + opencv + ninja + ccache. NCCL is GPU-only, skip.
+          # gfortran provides libgfortran.so (libmxnet links it via OpenBLAS/LAPACK);
+          # the runner image no longer ships the unversioned .so by default, so the
+          # final link fails on a missing libgfortran.so without it.
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             ninja-build \
             cmake \
             ccache \
             g++ \
+            gfortran \
             libopenblas-dev \
             libopencv-dev \
             libomp-dev \
@@ -54,7 +58,7 @@ jobs:
             python3-pip \
             python3-dev
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -62,22 +66,27 @@ jobs:
         run: python -m pip install --upgrade pip uv
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-build-cpu-${{ github.ref }}-${{ github.sha }}
+          # Image-scoped (ubuntu24): the cmake build dir bakes the absolute compiler
+          # path (e.g. .../gcc/x86_64-linux-gnu/13/libgfortran.so), so a cache seeded
+          # on a different gcc major (22.04/gcc-11) must NOT be restored here — doing
+          # so reintroduces the "missing libgfortran.so" link failure. Bump this
+          # token if the runner image's gcc major changes.
+          key: ccache-build-cpu-ubuntu24-${{ github.ref }}-${{ github.sha }}
           restore-keys: |
-            ccache-build-cpu-${{ github.ref }}-
-            ccache-build-cpu-
+            ccache-build-cpu-ubuntu24-${{ github.ref }}-
+            ccache-build-cpu-ubuntu24-
 
       - name: Cache CMake build dir
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CMAKE_BUILD_DIR }}
-          key: cmake-build-cpu-${{ github.ref }}-${{ github.sha }}
+          key: cmake-build-cpu-ubuntu24-${{ github.ref }}-${{ github.sha }}
           restore-keys: |
-            cmake-build-cpu-${{ github.ref }}-
-            cmake-build-cpu-
+            cmake-build-cpu-ubuntu24-${{ github.ref }}-
+            cmake-build-cpu-ubuntu24-
 
       - name: Configure CMake
         run: |
@@ -141,7 +150,7 @@ jobs:
 
       - name: Upload libmxnet.so artefact
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libmxnet-cpu-${{ github.sha }}
           path: ${{ steps.locate.outputs.libpath }}

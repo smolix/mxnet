@@ -106,10 +106,14 @@ echo "==> Build dir: $BUILD_DIR"
 echo "==> Version: $VERSION"
 echo "==> BUNDLE_OPENCV: $BUNDLE_OPENCV"
 
-# linux-cpu does a complete first-time configure below, so it may start from a
-# clean tree; the reuse flavors (linux-cuda / macos) require a pre-seeded cache.
-if [ "$FLAVOR" != linux-cpu ] && [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+# linux-cpu and macos both do a COMPLETE first-time configure below (generator,
+# build type, arch, BLAS, all feature toggles), so they may start from a clean
+# tree.  Only linux-cuda reuses a pre-seeded cache: its reconfigure deliberately
+# does not set the generator/build-type/BLAS (those come from the §3 first-time
+# configure in docs/cuda_wheel_build.md), so it requires the cache to exist.
+if [ "$FLAVOR" = linux-cuda ] && [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
     echo "$BUILD_DIR/CMakeCache.txt missing — configure $BUILD_DIR/ with CMake first" >&2
+    echo "(see docs/cuda_wheel_build.md §3 'First-time configure')" >&2
     exit 2
 fi
 
@@ -312,17 +316,74 @@ bundle_opencv_closure_macos() {
 }
 
 # ----------------------------------------------------------------------
+# OpenMP runtime bundling — macOS (Mach-O / install_name_tool / @loader_path)
+# ----------------------------------------------------------------------
+# Unlike Linux — where the OpenMP runtime (libgomp.so.1) is part of the host GCC
+# runtime and is intentionally left host-provided — macOS ships NO system libomp.
+# So a self-contained wheel must vendor the hermetic libomp.dylib it was linked
+# against.  libmxnet records that dependency as @rpath/libomp.dylib (the lib's
+# install id); the install-name pass on libmxnet repoints it to
+# @loader_path/lib/libomp.dylib once the file is present in mxnet/lib/.
+bundle_openmp_runtime_macos() {
+    echo "==> Bundling OpenMP runtime (libomp) into the wheel (macOS/Mach-O)"
+    mkdir -p python/mxnet/lib
+    # Resolve the exact libomp.dylib CMake linked against, straight from the cache.
+    local omp_lib dep
+    omp_lib="$(awk -F= '/^(MXNET_OPENMP_LIBRARY|OpenMP_omp_LIBRARY):/ {print $2}' \
+        "$BUILD_DIR/CMakeCache.txt" 2>/dev/null | tail -n1)"
+    if [ -z "$omp_lib" ] || [ ! -e "$omp_lib" ]; then
+        omp_lib="${OPENMP_ROOT_HINT:+$OPENMP_ROOT_HINT/lib/libomp.dylib}"
+    fi
+    if [ -z "$omp_lib" ] || [ ! -e "$omp_lib" ]; then
+        echo "ERROR: USE_OPENMP=ON but could not resolve libomp.dylib to bundle" >&2
+        exit 5
+    fi
+    cp -L "$omp_lib" python/mxnet/lib/libomp.dylib
+    chmod u+w python/mxnet/lib/libomp.dylib
+    install_name_tool -id "@rpath/libomp.dylib" python/mxnet/lib/libomp.dylib
+    # libomp's own deps are macOS-system only (libSystem); repoint any that happen
+    # to be siblings, for parity with the OpenCV closure handling.
+    for dep in $(_macos_dylib_deps python/mxnet/lib/libomp.dylib); do
+        if [ -e "python/mxnet/lib/$(basename "$dep")" ]; then
+            install_name_tool -change "$dep" "@loader_path/$(basename "$dep")" \
+                python/mxnet/lib/libomp.dylib
+        fi
+    done
+    codesign --force --sign - python/mxnet/lib/libomp.dylib 2>/dev/null || true
+    echo "    bundled libomp.dylib from $omp_lib"
+}
+
+# ----------------------------------------------------------------------
 # Configure + build libmxnet
 # ----------------------------------------------------------------------
 if [ "$FLAVOR" = macos ]; then
-    echo "==> Refreshing CMake metadata (macOS arm64 CPU + OpenCV)"
+    echo "==> Refreshing CMake metadata (macOS arm64 CPU + OpenCV + OpenMP)"
     # CPU-only Apple-silicon feature set: no CUDA stack, Accelerate BLAS/LAPACK,
     # oneDNN on, OpenCV on (so mx.image / RecordIO native decode works), OpenMP
-    # off (matches the smoke baseline), no x86 SSE/F16C.  OpenCV is discovered
-    # via OpenCV_DIR (override with the OpenCV_DIR env var); the MacPorts default
-    # is /opt/local/libexec/opencv4/cmake.
+    # ON (parity with the Linux wheels; it also switches oneDNN from the
+    # single-threaded SEQ runtime to the multi-threaded OMP runtime), no x86
+    # SSE/F16C.  OpenCV is discovered via OpenCV_DIR (override with the OpenCV_DIR
+    # env var); the MacPorts default is /opt/local/libexec/opencv4/cmake.
     OPENCV_DIR_HINT="${OpenCV_DIR:-/opt/local/libexec/opencv4/cmake}"
     echo "==> OpenCV_DIR: $OPENCV_DIR_HINT"
+    # AppleClang ships no OpenMP runtime and CMakeLists.txt deliberately does NOT
+    # probe system/Homebrew/MacPorts libomp: it uses a hermetic libomp built by
+    # tools/dependencies/build_openmp.py and installed under .deps/openmp-*.  Build
+    # it on demand if absent so USE_OPENMP=ON always has a runtime, then point
+    # CMake at it explicitly (the same prefix's libomp.dylib is bundled into the
+    # wheel below for self-containment, since there is no system libomp to fall
+    # back on the way Linux falls back on the host libgomp).
+    OPENMP_ROOT_HINT="${OPENMP_ROOT:-$(ls -d "$REPO_ROOT"/.deps/openmp-*-macos-* 2>/dev/null | head -n1)}"
+    if [ -z "$OPENMP_ROOT_HINT" ] || [ ! -f "$OPENMP_ROOT_HINT/include/omp.h" ]; then
+        echo "==> No hermetic libomp under .deps/; building it (tools/dependencies/build_openmp.py)"
+        "$PYTHON_BIN" tools/dependencies/build_openmp.py
+        OPENMP_ROOT_HINT="$(ls -d "$REPO_ROOT"/.deps/openmp-*-macos-* 2>/dev/null | head -n1)"
+    fi
+    if [ -z "$OPENMP_ROOT_HINT" ] || [ ! -f "$OPENMP_ROOT_HINT/include/omp.h" ]; then
+        echo "ERROR: USE_OPENMP=ON on macOS but no hermetic libomp prefix is available" >&2
+        exit 2
+    fi
+    echo "==> OPENMP_ROOT: $OPENMP_ROOT_HINT"
     cmake -S . -B "$BUILD_DIR" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_OSX_ARCHITECTURES=arm64 \
@@ -330,7 +391,8 @@ if [ "$FLAVOR" = macos ]; then
         -DUSE_CUDNN=OFF \
         -DUSE_NCCL=OFF \
         -DUSE_ONEDNN=ON \
-        -DUSE_OPENMP=OFF \
+        -DUSE_OPENMP=ON \
+        -DOPENMP_ROOT="$OPENMP_ROOT_HINT" \
         -DUSE_OPENCV=ON \
         -DOpenCV_DIR="$OPENCV_DIR_HINT" \
         -DUSE_BLAS=apple \
@@ -434,6 +496,12 @@ if [ "$HAS_OPENCV" = 1 ] && [ "$BUNDLE_OPENCV" = 1 ]; then
     fi
 fi
 
+# Vendor the OpenMP runtime on macOS (no system libomp to fall back on).  Probe
+# the cache so this fires exactly when libmxnet was actually built with OpenMP.
+if [ "$FLAVOR" = macos ] && grep -q "USE_OPENMP:BOOL=ON" "$BUILD_DIR/CMakeCache.txt" 2>/dev/null; then
+    bundle_openmp_runtime_macos
+fi
+
 # ----------------------------------------------------------------------
 # Repoint libmxnet at the bundled libraries
 # ----------------------------------------------------------------------
@@ -514,16 +582,17 @@ fi
 # fast path; on macOS we ship the ctypes path by default (set MXNET_WITH_CYTHON=1
 # to opt in) to keep the wheel build robust across Xcode toolchains.
 # ONNX (mxnet.onnx) is pure-Python and always ships in the wheel; the CUDA wheel
-# additionally declares `onnx` as a hard runtime dependency (so `pip install mxnet`
-# has working export/import), whereas the macOS CPU wheel keeps it as the optional
-# `[onnx]` extra.  See setup.py _include_onnx_deps().
+# AND the macOS CPU wheel additionally declare `onnx` as a hard runtime dependency
+# (so a plain `pip install mxnet` has working ONNX export/import out of the box),
+# while the Linux x86_64 CPU wheel keeps it as the optional `[onnx]` extra.  See
+# setup.py _include_onnx_deps().
 if [ "$FLAVOR" = macos ]; then
     CUDA_DEPS_FLAG=0
-    ONNX_DEPS_FLAG="${MXNET_SETUP_ENABLE_ONNX_DEPS:-0}"
+    ONNX_DEPS_FLAG="${MXNET_SETUP_ENABLE_ONNX_DEPS:-1}"
     CYTHON_FLAG="${MXNET_WITH_CYTHON:-0}"
 elif [ "$FLAVOR" = linux-cpu ]; then
     # CPU wheel: no nvidia-*-cu13 deps; onnx stays the optional [onnx] extra
-    # (the hard-onnx-dep policy is CUDA-wheel-only).  Cython is compiled in.
+    # (the hard-onnx-dep policy is the CUDA + macOS wheels).  Cython is compiled in.
     CUDA_DEPS_FLAG=0
     ONNX_DEPS_FLAG="${MXNET_SETUP_ENABLE_ONNX_DEPS:-0}"
     CYTHON_FLAG="${MXNET_WITH_CYTHON:-1}"
@@ -582,6 +651,7 @@ if [ "$FLAVOR" = macos ]; then
         --expect-onednn on \
         --expect-opencv "$EXPECT_OPENCV" \
         --expect-onnx "$EXPECT_ONNX" \
+        --expect-openmp on \
         --allow-dirty
 elif [ "$FLAVOR" = linux-cpu ]; then
     # Linux x86_64 CPU wheel: CUDA/cuDNN/NCCL off, oneDNN + OpenCV on, onnx extra.
@@ -593,7 +663,8 @@ elif [ "$FLAVOR" = linux-cpu ]; then
         --expect-nccl off \
         --expect-onednn on \
         --expect-opencv "$EXPECT_OPENCV" \
-        --expect-onnx "$EXPECT_ONNX"
+        --expect-onnx "$EXPECT_ONNX" \
+        --expect-openmp on
 else
     "$PYTHON_BIN" tools/release_provenance.py "$WHEEL" \
         --cmake-cache "$BUILD_DIR/CMakeCache.txt" \
@@ -603,7 +674,8 @@ else
         --expect-nccl on \
         --expect-onednn on \
         --expect-opencv "$EXPECT_OPENCV" \
-        --expect-onnx "$EXPECT_ONNX"
+        --expect-onnx "$EXPECT_ONNX" \
+        --expect-openmp on
 fi
 
 echo "==> Wheel build OK: $WHEEL"

@@ -36,7 +36,12 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
 
 
-FEATURES = ("USE_CUDA", "USE_CUDNN", "USE_NCCL", "USE_ONEDNN", "USE_OPENCV")
+FEATURES = ("USE_CUDA", "USE_CUDNN", "USE_NCCL", "USE_ONEDNN", "USE_OPENCV", "USE_OPENMP")
+# Basenames of the OpenMP runtime libraries libmxnet may link: the LLVM/Intel
+# runtime (libomp / libiomp5) and the GCC runtime (libgomp).  On macOS the
+# runtime is vendored into the wheel (no system libomp); on Linux it is host-
+# provided (part of the GCC runtime), exactly as libc/libstdc++ are.
+OPENMP_RUNTIME_RE = re.compile(r"^lib(omp|iomp5|gomp)\b")
 TRUE_VALUES = {"1", "ON", "TRUE", "YES"}
 FALSE_VALUES = {"0", "OFF", "FALSE", "NO"}
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -292,6 +297,9 @@ def inspect_wheel_payload(wheel_path):
         "opencv_needed": [],
         "opencv_bundled": [],
         "opencv_bundled_sonames": [],
+        "openmp_needed": [],
+        "openmp_bundled": [],
+        "openmp_runtime_loader_relative": False,
         "onnx_pkg_files": [],
         "onnx_hard_require": False,
         "onnx_extra_require": False,
@@ -313,6 +321,13 @@ def inspect_wheel_payload(wheel_path):
             )
             payload["opencv_bundled_sonames"] = sorted(
                 {Path(name).name for name in payload["opencv_bundled"]}
+            )
+            # The OpenMP runtime is vendored into mxnet/lib/ on macOS (no system
+            # libomp); on Linux it is host-provided and not bundled.
+            payload["openmp_bundled"] = sorted(
+                name for name in names
+                if name.startswith("mxnet/lib/")
+                and OPENMP_RUNTIME_RE.match(Path(name).name)
             )
             # ONNX integration (mxnet.onnx) is pure-Python and bundled in the
             # wheel (OI-27); the *dependency policy* (hard dep vs optional [onnx]
@@ -356,6 +371,8 @@ def inspect_wheel_payload(wheel_path):
                     payload["needed"] = needed
                     payload["opencv_needed"] = sorted(
                         s for s in needed if s.startswith("libopencv_"))
+                    payload["openmp_needed"] = sorted(
+                        s for s in needed if OPENMP_RUNTIME_RE.match(s))
                     payload["runpath"] = dynamic["runpath"]
                     entries = (
                         [] if dynamic["runpath"] is None
@@ -374,6 +391,17 @@ def inspect_wheel_payload(wheel_path):
                         if os.path.basename(d).startswith("libopencv_")]
                     payload["opencv_needed"] = sorted(
                         os.path.basename(d) for d in opencv_refs)
+                    openmp_refs = [
+                        d for d in deps
+                        if OPENMP_RUNTIME_RE.match(os.path.basename(d))]
+                    payload["openmp_needed"] = sorted(
+                        os.path.basename(d) for d in openmp_refs)
+                    # Self-containment: every OpenMP reference must be loader-
+                    # relative (@loader_path/@rpath), i.e. the absolute build-host
+                    # path was rewritten to resolve from inside the wheel.
+                    payload["openmp_runtime_loader_relative"] = bool(openmp_refs) and all(
+                        d.startswith("@loader_path") or d.startswith("@rpath")
+                        for d in openmp_refs)
                     payload["runpath"] = ":".join(rpaths) if rpaths else None
                     # The Mach-O analog of "$ORIGIN/lib in RUNPATH": every OpenCV
                     # reference is loader-relative (@loader_path/@rpath), i.e. the
@@ -453,6 +481,7 @@ def validate_provenance(
     expect_onednn=None,
     expect_opencv=None,
     expect_onnx=None,
+    expect_openmp=None,
 ):
     errors = []
     git = report["git"]
@@ -489,6 +518,7 @@ def validate_provenance(
         "USE_NCCL": _expected_flag(expect_nccl),
         "USE_ONEDNN": _expected_flag(expect_onednn),
         "USE_OPENCV": _expected_flag(expect_opencv),
+        "USE_OPENMP": _expected_flag(expect_openmp),
     }.items():
         feature = features.get(name, {"enabled": None, "raw": None})
         if expected is not None and feature["enabled"] is not expected:
@@ -517,6 +547,7 @@ def validate_provenance(
     expected_nccl = _expected_flag(expect_nccl)
     expected_opencv = _expected_flag(expect_opencv)
     expected_onnx = _expected_flag(expect_onnx)
+    expected_openmp = _expected_flag(expect_openmp)
     for wheel in report["wheels"]:
         if not wheel["exists"]:
             errors.append("wheel file does not exist: {}".format(wheel["path"]))
@@ -602,6 +633,27 @@ def validate_provenance(
             errors.append("{} declares onnx as a hard dependency despite "
                           "--expect-onnx off (it should be the optional [onnx] "
                           "extra)".format(wheel["filename"]))
+
+        # OpenMP runtime: the macOS wheel vendors libomp into mxnet/lib/ and
+        # rewrites libmxnet's reference to a loader-relative path (no system
+        # libomp to fall back on); on Linux the runtime (libgomp) is host-provided
+        # and not bundled, so only the build flag (checked above) is asserted
+        # there.  The self-containment payload check is therefore macOS-specific.
+        if expected_openmp is True and payload["format"] == "macho":
+            if not payload["openmp_needed"]:
+                errors.append("{} libmxnet.dylib has no OpenMP runtime dependency "
+                              "despite --expect-openmp on".format(wheel["filename"]))
+            if not payload["openmp_bundled"]:
+                errors.append("{} does not bundle the OpenMP runtime "
+                              "(mxnet/lib/libomp*)".format(wheel["filename"]))
+            if not payload["openmp_runtime_loader_relative"]:
+                errors.append("{} libmxnet.dylib OpenMP reference is not "
+                              "loader-relative (it would not resolve from inside "
+                              "the wheel on a clean host)".format(wheel["filename"]))
+        elif (expected_openmp is False and payload["format"] == "macho"
+              and payload["openmp_bundled"]):
+            errors.append("{} bundles an OpenMP runtime despite --expect-openmp "
+                          "off".format(wheel["filename"]))
     return errors
 
 
@@ -664,6 +716,11 @@ def format_text_report(report, errors):
                         len(payload["onnx_pkg_files"]),
                         "yes" if payload["onnx_hard_require"] else "no",
                         "yes" if payload["onnx_extra_require"] else "no"))
+                lines.append(
+                    "      openmp: needed={} bundled={} loader_relative={}".format(
+                        ",".join(payload["openmp_needed"]) or "none",
+                        len(payload["openmp_bundled"]),
+                        "yes" if payload["openmp_runtime_loader_relative"] else "no"))
 
     lines.append("Validation: {}".format("failed" if errors else "ok"))
     lines.extend("  - {}".format(error) for error in errors)
@@ -685,6 +742,7 @@ def parse_args(argv):
     parser.add_argument("--expect-onednn", choices=("on", "off"))
     parser.add_argument("--expect-opencv", choices=("on", "off"))
     parser.add_argument("--expect-onnx", choices=("on", "off"))
+    parser.add_argument("--expect-openmp", choices=("on", "off"))
     parser.add_argument("--allow-dirty", action="store_true")
     parser.add_argument("--strict-untracked", action="store_true")
     parser.add_argument("--allow-missing-cache", action="store_true")
@@ -714,6 +772,7 @@ def main(argv=None):
             expect_onednn=args.expect_onednn,
             expect_opencv=args.expect_opencv,
             expect_onnx=args.expect_onnx,
+            expect_openmp=args.expect_openmp,
         )
     except (OSError, ProvenanceError, subprocess.CalledProcessError) as err:
         print("release provenance check failed: {}".format(err), file=sys.stderr)

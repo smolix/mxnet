@@ -40,6 +40,7 @@ def _write_minimal_repo(tmp_path, version):
         "USE_NCCL:BOOL=ON\n"
         "USE_ONEDNN:BOOL=ON\n"
         "USE_OPENCV:BOOL=OFF\n"
+        "USE_OPENMP:BOOL=ON\n"
     )
     return cache
 
@@ -124,6 +125,7 @@ def test_validate_provenance_rejects_dirty_tree_and_wheel_version_mismatch():
             "USE_NCCL": {"enabled": True, "raw": "ON"},
             "USE_ONEDNN": {"enabled": True, "raw": "ON"},
             "USE_OPENCV": {"enabled": False, "raw": "OFF"},
+            "USE_OPENMP": {"enabled": True, "raw": "ON"},
         },
         "wheels": [
             {
@@ -191,6 +193,7 @@ def test_validate_provenance_rejects_stale_cmake_commit_stamp():
             "USE_NCCL": {"enabled": True, "raw": "ON"},
             "USE_ONEDNN": {"enabled": True, "raw": "ON"},
             "USE_OPENCV": {"enabled": False, "raw": "OFF"},
+            "USE_OPENMP": {"enabled": True, "raw": "ON"},
         },
         "build": {
             "build_dir": "build",
@@ -252,6 +255,7 @@ def test_validate_provenance_checks_opencv_wheel_payload():
             "USE_NCCL": {"enabled": True, "raw": "ON"},
             "USE_ONEDNN": {"enabled": True, "raw": "ON"},
             "USE_OPENCV": {"enabled": True, "raw": "ON"},
+            "USE_OPENMP": {"enabled": True, "raw": "ON"},
         },
         "wheels": [
             {
@@ -312,6 +316,7 @@ def test_validate_provenance_accepts_opencv_wheel_payload():
             "USE_NCCL": {"enabled": True, "raw": "ON"},
             "USE_ONEDNN": {"enabled": True, "raw": "ON"},
             "USE_OPENCV": {"enabled": True, "raw": "ON"},
+            "USE_OPENMP": {"enabled": True, "raw": "ON"},
         },
         "wheels": [
             {
@@ -388,6 +393,7 @@ def test_validate_provenance_checks_cudnn_and_nccl_wheel_payload():
             "USE_NCCL": {"enabled": True, "raw": "ON"},
             "USE_ONEDNN": {"enabled": True, "raw": "ON"},
             "USE_OPENCV": {"enabled": False, "raw": "OFF"},
+            "USE_OPENMP": {"enabled": True, "raw": "ON"},
         },
         "wheels": [
             {
@@ -431,3 +437,111 @@ def test_validate_provenance_checks_cudnn_and_nccl_wheel_payload():
     assert any("has no libnccl NEEDED entries" in error for error in errors)
     assert any("RUNPATH does not include $ORIGIN/../nvidia/nccl/lib" in error
                for error in errors)
+
+
+def _macos_wheel_report(openmp_bundled, openmp_needed, openmp_loader_relative):
+    """A macOS arm64 CPU-wheel provenance report (oneDNN+OpenCV+OpenMP, onnx hard)."""
+    return {
+        "expected_package_name": "mxnet",
+        "git": {
+            "commit": "0123456789abcdef0123456789abcdef01234567",
+            "short_commit": "0123456789ab",
+            "dirty": False,
+            "tracked_change_count": 0,
+            "untracked_count": 0,
+        },
+        "package": {"version": "2.0.0"},
+        "features": {
+            "cache_found": True,
+            "cache_path": "build/CMakeCache.txt",
+            "USE_CUDA": {"enabled": False, "raw": "OFF"},
+            "USE_CUDNN": {"enabled": False, "raw": "OFF"},
+            "USE_NCCL": {"enabled": False, "raw": "OFF"},
+            "USE_ONEDNN": {"enabled": True, "raw": "ON"},
+            "USE_OPENCV": {"enabled": True, "raw": "ON"},
+            "USE_OPENMP": {"enabled": True, "raw": "ON"},
+        },
+        "wheels": [
+            {
+                "filename": "mxnet-2.0.0-cp312-cp312-macosx_26_0_arm64.whl",
+                "path": "dist/mxnet-2.0.0-cp312-cp312-macosx_26_0_arm64.whl",
+                "exists": True,
+                "distribution": "mxnet",
+                "distribution_matches_package": True,
+                "version": "2.0.0",
+                "version_matches_package": True,
+                "payload": {
+                    "inspected": True,
+                    "error": None,
+                    "format": "macho",
+                    "has_libmxnet": True,
+                    "needed": (
+                        ["libomp.dylib"] if openmp_needed else []
+                    ) + ["libopencv_imgcodecs.dylib"],
+                    "cudnn_needed": [],
+                    "nccl_needed": [],
+                    "opencv_needed": ["libopencv_imgcodecs.dylib"],
+                    "opencv_bundled": ["mxnet/lib/libopencv_imgcodecs.dylib"],
+                    "opencv_bundled_sonames": ["libopencv_imgcodecs.dylib"],
+                    "openmp_needed": ["libomp.dylib"] if openmp_needed else [],
+                    "openmp_bundled": (
+                        ["mxnet/lib/libomp.dylib"] if openmp_bundled else []
+                    ),
+                    "openmp_runtime_loader_relative": openmp_loader_relative,
+                    "onnx_pkg_files": ["mxnet/onnx/__init__.py"],
+                    "onnx_hard_require": True,
+                    "onnx_extra_require": True,
+                    "metadata_found": True,
+                    "runpath": "@loader_path/lib",
+                    "runpath_has_origin_lib": True,
+                    "runpath_has_nvidia_cudnn": False,
+                    "runpath_has_nvidia_nccl": False,
+                },
+            }
+        ],
+    }
+
+
+def test_validate_provenance_accepts_macos_openmp_wheel_payload():
+    release_provenance = _load_release_provenance()
+    report = _macos_wheel_report(
+        openmp_bundled=True, openmp_needed=True, openmp_loader_relative=True)
+    assert release_provenance.validate_provenance(
+        report,
+        expect_cuda="off",
+        expect_cudnn="off",
+        expect_nccl="off",
+        expect_onednn="on",
+        expect_opencv="on",
+        expect_onnx="on",
+        expect_openmp="on",
+    ) == []
+
+
+def test_validate_provenance_rejects_macos_wheel_missing_bundled_openmp():
+    release_provenance = _load_release_provenance()
+    report = _macos_wheel_report(
+        openmp_bundled=False, openmp_needed=False, openmp_loader_relative=False)
+    errors = release_provenance.validate_provenance(
+        report,
+        expect_cuda="off",
+        expect_cudnn="off",
+        expect_nccl="off",
+        expect_onednn="on",
+        expect_opencv="on",
+        expect_onnx="on",
+        expect_openmp="on",
+    )
+    assert any("has no OpenMP runtime dependency" in error for error in errors)
+    assert any("does not bundle the OpenMP runtime" in error for error in errors)
+    assert any("not loader-relative" in error for error in errors)
+
+
+def test_validate_provenance_rejects_openmp_build_flag_off():
+    release_provenance = _load_release_provenance()
+    report = _macos_wheel_report(
+        openmp_bundled=True, openmp_needed=True, openmp_loader_relative=True)
+    report["features"]["USE_OPENMP"] = {"enabled": False, "raw": "OFF"}
+    errors = release_provenance.validate_provenance(
+        report, expect_openmp="on")
+    assert any("USE_OPENMP expected ON, found OFF" in error for error in errors)

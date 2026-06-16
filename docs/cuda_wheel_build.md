@@ -286,7 +286,7 @@ for the release build. In order:
    CUDA wheel hard-depends on the nvidia-*-cu13 runtime libs, `opencv-python`,
    and `onnx` (see §6).
 8. **Validate provenance** (§7) — non-zero exit means *don't ship*. The Linux
-   call asserts `--expect-cuda/cudnn/nccl/onednn/opencv/onnx on`.
+   call asserts `--expect-cuda/cudnn/nccl/onednn/opencv/onnx/openmp on`.
 
 Knobs:
 
@@ -295,7 +295,7 @@ Knobs:
 | `MXNET_BUILD_JOBS` | nproc | Ninja parallelism |
 | `PYTHON` | `.venv-mxnet/bin/python` | interpreter for `-m build` and provenance |
 | `BUNDLE_OPENCV` | `1` | copy system OpenCV into the wheel; set `0` only for a deliberate OpenCV-off wheel |
-| `MXNET_SETUP_ENABLE_ONNX_DEPS` | `1` (Linux) / `0` (macOS) | make `onnx` a hard dependency of this wheel vs the optional `[onnx]` extra |
+| `MXNET_SETUP_ENABLE_ONNX_DEPS` | `1` (Linux CUDA + macOS) / `0` (Linux CPU) | make `onnx` a hard dependency of this wheel vs the optional `[onnx]` extra |
 | `MXNET_WHEEL_FLAVOR` | `cuda` (Linux) | set to `cpu` for the x86_64 CPU wheel (no CUDA, oneDNN + OpenCV, its own `build-cpu/` tree) — see [`BUILDING.md`](../BUILDING.md) |
 | `MXNET_BUILD_DIR` | `build` / `build-cpu` | override the CMake build tree |
 | `MXNET_PACKAGE_VERSION` | today's date | overridden by the positional `<version>` arg |
@@ -341,8 +341,10 @@ inside it. Everything else is reached at load time via RUNPATH:
   **hard pip dependency** (`MXNET_SETUP_ENABLE_ONNX_DEPS=1`), so
   `pip install mxnet` has working ONNX export/import out of the box — no
   `mxnet[onnx]` extra needed. (`onnxruntime`, required only to *run* an
-  exported model, stays a test-only dependency, not an install dep.) On
-  macOS / source installs `onnx` remains the optional `[onnx]` extra.
+  exported model, stays a test-only dependency, not an install dep.) The
+  **macOS CPU wheel does the same** — `onnx` is a hard dep there too. Only the
+  Linux x86_64 CPU wheel and plain source installs keep `onnx` as the optional
+  `[onnx]` extra.
 
 This is why `.venv-mxnet` can run MXNet image notebooks with **no `cv2`
 module installed** — the C++ OpenCV is inside the wheel, and `mx.image`
@@ -400,7 +402,15 @@ asserts all three of:
 For ONNX (`--expect-onnx on`) it asserts the wheel ships the `mxnet/onnx/`
 package **and** that its `METADATA` declares `onnx` as an unconditional
 `Requires-Dist` (not merely the `extra == "onnx"` marker). `--expect-onnx off`
-(the macOS path) conversely fails if onnx was accidentally hard-pinned.
+(the Linux x86_64 CPU path) conversely fails if onnx was accidentally hard-pinned.
+
+For OpenMP (`--expect-openmp on`, asserted by every flavor) it checks the CMake
+cache built with `USE_OPENMP=ON`; on the macOS wheel it *additionally* asserts
+the OpenMP runtime (`libomp.dylib`) is bundled into `mxnet/lib/` and that
+`libmxnet.dylib`'s reference to it is loader-relative (`@loader_path`/`@rpath`),
+the macOS analog of the OpenCV self-containment check. On Linux the OpenMP
+runtime (`libgomp`) is part of the host GCC runtime and is intentionally left
+host-provided, so only the build flag is asserted there.
 
 It also checks the package version matches and that the binary's embedded
 commit stamp corresponds to the checkout. Treat a non-zero exit as a hard

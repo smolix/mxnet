@@ -2,23 +2,26 @@ name: Greetings
 
 on: [pull_request, issues]
 
+# first-interaction posts a comment, so it needs write on issues + PRs.
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
 jobs:
   greeting:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/first-interaction@v1
-      env:
-        GITHUB_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        GITHUB_PR_RUN_ID: ${{ github.run_id }}
-        GITHUB_PR_BASE_REF: ${{ github.event.pull_request.base.ref }} 
-      with:
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
-        issue-message: |
-          Welcome to Apache MXNet (incubating)! We are on a mission to democratize AI, and we are glad that you are contributing to it by opening this issue.
-          Please make sure to include all the relevant context, and one of the @apache/mxnet-committers will be here shortly.
-          If you are interested in contributing to our project, let us know! Also, be sure to check out our guide on [contributing to MXNet](https://mxnet.apache.org/community/contribute) and our [development guides wiki](https://cwiki.apache.org/confluence/display/MXNET/Developments).
-        pr-message: |
-          Welcome to Apache MXNet (incubating)! We are on a mission to democratize AI, and we are glad that you are contributing to it by opening this pull request.
-          Please make sure that the changes are covered by tests. One of the @apache/mxnet-committers will be here shortly.
-          If you run into any issue with the CI and tests, we recommend that you first check out our guide on [developer guides wiki](https://cwiki.apache.org/confluence/display/MXNET/Developments).
-          Let our @apache/mxnet-committers know if you need any help!
+      # v3 runs on Node 20 (v1 was Node 12, deprecated on current runners).
+      - uses: actions/first-interaction@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-message: |
+            Thanks for opening your first issue on this MXNet fork (CUDA 13 /
+            Blackwell + Apple Silicon)! Please include the platform, the wheel
+            flavor (CUDA / Linux CPU / macOS) and clear reproduction steps so it
+            can be triaged quickly.
+          pr-message: |
+            Thanks for opening your first pull request on this MXNet fork! Please
+            make sure CI is green and that the change is covered by tests where it
+            makes sense. A maintainer will review it shortly.

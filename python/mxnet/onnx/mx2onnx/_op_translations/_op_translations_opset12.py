@@ -819,7 +819,12 @@ def convert_pooling(node, **kwargs):
         if pool_type == 'max':
             input_dtype = get_input_dtypes(node, kwargs)[0]
             if np.issubdtype(input_dtype, np.floating):
-                pad_value = np.array(-np.inf, dtype=input_dtype)
+                # MXNet's full-convention max pooling fills a fully-out-of-bounds
+                # boundary window with the dtype's lowest *finite* value (-FLT_MAX),
+                # not -inf.  Pad the synthesized extra output column with the same
+                # value so the exported result matches MXNet element-for-element
+                # (using -inf here produced inf-magnitude mismatches under ORT).
+                pad_value = np.array(np.finfo(input_dtype).min, dtype=input_dtype)
             else:
                 pad_value = np.array(np.iinfo(input_dtype).min, dtype=input_dtype)
             create_const_scalar_node(name + '_full_pool_output_pad_value', pad_value, kwargs)

@@ -63,6 +63,7 @@ TEST_ROOT = os.path.abspath(os.path.join(THIS_DIR, '..'))
 # compiled regex.
 ALLOWED_PATTERNS = [
     re.compile(r'\b(?:XOP|FS|GH|CN|T|R|D|B|C|O|P|L|A)\d+\b'),       # tracker
+    re.compile(r'\bOI-?\d+\b'),                                     # OI-N open-issue tracker
     re.compile(r'\b#\d{2,}\b'),                                     # bare #NNN
     re.compile(r'apache/mxnet#?\d+', re.IGNORECASE),                # gh ref
     re.compile(r'apache/incubator-mxnet[/#]\d+', re.IGNORECASE),

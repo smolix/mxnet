@@ -66,6 +66,6 @@ won't-fix — look it up in [`FIXED.md`](FIXED.md).
 
 | ID | Sev | Summary |
 |----|-----|---------|
-| [OI-24](OPEN_ISSUES_DETAILS.md#oi-24) | Med | Wheel publication is manual; no conda/system packaging or release automation |
+| [OI-24](OPEN_ISSUES_DETAILS.md#oi-24) | Med | CUDA build→test→tag→release now scripted (`tools/release_cuda_wheel.sh`), but still host-run (no CI runner); no conda/system packaging |
 | [OI-25](OPEN_ISSUES_DETAILS.md#oi-25) | Med | No CUDA build-matrix CI (Ada/Hopper/Blackwell + CUDA 12.x) |
 | [OI-26](OPEN_ISSUES_DETAILS.md#oi-26) | Low | Downstreams unverified (GluonNLP/Sockeye/AutoGluon, ps-lite, Py3.13+, NumPy 2.x [op shape/axis-param rendering fixed], DLPack) |

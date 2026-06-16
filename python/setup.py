@@ -81,15 +81,27 @@ OPENCV_PYTHON_INSTALL_REQUIRES = [
     'opencv-python>=4,<5',
 ]
 
-# ONNX export/import (mxnet.onnx) is pure-Python and now ships in the wheel (OI-27).
-# onnx is exposed as an *optional* extra so a plain `pip install mxnet` does not pull
-# protobuf/onnx unless requested: `pip install "mxnet[onnx]"`. (onnxruntime is only
-# needed to run exported models, e.g. in the tests/python/onnx suite.)
-# Pin to the validated ONNX range. The exporter is tested against onnx 1.21 / ORT 1.24;
-# newer onnx/onnxruntime are stricter in a few op edge cases that are not yet covered.
-ONNX_EXTRA_REQUIRES = [
+# ONNX export/import (mxnet.onnx) is pure-Python and ships in every wheel (OI-27).
+#
+# The dependency *policy* is platform-dependent:
+#   * The Linux CUDA release wheel makes `onnx` a FIRST-CLASS runtime dependency
+#     (MXNET_SETUP_ENABLE_ONNX_DEPS=1, set by tools/build_cleanup_wheel.sh) so a
+#     plain `pip install mxnet` has working ONNX export/import out of the box —
+#     the same treatment OpenCV and the nvidia-*-cu13 runtime libs get.
+#   * Every other wheel (macOS CPU, source installs) keeps `onnx` as the OPTIONAL
+#     `[onnx]` extra so a bare install does not pull protobuf/onnx unless asked:
+#     `pip install "mxnet[onnx]"`.
+# (onnxruntime is only needed to *run* exported models, e.g. in tests/python/onnx,
+# so it is never an install dep — the acceptance harness adds it itself.)
+#
+# Pin to the validated ONNX range. The exporter is tested against onnx 1.21 / ORT
+# 1.24; newer onnx/onnxruntime are stricter in a few op edge cases not yet covered.
+ONNX_REQUIRES = [
     'onnx>=1.7.0,<1.22',
 ]
+# The `[onnx]` extra is still exposed everywhere: on the CUDA wheel it is a
+# (redundant) superset of the hard dep; elsewhere it is the only way to pull onnx.
+ONNX_EXTRA_REQUIRES = ONNX_REQUIRES
 
 # need to use distutils.core for correct placement of cython dll
 kwargs = {}
@@ -323,10 +335,28 @@ def _include_opencv_python_deps():
     return False
 
 
+def _include_onnx_deps():
+    """Return whether onnx should be a hard runtime dependency of this wheel.
+
+    The CUDA (Linux) release wheel ships mxnet.onnx as a first-class feature and
+    depends on onnx directly; other wheels keep it as the optional `[onnx]` extra.
+    Never hard-depend when the ONNX integration code is excluded from the build.
+    """
+    if _env_flag('MXNET_SETUP_EXCLUDE_ONNX'):
+        return False
+    override = _env_flag('MXNET_SETUP_ENABLE_ONNX_DEPS')
+    if override is not None:
+        return override
+    # Default scope matches the CUDA runtime deps — i.e. the CUDA release wheel.
+    return _include_cuda_runtime_deps()
+
+
 if 'install_requires' in kwargs and _include_cuda_runtime_deps():
     kwargs['install_requires'].extend(CUDA_RUNTIME_INSTALL_REQUIRES)
 if 'install_requires' in kwargs and _include_opencv_python_deps():
     kwargs['install_requires'].extend(OPENCV_PYTHON_INSTALL_REQUIRES)
+if 'install_requires' in kwargs and _include_onnx_deps():
+    kwargs['install_requires'].extend(ONNX_REQUIRES)
 if 'install_requires' in kwargs:
     kwargs.setdefault('extras_require', {})['onnx'] = ONNX_EXTRA_REQUIRES
 

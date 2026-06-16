@@ -19,6 +19,7 @@ import mxnet as mx
 import numpy as np
 from mxnet.test_utils import *
 from common import make_test_images, requires_opencv
+import os
 import sys
 import shutil
 import tempfile
@@ -60,7 +61,10 @@ class TestImage(unittest.TestCase):
     @use_np
     def test_imageiter(self):
         im_list = [[np.random.randint(0, 5), x] for x in self.IMAGES]
-        fname = './data/test_numpy_imageiter.lst'
+        # Write the .lst into the per-test temp dir (created in setUp, removed in
+        # tearDown) rather than a CWD-relative './data/', which does not exist when
+        # the suite runs from the repo root and is never cleaned up.
+        fname = os.path.join(self.IMAGES_DIR, 'test_numpy_imageiter.lst')
         file_list = ['\t'.join([str(k), str(np.random.randint(0, 5)), x])
                         for k, x in enumerate(self.IMAGES)]
         with open(fname, 'w') as f:
@@ -103,8 +107,8 @@ class TestImage(unittest.TestCase):
         for _ in det_iter:
             pass
 
-        # test file list with last batch handle
-        fname = './data/test_numpy_imagedetiter.lst'
+        # test file list with last batch handle (temp dir, not CWD-relative ./data/)
+        fname = os.path.join(self.IMAGES_DIR, 'test_numpy_imagedetiter.lst')
         im_list = [[k] + _generate_objects() + [x] for k, x in enumerate(self.IMAGES)]
         with open(fname, 'w') as f:
             for line in im_list:

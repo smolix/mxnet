@@ -31,6 +31,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
 
@@ -252,6 +253,33 @@ def _macho_rpaths(library_path):
     return rpaths
 
 
+def _classify_onnx_requires(metadata_text):
+    """Classify how a wheel's METADATA depends on onnx.
+
+    Returns (hard_required, extra_required):
+      * hard_required  — a `Requires-Dist: onnx ...` line with NO environment
+        marker, i.e. onnx is an unconditional install dependency (the CUDA wheel).
+      * extra_required — an onnx requirement gated on `extra == "onnx"`, i.e. the
+        optional `[onnx]` extra (present on every wheel).
+    """
+    hard = extra = False
+    for line in metadata_text.splitlines():
+        if not line.lower().startswith("requires-dist:"):
+            continue
+        spec = line.split(":", 1)[1].strip()
+        try:
+            requirement = Requirement(spec)
+        except InvalidRequirement:
+            continue
+        if canonicalize_name(requirement.name) != "onnx":
+            continue
+        if requirement.marker is not None and "extra" in str(requirement.marker):
+            extra = True
+        else:
+            hard = True
+    return hard, extra
+
+
 def inspect_wheel_payload(wheel_path):
     payload = {
         "inspected": False,
@@ -264,6 +292,10 @@ def inspect_wheel_payload(wheel_path):
         "opencv_needed": [],
         "opencv_bundled": [],
         "opencv_bundled_sonames": [],
+        "onnx_pkg_files": [],
+        "onnx_hard_require": False,
+        "onnx_extra_require": False,
+        "metadata_found": False,
         "runpath": None,
         "runpath_has_origin_lib": False,
         "runpath_has_nvidia_cudnn": False,
@@ -282,6 +314,21 @@ def inspect_wheel_payload(wheel_path):
             payload["opencv_bundled_sonames"] = sorted(
                 {Path(name).name for name in payload["opencv_bundled"]}
             )
+            # ONNX integration (mxnet.onnx) is pure-Python and bundled in the
+            # wheel (OI-27); the *dependency policy* (hard dep vs optional [onnx]
+            # extra) is read from the wheel METADATA.
+            payload["onnx_pkg_files"] = sorted(
+                name for name in names if name.startswith("mxnet/onnx/")
+            )
+            metadata_names = [
+                name for name in names if name.endswith(".dist-info/METADATA")
+            ]
+            if metadata_names:
+                payload["metadata_found"] = True
+                metadata_text = wheel.read(metadata_names[0]).decode(
+                    "utf-8", "ignore")
+                payload["onnx_hard_require"], payload["onnx_extra_require"] = (
+                    _classify_onnx_requires(metadata_text))
             # Linux wheels ship an ELF libmxnet.so; macOS wheels ship a Mach-O
             # libmxnet.dylib.  Inspect whichever the wheel actually contains.
             if "mxnet/libmxnet.so" in names:
@@ -405,6 +452,7 @@ def validate_provenance(
     expect_nccl=None,
     expect_onednn=None,
     expect_opencv=None,
+    expect_onnx=None,
 ):
     errors = []
     git = report["git"]
@@ -468,6 +516,7 @@ def validate_provenance(
     expected_cudnn = _expected_flag(expect_cudnn)
     expected_nccl = _expected_flag(expect_nccl)
     expected_opencv = _expected_flag(expect_opencv)
+    expected_onnx = _expected_flag(expect_onnx)
     for wheel in report["wheels"]:
         if not wheel["exists"]:
             errors.append("wheel file does not exist: {}".format(wheel["path"]))
@@ -537,6 +586,22 @@ def validate_provenance(
             errors.append("{} libmxnet.so has OpenCV NEEDED entries despite "
                           "--expect-opencv off: {}".format(
                               wheel["filename"], ", ".join(payload["opencv_needed"])))
+
+        if expected_onnx is not None and not payload["metadata_found"]:
+            errors.append("{} has no .dist-info/METADATA to check the onnx "
+                          "dependency policy".format(wheel["filename"]))
+        if expected_onnx is True:
+            if not payload["onnx_pkg_files"]:
+                errors.append("{} does not ship the mxnet/onnx package".format(
+                    wheel["filename"]))
+            if not payload["onnx_hard_require"]:
+                errors.append("{} METADATA does not declare onnx as a hard runtime "
+                              "dependency (expected for the CUDA wheel)".format(
+                                  wheel["filename"]))
+        elif expected_onnx is False and payload["onnx_hard_require"]:
+            errors.append("{} declares onnx as a hard dependency despite "
+                          "--expect-onnx off (it should be the optional [onnx] "
+                          "extra)".format(wheel["filename"]))
     return errors
 
 
@@ -594,6 +659,11 @@ def format_text_report(report, errors):
                         "yes" if payload["runpath_has_origin_lib"] else "no",
                         "yes" if payload["runpath_has_nvidia_cudnn"] else "no",
                         "yes" if payload["runpath_has_nvidia_nccl"] else "no"))
+                lines.append(
+                    "      onnx: pkg_files={} hard_require={} extra_require={}".format(
+                        len(payload["onnx_pkg_files"]),
+                        "yes" if payload["onnx_hard_require"] else "no",
+                        "yes" if payload["onnx_extra_require"] else "no"))
 
     lines.append("Validation: {}".format("failed" if errors else "ok"))
     lines.extend("  - {}".format(error) for error in errors)
@@ -614,6 +684,7 @@ def parse_args(argv):
     parser.add_argument("--expect-nccl", choices=("on", "off"))
     parser.add_argument("--expect-onednn", choices=("on", "off"))
     parser.add_argument("--expect-opencv", choices=("on", "off"))
+    parser.add_argument("--expect-onnx", choices=("on", "off"))
     parser.add_argument("--allow-dirty", action="store_true")
     parser.add_argument("--strict-untracked", action="store_true")
     parser.add_argument("--allow-missing-cache", action="store_true")
@@ -642,6 +713,7 @@ def main(argv=None):
             expect_nccl=args.expect_nccl,
             expect_onednn=args.expect_onednn,
             expect_opencv=args.expect_opencv,
+            expect_onnx=args.expect_onnx,
         )
     except (OSError, ProvenanceError, subprocess.CalledProcessError) as err:
         print("release provenance check failed: {}".format(err), file=sys.stderr)

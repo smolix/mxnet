@@ -3367,7 +3367,19 @@ def check_interoperability(op_list):
             continue
         default_tols = (1e-3, 1e-4)
         tols = {'linalg.tensorinv': (1e-2, 5e-3),
-                'linalg.solve':     (1e-3, 5e-2)}
+                'linalg.solve':     (1e-3, 5e-2),
+                # GPU GEMM-family ops use TF32 tensor cores by default (the FC /
+                # la_op default in src/common/cuda/cublaslt_gemm.cc, matching
+                # PyTorch), so a GPU result differs from NumPy's fp32 by ~1e-3
+                # relative — which the default (1e-3, 1e-4) flags on the near-zero
+                # output elements. This is a __array_function__ *dispatch* check,
+                # not a precision check, so use a TF32-appropriate tolerance for
+                # the matmul family (OI-15; harmless on the exact CPU path).
+                'dot':       (1e-2, 1e-2),
+                'matmul':    (1e-2, 1e-2),
+                'tensordot': (1e-2, 1e-2),
+                'inner':     (1e-2, 1e-2),
+                'vdot':      (1e-2, 1e-2)}
         (rel_tol, abs_tol) = tols.get(name, default_tols)
         print('Dispatch test:', name)
         workloads = OpArgMngr.get_workloads(name)

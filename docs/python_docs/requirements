@@ -19,6 +19,17 @@ numpy>=1.17,<1.20.0
 jupyter
 Jinja2==3.0.3
 sphinx==2.4.0
+# Pin the sphinxcontrib-* helper extensions to their Sphinx-2.x-compatible
+# versions. They are UNCONSTRAINED transitive deps of sphinx==2.4.0, so pip
+# otherwise installs the latest (2.x) which hard-requires Sphinx>=5.0 and fails
+# the docs build at import with:
+#   "The sphinxcontrib.applehelp extension ... needs at least Sphinx v5.0".
+sphinxcontrib-applehelp==1.0.2
+sphinxcontrib-devhelp==1.0.2
+sphinxcontrib-htmlhelp==1.0.3
+sphinxcontrib-jsmath==1.0.1
+sphinxcontrib-qthelp==1.0.3
+sphinxcontrib-serializinghtml==1.1.5
 matplotlib
 notebook
 nbconvert==5.6.1

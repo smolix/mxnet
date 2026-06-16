@@ -347,14 +347,14 @@ class Trainer(object):
         gradients to perform certain transformation, such as in gradient clipping, then
         you may want to manually call `allreduce_grads()` and `update()` separately.
 
-        Compared to ``torch.optim.SGD.step()``
-        --------------------------------------
+        .. rubric:: Compared to torch.optim.SGD.step()
+
         PyTorch's ``optimizer.step()`` takes no batch_size argument and applies
         the raw gradient produced by ``loss.backward()``.  Gluon's
         ``trainer.step(batch_size)`` rescales the gradient by
         ``1 / batch_size`` before applying it, so for the SAME nominal ``lr``
         and the SAME per-sample loss formula, MXNet's effective update is
-        ``batch_size``× smaller than PyTorch's.  Concretely::
+        ``batch_size`` × smaller than PyTorch's.  Concretely::
 
             # PyTorch
             loss(pred, y).sum().backward()   # loss has shape (N,)
@@ -369,7 +369,7 @@ class Trainer(object):
             trainer.step(N)                  # rescale by 1/N -> mean-over-batch
 
         If your loss returns a per-sample value and you call
-        ``trainer.step(N)``, the effective learning rate is ``N``× smaller
+        ``trainer.step(N)``, the effective learning rate is ``N`` × smaller
         than the equivalent PyTorch code with the same nominal ``lr``.  When
         porting hyper-parameters between frameworks, either (a) use
         ``trainer.step(1)`` to match PyTorch's no-rescale behaviour, or (b)

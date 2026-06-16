@@ -14,7 +14,7 @@ jobs:
     name: shellcheck (tools/)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Run shellcheck on tools/ scripts (warn-only)
@@ -37,8 +37,8 @@ jobs:
     name: cmake-format / cmake-lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Install cmakelang
@@ -64,8 +64,8 @@ jobs:
     name: ruff / flake8 / py_compile (python/mxnet)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Byte-compile Python sources (py_compile)
@@ -134,7 +134,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install clang-format
         run: sudo apt-get update && sudo apt-get install -y clang-format-14
       - name: Run clang-format --dry-run on DNNL operator sources

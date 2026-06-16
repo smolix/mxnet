@@ -30,10 +30,10 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Compilation cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.ccache
           # We include the commit sha in the cache key, as new cache entries are
@@ -45,7 +45,7 @@ jobs:
             ${{ runner.os }}-ccache
 
       - name: Setup python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           # The docs toolchain in docs/python_docs/requirements is a legacy, tightly
           # pinned set (numpy<1.20, sphinx==2.4.0, nbsphinx==0.4.3, ...) that only has
@@ -60,7 +60,9 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libopenblas-dev ninja-build ccache python3-sphinx \
+          # gfortran provides libgfortran.so, which the OpenBLAS/LAPACK link needs;
+          # the runner image no longer ships the unversioned .so by default.
+          sudo apt-get install -y libopenblas-dev gfortran ninja-build ccache python3-sphinx \
               pandoc libopencv-dev protobuf-compiler libprotobuf-dev
           ccache -M 500M  # Limit the ccache size; Github's overall cache limit is 5GB
           python -m pip install pandoc-attributes==0.1.7

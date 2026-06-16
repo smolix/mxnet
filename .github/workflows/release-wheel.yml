@@ -20,11 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -40,6 +40,7 @@ jobs:
             cmake \
             ccache \
             g++ \
+            gfortran \
             libopenblas-dev \
             libomp-dev \
             libopencv-dev \
@@ -86,8 +87,25 @@ jobs:
             tools/build_cleanup_wheel.sh "${{ steps.ver.outputs.version }}"
           ls -lh dist/*.whl
 
+      - name: Verify the wheel is self-contained (clean-room import)
+        run: |
+          set -e
+          # The build host has libopencv-dev installed, so importing here would
+          # resolve the bundled OpenCV's system deps from the host and hide any gap
+          # in the vendored closure (this is exactly how the libcharls.so.2 miss went
+          # unnoticed). Import instead in a minimal container that has NO OpenCV and
+          # only the single host lib the Linux wheel is designed to borrow — libgomp1,
+          # the GCC OpenMP runtime. If the bundled closure is incomplete, `import
+          # mxnet` fails here, catching the regression before the wheel ships.
+          docker run --rm -v "$PWD/dist:/dist:ro" python:3.12-slim bash -euxc '
+            apt-get update >/dev/null
+            apt-get install -y --no-install-recommends libgomp1 >/dev/null
+            pip install --quiet /dist/*.whl
+            python -c "import mxnet, mxnet.runtime as rt; print(mxnet.__version__); print(rt.Features())"
+          '
+
       - name: Upload wheel as workflow artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mxnet-cpu-wheel-${{ steps.ver.outputs.version }}
           path: dist/*.whl
@@ -96,7 +114,7 @@ jobs:
 
       - name: Attach wheel to GitHub Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           files: dist/*.whl
@@ -121,11 +139,11 @@ jobs:
     env:
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           # The macOS wheel is built cp312 (matches the local build / full-test
           # tooling, which uses python3.12).
@@ -194,7 +212,7 @@ jobs:
           PY
 
       - name: Upload wheel as workflow artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mxnet-macos-arm64-wheel
           path: dist/*.whl
@@ -206,7 +224,7 @@ jobs:
         # the release body / notes, so this step deliberately sets no body to avoid
         # clobbering it when both jobs target the same tag.
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           files: dist/*.whl

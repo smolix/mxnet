@@ -39,14 +39,14 @@ jobs:
       UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # For workflow_run events the SHA we want to test is the one that
           # triggered the upstream build, not the merge commit.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           submodules: false   # Tests only; no need to pull 3rd-party source
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -68,7 +68,7 @@ jobs:
       # that a requirements change always busts it.                         #
       # ------------------------------------------------------------------ #
       - name: Cache uv
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-test-cpu-py311-${{ hashFiles('python/setup.py', 'tests/requirements*.txt') }}
@@ -83,7 +83,7 @@ jobs:
       # run so the tester must supply the artifact manually or skip).       #
       # ------------------------------------------------------------------ #
       - name: Download libmxnet.so artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: libmxnet-cpu-${{ github.event.workflow_run.head_sha || github.sha }}
           path: ${{ github.workspace }}/lib
@@ -147,7 +147,7 @@ jobs:
 
       - name: Upload pytest report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-report-${{ github.event.workflow_run.head_sha || github.sha }}
           path: |

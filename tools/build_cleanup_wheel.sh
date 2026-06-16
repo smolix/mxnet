@@ -166,7 +166,14 @@ bundle_opencv_closure_linux() {
     #   * CUDA runtime / driver libs — intentionally host- or pip-provided and
     #     resolved via libmxnet's RUNPATH (libcuda, libnvidia-*, libcudart,
     #     libcublas, libcudnn, libnccl, libnvrtc, libcu{fft,solver,sparse,rand}).
-    local skip_re='^(ld-linux|libc|libm|libdl|libpthread|librt|libutil|libnsl|libresolv|libstdc\+\+|libgcc_s|libcuda|libcudart|libcublas|libcudnn|libnccl|libnvrtc|libcufft|libcusolver|libcusparse|libcurand|libnvJitLink|libnvToolsExt|libnvidia)'
+    #
+    # Each name is anchored on a soname boundary — (\.so|-|$) — so it matches a WHOLE
+    # library name, never a prefix. Without the anchor the short glibc names match
+    # unrelated libraries: `libc` matches libcharls.so.2 / libcrypto / libcurl, `libm`
+    # matches libmount, `librt` matches librtmp. That silently dropped real OpenCV
+    # codec deps from the closure, so a clean host (no system OpenCV) failed at
+    # `import mxnet` with e.g. "OSError: libcharls.so.2: cannot open shared object file".
+    local skip_re='^(ld-linux|libc|libm|libdl|libpthread|librt|libutil|libnsl|libresolv|libstdc\+\+|libgcc_s|libcuda|libcudart|libcublas|libcudnn|libnccl|libnvrtc|libcufft|libcusolver|libcusparse|libcurand|libnvJitLink|libnvToolsExt|libnvidia)(\.so|-|$)'
     local added lib real
     while :; do
         added=0

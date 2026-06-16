@@ -25,7 +25,7 @@ jobs:
       UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -39,7 +39,7 @@ jobs:
           fi
           sw_vers
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -52,7 +52,7 @@ jobs:
           ccache -M "$CCACHE_MAXSIZE"
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-macos-arm64-cpu-${{ github.ref }}-${{ github.sha }}
@@ -61,7 +61,7 @@ jobs:
             ccache-macos-arm64-cpu-
 
       - name: Cache uv
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-macos-arm64-cpu-py311-${{ hashFiles('python/setup.py', 'tests/python/apple_silicon_cpu_smoke') }}
@@ -134,7 +134,7 @@ jobs:
 
       - name: Upload pytest cache on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-cache-macos-arm64-${{ github.sha }}
           path: .pytest_cache/

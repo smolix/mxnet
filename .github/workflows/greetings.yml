@@ -12,16 +12,16 @@ jobs:
   greeting:
     runs-on: ubuntu-latest
     steps:
-      # v3 runs on Node 20 (v1 was Node 12, deprecated on current runners).
+      # v3 runs on Node 24 (v1 was Node 12, deprecated on current runners).
       - uses: actions/first-interaction@v3
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          issue-message: |
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          issue_message: |
             Thanks for opening your first issue on this MXNet fork (CUDA 13 /
             Blackwell + Apple Silicon)! Please include the platform, the wheel
             flavor (CUDA / Linux CPU / macOS) and clear reproduction steps so it
             can be triaged quickly.
-          pr-message: |
+          pr_message: |
             Thanks for opening your first pull request on this MXNet fork! Please
             make sure CI is green and that the change is covered by tests where it
             makes sense. A maintainer will review it shortly.

@@ -380,11 +380,15 @@ if [ "$FLAVOR" = macos ]; then
     # CMake at it explicitly (the same prefix's libomp.dylib is bundled into the
     # wheel below for self-containment, since there is no system libomp to fall
     # back on the way Linux falls back on the host libgomp).
-    OPENMP_ROOT_HINT="${OPENMP_ROOT:-$(ls -d "$REPO_ROOT"/.deps/openmp-*-macos-* 2>/dev/null | head -n1)}"
+    # `|| true`: under `set -euo pipefail`, when no hermetic libomp exists yet (the
+    # case this very block is meant to handle — a fresh CI checkout), `ls` exits
+    # non-zero and pipefail propagates it, which would kill the script here before
+    # it can build libomp. Swallow that so an empty result falls through to the build.
+    OPENMP_ROOT_HINT="${OPENMP_ROOT:-$(ls -d "$REPO_ROOT"/.deps/openmp-*-macos-* 2>/dev/null | head -n1 || true)}"
     if [ -z "$OPENMP_ROOT_HINT" ] || [ ! -f "$OPENMP_ROOT_HINT/include/omp.h" ]; then
         echo "==> No hermetic libomp under .deps/; building it (tools/dependencies/build_openmp.py)"
         "$PYTHON_BIN" tools/dependencies/build_openmp.py
-        OPENMP_ROOT_HINT="$(ls -d "$REPO_ROOT"/.deps/openmp-*-macos-* 2>/dev/null | head -n1)"
+        OPENMP_ROOT_HINT="$(ls -d "$REPO_ROOT"/.deps/openmp-*-macos-* 2>/dev/null | head -n1 || true)"
     fi
     if [ -z "$OPENMP_ROOT_HINT" ] || [ ! -f "$OPENMP_ROOT_HINT/include/omp.h" ]; then
         echo "ERROR: USE_OPENMP=ON on macOS but no hermetic libomp prefix is available" >&2

@@ -36,10 +36,13 @@ jobs:
 
       - name: Install build + test dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -o Acquire::Retries=3
           # gfortran provides libgfortran.so (libmxnet links it via OpenBLAS/LAPACK);
           # the runner image no longer ships the unversioned .so by default.
+          # Retries + per-connection timeout so a slow mirror fails fast and retries.
           sudo apt-get install -y --no-install-recommends \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 \
             build-essential \
             ninja-build \
             cmake \

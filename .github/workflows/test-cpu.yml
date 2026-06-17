@@ -57,8 +57,26 @@ jobs:
       # same OpenCV packages build-cpu uses so the SONAMEs match.
       - name: Install OpenCV runtime (libmxnet.so links against it)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libopencv-dev
+          # libmxnet.so links ONLY libopencv_{core,imgproc,imgcodecs}.so.* (verified
+          # from its ELF NEEDED entries). Install just those runtime libs -- NOT the
+          # libopencv-dev metapackage, which pulls every OpenCV module plus ROCm/GDAL/
+          # ffmpeg deps that `import mxnet` never loads. Resolve the versioned package
+          # names from the apt index so this survives OpenCV SONAME bumps; fall back to
+          # libopencv-dev if resolution finds nothing. Retries + per-connection timeout
+          # so a stalled mirror fails fast and retries instead of hanging.
+          sudo apt-get update -o Acquire::Retries=3
+          pkgs=$(for m in core imgproc imgcodecs; do
+                   apt-cache --names-only search "^libopencv-${m}[0-9]"
+                 done | awk '{print $1}' | sort -u)
+          if [ -z "$pkgs" ]; then
+            echo "::warning::lean OpenCV runtime packages not found; falling back to libopencv-dev"
+            pkgs=libopencv-dev
+          fi
+          echo "Installing OpenCV runtime: $pkgs"
+          sudo apt-get install -y --no-install-recommends \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 \
+            $pkgs
 
       - name: Install uv
         run: python -m pip install --upgrade pip uv

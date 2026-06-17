@@ -368,15 +368,32 @@ else()
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3")
   endif()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_C_FLAGS}")
-  # gcc — especially 13+ on the current runner images — floods these three warnings
-  # on the vendored, template-heavy mshadow/nnvm code, where they are well-known
-  # false positives (e.g. -Wmaybe-uninitialized in mshadow Shape<>). Suppress them on
-  # GNU so the build log is readable; clang/AppleClang are unaffected (they don't
-  # accept these spellings, and unknown -Wno-* there would itself warn).
+  # gcc (especially 13+ on the current runner images) emits a few well-known false
+  # positives that are NOT our bugs:
+  #   * -Wmaybe-uninitialized / -Wdangling-reference / -Warray-bounds — on the
+  #     vendored, template-heavy mshadow/nnvm code (e.g. -Wmaybe-uninitialized in
+  #     mshadow Shape<>);
+  #   * -Wnonnull — fires inside libstdc++ (std::copy -> __builtin_memmove) when a
+  #     std::vector is assigned from an empty range, i.e. memmove(dst, nullptr, 0),
+  #     which is harmless. gcc-13 flags it pedantically; it is a libstdc++/gcc bug.
+  # Suppress them on GNU so the build log is readable; clang/AppleClang are
+  # unaffected (they don't accept these spellings, and unknown -Wno-* there would
+  # itself warn).
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     string(APPEND CMAKE_CXX_FLAGS
-      " -Wno-maybe-uninitialized -Wno-dangling-reference -Wno-array-bounds")
+      " -Wno-maybe-uninitialized -Wno-dangling-reference -Wno-array-bounds -Wno-nonnull")
   endif()
+endif()
+
+# On Linux, oneDNN's vendored ITT assembly (ittptmark64.S) ships without a
+# .note.GNU-stack section, so ld marks the whole libmxnet.so as REQUIRING AN
+# EXECUTABLE STACK. Hardened loaders then refuse to dlopen it and `import mxnet`
+# from the wheel dies with "cannot enable executable stack as shared object
+# requires: Invalid argument". Force a non-executable stack on the outputs (this
+# also silences the ld "missing .note.GNU-stack ... executable stack" warning).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,-z,noexecstack")
+  string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,-z,noexecstack")
 endif()
 
 if(NOT mxnet_LINKER_LIBS)
@@ -835,6 +852,17 @@ list(APPEND SOURCE $<TARGET_OBJECTS:nnvm>)
 
 add_library(miniz STATIC "3rdparty/miniz/miniz.c")
 target_include_directories(miniz PUBLIC "3rdparty/miniz")
+# miniz picks its stdio path from platform macros. On Linux/glibc, without
+# _LARGEFILE64_SOURCE it falls back to the 32-bit fopen/ftello/stat path and warns
+# (via #pragma message) that it "may not support large files". Define the macro so
+# miniz takes its `__GNUC__ && _LARGEFILE64_SOURCE` branch and uses the 64-bit
+# fopen64/ftello64/fseeko64/stat64 APIs — that is the actual large-file fix; the
+# message going away is just a consequence. Scope to Linux: macOS uses miniz's own
+# __APPLE__ branch (already 64-bit), and defining the macro there (AppleClang also
+# defines __GNUC__) would wrongly select the nonexistent *64 symbols.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(miniz PRIVATE _LARGEFILE64_SOURCE)
+endif()
 list(APPEND mxnet_LINKER_LIBS miniz)
 
 # add source group
@@ -1301,7 +1329,10 @@ if(USE_OPENCV AND OpenCV_VERSION_MAJOR GREATER 2)
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(im2rec PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>")
   endif()
-else()
+elseif(USE_OPENCV)
+    # Only warn when OpenCV was actually requested but is too old / lacks imgcodecs.
+    # When USE_OPENCV is OFF (e.g. the macOS smoke build) im2rec is obviously
+    # unavailable and the warning is just noise.
     message(WARNING "OpenCV_VERSION_MAJOR: ${OpenCV_VERSION_MAJOR}, version 3 with imgcodecs \
     is required for im2rec, im2rec will not be available")
 endif()

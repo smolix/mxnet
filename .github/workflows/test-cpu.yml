@@ -131,6 +131,11 @@ jobs:
       #   * tests/python/dnnl/subgraphs/             — FC subgraph fusion   #
       #   * tests/python/unittest/test_engine_*      — scheduler lifecycle  #
       #   * tests/python/unittest/test_inplace_dtype — dtype/inplace logic  #
+      #   * test_operator.py::test_custom_op_*_exception_isolation_*        #
+      #       — engine exception isolation under NaiveEngine. These two run #
+      #         ONLY in the nightly sweep otherwise, so a NaiveEngine       #
+      #         regression here goes unseen on PRs for a day; pull them     #
+      #         into the fast subset so PR CI guards them directly.         #
       # Per-test timeout 180 s; total well within the 20-min job cap.       #
       # ------------------------------------------------------------------ #
       - name: Run pytest subset
@@ -143,6 +148,8 @@ jobs:
             tests/python/dnnl/subgraphs/test_fc_subgraph.py \
             tests/python/unittest/test_engine_shutdown.py \
             tests/python/unittest/test_inplace_dtype.py \
+            "tests/python/unittest/test_operator.py::test_custom_op_exception_isolation_between_queued_ops" \
+            "tests/python/unittest/test_operator.py::test_custom_op_backward_exception_isolation_between_queued_ops" \
             -v --timeout=180 --tb=short
 
       - name: Upload pytest report on failure

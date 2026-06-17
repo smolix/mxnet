@@ -21,6 +21,7 @@
  * \file naive_engine.cc
  * \brief Implementation of NaiveEngine
  */
+#include <algorithm>
 #include <atomic>
 #include <future>
 #include <memory>
@@ -300,6 +301,15 @@ class NaiveEngine final : public Engine {
       if (it != var_exceptions_.end()) {
         exception_to_rethrow = it->second;
         var_exceptions_.erase(it);
+        // The failed op recorded this same exception_ptr in BOTH var_exceptions_
+        // and global_exceptions_ (see the RunOperator failure path). Consuming it
+        // here via a per-var wait (e.g. wait_to_read) must also drop the global
+        // copy, otherwise a later WaitForAll() re-raises an exception the caller
+        // already handled -- breaking exception isolation between queued ops. The
+        // ThreadedEngine clears its global state on the same path; mirror it here.
+        global_exceptions_.erase(
+            std::remove(global_exceptions_.begin(), global_exceptions_.end(), exception_to_rethrow),
+            global_exceptions_.end());
       }
     }
     if (exception_to_rethrow != nullptr) {

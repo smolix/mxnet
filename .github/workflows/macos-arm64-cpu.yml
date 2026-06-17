@@ -48,6 +48,9 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          # The runner image preinstalls untrusted taps (aws/tap, azure/bicep) that
+          # make `brew install` warn ("taps are not trusted"); untap them first.
+          brew untap aws/tap azure/bicep 2>/dev/null || true
           brew install cmake ninja ccache
           ccache -M "$CCACHE_MAXSIZE"
 

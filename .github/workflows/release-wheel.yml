@@ -165,6 +165,9 @@ jobs:
           # hermetic libomp (tools/dependencies/build_openmp.py) and bundles it into
           # the wheel for self-containment — there is no system libomp to fall back
           # on, unlike Linux's libgomp.
+          # The runner image preinstalls untrusted taps (aws/tap, azure/bicep) that
+          # make `brew install` warn ("taps are not trusted"); untap them first.
+          brew untap aws/tap azure/bicep 2>/dev/null || true
           brew install cmake ninja opencv
 
       - name: Resolve tag (for the GitHub Release attachment)

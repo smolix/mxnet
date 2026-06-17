@@ -11,18 +11,22 @@ SPHINXOPTS  ?=
 SOURCEDIR    = .
 BUILDDIR     = _build
 
-.PHONY: help html clean serve deploy
+.PHONY: help html linkcheck clean serve deploy
 
 help:
-	@echo "make html   - build the HTML API reference into $(BUILDDIR)/html"
-	@echo "make deploy - build, then publish to the gh-pages branch (GitHub Pages)"
-	@echo "make clean  - remove $(BUILDDIR) and autosummary stubs (generated/)"
-	@echo "make serve  - build, then serve at http://localhost:8000"
+	@echo "make html      - build the HTML API reference into $(BUILDDIR)/html"
+	@echo "make linkcheck - validate links/cross-references in the API reference"
+	@echo "make deploy    - build, then publish to the gh-pages branch (GitHub Pages)"
+	@echo "make clean     - remove $(BUILDDIR) and autosummary stubs (generated/)"
+	@echo "make serve     - build, then serve at http://localhost:8000"
 
 html:
 	$(SPHINXBUILD) -b html -d "$(BUILDDIR)/doctrees" $(SPHINXOPTS) "$(SOURCEDIR)" "$(BUILDDIR)/html"
 	@touch "$(BUILDDIR)/html/.nojekyll"
 	@echo "Built: $(BUILDDIR)/html/index.html"
+
+linkcheck:
+	$(SPHINXBUILD) -b linkcheck -d "$(BUILDDIR)/doctrees" $(SPHINXOPTS) "$(SOURCEDIR)" "$(BUILDDIR)/linkcheck"
 
 clean:
 	rm -rf "$(BUILDDIR)" generated

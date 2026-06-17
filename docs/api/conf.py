@@ -81,6 +81,12 @@ autodoc_mock_imports = [
 nitpicky = False
 suppress_warnings = ["autosummary", "ref.python"]
 
+# Don't verify URL #fragment anchors during linkcheck: anchor checking is the most
+# fragile part of linkcheck (GitHub/readthedocs rewrite anchors, JS-rendered pages),
+# producing false "broken" results. The linkcheck job reports external rot without
+# gating CI anyway, so anchor noise is pure distraction.
+linkcheck_anchors = False
+
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable", None),

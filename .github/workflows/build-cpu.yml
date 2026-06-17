@@ -156,3 +156,72 @@ jobs:
           path: ${{ steps.locate.outputs.libpath }}
           if-no-files-found: warn
           retention-days: 14
+
+  # Validate links/cross-references in the MODERN docs/api reference (the site we
+  # actually publish). This REUSES the libmxnet.so the build job just compiled —
+  # downloaded as an artifact within this same run — so libmxnet is built ONCE on
+  # Linux. It replaces the old standalone link_check.yml, which recompiled libmxnet
+  # a second time on a legacy py3.9 / sphinx-2.4 stack against docs/python_docs (a
+  # tree we don't publish). Same-run artifact reuse keeps PR coverage (no
+  # workflow_run), and a failure here is independent of the build/test signal.
+  linkcheck:
+    name: docs/api linkcheck (py3.12)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: false   # docs/api + the python package only; no 3rdparty
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # The build artifact is the full libmxnet.so (USE_OPENCV=ON), so the OpenCV
+      # runtime must be present for `import mxnet` to dlopen it.
+      - name: Install OpenCV runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libopencv-dev
+
+      - name: Download libmxnet.so (built by the build job, same run)
+        uses: actions/download-artifact@v8
+        with:
+          name: libmxnet-cpu-${{ github.sha }}
+          path: ${{ github.workspace }}/lib
+
+      - name: Locate libmxnet.so
+        id: locate
+        run: |
+          set -e
+          libpath=$(find "$GITHUB_WORKSPACE/lib" -name 'libmxnet.so' | head -n1)
+          if [ -z "$libpath" ]; then echo "libmxnet.so not found in artifact" >&2; exit 1; fi
+          echo "libpath=$libpath" >> "$GITHUB_OUTPUT"
+
+      - name: Install mxnet (editable) + docs/api toolchain
+        env:
+          MXNET_LIBRARY_PATH: ${{ steps.locate.outputs.libpath }}
+          MXNET_SETUP_ENABLE_CUDA_DEPS: "0"
+        run: |
+          # setuptools+wheel: mxnet's PEP 517 backend; py3.12 no longer bundles
+          # setuptools, and --no-build-isolation needs it present.
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install "numpy<2" requests "graphviz>=0.8.1,<0.9.0" "packaging>=20.0"
+          python -m pip install --no-build-isolation -e ./python
+          python -m pip install -r docs/api/requirements.txt
+          python -c "import mxnet; print('mxnet', mxnet.__version__)"
+
+      - name: Link Check (docs/api)
+        env:
+          MXNET_LIBRARY_PATH: ${{ steps.locate.outputs.libpath }}
+        run: |
+          # Report broken links but do NOT gate CI on them. The API docstrings (and
+          # the NumPy ones they re-expose) reference dozens of external pages — the
+          # Array API spec, academic PDFs, OpenCV/SciPy docs — that move, 404, or
+          # 402/403 CI bots over time. That rot is outside our control and is exactly
+          # what the legacy linkcheck stopped gating on; the full report stays in the
+          # log so a maintainer can fix any genuinely-controllable links.
+          make -C docs/api clean
+          timeout 10m make -C docs/api linkcheck \
+            || echo "::warning title=docs/api linkcheck::broken/redirected links reported above (external link rot — not gating CI)"

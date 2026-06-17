@@ -1,9 +1,27 @@
 name: lint
 
 on:
+  # shellcheck/cmake-lint/ruff/clang-format only inspect code, build files and
+  # scripts -- a docs-only or unrelated PR has nothing here to check, so scope the
+  # triggers to the paths these jobs actually read. (master is unprotected; no
+  # required-check is gated on this, so a skipped run can't block a merge.)
   push:
     branches: [master]
+    paths:
+      - 'python/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'tools/**'
+      - '.github/workflows/lint.yml'
   pull_request:
+    paths:
+      - 'python/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'tools/**'
+      - '.github/workflows/lint.yml'
   workflow_dispatch:
 
 permissions:

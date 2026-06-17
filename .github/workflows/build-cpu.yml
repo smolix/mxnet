@@ -39,12 +39,15 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -o Acquire::Retries=3
           # CPU-only build: openblas + opencv + ninja + ccache. NCCL is GPU-only, skip.
           # gfortran provides libgfortran.so (libmxnet links it via OpenBLAS/LAPACK);
           # the runner image no longer ships the unversioned .so by default, so the
           # final link fails on a missing libgfortran.so without it.
+          # Retries + per-connection timeout so a slow mirror fails fast and retries.
           sudo apt-get install -y --no-install-recommends \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 \
             build-essential \
             ninja-build \
             cmake \
@@ -180,10 +183,30 @@ jobs:
 
       # The build artifact is the full libmxnet.so (USE_OPENCV=ON), so the OpenCV
       # runtime must be present for `import mxnet` to dlopen it.
-      - name: Install OpenCV runtime
+      - name: Install OpenCV runtime (only the libs libmxnet links)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libopencv-dev
+          # libmxnet.so links ONLY libopencv_{core,imgproc,imgcodecs}.so.* (verified
+          # from its ELF NEEDED entries). Install just those runtime libs -- NOT the
+          # libopencv-dev metapackage, which pulls every OpenCV module plus ROCm/GDAL/
+          # ffmpeg deps that `import mxnet` never loads (hundreds of MB, and the cause
+          # of the 30-min apt hang when the mirror is slow). Resolve the versioned
+          # package names from the apt index so this survives OpenCV SONAME bumps on
+          # the runner image; fall back to libopencv-dev if resolution finds nothing.
+          # Retries + per-connection timeout so a stalled mirror fails fast and retries
+          # instead of hanging to the job timeout.
+          sudo apt-get update -o Acquire::Retries=3
+          pkgs=$(for m in core imgproc imgcodecs; do
+                   apt-cache --names-only search "^libopencv-${m}[0-9]"
+                 done | awk '{print $1}' | sort -u)
+          if [ -z "$pkgs" ]; then
+            echo "::warning::lean OpenCV runtime packages not found; falling back to libopencv-dev"
+            pkgs=libopencv-dev
+          fi
+          echo "Installing OpenCV runtime: $pkgs"
+          sudo apt-get install -y --no-install-recommends \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 \
+            $pkgs
 
       - name: Download libmxnet.so (built by the build job, same run)
         uses: actions/download-artifact@v8

@@ -27,8 +27,18 @@
 name: docs deploy (GitHub Pages)
 
 on:
+  # The site documents the *published* wheel, so it only changes when the docs
+  # sources/toolchain change, this workflow changes, or a new release ships a new
+  # API. Plain code-only master commits leave the published wheel (and thus the
+  # rendered docs) identical -- rebuilding on every push was ~10-15 min of wasted
+  # runner time each (apt install + Sphinx + the 10-min linkcheck).
   push:
     branches: [master]
+    paths:
+      - 'docs/api/**'
+      - '.github/workflows/docs-deploy.yml'
+  release:
+    types: [published]
   workflow_dispatch:
 
 # Least-privilege token plus the Pages/OIDC scopes deploy-pages needs.  `contents:
@@ -85,8 +95,22 @@ jobs:
           fi
           # The wheel bundles OpenCV but not all of OpenCV's transitive *system* deps
           # (e.g. libcharls.so.2), so `import mxnet` needs the OpenCV runtime present.
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libopencv-dev
+          # Install only the runtime libs libmxnet links (core/imgproc/imgcodecs), not
+          # the full libopencv-dev metapackage (every module + ROCm/GDAL/ffmpeg deps).
+          # Resolve versioned names from the apt index; fall back to libopencv-dev.
+          sudo apt-get update -o Acquire::Retries=3
+          opencv_pkgs=$(for m in core imgproc imgcodecs; do
+                          apt-cache --names-only search "^libopencv-${m}[0-9]"
+                        done | awk '{print $1}' | sort -u)
+          if [ -z "$opencv_pkgs" ]; then
+            echo "::warning::lean OpenCV runtime packages not found; falling back to libopencv-dev"
+            opencv_pkgs=libopencv-dev
+          fi
+          echo "Installing OpenCV runtime: $opencv_pkgs"
+          sudo apt-get install -y --no-install-recommends \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 \
+            $opencv_pkgs
           python -m pip install "$wheel"
           python -m pip install -r docs/api/requirements.txt
           python -c "import mxnet; print('mxnet', mxnet.__version__)"

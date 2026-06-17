@@ -33,11 +33,14 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -o Acquire::Retries=3
           # libopencv-dev: the CPU wheel is now built with USE_OPENCV=ON and the
           # native libopencv_* closure is bundled into the wheel (parity with the
           # CUDA wheel) so image I/O works out of the box.
+          # Retries + per-connection timeout so a slow mirror fails fast and retries.
           sudo apt-get install -y --no-install-recommends \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 \
             build-essential \
             ninja-build \
             cmake \

@@ -20,8 +20,6 @@ defaults:
 jobs:
   licensecheck:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5

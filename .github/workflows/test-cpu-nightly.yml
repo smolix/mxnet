@@ -8,14 +8,75 @@ on:
 
 permissions:
   contents: read
+  # The gate job lists this workflow's prior runs (REST:
+  # /repos/{owner}/{repo}/actions/workflows/{id}/runs) to find the last successful
+  # nightly's commit; that read requires actions: read.
+  actions: read
 
 concurrency:
   group: test-cpu-nightly-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  # Decide whether the expensive build+sweep needs to run at all. The nightly
+  # rebuilds libmxnet and runs a ~45-min pytest sweep; on a day with NO new commits,
+  # master HEAD is identical to the commit the last nightly already tested green, so
+  # the whole job is wasted compute. This job compares the current commit to the head
+  # commit of the most recent SUCCESSFUL nightly and skips the sweep when they match.
+  # Manual (workflow_dispatch) runs always proceed, so the sweep can be forced on
+  # demand regardless of whether code changed.
+  gate:
+    name: Gate (skip if unchanged since last green nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+    steps:
+      - name: Decide whether HEAD changed since the last successful nightly
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          CURRENT_SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Manual runs always execute the full sweep (forced / on-demand validation).
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "Manual workflow_dispatch -> running the full sweep unconditionally."
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Forced run (workflow_dispatch)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Head commit of the most recent SUCCESSFUL nightly on this branch. The
+          # in-progress current run is not 'success' yet, so it is never matched here.
+          last_sha=$(gh run list \
+                       --repo "$REPO" \
+                       --workflow test-cpu-nightly.yml \
+                       --branch "$BRANCH" \
+                       --status success \
+                       --limit 1 \
+                       --json headSha \
+                       --jq '.[0].headSha // ""')
+          echo "current HEAD ($BRANCH): $CURRENT_SHA"
+          echo "last green nightly:    ${last_sha:-<none>}"
+          if [ -z "$last_sha" ]; then
+            decision=true;  reason="No prior successful nightly found"
+          elif [ "$last_sha" = "$CURRENT_SHA" ]; then
+            decision=false; reason="HEAD unchanged since the last successful nightly"
+          else
+            decision=true;  reason="HEAD changed since the last successful nightly"
+          fi
+          echo "should_run=$decision" >> "$GITHUB_OUTPUT"
+          echo "$reason -> should_run=$decision" | tee -a "$GITHUB_STEP_SUMMARY"
+
   test:
     name: CPU pytest sweep (operator, gluon, dnnl)
+    needs: gate
+    # Skip the build+sweep entirely when the gate found nothing changed. A skipped
+    # job leaves the overall run green, so an unchanged nightly finishes in seconds.
+    if: ${{ needs.gate.outputs.should_run == 'true' }}
     runs-on: ubuntu-latest
     # Cold build (~70 min at -j4) + deps install + 30-min pytest sweep, with
     # headroom. Nightly normally restores the build-cpu master cache (see the

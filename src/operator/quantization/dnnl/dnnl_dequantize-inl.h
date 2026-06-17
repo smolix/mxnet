@@ -81,7 +81,7 @@ void SgDNNLDequantizeOperator::Forward(const OpContext& ctx,
         (data_max - data_min) / (mshadow::red::limits::MaxValue<uint8_t>() -
                                  mshadow::red::limits::MinValue<uint8_t>());
     const index_t size    = outputs[0].shape().Size();
-    const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+    [[maybe_unused]] const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 #pragma omp parallel for num_threads(nthreads)
     for (index_t i = 0; i < size; ++i) {
       const float dequantized = in_ptr[i] * scale + data_min;

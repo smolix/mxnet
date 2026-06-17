@@ -144,7 +144,7 @@ void DNNLQuantizedFullyConnectedForward(const nnvm::NodeAttrs& attrs,
   const uint8_t* data_u8   = data.dtype() == mshadow::kUint8 ? data.data().dptr<uint8_t>() : nullptr;
   const int8_t* weight_ptr = weight.data().dptr<int8_t>();
   const int32_t* bias_ptr  = param.no_bias ? nullptr : quantized_bias.data().dptr<int32_t>();
-  const int omp_threads    = mxnet::engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  [[maybe_unused]] const int omp_threads    = mxnet::engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 
   if (req[fullc::kOut] == kWriteTo || req[fullc::kOut] == kWriteInplace) {
 #pragma omp parallel for num_threads(omp_threads)

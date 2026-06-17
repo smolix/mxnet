@@ -64,7 +64,7 @@ static NDArray DequantizeSelfAttTensorCPU(const NDArray& data,
   const float max_range = data_max.data().dptr<float>()[0];
   float* out            = ret.data().dptr<float>();
   const size_t size     = default_data.shape().Size();
-  const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  [[maybe_unused]] const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 
   if (default_data.dtype() == mshadow::kInt8) {
     const int8_t* in = default_data.data().dptr<int8_t>();
@@ -108,7 +108,7 @@ static NDArray CastSelfAttGradToFloatCPU(const NDArray& grad, const char* op_nam
   NDArray ret(default_grad.shape(), default_grad.ctx(), false, mshadow::kFloat32);
   float* out        = ret.data().dptr<float>();
   const size_t size = default_grad.shape().Size();
-  const int nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  [[maybe_unused]] const int nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 
   if (default_grad.dtype() == mshadow::kInt8) {
     const int8_t* in = default_grad.data().dptr<int8_t>();

@@ -179,7 +179,7 @@ static NDArray DequantizeQATDataCPU(const NDArray& data,
   const float max_range = data_max.data().dptr<float>()[0];
   float* out            = ret.data().dptr<float>();
   const size_t size     = data.shape().Size();
-  const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  [[maybe_unused]] const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 
   if (data.dtype() == mshadow::kInt8) {
     const int8_t* in = data.data().dptr<int8_t>();
@@ -209,7 +209,7 @@ static NDArray CastQATGradToFloatCPU(const NDArray& grad) {
   NDArray ret(default_grad.shape(), default_grad.ctx(), false, mshadow::kFloat32);
   float* out        = ret.data().dptr<float>();
   const size_t size = default_grad.shape().Size();
-  const int nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  [[maybe_unused]] const int nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 
   if (default_grad.dtype() == mshadow::kInt8) {
     const int8_t* in = default_grad.data().dptr<int8_t>();

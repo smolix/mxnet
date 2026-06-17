@@ -132,7 +132,7 @@ static NDArray DequantizeQATTensorCPU(const NDArray& data,
   const float max_range = data_max.data().dptr<float>()[0];
   float* out            = ret.data().dptr<float>();
   const size_t size     = data.shape().Size();
-  const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  [[maybe_unused]] const int nthreads    = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 
   if (data.dtype() == mshadow::kInt8) {
     const int8_t* in = data.data().dptr<int8_t>();
@@ -637,7 +637,7 @@ bool SgDNNLFCOp::PrepareQuantization(const OpContext& ctx,
                                      const std::vector<NDArray>& in_data,
                                      const NDArray& output,
                                      const std::vector<float>& min_max_vec) {
-  const auto nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  [[maybe_unused]] const auto nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 #if MXNET_USE_OPENMP != 1
   (void)nthreads;
 #endif

@@ -324,7 +324,7 @@ void TVMOpReduce(const OpContext& ctx,
 // live in a real function (not inside a type-switch macro argument).
 template <typename DType, typename OP>
 inline double FlatGlobalSum(const DType* in, index_t total) {
-  const int nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  [[maybe_unused]] const int nthreads = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
   double acc         = 0.0;
 #pragma omp parallel for num_threads(nthreads) reduction(+ : acc)
   for (index_t i = 0; i < total; ++i) {

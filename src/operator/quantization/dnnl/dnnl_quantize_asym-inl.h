@@ -90,7 +90,7 @@ void DNNLQuantizeAsymOp::Forward(const OpContext& ctx,
       NDArray input_buffer = inputs[0].Reorder2Default();
       const uint8_t* input_ptr = input_buffer.data().dptr<uint8_t>();
       uint8_t* output_ptr      = outputs[0].data().dptr<uint8_t>();
-      const int nthreads       = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+      [[maybe_unused]] const int nthreads       = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
 #pragma omp parallel for num_threads(nthreads)
       for (index_t i = 0; i < static_cast<index_t>(input_buffer.shape().Size()); ++i) {
         KERNEL_ASSIGN(output_ptr[i], req[0], input_ptr[i]);
@@ -102,7 +102,7 @@ void DNNLQuantizeAsymOp::Forward(const OpContext& ctx,
     in_buffer                 = inputs[0].Reorder2Default();
     const dnnl::memory* i_mem = in_buffer.GetDNNLData();
     float* in_ptr             = in_buffer.data().dptr<float>();
-    const int nthreads        = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+    [[maybe_unused]] const int nthreads        = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
     if (inputs[0].dtype() == mshadow::kInt8) {
       scale = 1.f;
       shift = 128.f;

@@ -145,7 +145,7 @@ static void DNNLQuantizedConvForward(const nnvm::NodeAttrs& attrs,
   const uint8_t* data_u8    = data_is_int8 ? nullptr : data.data().dptr<uint8_t>();
   const int8_t* weight_ptr  = weight.data().dptr<int8_t>();
   const int32_t* bias_ptr   = param.no_bias ? nullptr : quantized_bias.data().dptr<int32_t>();
-  const int omp_threads     = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
+  [[maybe_unused]] const int omp_threads     = engine::OpenMP::Get()->GetRecommendedOMPThreadCount();
   const index_t batch       = dshape[0];
   const index_t in_channels = dshape[1];
   const index_t out_channels = wshape[0];

@@ -385,6 +385,17 @@ else()
   endif()
 endif()
 
+# On Linux, oneDNN's vendored ITT assembly (ittptmark64.S) ships without a
+# .note.GNU-stack section, so ld marks the whole libmxnet.so as REQUIRING AN
+# EXECUTABLE STACK. Hardened loaders then refuse to dlopen it and `import mxnet`
+# from the wheel dies with "cannot enable executable stack as shared object
+# requires: Invalid argument". Force a non-executable stack on the outputs (this
+# also silences the ld "missing .note.GNU-stack ... executable stack" warning).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,-z,noexecstack")
+  string(APPEND CMAKE_EXE_LINKER_FLAGS " -Wl,-z,noexecstack")
+endif()
+
 if(NOT mxnet_LINKER_LIBS)
   set(mxnet_LINKER_LIBS "")
 endif()
@@ -1318,7 +1329,10 @@ if(USE_OPENCV AND OpenCV_VERSION_MAJOR GREATER 2)
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(im2rec PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>")
   endif()
-else()
+elseif(USE_OPENCV)
+    # Only warn when OpenCV was actually requested but is too old / lacks imgcodecs.
+    # When USE_OPENCV is OFF (e.g. the macOS smoke build) im2rec is obviously
+    # unavailable and the warning is just noise.
     message(WARNING "OpenCV_VERSION_MAJOR: ${OpenCV_VERSION_MAJOR}, version 3 with imgcodecs \
     is required for im2rec, im2rec will not be available")
 endif()

@@ -247,10 +247,37 @@ _macos_dylib_deps() {
         done
 }
 
+# Resolve a Mach-O dependency reference to a concrete file we can bundle; print
+# nothing if it should be left to the host.  Homebrew records many transitive deps
+# as @rpath/@loader_path paths (e.g. libwebp -> @rpath/libsharpyuv.0.dylib) — these
+# MUST be resolved against the package-manager lib dirs and bundled, NOT skipped,
+# or `import mxnet` fails on a clean machine with "Library not loaded: @rpath/...".
+# (This is the Mach-O analog of the Linux libcharls miss.)  $MACOS_DEP_SEARCH_DIRS
+# is set by bundle_opencv_closure_macos before the closure walk.
+_macos_resolve_dep() {
+    local dep="$1" name d
+    case "$dep" in
+        /usr/lib/*|/System/*) return 1 ;;                  # macOS system: never bundle
+        @rpath/*|@loader_path/*|@executable_path/*)
+            name="${dep##*/}"
+            for d in $MACOS_DEP_SEARCH_DIRS; do
+                [ -e "$d/$name" ] && { printf '%s\n' "$d/$name"; return 0; }
+            done
+            return 1 ;;
+        *) [ -e "$dep" ] && { printf '%s\n' "$dep"; return 0; }; return 1 ;;
+    esac
+}
+
 bundle_opencv_closure_macos() {
     echo "==> Bundling system OpenCV shared libraries (macOS/Mach-O)"
     mkdir -p python/mxnet/lib
     local dep b seeded=0
+    # Dirs to resolve @rpath/@loader_path transitive deps against: the OpenCV keg
+    # (OpenCV_DIR/../../lib) and the Homebrew prefix lib dir, into which Homebrew
+    # symlinks every non-keg-only formula's libraries (libwebp, libsharpyuv, ...).
+    local _ocv_lib
+    _ocv_lib="$([ -n "${OpenCV_DIR:-}" ] && cd "$OpenCV_DIR/../.." 2>/dev/null && pwd || true)"
+    MACOS_DEP_SEARCH_DIRS="${_ocv_lib} $(brew --prefix 2>/dev/null)/lib /opt/homebrew/lib /usr/local/lib"
     # Seed: the OpenCV dylibs libmxnet.dylib links directly.
     for dep in $(_macos_dylib_deps "$BUILD_DIR/libmxnet.dylib"); do
         case "$(basename "$dep")" in
@@ -278,20 +305,23 @@ bundle_opencv_closure_macos() {
     # OpenEXR/Imath/Iex/IlmThread, …) — all under the package-manager prefix,
     # none of them macOS-provided — exactly the Mach-O analog of the Linux
     # libgdcm*/libgdal/… closure.
-    local added lib
+    local added lib src
     while :; do
         added=0
         for lib in python/mxnet/lib/*.dylib; do
             [ -e "$lib" ] || continue
             for dep in $(_macos_dylib_deps "$lib"); do
-                _macos_is_system_dylib "$dep" && continue
-                b="$(basename "$dep")"
-                [ -e "python/mxnet/lib/$b" ] && continue
-                if [ ! -e "$dep" ]; then
-                    echo "  WARNING: unresolved transitive dep $dep (left to host)" >&2
+                src="$(_macos_resolve_dep "$dep" || true)"
+                if [ -z "$src" ]; then
+                    case "$dep" in
+                        /usr/lib/*|/System/*) ;;   # macOS system dep: leave to host
+                        *) echo "  WARNING: unresolved transitive dep $dep (left to host)" >&2 ;;
+                    esac
                     continue
                 fi
-                cp -L "$dep" "python/mxnet/lib/$b"
+                b="$(basename "$src")"
+                [ -e "python/mxnet/lib/$b" ] && continue
+                cp -L "$src" "python/mxnet/lib/$b"
                 chmod u+w "python/mxnet/lib/$b"
                 echo "  bundled $b"
                 added=1

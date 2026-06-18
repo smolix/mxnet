@@ -36,8 +36,10 @@ official Apache release.
 - **Current release line:** `2.0.0+cu13.bw.<YYYYMMDD>[.N]` for Linux/CUDA,
   `2.0.0+cpu.linux.<YYYYMMDD>[.N]` for Linux CPU, and `2.0.0+cpu.macos.<YYYYMMDD>`
   for Apple Silicon (latest date-line wheels `2.0.0+cu13.bw.20260617.1` /
-  `2.0.0+cpu.linux.20260617.1`, CUDA 13.3). The authoritative current build is
-  always the newest on the [Releases page](https://github.com/smolix/mxnet/releases/latest).
+  `2.0.0+cpu.linux.20260617.1`, CUDA 13.3). The current **Latest** release is the
+  re-cut `mxnet-2.0.0.zombie.1` line — the same validated binaries across all three
+  platforms — which the quick-install commands below use. The authoritative current
+  build is always the newest on the [Releases page](https://github.com/smolix/mxnet/releases/latest).
 - **What changed vs upstream:** see [`FIXED.md`](FIXED.md).
 - **Known limitations / open work:** see [`OPEN_ISSUES.md`](OPEN_ISSUES.md).
 - **Build from source:** see [`BUILDING.md`](BUILDING.md) and
@@ -50,14 +52,14 @@ Quick install
 
 ```bash
 # CPython 3.12
-pip install "https://github.com/smolix/mxnet/releases/download/v2.0.0%2Bcu13.bw.20260617.1/mxnet-2.0.0%2Bcu13.bw.20260617.1-cp312-cp312-linux_x86_64.whl"
+pip install "https://github.com/smolix/mxnet/releases/download/mxnet-2.0.0.zombie.1/mxnet-2.0.0%2Bcu133.bw.zombie.1-cp312-cp312-linux_x86_64.whl"
 ```
 
 **macOS, Apple Silicon (CPU-only):**
 
 ```bash
 # CPython 3.12
-pip install "https://github.com/smolix/mxnet/releases/download/v2.0.0%2Bcu13.bw.20260614/mxnet-2.0.0%2Bcpu.macos.20260614-cp312-cp312-macosx_26_0_arm64.whl"
+pip install "https://github.com/smolix/mxnet/releases/download/mxnet-2.0.0.zombie.1/mxnet-2.0.0%2Bcpu.macos.zombie.1-cp312-cp312-macosx_26_0_arm64.whl"
 ```
 
 Smoke-test the install:

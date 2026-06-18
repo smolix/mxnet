@@ -81,21 +81,25 @@ def test_deploy_sh_uses_defensive_wget():
 
 
 def test_workflows_use_modern_action_versions():
-    """The three previously-stale workflows (link_check, os_x_mklbuild,
-    os_x_staticbuild) must use checkout@v4 + setup-python@v5 — matching
-    the rest of the workflow set."""
-    for wf in [
-        ".github/workflows/link_check.yml",
-        ".github/workflows/os_x_mklbuild.yml",
-        ".github/workflows/os_x_staticbuild.yml",
-    ]:
-        contents = _read(wf)
-        # We don't pin to exactly v4/v5 (a future bump should be allowed),
-        # but @v2/@v3 must not return.
+    """No workflow may regress to a legacy action major (checkout@v2/v3,
+    setup-python@v2/v3).
+
+    Globs the live ``.github/workflows`` set instead of a hardcoded file
+    list: an earlier hardcoded list (link_check, os_x_mklbuild,
+    os_x_staticbuild) silently rotted into a missing-file failure when a CI
+    cleanup deleted those workflows. Globbing tracks add/remove automatically.
+    """
+    wf_dir = REPO / ".github" / "workflows"
+    workflows = sorted(wf_dir.glob("*.yml")) + sorted(wf_dir.glob("*.yaml"))
+    assert workflows, f"no workflow files found under {wf_dir}"
+    # We don't pin to exactly v4/v5 (a future bump should be allowed),
+    # but @v2/@v3 must not return.
+    for wf in workflows:
+        contents = wf.read_text()
         for stale in ["actions/checkout@v2", "actions/checkout@v3",
                       "actions/setup-python@v2", "actions/setup-python@v3"]:
             assert stale not in contents, \
-                f"GH1: {wf} regressed to {stale}"
+                f"GH1: {wf.relative_to(REPO)} regressed to {stale}"
 
 
 def test_diagnose_py_bounds_dns_timeout():

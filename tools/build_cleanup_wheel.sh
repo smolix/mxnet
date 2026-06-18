@@ -277,7 +277,14 @@ bundle_opencv_closure_macos() {
     # symlinks every non-keg-only formula's libraries (libwebp, libsharpyuv, ...).
     local _ocv_lib
     _ocv_lib="$([ -n "${OpenCV_DIR:-}" ] && cd "$OpenCV_DIR/../.." 2>/dev/null && pwd || true)"
-    MACOS_DEP_SEARCH_DIRS="${_ocv_lib} $(brew --prefix 2>/dev/null)/lib /opt/homebrew/lib /usr/local/lib"
+    # Resolve @rpath/@loader_path transitive deps against the package-manager lib
+    # dirs. CI uses Homebrew (libs under `brew --prefix`/lib); local dev here uses
+    # MacPorts (/opt/local/lib). brew may be ABSENT (MacPorts hosts) -- guard the
+    # call, since an unguarded `brew --prefix` is command-not-found there and, under
+    # `set -e`, aborts the whole wheel build at this bundling step.
+    local _brew_lib=""
+    if command -v brew >/dev/null 2>&1; then _brew_lib="$(brew --prefix 2>/dev/null)/lib"; fi
+    MACOS_DEP_SEARCH_DIRS="${_ocv_lib} ${_brew_lib} /opt/local/lib /opt/local/lib/opencv4 /opt/homebrew/lib /usr/local/lib"
     # Seed: the OpenCV dylibs libmxnet.dylib links directly.
     for dep in $(_macos_dylib_deps "$BUILD_DIR/libmxnet.dylib"); do
         case "$(basename "$dep")" in

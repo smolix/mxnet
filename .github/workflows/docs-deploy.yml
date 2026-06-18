@@ -27,18 +27,23 @@
 name: docs deploy (GitHub Pages)
 
 on:
-  # The site documents the *published* wheel, so it only changes when the docs
-  # sources/toolchain change, this workflow changes, or a new release ships a new
-  # API. Plain code-only master commits leave the published wheel (and thus the
-  # rendered docs) identical -- rebuilding on every push was ~10-15 min of wasted
-  # runner time each (apt install + Sphinx + the 10-min linkcheck).
+  # Trigger only on changes to the docs sources/toolchain or this workflow, plus
+  # manual dispatch. All of these run on master, which is what the github-pages
+  # environment allows to deploy. Plain code-only master commits leave the
+  # published wheel (and thus the rendered docs) identical, so rebuilding on every
+  # push was ~10-15 min of wasted runner time each (apt + Sphinx + linkcheck).
+  #
+  # NOTE: do NOT add a `release: published` trigger here. That run executes on the
+  # TAG ref, and the github-pages environment is locked to the default branch, so
+  # the deploy job is rejected ("Tag ... is not allowed to deploy to github-pages
+  # due to environment protection rules") and the run goes red on every release.
+  # To refresh the docs after a release, run this workflow via workflow_dispatch
+  # (it dispatches on master and deploys cleanly).
   push:
     branches: [master]
     paths:
       - 'docs/api/**'
       - '.github/workflows/docs-deploy.yml'
-  release:
-    types: [published]
   workflow_dispatch:
 
 # Least-privilege token plus the Pages/OIDC scopes deploy-pages needs.  `contents:

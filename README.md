@@ -21,7 +21,7 @@
 MXNet 2.0 — CUDA 13 / Blackwell + Apple Silicon fork
 ====================================================
 
-> Unofficial, maintained fork at [`smolix/mxnet`](https://github.com/smolix/mxnet).
+> Unofficial fork at [`smolix/mxnet`](https://github.com/smolix/mxnet).
 > **Run existing MXNet code on current hardware** — NVIDIA Blackwell (and
 > Ampere → Hopper) GPUs on the CUDA 13 stack, and native Apple Silicon CPU.
 

@@ -1,7 +1,7 @@
 # What this fork fixes / changes
 
-This is the consolidated change log for the **`smolix/mxnet`** fork — a maintained
-port of the (archived) Apache MXNet 2.0 that runs existing/legacy MXNet code on
+This is the consolidated change log for the **`smolix/mxnet`** fork — a port of
+the (archived) Apache MXNet 2.0 that runs existing/legacy MXNet code on
 **CUDA 13 / Blackwell GPUs** and on **native Apple Silicon CPU**.
 
 It supersedes the many per-topic engineering notes that used to live at the repo

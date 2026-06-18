@@ -1,7 +1,7 @@
 # What this fork fixes / changes
 
-This is the consolidated change log for the **`smolix/mxnet`** fork — a maintained
-port of the (archived) Apache MXNet 2.0 that runs existing/legacy MXNet code on
+This is the consolidated change log for the **`smolix/mxnet`** fork — a port of
+the (archived) Apache MXNet 2.0 that runs existing/legacy MXNet code on
 **CUDA 13 / Blackwell GPUs** and on **native Apple Silicon CPU**.
 
 It supersedes the many per-topic engineering notes that used to live at the repo
@@ -12,8 +12,12 @@ fine-grained history is preserved in `git log`. Anything still *open* lives in
 
 Validation hosts referenced below: 4× RTX 4090 (Ada, `sm_89`), RTX PRO 4000 /
 RTX 50-series (Blackwell, `sm_120`), AMD EPYC 7B12 (Zen 2 CPU), and Apple Silicon
-(arm64). Current release line: `2.0.0+cu13.bw.<YYYYMMDD>` (latest published wheel
-`2.0.0+cu13.bw.20260614`) plus the macOS CPU wheel `2.0.0+cpu.macos.<YYYYMMDD>`.
+(arm64). Current release line: `2.0.0+cu13.bw.<YYYYMMDD>[.N]` (Linux/CUDA) and
+`2.0.0+cpu.linux.<YYYYMMDD>[.N]` (Linux CPU), plus the macOS CPU wheel
+`2.0.0+cpu.macos.<YYYYMMDD>`. Latest date-line wheels: `2.0.0+cu13.bw.20260617.1`
+and `2.0.0+cpu.linux.20260617.1` (CUDA 13.3, full acceptance + 141 d2l-neu MXNet
+notebooks green). The authoritative current build is always the newest on the
+[Releases page](https://github.com/smolix/mxnet/releases/latest).
 
 ---
 
@@ -120,6 +124,22 @@ Implemented and validated across phases (`src/imperative/cuda_graphs.h`,
 - A **provenance gate** (`tools/release_provenance.py`) re-derives the feature set
   from the compiled binary + wheel contents and fails the build unless the promised
   features (CUDA/cuDNN/NCCL/oneDNN/OpenCV) are actually present.
+- **Release CI** (`.github/workflows/release-wheel.yml`, on `v*` tags): the Linux
+  CPU wheel is built with the same `tools/build_cleanup_wheel.sh` recipe,
+  **clean-room-imported** in a minimal `python:3.12-slim` container (no system
+  OpenCV — exactly the check that would have caught the `libcharls.so.2` closure
+  miss) and attached to the release. The macOS arm64 job builds + smoke-tests the
+  wheel and uploads it as a workflow artefact but does **not** auto-release it — a
+  smoke test is not sufficient gating, so full macOS unit testing is an out-of-band
+  step before a hand-attach (OI-32). The CI **`-z,noexecstack`** link flag + the
+  soname-anchored OpenCV skip-list make the Linux wheels import on hardened loaders
+  and on hosts with no system OpenCV.
+- **Workflow-hardening self-test de-staled** — `test_workflows_use_modern_action_versions`
+  hardcoded three workflow files (`link_check.yml`, `os_x_mklbuild.yml`,
+  `os_x_staticbuild.yml`) that a CI cleanup deleted, so it had regressed to a
+  deterministic missing-file failure. It now globs the live `.github/workflows` set,
+  so it tracks add/remove automatically while still rejecting `actions/checkout@v2|v3`
+  and `setup-python@v2|v3`.
 
 ## 5. Engine, concurrency & lifecycle
 

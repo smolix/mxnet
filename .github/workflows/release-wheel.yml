@@ -173,17 +173,6 @@ jobs:
           brew untap aws/tap azure/bicep 2>/dev/null || true
           brew install cmake ninja opencv
 
-      - name: Resolve tag (for the GitHub Release attachment)
-        id: ver
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "push" ]; then
-            tag="${GITHUB_REF#refs/tags/}"
-          else
-            tag="${{ github.event.inputs.tag }}"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
       - name: Build macOS arm64 CPU wheel (oneDNN + OpenCV + OpenMP bundled)
         env:
           # build_cleanup_wheel.sh reads $PYTHON for its interpreter and $OpenCV_DIR
@@ -220,6 +209,13 @@ jobs:
           print("features OK:", feats)
           PY
 
+      # NOTE: this job deliberately does NOT attach the macOS wheel to the GitHub
+      # Release. A smoke test (import + OPENCV feature) is not sufficient gating to
+      # ship a wheel; the macOS wheel must pass the full unit-test suite first. That
+      # run happens out of band (locally on an Apple-silicon host), after which the
+      # vetted wheel is attached to the release by hand. CI here only builds +
+      # smoke-tests as a build-health check and publishes the wheel as a workflow
+      # artefact (below) for download — it is never auto-released. See OI-32.
       - name: Upload wheel as workflow artefact
         uses: actions/upload-artifact@v7
         with:
@@ -227,14 +223,3 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
           retention-days: 30
-
-      - name: Attach wheel to GitHub Release
-        # Only add the wheel file to the release; the build-wheel (Linux) job owns
-        # the release body / notes, so this step deliberately sets no body to avoid
-        # clobbering it when both jobs target the same tag.
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.ver.outputs.tag }}
-          files: dist/*.whl
-          fail_on_unmatched_files: true

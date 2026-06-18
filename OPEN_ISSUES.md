@@ -10,9 +10,9 @@ Severity: **High** = can produce wrong results or block a common workflow ·
 
 Issue IDs (`OI-N`) are **stable** — once an item is resolved or closed it moves to
 [`FIXED.md`](FIXED.md) and is dropped from this list, so the `OI-N` sequence here is
-intentionally gappy and is **not** a count. **18 items are open** (OI-4–OI-17, OI-21,
-OI-24–OI-26); any other ID in the OI-1…OI-30 range is fixed, an accepted constraint, or
-won't-fix — look it up in [`FIXED.md`](FIXED.md).
+intentionally gappy and is **not** a count. **20 items are open** (OI-4–OI-17, OI-21,
+OI-24–OI-26, OI-31, OI-32); any other ID in the OI-1…OI-32 range is fixed, an accepted
+constraint, or won't-fix — look it up in [`FIXED.md`](FIXED.md).
 
 ## Start here — the two things most likely to bite you
 
@@ -61,6 +61,7 @@ won't-fix — look it up in [`FIXED.md`](FIXED.md).
 | ID | Sev | Summary |
 |----|-----|---------|
 | [OI-21](OPEN_ISSUES_DETAILS.md#oi-21) | Med | Rare long-running inference hang (A6) — instrumented, needs an aarch64 repro |
+| [OI-31](OPEN_ISSUES_DETAILS.md#oi-31) | Med | `cpu_unittest` pytest-xdist lane intermittently hangs at worker teardown (engine threads parked in `futex_wait` at process exit) → `rc=124`; all assertions pass, the process just won't exit. Re-run usually completes (~19.5 min CPU / ~15 min CUDA) |
 
 ## Ecosystem / packaging / CI
 
@@ -69,3 +70,4 @@ won't-fix — look it up in [`FIXED.md`](FIXED.md).
 | [OI-24](OPEN_ISSUES_DETAILS.md#oi-24) | Med | CUDA build→test→tag→release now scripted (`tools/release_cuda_wheel.sh`), but still host-run (no CI runner); no conda/system packaging |
 | [OI-25](OPEN_ISSUES_DETAILS.md#oi-25) | Med | No CUDA build-matrix CI (Ada/Hopper/Blackwell + CUDA 12.x) |
 | [OI-26](OPEN_ISSUES_DETAILS.md#oi-26) | Low | Downstreams unverified (GluonNLP/Sockeye/AutoGluon, ps-lite, Py3.13+, NumPy 2.x [op shape/axis-param rendering fixed], DLPack) |
+| [OI-32](OPEN_ISSUES_DETAILS.md#oi-32) | Med | macOS wheel has no full-suite CI: `release-wheel.yml` builds + smoke-tests it but no longer auto-attaches it; the full unit-test run is manual/local before the wheel is hand-attached to a release |

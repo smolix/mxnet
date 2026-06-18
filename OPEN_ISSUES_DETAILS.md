@@ -189,6 +189,23 @@ pointer / `pending_ops` / shutdown phase / kill flag on timeout (it does not abo
 A reliable reproducer (seen on aarch64) is needed to land a fix. Distinct from the
 cold-start deadlock, which **is** fixed (`FIXED.md` §5).
 
+<a id="oi-31"></a>
+### OI-31 — `cpu_unittest` pytest-xdist teardown deadlock
+The big `tests/python/unittest -n 8` acceptance lane (`tools/run_wheel_full_test.sh`)
+intermittently fails to exit *after every test has already passed*: the xdist worker
+processes hang at interpreter teardown with MXNet engine threads parked in
+`futex_wait` (one worker often grows to 40–150 threads), so pytest never prints its
+summary and the 30-min shard cap kills the lane with `rc=124` and no summary. Observed
+on **both** the Linux CPU and CUDA wheels on different days, so it is not
+wheel-specific. It survives the A13 shutdown-ordering fix (`FIXED.md` §5,
+`MXNotifyShutdown` → `Engine::Stop()`) — likely a residual join/lifecycle race when
+many worker interpreters tear the engine down concurrently, frequently right after the
+`test_profiler` cases. A re-run of the isolated lane normally completes cleanly
+(~19.5 min CPU / ~15 min CUDA; the only failure is the unrelated workflow-hardening
+fixture). Needs a minimized reproducer; mitigate by re-running with a larger wall and a
+per-test `--timeout` (pytest-timeout) so a genuinely-hung test names itself instead of
+hanging the lane. Possibly related to [OI-21](#oi-21).
+
 ---
 
 ## Ecosystem / packaging / CI
@@ -216,3 +233,16 @@ rendezvous (T3); Python 3.13+ (T4); NumPy 2.x ABI (T5 — the operator shape/axi
 rendering incompatibility is now fixed, see [`FIXED.md`](FIXED.md) §10, but a full-suite
 NumPy 2.x run is not yet a gate); DLPack interop (T6); broader cross-platform process
 lifecycle (T11). Strategic; revisit per concrete demand.
+
+<a id="oi-32"></a>
+### OI-32 — macOS wheel has no full-suite CI gating
+`release-wheel.yml`'s `build-macos-wheel` job builds the Apple-silicon CPU wheel and
+**smoke-tests** it (import + `OPENCV` feature) on every `v*` tag, but a smoke test is
+not sufficient to ship a wheel. The job therefore no longer attaches the wheel to the
+release — it uploads a workflow artefact only; the macOS wheel is **full unit-tested
+out of band** on an Apple-silicon host and attached to the release by hand. What
+remains open: there is no CI-hosted **full** macOS unit-test run. The GitHub `macos-15`
+runner is small (few cores, 150-min job cap), so the full CPU unit suite needs either a
+self-hosted Apple-silicon runner or sharding; `apple-silicon.yml` runs only the
+`tests/python/apple_silicon_cpu_smoke` subset. Until that exists, the full-test gate is
+the maintainer's local run.

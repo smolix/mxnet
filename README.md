@@ -33,10 +33,11 @@ operators like `_contrib_quantize_*`, and the [d2l.ai](https://d2l.ai) book —
 running on today's hardware without a rewrite to PyTorch / JAX. It is **not** an
 official Apache release.
 
-- **Current release line:** `2.0.0+cu13.bw.<YYYYMMDD>` (latest published wheel
-  `2.0.0+cu13.bw.20260614`) for Linux/CUDA, and `2.0.0+cpu.macos.<YYYYMMDD>` for
-  Apple Silicon. The authoritative current build is always the newest on the
-  [Releases page](https://github.com/smolix/mxnet/releases/latest).
+- **Current release line:** `2.0.0+cu13.bw.<YYYYMMDD>[.N]` for Linux/CUDA,
+  `2.0.0+cpu.linux.<YYYYMMDD>[.N]` for Linux CPU, and `2.0.0+cpu.macos.<YYYYMMDD>`
+  for Apple Silicon (latest date-line wheels `2.0.0+cu13.bw.20260617.1` /
+  `2.0.0+cpu.linux.20260617.1`, CUDA 13.3). The authoritative current build is
+  always the newest on the [Releases page](https://github.com/smolix/mxnet/releases/latest).
 - **What changed vs upstream:** see [`FIXED.md`](FIXED.md).
 - **Known limitations / open work:** see [`OPEN_ISSUES.md`](OPEN_ISSUES.md).
 - **Build from source:** see [`BUILDING.md`](BUILDING.md) and
@@ -48,8 +49,8 @@ Quick install
 **Linux + NVIDIA GPU (CUDA 13, driver R590+):**
 
 ```bash
-# CPython 3.12 (a cp311 wheel is also published)
-pip install "https://github.com/smolix/mxnet/releases/download/v2.0.0%2Bcu13.bw.20260614/mxnet-2.0.0%2Bcu13.bw.20260614-cp312-cp312-linux_x86_64.whl"
+# CPython 3.12
+pip install "https://github.com/smolix/mxnet/releases/download/v2.0.0%2Bcu13.bw.20260617.1/mxnet-2.0.0%2Bcu13.bw.20260617.1-cp312-cp312-linux_x86_64.whl"
 ```
 
 **macOS, Apple Silicon (CPU-only):**
